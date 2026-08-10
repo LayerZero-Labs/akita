@@ -55,26 +55,19 @@ A, B, and D dimensions during the adaptive prefix. It prices each complete
 schedule before selection. B and D are not chosen by a separate local rank
 heuristic.
 
-Grouped recursive-setup requests use a distinct adaptive path. Their suffix DP
-searches explicit per-matrix dimension tuples and jointly chooses role
-dimensions, block geometry, commitment payload mode, and whether each supported
-edge evaluates setup directly or offloads it through a carried setup-prefix
-opening. Direct grouped roots preserve their frozen committed profiles while
-searching the final-group A/B/D tuple under the direct setup-first objective.
-The generated catalogs include bounded grouped rows for fp128 and the shipped
-fp32 one-hot precommit-plus-final workload. Prover and verifier do not invoke
-the planner at runtime.
+Recursive-setup requests use a distinct adaptive path. Their suffix DP searches
+explicit per-matrix dimension tuples and jointly chooses role dimensions,
+block geometry, commitment payload mode, and whether each supported edge
+evaluates setup directly or offloads it through a carried setup-prefix opening.
+This applies to both scalar roots and grouped roots; direct grouped roots
+preserve their frozen committed profiles while searching the final-group
+A/B/D tuple under the direct setup-first objective. Prover and verifier replay
+generated rows and do not invoke the planner at runtime.
 
-For recursive schedules, adaptive search is deliberately scoped to grouped
-requests with precommitted inputs: those inputs provide setup contributions
-that can actually be offloaded. A scalar request under
-`RecursiveCommitmentConfig<OneHot>` is rejected by the scalar mixed-search
-entry point. This is a request-shape restriction, not a lack of adaptive
-recursive support.
-
-The production recursive catalogs currently cover the profiling key with a
-32-variable, two-polynomial final group and two 16-variable singleton
-precommitted groups. The selected schedules are:
+The production recursive catalogs cover both the scalar fp128 `nv=36`
+profiling row and the grouped profiling key with a 32-variable, two-polynomial
+final group plus two 16-variable singleton precommitted groups. The grouped
+selected schedules are:
 
 ```text
 single chunk:
@@ -922,8 +915,9 @@ above:
   policy;
 - mixed-boundary states retain the required setup/proof alternatives per exact
   parent-visible first fold;
-- scalar recursive requests without precommitted inputs are rejected; grouped
-  recursive requests use the adaptive setup-aware suffix planner.
+- scalar and grouped recursive requests both use the adaptive setup-aware
+  suffix planner; a scalar root may carry its setup-prefix opening into the
+  first recursive fold without adding an application precommit group.
 
 `crates/akita-planner/examples/mixed_dimension_search.rs` exercises both the
 implemented and preserved paths. With `nv=18` and the following candidate

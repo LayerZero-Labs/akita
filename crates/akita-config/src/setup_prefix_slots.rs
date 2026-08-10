@@ -76,9 +76,8 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
 
 /// Enumerate every exact setup-prefix slot required by selected recursive schedules.
 ///
-/// Selected keys are the bounded catalog/profile set from
-/// `recursive_group_batch_candidates_for_capacity`,
-/// not a dense capacity grid.
+/// Selected keys are the bounded recursive catalog/profile set from
+/// `recursive_group_batch_candidates_for_capacity`, not a dense capacity grid.
 pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -127,9 +126,6 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     let mut keys = Vec::new();
     if let Some(catalog) = Cfg::schedule_catalog() {
         for entry in catalog.entries {
-            if entry.root.precommitted_groups.is_empty() {
-                continue;
-            }
             let candidate = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
                 precommitteds: entry
@@ -190,6 +186,20 @@ mod tests {
             candidates.len() <= 4,
             "selected recursive capacity keys must stay bounded, got {}",
             candidates.len()
+        );
+    }
+
+    #[test]
+    fn capacity_candidates_include_scalar_recursive_key() {
+        let scalar = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(36));
+        let candidates =
+            recursive_group_batch_candidates_for_capacity::<SetupCfg>(36, 1).expect("candidates");
+        assert_eq!(candidates, vec![scalar]);
+
+        let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(36, 1).expect("slots");
+        assert!(
+            !slots.is_empty(),
+            "scalar recursive schedule must provision its carried setup prefix"
         );
     }
 

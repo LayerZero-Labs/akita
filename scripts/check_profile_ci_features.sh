@@ -32,6 +32,7 @@ MODE_FEATURE = {
     "dense_fp64": "schedules-fp64-dense",
     "dense_fp128": "schedules-fp128-dense",
     "onehot_fp128": "schedules-fp128-onehot",
+    "onehot_fp128_recursive": "schedules-fp128-onehot-recursive",
     "onehot_fp128_multi_group": "schedules-fp128-onehot",
     "onehot_fp128_multi_group_recursive": "schedules-fp128-onehot-recursive",
     "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": "schedules-fp128-onehot-recursive-multi-chunk-w8r2",
@@ -46,6 +47,7 @@ MODE_NUM_POLYS = {
     "dense_fp64": {1},
     "dense_fp128": {1},
     "onehot_fp128": {1},
+    "onehot_fp128_recursive": {1},
     "onehot_fp128_multi_group": {4},
     "onehot_fp128_multi_group_recursive": {4},
     "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {4},
@@ -59,7 +61,8 @@ MODE_NUM_VARS = {
     "onehot_fp64": {30},
     "dense_fp64": {26},
     "dense_fp128": {26},
-    "onehot_fp128": {32},
+    "onehot_fp128": {36},
+    "onehot_fp128_recursive": {36},
     "onehot_fp128_multi_group": {32},
     "onehot_fp128_multi_group_recursive": {32},
     "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {32},
@@ -68,6 +71,7 @@ MODE_NUM_VARS = {
     "onehot_fp128_multi_chunk_w4r2": {32},
 }
 MODE_SETUP = {mode: "direct" for mode in MODE_FEATURE}
+MODE_SETUP["onehot_fp128_recursive"] = "recursive"
 MODE_SETUP["onehot_fp128_multi_group_recursive"] = "recursive"
 MODE_SETUP["onehot_fp128_multi_group_recursive_multi_chunk_w8r2"] = "recursive"
 PROFILE_BENCH_MARKER = "profile-bench-selected"
@@ -127,6 +131,18 @@ for group in groups:
 
 if not bench_cases:
     print("No matrix bench cases found in profile-bench.yml", file=sys.stderr)
+    raise SystemExit(1)
+case_specs = [case_spec for _, _, case_spec in bench_cases]
+fp128_direct = "onehot_fp128:36:1:direct"
+fp128_recursive = "onehot_fp128_recursive:36:1:recursive"
+if fp128_direct not in case_specs or case_specs.index(fp128_direct) + 1 >= len(case_specs):
+    print("fp128 nv36 direct benchmark case is missing", file=sys.stderr)
+    raise SystemExit(1)
+if case_specs[case_specs.index(fp128_direct) + 1] != fp128_recursive:
+    print(
+        "fp128 nv36 recursive benchmark must immediately follow the direct case",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
 failed = False
 matrix_features: dict[str, set[str]] = {}

@@ -56,7 +56,9 @@ jobs:
         # exercises two more variables than the previous nv=28 fixture while
         # retaining generated schedules and the equality-table allocation guard.
         # Each base field has its own feature graph so unrelated catalogs and
-        # monomorphizations do not inflate every runner. fp128 remains at nv=32.
+        # monomorphizations do not inflate every runner. The scalar fp128
+        # one-hot pair runs at nv=36; grouped and distributed fp128 cases stay
+        # at nv=32.
         group:
           - name: 1-fp32-base
             profile_feature: profile-ci-fp32
@@ -72,7 +74,8 @@ jobs:
             profile_feature: profile-ci-fp128-base
             cases: |
               dense_fp128:26:1
-              onehot_fp128:32:1
+              onehot_fp128:36:1:direct
+              onehot_fp128_recursive:36:1:recursive
           - name: 4-multi-group-direct
             profile_feature: profile-ci-multi-group-direct
             cases: |

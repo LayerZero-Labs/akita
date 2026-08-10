@@ -833,6 +833,68 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 }
 
 #[test]
+fn scalar_recursive_nv36_selects_offloaded_schedule() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+    use akita_types::AkitaScheduleLookupKey;
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(36));
+    let policy = policy_of::<Recursive>();
+    assert_eq!(
+        policy.selection_policy,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+    );
+
+    let planned = crate::find_schedule(
+        &key,
+        Recursive::root_honest_fold_policy(),
+        &[],
+        &policy,
+        Recursive::ring_challenge_config,
+    )
+    .expect("scalar recursive schedule");
+
+    assert!(planned.schedule.root.params.precommitted_groups.is_empty());
+    assert!(planned.estimate.selected_offload_edges > 0);
+    assert!(planned
+        .schedule
+        .recursive_folds
+        .iter()
+        .any(|fold| fold.params.incoming_setup_prefix.is_some()));
+    assert_eq!(
+        planned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        }
+    );
+    assert_eq!(
+        planned.schedule.recursive_folds[0]
+            .params
+            .witness
+            .role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        }
+    );
+    assert_eq!(
+        planned.estimate.estimated_proof_payload_bytes().unwrap(),
+        93_224
+    );
+}
+
+#[test]
 fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
