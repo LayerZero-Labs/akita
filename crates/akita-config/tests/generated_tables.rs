@@ -35,7 +35,7 @@
 
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_planner::generated_families::{
@@ -264,7 +264,7 @@ fn adaptive_catalog_identity_rejects_terminal_dimension_growth() {
     let catalog = fp32::Dense::schedule_catalog().expect("fp32 dense catalog");
     let mut entry = *catalog.entries.first().expect("nonempty fp32 catalog");
 
-    if let Some(last) = entry.recursive_folds.last().copied() {
+    if !entry.recursive_folds.is_empty() {
         let mut folds = entry.recursive_folds.to_vec();
         let last = folds.last_mut().expect("copied recursive fold");
         last.witness.inner_commit_matrix.ring_dimension = 64;
