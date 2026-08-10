@@ -73,6 +73,7 @@ profile-ci-fp128-base = [
   "profile-bench-selected",
   "akita-config/schedules-fp128-dense",
   "akita-config/schedules-fp128-onehot",
+  "akita-config/schedules-fp128-onehot-recursive",
 ]
 profile-ci-multi-group-direct = [
   "profile-bench-selected",

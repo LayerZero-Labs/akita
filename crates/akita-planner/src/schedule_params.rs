@@ -555,3 +555,7 @@ mod adaptive_dimension_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/adaptive_search.rs"]
 mod adaptive_search_tests;
+
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/recursive_setup.rs"]
+mod recursive_setup_tests;

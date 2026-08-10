@@ -1,8 +1,9 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow,
     degree_one_claim_point_to_base, dense_lagrange_opening_from_evals, make_profile_onehot_poly,
-    onehot_lagrange_opening, opening_from_poly, planned_payload_bytes, prover_claims,
-    random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
+    onehot_lagrange_opening, opening_from_poly, planned_payload_bytes,
+    profile_setup_contribution_mode, prover_claims, random_claim_point,
+    report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
@@ -29,7 +30,7 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
+    OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -82,7 +83,7 @@ fn run_prove<
     let pools = ProfileThreadPools::get();
     let poly_refs: [&P; 1] = [poly];
     let openings = [opening];
-    let setup_contribution_mode = SetupContributionMode::Direct;
+    let setup_contribution_mode = profile_setup_contribution_mode();
     tracing::info!(
         label,
         ?setup_contribution_mode,
@@ -178,7 +179,18 @@ fn run_prove<
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(setup).expect("verifier setup")
+        if let Some(schedule) = plan {
+            let opening_layout =
+                OpeningClaimsLayout::new(pt.len(), 1).expect("singleton opening layout");
+            AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
+                setup,
+                schedule,
+                &opening_layout,
+            )
+            .expect("schedule verifier setup")
+        } else {
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(setup).expect("verifier setup")
+        }
     });
     report_timing(
         label,

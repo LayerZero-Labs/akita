@@ -75,11 +75,12 @@ The checked-in workflow currently runs:
 | Mode | Field | Workload | Variables | Polys | Config | Setup mode | Notes |
 | --- | --- | --- | ---: | ---: | --- | --- | --- |
 | `dense_fp32` | fp32 | dense | 26 | 1 | adaptive A≤D1024, B/D≤D256 | `direct` | Catalog-selected adaptive fp32 dense schedule with a D64/D128 suffix domain. |
-| `dense_fp64` | fp64 | dense | 26 | 1 | adaptive A≤D512, B/D≤D256 | `direct` | Catalog-selected adaptive fp64 dense schedule with a D64 suffix domain. |
-| `dense_fp128` | fp128 | dense | 26 | 1 | adaptive | `direct` | Root A/B/D = 256/64/64; recursive folds and terminal use D64. |
 | `onehot_fp32` | fp32 | 1-of-256 one-hot | 30 | 1 | adaptive A≤D1024, B/D≤D256 | `direct` | Adaptive fp32 one-hot with a D64/D128 suffix domain. The equality-table allocation guard remains active. |
+| `dense_fp64` | fp64 | dense | 26 | 1 | adaptive A≤D512, B/D≤D256 | `direct` | Catalog-selected adaptive fp64 dense schedule with a D64 suffix domain. |
 | `onehot_fp64` | fp64 | 1-of-256 one-hot | 30 | 1 | adaptive A≤D512, B/D≤D256 | `direct` | Adaptive fp64 one-hot with a D64 suffix domain. The equality-table allocation guard remains active. |
-| `onehot_fp128` | fp128 | 1-of-256 one-hot | 32 | 1 | adaptive | `direct` | Canonical adaptive fp128 one-hot catalog. |
+| `dense_fp128` | fp128 | dense | 28 | 1 | adaptive | `direct` | Root A/B/D = 256/64/64; recursive folds and terminal use D64. |
+| `onehot_fp128` | fp128 | 1-of-256 one-hot | 36 | 1 | adaptive | `direct` | Canonical adaptive fp128 one-hot catalog. |
+| `onehot_fp128` | fp128 | 1-of-256 one-hot | 36 | 1 | adaptive recursive | `recursive` | The same scalar opening statement with setup contribution carried through Stage 3. |
 | `onehot_fp128_multi_group` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive | `direct` | Direct multi-group coverage using the canonical adaptive fp128 one-hot catalog. |
 | `onehot_fp128_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | adaptive recursive multi-group | `recursive` | Recursive setup-product coverage using the adaptive recursive companion catalog. |
 | `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot batched multi-group W8R2 | 32 | 4 | adaptive recursive multi-group W8R2 | `recursive` | Distributed recursive setup-offload row: `8` chunks, `2` leading levels, with adaptive role dimensions. |
