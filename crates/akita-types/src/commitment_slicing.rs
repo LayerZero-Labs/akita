@@ -11,8 +11,14 @@ use crate::witness::dyadic_block_ranges;
 pub const MAX_COMMITMENT_SLICES: usize = 8;
 
 /// Checked number of logical inputs committed through one physical B matrix.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CommitmentSliceCount(u8);
+
+impl Default for CommitmentSliceCount {
+    fn default() -> Self {
+        Self::ONE
+    }
+}
 
 impl CommitmentSliceCount {
     /// Unsliced commitment geometry.
@@ -315,6 +321,7 @@ mod tests {
 
     #[test]
     fn slice_count_accepts_only_the_protocol_domain() {
+        assert_eq!(CommitmentSliceCount::default(), CommitmentSliceCount::ONE);
         for count in CommitmentSliceCount::ALL {
             assert_eq!(CommitmentSliceCount::try_new(count.get()), Ok(count));
         }

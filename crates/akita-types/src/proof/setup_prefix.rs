@@ -399,11 +399,8 @@ fn serialize_precommitted_level_params<W: Write>(
         .layout
         .num_live_blocks
         .serialize_with_mode(&mut writer, compress)?;
-    params
-        .layout
-        .outer_slice_count
-        .get()
-        .serialize_with_mode(&mut writer, compress)?;
+    let outer_slice_count = params.layout.outer_slice_count.get();
+    outer_slice_count.serialize_with_mode(&mut writer, compress)?;
     params
         .layout
         .log_basis_inner
@@ -460,13 +457,9 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_positions_per_block =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let outer_slice_count = CommitmentSliceCount::try_new(usize::deserialize_with_mode(
-        &mut reader,
-        compress,
-        validate,
-        &(),
-    )?)
-    .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
+    let raw_slice_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let outer_slice_count = CommitmentSliceCount::try_new(raw_slice_count)
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
     let log_basis_inner = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let inner_commit_matrix: InnerCommitMatrixParams =
@@ -509,6 +502,7 @@ fn precommitted_level_params_serialized_size(
     params: &PrecommittedLevelParams,
     compress: Compress,
 ) -> usize {
+    let outer_slice_count = params.layout.outer_slice_count.get();
     params.layout.version.serialized_size(compress)
         + params.layout.group.num_vars().serialized_size(compress)
         + params
@@ -525,11 +519,7 @@ fn precommitted_level_params_serialized_size(
             .num_positions_per_block
             .serialized_size(compress)
         + params.layout.num_live_blocks.serialized_size(compress)
-        + params
-            .layout
-            .outer_slice_count
-            .get()
-            .serialized_size(compress)
+        + outer_slice_count.serialized_size(compress)
         + params.layout.log_basis_inner.serialized_size(compress)
         + params.layout.num_digits_inner.serialized_size(compress)
         + commit_matrix_serialized_size(&params.layout.inner_commit_matrix, compress)
