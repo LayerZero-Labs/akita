@@ -329,31 +329,19 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
     );
 }
 
-fn small_field_schedule_source(d: usize) -> &'static str {
-    if d >= 128 {
-        "runtime DP schedule (no shipped D128 table)"
-    } else {
-        "generated small-field schedule"
-    }
-}
-
 fn small_field_onehot_title(field_label: &str, d: usize, nv: usize, num_polys: usize) -> String {
     let onehot_k = onehot_k_for_num_vars(nv);
-    let schedule = small_field_schedule_source(d);
     if num_polys == 1 {
-        format!(
-            "=== onehot_{field_label}_d{d} ({field_label}, D={d}, 1-of-{onehot_k}, {schedule}) ==="
-        )
+        format!("=== onehot_{field_label}_d{d} ({field_label}, D={d}, 1-of-{onehot_k}) ===")
     } else {
         format!(
-            "=== onehot_{field_label}_d{d} batched ({field_label}, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}, {schedule}) ==="
+            "=== onehot_{field_label}_d{d} batched ({field_label}, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
         )
     }
 }
 
 fn small_field_dense_title(field_label: &str, d: usize) -> String {
-    let schedule = small_field_schedule_source(d);
-    format!("=== dense_{field_label}_d{d} ({field_label}, D={d}, {schedule}) ===")
+    format!("=== dense_{field_label}_d{d} ({field_label}, D={d}) ===")
 }
 
 fn run_profile_dense_fp128(nv: usize, num_polys: usize) {

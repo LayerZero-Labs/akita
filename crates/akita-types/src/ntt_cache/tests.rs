@@ -116,6 +116,31 @@ fn exact_selector_changes_layout_at_the_strict_capacity_boundary() {
     assert!(ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe + 1, 1 << 15).unwrap());
 }
 
+fn assert_quotient_tail_selectors_agree<F: CanonicalField, const D: usize>(
+    profile: SisModulusProfileId,
+) {
+    for rhs_abs_bound in [1, 1 << 15, 1_000_000, u64::from(u32::MAX)] {
+        let profile_result = centered_quotient_requires_i16_tail(profile, D, rhs_abs_bound);
+        let field_result = centered_quotient_requires_i16_tail_for_field::<F, D>(rhs_abs_bound);
+        match (profile_result, field_result) {
+            (Ok(profile_tail), Ok(field_tail)) => assert_eq!(profile_tail, field_tail),
+            (Err(_), Err(_)) => {}
+            (profile_result, field_result) => panic!(
+                "profile and field quotient-tail selectors disagree for D={D}, bound={rhs_abs_bound}: profile={profile_result:?}, field={field_result:?}"
+            ),
+        }
+    }
+}
+
+#[test]
+fn quotient_tail_planning_and_runtime_selectors_agree_for_all_fields() {
+    assert_quotient_tail_selectors_agree::<Prime32Offset99, 128>(SisModulusProfileId::Q32Offset99);
+    assert_quotient_tail_selectors_agree::<Prime64Offset59, 128>(SisModulusProfileId::Q64Offset59);
+    assert_quotient_tail_selectors_agree::<Prime128OffsetA7F7, 128>(
+        SisModulusProfileId::Q128OffsetA7F7,
+    );
+}
+
 #[test]
 fn q128_a7f7_selector_accepts_d512() {
     assert!(matches!(

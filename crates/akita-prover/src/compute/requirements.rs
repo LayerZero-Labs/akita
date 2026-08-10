@@ -388,7 +388,7 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
 mod tests {
     use super::*;
     #[cfg(feature = "schedules-default")]
-    use akita_config::proof_optimized::fp128;
+    use akita_config::proof_optimized::{fp128, fp32, fp64};
     #[cfg(feature = "schedules-default")]
     use akita_config::CommitmentConfig;
     #[cfg(feature = "schedules-default")]
@@ -534,5 +534,29 @@ mod tests {
                         .d_a()
                 && entry.key.domain == NttTransformDomain::I16TailBothTransforms
         }));
+    }
+
+    #[test]
+    #[cfg(feature = "schedules-default")]
+    fn dense_small_field_nv26_stays_on_the_base_ntt_profiles() {
+        let schedules = [
+            fp32::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(26),
+            ))
+            .expect("generated fp32 dense schedule"),
+            fp64::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                PolynomialGroupLayout::singleton(26),
+            ))
+            .expect("generated fp64 dense schedule"),
+        ];
+
+        for schedule in schedules {
+            let requirements = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule)
+                .expect("compile complete NTT requirements");
+            assert!(requirements.entries().iter().all(|entry| matches!(
+                entry.key.domain,
+                NttTransformDomain::Negacyclic | NttTransformDomain::Cyclic
+            )));
+        }
     }
 }

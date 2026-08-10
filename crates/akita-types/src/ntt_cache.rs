@@ -44,7 +44,7 @@ pub enum NttTransformDomain {
     /// Exactness-only 14-bit tail in both negacyclic and cyclic domains.
     ///
     /// Ring-switch quotient kernels combine this cache with the ordinary CRT
-    /// prefix when the five-prime Q128 representation cannot fit one centered
+    /// prefix when the field-selected representation cannot fit one centered
     /// product term.
     I16TailBothTransforms,
     /// Exact negacyclic transforms for a signed-i16 matrix product.
