@@ -338,13 +338,11 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
     );
 }
 
-fn small_field_schedule_source() -> &'static str {
-    "generated schedule catalog"
-}
+const SMALL_FIELD_SCHEDULE_SOURCE: &str = "generated schedule catalog";
 
 fn small_field_onehot_title(field_label: &str, nv: usize, num_polys: usize) -> String {
     let onehot_k = onehot_k_for_num_vars(nv);
-    let schedule = small_field_schedule_source();
+    let schedule = SMALL_FIELD_SCHEDULE_SOURCE;
     if num_polys == 1 {
         format!(
             "=== onehot_{field_label} ({field_label}, adaptive ring dimensions, 1-of-{onehot_k}, {schedule}) ==="
@@ -357,7 +355,7 @@ fn small_field_onehot_title(field_label: &str, nv: usize, num_polys: usize) -> S
 }
 
 fn small_field_dense_title(field_label: &str) -> String {
-    let schedule = small_field_schedule_source();
+    let schedule = SMALL_FIELD_SCHEDULE_SOURCE;
     format!("=== dense_{field_label} ({field_label}, adaptive ring dimensions, {schedule}) ===")
 }
 

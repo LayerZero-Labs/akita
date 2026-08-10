@@ -62,8 +62,8 @@ edge evaluates setup directly or offloads it through a carried setup-prefix
 opening. Direct grouped roots preserve their frozen committed profiles while
 searching the final-group A/B/D tuple under the direct setup-first objective.
 The generated catalogs include bounded grouped rows for fp128 and the shipped
-fp32/fp64 one-hot families. Prover and verifier do not invoke the planner at
-runtime.
+fp32 one-hot precommit-plus-final workload. Prover and verifier do not invoke
+the planner at runtime.
 
 For recursive schedules, adaptive search is deliberately scoped to grouped
 requests with precommitted inputs: those inputs provide setup contributions
@@ -163,8 +163,9 @@ rather than silently changing objectives. Prover and verifier remain
 catalog-only and never run the planner.
 
 The current implementation applies this objective to exact A/B/D tuples. Small
-independent-domain oracle tests vary B and D separately and compare the
-production frontier with an unpruned traversal.
+tests vary B and D separately, compare production against an unpruned traversal,
+and assert literal hand-priced winning tuples so shared production pricing is
+not the only oracle.
 
 The currently preferred measured design remains:
 
@@ -280,13 +281,14 @@ from the selected dimensions, plan the complete continuation from the exact
 outgoing witness, and retain enough alternatives to optimize the non-additive
 setup objective correctly.
 
-The target search policy limits dimension choice to L0 and L1. Dimensions are
-component-wise non-increasing, and L2 and later are uniform D64. The target
-does not use rank-one dimension pruning because B and D widths depend on
-upstream ranks. A geometry-only bucket is not an equivalence class. The target
-correctness baseline is exhaustive L0/L1 tuple enumeration with Pareto frontier
-retention and descriptor-byte tie-breaking. The current implementation reaches
-this baseline for A choices and block splits, but not for B and D choices.
+The catalog policy limits independent A/B/D choice to its adaptive prefix.
+Dimensions are component-wise non-increasing. Later levels use a uniform tuple
+from the catalog's suffix domain, which is D64 for fp64/fp128 and D64 or D128
+for fp32. B and D widths depend on upstream ranks, so the planner prices every
+policy-admitted tuple before applying Pareto retention and descriptor-byte
+tie-breaking. Large split domains use the catalog-bound bounded-search policy;
+the unpruned test traversal checks that pruning does not change the covered
+small-domain results.
 
 The direct-schedule score is:
 
@@ -457,10 +459,8 @@ normative:
 - Terminal candidates use the A domain because a terminal has only the inner
   commitment matrix.
 
-The current bounded fp128 implementation is a partial implementation of this
-target. It enumerates A but derives B and D locally by minimum secure rank. The
-P0 follow-up must enumerate the full role-valid Cartesian product and apply the
-catalog objective only after each complete schedule has been priced.
+The implementation enumerates the full role-valid Cartesian product and applies
+the catalog objective only after each complete schedule has been priced.
 
 For fp128 one-hot, the intended eventual role domains are:
 
@@ -629,7 +629,7 @@ partial geometry model that can drift from `level_proof_bytes`.
 The approved mixed search is deliberately bounded and its recursive split
 domain is part of catalog identity:
 
-1. L0 and L1 enumerate every feasible basis and admitted dimension tuple.
+1. L0 and L1 enumerate every feasible basis and policy-admitted dimension tuple.
    `RecursiveSplitSearchPolicy::Exhaustive` enumerates every block split.
    `BoundedBalancedExtremesV1` is exhaustive through twelve reduced variables
    and otherwise keeps the two extremes plus a radius-two balance window.
@@ -871,18 +871,18 @@ byte-identical.
    suffix domain.
 5. Retain the unpruned L0/L1 frontier; do not apply rank-one dimension caps
    until an equivalence key is proved against the unpruned reference traversal.
-6. Retain edge-safe setup/proof frontiers across the mixed boundary, then
-   reuse the existing uniform-D64 split search.
+6. Retain edge-safe setup/proof frontiers across the mixed boundary, then use
+   the same catalog-bound split policy throughout the suffix.
 7. Select by setup field elements, then proof bytes, then descriptor bytes.
-8. Keep recursive setup families on singleton D64.
+8. Bind recursive setup-family dimensions to the same explicit catalog policy.
 
-#### Cut 2: catalog replay and shipped adaptive families (implemented for fp128 one-hot and dense)
+#### Cut 2: catalog replay and shipped adaptive families (implemented)
 
 1. Make the canonical generated-entry walker replay per-matrix/per-level
    dimensions.
 2. Add DP-to-generated-to-runtime exact parity tests.
-3. Add adaptive fp128 one-hot and dense families rather than another set of
-   fixed-D selector wrappers.
+3. Add adaptive fp128, fp64, and fp32 one-hot and dense families rather than
+   another set of fixed-D selector wrappers.
 4. Regenerate tables and update setup capacity/cache identity.
 
 #### Historical Cut 3 plan: broader topology
@@ -901,25 +901,25 @@ as rollout history and is superseded by the adaptive recursion implementation
 above:
 
 - `RingDimensionScheduleMode::AdaptiveDimension` is the catalog-bound source
-  of independently audited A/B/D domains and the D64 suffix;
+  of independently audited A/B/D domains and the per-profile uniform suffix;
 - the one canonical `find_schedule` entry point dispatches by schedule mode:
   uniform mode preserves the proof-payload objective, while adaptive mode
   selects by physical setup field elements and then exact modeled proof bytes;
-- root and recursive candidates derive role-local widths, SIS keys, and
-  matrices directly after choosing A and deriving B and D by minimum secure
-  rank;
-- L0 and L1 exhaustively enumerate admissible, component-wise descending A
-  choices. Block splits follow the catalog-bound recursive split policy;
-- dimensions are uniform D64 from L2 through the terminal;
-- a test-only unpruned traversal checks the production frontier and canonical
-  selection over an A-varying domain with B and D fixed at D64. It deliberately
-  shares canonical candidate construction and pricing primitives. It does not
-  establish global optimality over the full B/D domain;
-- hand-calculated regressions independently pin exact field-element setup
-  rounding, candidate-local EOR pricing, unsupported SIS-cell skipping, and
+- root and recursive candidates enumerate A/B/D independently and derive each
+  role-local width, SIS key, and matrix from the complete tuple;
+- adaptive-prefix levels enumerate admissible component-wise descending tuples.
+  Block splits follow the catalog-bound recursive split policy;
+- later dimensions are uniform and drawn from the profile's suffix domain;
+- a test-only unpruned traversal checks production traversal and canonical
+  selection over B-varying and D-varying domains. Because it shares candidate
+  construction and pricing, literal hand-priced winning tuples provide the
+  independent oracle;
+- hand-calculated regressions also pin exact field-element setup rounding,
+  candidate-local EOR pricing, unsupported SIS-cell skipping, and
   complete-schedule descriptor ties;
 - the dedicated mixed-search memo includes the parent dimension ceiling, while
-  L2+ states canonicalize to D64 and reuse the fixed planner's split policy;
+  suffix states use their exact uniform dimension and the catalog-bound split
+  policy;
 - mixed-boundary states retain the required setup/proof alternatives per exact
   parent-visible first fold;
 - scalar recursive requests without precommitted inputs are rejected; grouped
@@ -957,7 +957,7 @@ Release-process measurements after the bounded-search change were:
 | 36 | 0.46 s | `256/128/128` | `64/64/64` | D64 | 67,108,864 | 99,368 |
 
 The `nv=24` and `nv=36` rows supersede the earlier A-pruned checkpoint.
-Exhaustive L0/L1 A enumeration admits the D256 root and selects it because
+The adaptive-prefix tuple enumeration admits the D256 root and selects it because
 setup fields are the primary objective, even though the `nv=36` proof is
 larger than the former pruned result.
 
@@ -971,12 +971,10 @@ bounded split domain for large states. Monotonicity removes upward transitions,
 and the complete D64 suffix reuses the same catalog-bound split policy. Exact
 A/B/D tuples are still compared under the complete-schedule objective.
 
-For the PR recursive multi-group shape, the new entry point returns the
-expected unsupported-policy error because mixed recursive setup is a later
-cut. The preserved grouped D64 planner still produced a valid nine-level
-schedule with one setup-offload edge, a 524,288-ring-element D64 setup
-envelope, and a 102,732-byte modeled proof. This confirms behavior
-preservation, not planner-native recursive mixed-D support.
+At this archived checkpoint, the recursive multi-group entry point still
+returned an unsupported-policy error and only the preserved grouped D64 planner
+was measured. The adaptive recursion implementation described above supersedes
+that limitation; these numbers remain historical controls only.
 
 ### Acceptance criteria
 
@@ -987,13 +985,14 @@ one-hot base families also ship adaptive catalogs. Catalog coverage remains
 bounded to named supported workload keys.
 
 1. Existing `find_schedule` reproduces uniform schedules, estimates, and
-   generated/runtime descriptor bytes. An adaptive policy must admit D64 for
-   every role and uses uniform D64 from L2 onward.
+   generated/runtime descriptor bytes. An adaptive policy must admit at least
+   one uniform suffix tuple and use only policy-admitted, non-increasing suffix
+   tuples after the adaptive prefix.
 2. A small-domain unpruned traversal agrees with the constrained L0/L1 search
    and selected score; independently calculated tests cover the concrete
    formulas that traversal shares with production.
-3. L0 and L1 can select different A/B/D dimensions; every later fold and the
-   terminal use D64.
+3. Adaptive-prefix levels can select different A/B/D dimensions; every later
+   fold and the terminal use a policy-admitted uniform suffix dimension.
 4. B and D can be selected independently and their widths include exact
    A-to-role projection ratios.
 5. Every selected role key is covered by the canonical SIS table at its exact
@@ -1034,23 +1033,24 @@ bounded to named supported workload keys.
 | Determinism | Repeated and parallel table generation emits byte-identical rows |
 | Benchmark policy | The constrained `nv=36` search completes and reports `256/128/128 → D64` with 67,108,864 physical setup fields |
 
-These tests describe the implemented direct scalar cut. A future mixed
-multi-group or mixed multi-chunk cut must add corresponding frozen-precommit,
-chunk-partition, and generated-replay rows before claiming those capabilities.
+These tests cover direct scalar, direct grouped, multi-chunk, and recursive
+generated replay. Each newly shipped grouped workload still requires a named
+catalog row and matching end-to-end coverage.
 
 ### Target search policy
 
-The approved first planner cut uses the deterministic
+The planner uses the deterministic
 `(physical setup fields, proof bytes, descriptor bytes)` comparator subject to
-two catalog-bound constraints:
+catalog-bound constraints:
 
-1. only L0 and L1 search mixed dimensions;
-2. dimensions never increase and L2+ is uniform D64.
+1. only the configured adaptive prefix searches mixed dimensions;
+2. dimensions never increase and later levels use the configured uniform
+   suffix domain;
+3. recursive block splits use the catalog-identity-bound split-search policy.
 
-A rank-one pruning is absent from this cut. B and D still use a local minimum
-rank choice, which is not equivalent to the complete schedule objective. The
-P0 Cartesian follow-up must remove that choice. Any later pruning requires an
-equivalence proof checked against a full-domain traversal.
+B and D are enumerated independently and priced as complete candidates. Any
+new pruning rule requires either an admissible bound or an equivalence check
+against the full-domain traversal.
 
 Measured verifier latency remains a possible later objective. It requires a
 versioned deterministic work model; host timings are not planner inputs.
@@ -1343,8 +1343,9 @@ continue to cover mixed-D search and validation at the planning boundary.
 
 ### Lower-level coverage
 
-- planner tests compare the mixed Pareto frontier with an A-varying unpruned
-  traversal whose B and D dimensions remain D64. They also show that a lower
+- planner tests compare the mixed Pareto frontier with B-varying and D-varying
+  unpruned traversals and assert literal hand-priced winning root tuples. They
+  also show that a lower
   D256 A rank can reduce B width after both B matrices reach rank one, preserve
   a lower-proof child when a larger parent setup masks child setup differences,
   and require descriptor-identical concurrent generation.

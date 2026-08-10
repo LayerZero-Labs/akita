@@ -12,7 +12,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
 use akita_schedules::{
@@ -299,7 +299,7 @@ fn grouped_recursive_catalog_rejects_without_recursive_feature() {
         precommitteds: vec![descriptor, descriptor],
     };
     assert!(matches!(
-        RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
+        akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::runtime_schedule(key),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))
     ));
 }

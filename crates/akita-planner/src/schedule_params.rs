@@ -527,3 +527,11 @@ pub fn plan_standalone_precommit(
 #[cfg(test)]
 #[path = "test/schedule_params.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/adaptive_dimensions.rs"]
+mod adaptive_dimension_tests;
+
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/adaptive_search.rs"]
+mod adaptive_search_tests;

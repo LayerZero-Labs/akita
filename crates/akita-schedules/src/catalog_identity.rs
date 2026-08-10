@@ -444,6 +444,15 @@ fn validate_entry_dimensions(
                 entry.root.final_group.layout
             )));
         }
+        if matches!(mode, RingDimensionScheduleMode::AdaptiveDimension { .. })
+            && terminal_d > previous.d_a()
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated terminal D{terminal_d} exceeds predecessor A dimension D{} for key {:?}",
+                previous.d_a(),
+                entry.root.final_group.layout
+            )));
+        }
     }
     Ok(())
 }

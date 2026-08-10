@@ -40,7 +40,7 @@ pub use ajtai_key::{
 };
 pub use coverage::{
     sis_role_cell, sis_role_cells, sis_role_dimension_supported, SisRoleCell,
-    GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES, SIS_ROLE_RING_DIMS,
+    GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES,
 };
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_field_width, decomposed_s_block_ring_count,

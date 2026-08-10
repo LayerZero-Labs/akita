@@ -674,7 +674,7 @@ macro_rules! impl_proof_optimized_preset {
     };
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "schedules-default"))]
 mod tests;
 
 // ---------------------------------------------------------------------------

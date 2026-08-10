@@ -310,20 +310,12 @@ Implemented:
   exhaustive comparison. fp32 uses a D64/D128 suffix domain; fp64 and fp128
   use D64.
 
-Still pending:
-
-- a catalog-bound mixed-D policy and selection-policy identity;
-- generated-row expansion/replay for planner-selected mixed dimensions;
-- setup/config separation of generation D from admitted candidate domains;
-- planner-native mixed multi-group roots and recursive setup prefixes;
-- a versioned verifier-work objective, if latency rather than setup footprint
-  is the product metric;
-- retirement of synthetic profile builders after an adaptive catalog fully
-  replaces their coverage.
-
-Therefore this cut makes direct scalar mixed-D schedules searchable and
-testable, but it is not yet a shipped adaptive runtime family and does not
-claim recursive mixed-D planner completion.
+Remaining follow-up work is limited to a versioned verifier-work objective, if
+latency rather than setup footprint becomes the product metric, and retirement
+of any synthetic profile builders whose coverage is fully replaced by adaptive
+catalogs. Mixed-D policy identity, generated replay, setup/config separation,
+grouped roots, recursive setup prefixes, and shipped adaptive runtime families
+are implemented.
 
 ## Required experiments
 

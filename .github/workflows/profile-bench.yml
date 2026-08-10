@@ -21,9 +21,8 @@ env:
   # Every cell folds securely under honest committed-fold A-role pricing.
   #
   # Ring-degree choice differs by field:
-  # - Small prime fields (fp32/fp64): their D32/D64 schedules are non-securable
-  #   under the reprice (they degrade to a cleartext root-direct proof), so the
-  #   smallest secure ring degree is D128. Those cells use D128 one-hot.
+  # - Small prime fields use generated adaptive catalogs. fp32 admits A through
+  #   D1024 with a D64/D128 suffix; fp64 admits A through D512 with a D64 suffix.
   # - fp128: `onehot_fp128` is the canonical direct one-hot profile. Recursive
   #   and distributed profiles use the corresponding adaptive catalogs.
   AKITA_BENCH_MODE: onehot_fp128

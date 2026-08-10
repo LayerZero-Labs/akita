@@ -3,8 +3,8 @@
 //! Fold / ring-switch paths use **role × PCS field tier** tables (see
 //! `specs/ring-dim-challenge-cutover.md`). NTT cache build uses field tier only.
 //!
-//! Arm lists come from `protocol_dispatch_policy!`; validators and
-//! [`crate::dispatch_for_field!`] expand from that single block.
+//! Arm lists come from the policy block in `dispatch/policy.rs`; validators and
+//! [`crate::dispatch_for_field!`] expand from that single declaration.
 
 mod policy;
 
@@ -13,6 +13,7 @@ use crate::sis::SisModulusProfileId;
 use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
 use akita_field::{AkitaError, CanonicalField};
 
+pub(crate) use policy::role_ring_dimensions_for_tier;
 pub use policy::{
     compression_ring_dim_supported_for_tier, inner_ring_dim_supported_for_tier, ntt_max_ring_d,
     ntt_min_ring_d, opening_ring_dim_supported_for_tier, outer_opening_min_ring_d,
@@ -241,6 +242,20 @@ mod tests {
             |D| Ok(D)
         )
         .is_err());
+    }
+
+    #[test]
+    fn fp64_uniform_policy_dispatch_matches_declared_d512_cap() {
+        assert_eq!(
+            dispatch_for_field!(
+                ProtocolDispatchSlot::UniformPolicy,
+                Prime64Offset59,
+                512usize,
+                |D| Ok(D)
+            )
+            .expect("declared fp64 uniform-policy dimension must dispatch"),
+            512
+        );
     }
 
     #[test]

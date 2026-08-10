@@ -1,6 +1,8 @@
 //! Exact role, modulus, dimension, and coefficient-bound coverage for SIS rows.
 
 use super::ajtai_key::{SisMatrixRole, SisModulusProfileId, COEFF_LINF_BUCKETS};
+use crate::dispatch::{protocol_dispatch_tier_for_sis_profile, role_ring_dimensions_for_tier};
+use crate::RingRole;
 
 /// One reachable role coverage cell used by generation and runtime checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -22,15 +24,20 @@ pub struct SisRoleCell {
 /// Exact gadget anchors used by B and D.
 pub const GADGET_COEFF_LINF_ANCHORS: &[u128] = &[3, 7, 15, 31, 63, 127, 255];
 
-/// Ring dimensions present in at least one production matrix-role cell.
-pub const SIS_ROLE_RING_DIMS: &[u32] = &[64, 128, 256, 512, 1024];
-
 /// Production matrix roles with checked-in coverage.
 pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[
     SisMatrixRole::Inner,
     SisMatrixRole::Outer,
     SisMatrixRole::Open,
 ];
+
+const fn dispatch_role(role: SisMatrixRole) -> RingRole {
+    match role {
+        SisMatrixRole::Inner => RingRole::Inner,
+        SisMatrixRole::Outer => RingRole::Outer,
+        SisMatrixRole::Open => RingRole::Opening,
+    }
+}
 
 /// Whether generated SIS security floors cover one role/profile/dimension.
 #[must_use]
@@ -39,16 +46,11 @@ pub fn sis_role_dimension_supported(
     modulus_profile: SisModulusProfileId,
     ring_dimension: u32,
 ) -> bool {
-    if !SIS_ROLE_RING_DIMS.contains(&ring_dimension) {
-        return false;
-    }
-    match modulus_profile {
-        SisModulusProfileId::Q32Offset99 => true,
-        SisModulusProfileId::Q64Offset59 => ring_dimension <= 512,
-        SisModulusProfileId::Q128OffsetA7F7 => {
-            ring_dimension <= 256 || (role == SisMatrixRole::Inner && ring_dimension == 512)
-        }
-    }
+    role_ring_dimensions_for_tier(
+        protocol_dispatch_tier_for_sis_profile(modulus_profile),
+        dispatch_role(role),
+    )
+    .contains(&(ring_dimension as usize))
 }
 
 /// Return whether the exact role cell is part of the canonical coverage.
@@ -93,7 +95,10 @@ pub fn sis_role_cells() -> Vec<SisRoleCell> {
     let mut cells = Vec::new();
     for role in SIS_MATRIX_ROLES.iter().copied() {
         for profile in profiles {
-            for &dimension in SIS_ROLE_RING_DIMS {
+            for &dimension in role_ring_dimensions_for_tier(
+                protocol_dispatch_tier_for_sis_profile(profile),
+                dispatch_role(role),
+            ) {
                 let bounds = match role {
                     SisMatrixRole::Inner => COEFF_LINF_BUCKETS,
                     SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS,
@@ -101,7 +106,7 @@ pub fn sis_role_cells() -> Vec<SisRoleCell> {
                 cells.extend(
                     bounds
                         .iter()
-                        .filter_map(|&bound| sis_role_cell(role, profile, dimension, bound)),
+                        .filter_map(|&bound| sis_role_cell(role, profile, dimension as u32, bound)),
                 );
             }
         }

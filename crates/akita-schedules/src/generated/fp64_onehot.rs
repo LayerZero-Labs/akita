@@ -15,21 +15,6 @@ use super::{
 pub(crate) static FP64_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
-            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(20, 1), num_digits_inner: 1, num_digits_fold: 2,
-                commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 8192, positions_per_block: 512, live_blocks: 16 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 } } },
-            precommitted_groups: &[
-                GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { version: CommittedGroupProfile::VERSION, group: PolynomialGroupLayout::new(14, 1), num_live_ring_elements_per_claim: 256, num_positions_per_block: 128, num_live_blocks: 2, log_basis_inner: 3, num_digits_inner: 1, inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([242, 228, 119, 109, 33, 25, 231, 43, 203, 140, 11, 93, 57, 15, 147, 234, 80, 167, 7, 242, 178, 210, 29, 149, 120, 103, 249, 50, 46, 32, 225, 109]), SisModulusProfileId::Q64Offset59, 5, 128, 32767, 64), log_basis_outer: 3, num_digits_outer: 22, outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([242, 228, 119, 109, 33, 25, 231, 43, 203, 140, 11, 93, 57, 15, 147, 234, 80, 167, 7, 242, 178, 210, 29, 149, 120, 103, 249, 50, 46, 32, 225, 109]), SisModulusProfileId::Q64Offset59, 1, 220, 7, 64) }, num_digits_fold: 2, commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 256, positions_per_block: 128, live_blocks: 2 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 } } },
-            ],
-            open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 },
-            witness_partition: GeneratedWitnessPartition::Single,
-        },
-        recursive_folds: &[
-            GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Compressed, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 3091, positions_per_block: 256, live_blocks: 13 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 128, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 128, log_basis: 3, slice_count: 1 } }, num_digits_fold: 3, open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 3, slice_count: 1 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
-        ],
-        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 4971, positions_per_block: 512, live_blocks: 10 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, num_digits_inner: 1, inner_output_rank: 8, inner_coeff_linf_bound: 524287, z_admission_linf_cap: 642, z_rice_low_bits: 7, z_payload_bytes: 45056 },
-    },
-    GeneratedFoldScheduleEntry {
-        root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(28, 1), num_digits_inner: 1, num_digits_fold: 2,
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 524288, positions_per_block: 4096, live_blocks: 128 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 512, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 256, log_basis: 3, slice_count: 1 } } },
             precommitted_groups: &[],
@@ -71,7 +56,7 @@ pub(crate) static CATALOG_POTENTIAL_B_DIMENSIONS: &[usize] = &[64, 128, 256];
 #[rustfmt::skip]
 pub(crate) static CATALOG_POTENTIAL_D_DIMENSIONS: &[usize] = &[64, 128, 256];
 #[rustfmt::skip]
-pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512];
+pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 256, 512];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp64_onehot",
@@ -97,6 +82,6 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension { num_search_levels: 2, suffix_dimensions: CATALOG_SUFFIX_DIMENSIONS, potential_a_dimensions: CATALOG_POTENTIAL_A_DIMENSIONS, potential_b_dimensions: CATALOG_POTENTIAL_B_DIMENSIONS, potential_d_dimensions: CATALOG_POTENTIAL_D_DIMENSIONS },
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 16577217186669637934,
-    key_count: 3,
-    key_digest: 8395930520129191864,
+    key_count: 2,
+    key_digest: 3910457326744101461,
 };

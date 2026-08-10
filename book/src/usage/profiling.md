@@ -32,7 +32,8 @@ same adaptive policy. At dense `nv=26`, the root roles are A/B/D = 256/64/64,
 and every recursive fold and the terminal use D64. The preset's `Cfg::D = 256`
 records how the flat dense input was first viewed. The stored coefficients do
 not depend on that ring dimension. Each kernel uses the ring dimension in the
-generated schedule. Recursive and multi-chunk companion presets remain D64.
+generated schedule. Recursive and multi-chunk companion presets inherit their
+base adaptive policy and resolve their own generated catalog keys.
 Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
