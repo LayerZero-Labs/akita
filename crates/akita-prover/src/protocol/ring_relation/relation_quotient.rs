@@ -147,50 +147,19 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>
     CyclotomicRing::from_coefficients(quotient)
 }
 
-fn add_cyclic_ring_product<F: FieldCore, const D: usize>(
-    acc: &mut [F; D],
-    lhs: &CyclotomicRing<F, D>,
-    rhs: &CyclotomicRing<F, D>,
-) {
-    let lhs_coeffs = lhs.coefficients();
-    let rhs_coeffs = rhs.coefficients();
-    for (i, &a) in lhs_coeffs.iter().enumerate() {
-        if a.is_zero() {
-            continue;
-        }
-        for (j, &b) in rhs_coeffs.iter().enumerate() {
-            if !b.is_zero() {
-                acc[(i + j) % D] += a * b;
-            }
-        }
-    }
-}
-
-fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
-    acc: &mut [F; D],
-    scalar: F,
-    rhs: &CyclotomicRing<F, D>,
-) {
-    for (idx, &coeff) in rhs.coefficients().iter().enumerate() {
-        if !coeff.is_zero() {
-            acc[idx] += scalar * coeff;
-        }
-    }
-}
-
 fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
     coeffs: &[i32; D],
 ) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
 }
 
-fn cyclic_consistency_z_product<F, const D: usize>(
+fn consistency_z_product_high_half<F, const D: usize>(
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     z_folded_centered: &[[i32; D]],
     num_positions_per_block: usize,
     depth_commit: usize,
     log_basis: u32,
-) -> Result<(CyclotomicRing<F, D>, CyclotomicRing<F, D>), AkitaError>
+) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
@@ -207,46 +176,26 @@ where
         )));
     }
     let g_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
-    let mut cyclic = [F::zero(); D];
-    let mut reduced = CyclotomicRing::<F, D>::zero();
-    let position_rings = if ring_multiplier_point.is_constant() {
-        None
-    } else {
-        Some(
-            ring_multiplier_point
-                .materialize_position_rings::<D>()?
-                .ok_or(AkitaError::InvalidProof)?,
-        )
-    };
-
-    {
-        if ring_multiplier_point.position_len() < num_positions_per_block {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring-multiplier a length mismatch: actual={} expected_at_least={num_positions_per_block}",
-                ring_multiplier_point.position_len()
-            )));
-        }
-        for block_idx in 0..num_positions_per_block {
-            let mut z_block = CyclotomicRing::<F, D>::zero();
-            for (digit_idx, &g) in g_commit.iter().enumerate() {
-                let z_idx = block_idx * depth_commit + digit_idx;
-                z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
-            }
-            if let Some(scalar) = ring_multiplier_point.position_constant_coeff(block_idx) {
-                add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
-                reduced += z_block.scale(&scalar);
-            } else {
-                let multiplier = position_rings
-                    .as_ref()
-                    .and_then(|rings| rings.get(block_idx))
-                    .ok_or(AkitaError::InvalidProof)?;
-                add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
-                reduced += *multiplier * z_block;
-            }
-        }
+    if ring_multiplier_point.position_len() < num_positions_per_block {
+        return Err(AkitaError::InvalidInput(format!(
+            "ring-multiplier a length mismatch: actual={} expected_at_least={num_positions_per_block}",
+            ring_multiplier_point.position_len()
+        )));
     }
-
-    Ok((CyclotomicRing::from_coefficients(cyclic), reduced))
+    let mut high_half = [F::zero(); D];
+    for block_idx in 0..num_positions_per_block {
+        let mut z_block = CyclotomicRing::<F, D>::zero();
+        for (digit_idx, &g) in g_commit.iter().enumerate() {
+            let z_idx = block_idx * depth_commit + digit_idx;
+            z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
+        }
+        ring_multiplier_point.accumulate_position_product_high_half(
+            block_idx,
+            &z_block,
+            &mut high_half,
+        )?;
+    }
+    Ok(CyclotomicRing::from_coefficients(high_half))
 }
 
 fn compute_group_a_relation_quotients<F, B, const D: usize>(
@@ -326,14 +275,13 @@ where
     let consistency_z_quotient = if ring_multiplier_point.is_constant() {
         CyclotomicRing::<F, D>::zero()
     } else {
-        let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
+        consistency_z_product_high_half::<F, D>(
             ring_multiplier_point,
             z_centered,
             group.params.num_positions_per_block(),
             group.params.num_digits_inner(),
             group.params.log_basis_inner(),
-        )?;
-        quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
+        )?
     };
     let quotient =
         parallel_high_half_accumulate::<F, _, D>(challenges, |i| e_folded.get(i).copied())?;
