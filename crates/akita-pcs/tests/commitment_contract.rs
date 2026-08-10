@@ -25,11 +25,11 @@ use akita_prover::{
 };
 use akita_types::{NttCacheKey, OpeningClaimsLayout};
 
-type Cfg = fp64::D128Dense;
+type Cfg = fp64::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
 const D: usize = Cfg::D;
 // The folded-only protocol requires at least two folds. `nv=8` was a
-// root-direct fixture; `nv=14` is the first supported fp64 D128 singleton.
+// root-direct fixture; `nv=14` is the first supported adaptive fp64 singleton.
 const CONTRACT_NUM_VARS: usize = 14;
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.

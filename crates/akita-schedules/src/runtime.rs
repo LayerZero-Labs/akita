@@ -115,10 +115,11 @@ impl RecursiveSplitSearchPolicy {
 pub enum RingDimensionScheduleMode {
     /// Use one uniform A/B/D dimension from root through terminal.
     UniformDimension { ring_dimension: usize },
-    /// Search A over a bounded prefix, derive B/D by minimum rank, then use a uniform suffix.
+    /// Search exact A/B/D tuples over a bounded prefix, then use a monotone
+    /// sequence of uniform dimensions from the catalog-bound suffix domain.
     AdaptiveDimension {
         num_search_levels: usize,
-        uniform_suffix_dimension: usize,
+        suffix_dimensions: &'static [usize],
         potential_a_dimensions: &'static [usize],
         potential_b_dimensions: &'static [usize],
         potential_d_dimensions: &'static [usize],
@@ -300,7 +301,7 @@ fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), A
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
@@ -310,21 +311,25 @@ fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), A
                     "adaptive search currently requires exactly {ADAPTIVE_SEARCH_LEVELS} levels, got {num_search_levels}"
                 )));
             }
+            validate_dimension_list(policy, RingRole::Inner, suffix_dimensions)?;
             for (role, dimensions) in [
                 (RingRole::Inner, potential_a_dimensions),
                 (RingRole::Outer, potential_b_dimensions),
                 (RingRole::Opening, potential_d_dimensions),
             ] {
                 validate_dimension_list(policy, role, dimensions)?;
-                if !dimensions.contains(&uniform_suffix_dimension) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "adaptive {} domain must contain suffix D{uniform_suffix_dimension}",
-                        role_name(role)
-                    )));
+                for &suffix_dimension in suffix_dimensions {
+                    if !dimensions.contains(&suffix_dimension) {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "adaptive {} domain must contain suffix D{suffix_dimension}",
+                            role_name(role)
+                        )));
+                    }
                 }
-                if dimensions.iter().any(|&d| d < uniform_suffix_dimension) {
+                let minimum_suffix_dimension = suffix_dimensions[0];
+                if dimensions.iter().any(|&d| d < minimum_suffix_dimension) {
                     return Err(AkitaError::InvalidSetup(format!(
-                        "adaptive {} dimensions must be at least suffix D{uniform_suffix_dimension}",
+                        "adaptive {} dimensions must be at least minimum suffix D{minimum_suffix_dimension}",
                         role_name(role)
                     )));
                 }
@@ -661,7 +666,7 @@ mod tests {
             setup_prefix_inner_ring_dimension: 64,
             ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
                 potential_b_dimensions: SUFFIX_DIMENSIONS,
                 potential_d_dimensions: SUFFIX_DIMENSIONS,
@@ -698,7 +703,7 @@ mod tests {
         let mut policy = adaptive_policy();
         policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels: 2,
-            uniform_suffix_dimension: 64,
+            suffix_dimensions: &[64],
             potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
             potential_b_dimensions: UNSUPPORTED_B_DIMENSIONS,
             potential_d_dimensions: SUFFIX_DIMENSIONS,
@@ -714,7 +719,7 @@ mod tests {
             let mut policy = adaptive_policy();
             policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
                 potential_b_dimensions: SUFFIX_DIMENSIONS,
                 potential_d_dimensions: SUFFIX_DIMENSIONS,

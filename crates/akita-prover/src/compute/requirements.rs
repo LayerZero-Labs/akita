@@ -681,25 +681,44 @@ mod tests {
 
     #[test]
     #[cfg(feature = "schedules-default")]
-    fn dense_small_field_nv26_stays_on_the_base_ntt_profiles() {
-        let schedules = [
-            fp32::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::singleton(26),
-            ))
-            .expect("generated fp32 dense schedule"),
-            fp64::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::singleton(26),
-            ))
-            .expect("generated fp64 dense schedule"),
-        ];
+    fn dense_small_field_nv26_cache_plan_matches_adaptive_geometry() {
+        for (schedule, expected_root_d, expected_root_basis, expected_root_cache_len) in [
+            (
+                fp32::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(26),
+                ))
+                .expect("generated fp32 dense schedule"),
+                1024,
+                8,
+                4096,
+            ),
+            (
+                fp64::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(26),
+                ))
+                .expect("generated fp64 dense schedule"),
+                512,
+                6,
+                11_264,
+            ),
+        ] {
+            let root = &schedule.root.params.final_group.commitment;
+            assert_eq!(root.role_dims().d_a(), expected_root_d);
+            assert_eq!(root.log_basis_inner, expected_root_basis);
 
-        for schedule in schedules {
             let requirements = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule)
-                .expect("compile complete NTT requirements");
+                .expect("compile complete small-field NTT requirements");
             assert!(requirements.entries().iter().all(|entry| matches!(
                 entry.key.domain,
                 NttTransformDomain::Negacyclic | NttTransformDomain::Cyclic
             )));
+            assert!(requirements.entries().iter().any(|entry| {
+                entry.fold_level == 0
+                    && entry.cluster == NttOperationCluster::Commit
+                    && entry.key.ring_d == expected_root_d
+                    && entry.key.num_ring_elements == expected_root_cache_len
+                    && entry.key.domain == NttTransformDomain::Negacyclic
+            }));
         }
     }
 }

@@ -579,7 +579,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             ),
             akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels,
-                uniform_suffix_dimension,
+                suffix_dimensions,
                 potential_a_dimensions,
                 potential_b_dimensions,
                 potential_d_dimensions,
@@ -589,18 +589,21 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
                     format!(
                         concat!(
                             "#[rustfmt::skip]\n",
+                            "pub(crate) static CATALOG_SUFFIX_DIMENSIONS: &[usize] = &[{}];\n",
+                            "#[rustfmt::skip]\n",
                             "pub(crate) static CATALOG_POTENTIAL_A_DIMENSIONS: &[usize] = &[{}];\n",
                             "#[rustfmt::skip]\n",
                             "pub(crate) static CATALOG_POTENTIAL_B_DIMENSIONS: &[usize] = &[{}];\n",
                             "#[rustfmt::skip]\n",
                             "pub(crate) static CATALOG_POTENTIAL_D_DIMENSIONS: &[usize] = &[{}];\n",
                         ),
+                        format_dimensions(suffix_dimensions),
                         format_dimensions(potential_a_dimensions),
                         format_dimensions(potential_b_dimensions),
                         format_dimensions(potential_d_dimensions),
                     ),
                     format!(
-                        "RingDimensionScheduleMode::AdaptiveDimension {{ num_search_levels: {num_search_levels}, uniform_suffix_dimension: {uniform_suffix_dimension}, potential_a_dimensions: CATALOG_POTENTIAL_A_DIMENSIONS, potential_b_dimensions: CATALOG_POTENTIAL_B_DIMENSIONS, potential_d_dimensions: CATALOG_POTENTIAL_D_DIMENSIONS }}"
+                        "RingDimensionScheduleMode::AdaptiveDimension {{ num_search_levels: {num_search_levels}, suffix_dimensions: CATALOG_SUFFIX_DIMENSIONS, potential_a_dimensions: CATALOG_POTENTIAL_A_DIMENSIONS, potential_b_dimensions: CATALOG_POTENTIAL_B_DIMENSIONS, potential_d_dimensions: CATALOG_POTENTIAL_D_DIMENSIONS }}"
                     ),
                 )
             }

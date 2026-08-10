@@ -39,9 +39,8 @@ pub use ajtai_key::{
     SUPPORTED_SIS_SECURITY_POLICIES,
 };
 pub use coverage::{
-    sis_role_cell, sis_role_cells, sis_role_dimension_supported, SisRoleCell, A_ROLE_RING_DIMS,
-    BD_ROLE_RING_DIMS, GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES, SIS_MAX_MODULE_RANK,
-    SIS_REQUIRED_MAX_WIDTH,
+    sis_role_cell, sis_role_cells, sis_role_dimension_supported, SisRoleCell,
+    GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES, SIS_MAX_MODULE_RANK, SIS_REQUIRED_MAX_WIDTH,
 };
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_field_width, decomposed_s_block_ring_count,

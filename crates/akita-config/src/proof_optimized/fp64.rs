@@ -7,92 +7,41 @@ pub type Field = Prime64Offset59;
 /// ring-subfield used for fp64 public claims and Fiat-Shamir challenges.
 pub type ExtensionField = Ext2<Field>;
 
-/// Dense `D=64` preset.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64Dense;
+const SUFFIX_RING_DIMENSIONS: &[usize] = &[64];
+const A_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512];
+const B_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
+const D_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
+const ADAPTIVE_RING_DIMENSION_MODE: akita_schedules::RingDimensionScheduleMode =
+    akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: SUFFIX_RING_DIMENSIONS,
+        potential_a_dimensions: A_RING_DIMENSIONS,
+        potential_b_dimensions: B_RING_DIMENSIONS,
+        potential_d_dimensions: D_RING_DIMENSIONS,
+    };
 
-/// Onehot `D=64` preset.
+/// Default adaptive dense preset for fp64.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHot;
+pub struct Dense;
 
-/// Dense `D=128` preset for planner-backed fp64 experiments.
+/// Default adaptive one-hot preset for fp64.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D128Dense;
-
-/// Onehot `D=128` preset for planner-backed fp64 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D128OneHot;
-
-/// Dense `D=256` preset for planner-backed fp64 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D256Dense;
-
-/// Onehot `D=256` preset for planner-backed fp64 experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D256OneHot;
+pub struct OneHot;
 
 impl_proof_optimized_preset!(
-    D64Dense,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q64Offset59,
-    64,
-    64,
-    64,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64)
-);
-impl_proof_optimized_preset!(
-    D64OneHot,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q64Offset59,
-    64,
-    64,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1)
-);
-impl_proof_optimized_preset!(
-    D128Dense,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q64Offset59,
-    128,
-    64,
-    64,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
-    schedules = (
-        "schedules-fp64-d128-dense",
-        "fp64_d128_dense",
-        fp64_d128_dense_table
-    )
-);
-impl_proof_optimized_preset!(
-    D128OneHot,
-    Field,
-    ExtensionField,
-    akita_types::SisModulusProfileId::Q64Offset59,
-    128,
-    64,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp64-d128-onehot",
-        "fp64_d128_onehot",
-        fp64_d128_onehot_table
-    )
-);
-impl_proof_optimized_preset!(
-    D256Dense,
+    Dense,
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q64Offset59,
     256,
     64,
     64,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 256)
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
+    schedules = ("schedules-fp64-dense", "fp64_dense", fp64_dense_table),
+    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );
 impl_proof_optimized_preset!(
-    D256OneHot,
+    OneHot,
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q64Offset59,
@@ -100,9 +49,6 @@ impl_proof_optimized_preset!(
     64,
     1,
     fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp64-d256-onehot",
-        "fp64_d256_onehot",
-        fp64_d256_onehot_table
-    )
+    schedules = ("schedules-fp64-onehot", "fp64_onehot", fp64_onehot_table),
+    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );

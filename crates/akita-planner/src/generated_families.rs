@@ -16,6 +16,7 @@ use crate::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
+use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
@@ -83,27 +84,30 @@ const FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] =
 const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(16)];
 
-const FP32_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
+const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(20),
+    PolynomialGroupLayout::singleton(26),
+];
+
+const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::new(16, 2),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
 ];
 
-const FP32_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(14)];
-
-const FP64_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
+const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
 ];
 
-const FP64_D128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
-
-const FP64_D256_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
-
-const FP32_D128_DENSE_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(26)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
+];
 
 /// One generated schedule-table family.
 ///
@@ -130,9 +134,13 @@ pub struct GeneratedFamily {
     #[allow(clippy::type_complexity)]
     pub group_batch_keys:
         fn() -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError>,
-    /// `Cfg::runtime_schedule(key)` — strict table-backed runtime resolution.
-    /// Used by diagnostic comparisons against the generated table.
-    pub table_backed: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
+    /// Strict table-backed runtime resolution. A missing row is unsupported.
+    pub runtime_schedule: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    /// The generated catalog linked for this family, when its feature is active.
+    pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
+    /// Strict table-backed standalone precommit resolution.
+    pub runtime_precommitted_profile:
+        fn(&PolynomialGroupLayout) -> Result<CommittedGroupProfile, AkitaError>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     /// Standalone precommit profiles emitted for this family.
@@ -207,12 +215,20 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     plan_regen::<Cfg>(&key, &precommitted_honest_fold_policies)
 }
 
-/// Table-backed resolution for `Cfg` — table hit when present, otherwise
-/// the DP fallback baked into `runtime_schedule`.
-fn table_backed<Cfg: CommitmentConfig>(
-    key: PolynomialGroupLayout,
+fn runtime_schedule<Cfg: CommitmentConfig>(
+    key: AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
-    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
+    Cfg::runtime_schedule(key)
+}
+
+fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
+    Cfg::schedule_catalog()
+}
+
+fn runtime_precommitted_profile<Cfg: CommitmentConfig>(
+    group: &PolynomialGroupLayout,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    akita_config::committed_group_profile::<Cfg>(group)
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
@@ -341,6 +357,29 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
     )])
 }
 
+/// Shipped fp32 precommit-plus-final workload exercised by the extension-field
+/// multi-group PCS end-to-end test.
+fn fp32_onehot_group_batch_keys(
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    type Cfg = fp32::OneHot;
+    let group = PolynomialGroupLayout::new(14, 1);
+    let precommitted = plan_standalone_precommit(
+        group,
+        &policy_of::<Cfg>(),
+        honest_fold_policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )?
+    .selected
+    .profile;
+    Ok(vec![(
+        AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 1),
+            precommitteds: vec![precommitted],
+        },
+        vec![honest_fold_policy_of::<Cfg>()],
+    )])
+}
+
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
@@ -456,7 +495,9 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            table_backed: table_backed::<$cfg>,
+            runtime_schedule: runtime_schedule::<$cfg>,
+            schedule_catalog: schedule_catalog::<$cfg>,
+            runtime_precommitted_profile: runtime_precommitted_profile::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             precommitted_profiles: $precommitted_profiles,
@@ -474,7 +515,9 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            table_backed: table_backed::<$cfg>,
+            runtime_schedule: runtime_schedule::<$cfg>,
+            schedule_catalog: schedule_catalog::<$cfg>,
+            runtime_precommitted_profile: runtime_precommitted_profile::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             // Standalone precommits are made under the base commitment
@@ -632,57 +675,39 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         baseline_precommitted_profiles::<fp128::DenseMultiChunk>
     ),
     family_row!(
-        "fp64_d128_dense",
-        "FP64_D128_DENSE_SCHEDULES",
-        "fp64-d128-dense",
-        FP64_D128_DENSE_KEYS,
-        fp64::D128Dense,
+        "fp64_dense",
+        "FP64_DENSE_SCHEDULES",
+        "fp64-dense",
+        FP64_DENSE_KEYS,
+        fp64::Dense,
         no_group_batch_keys,
-        baseline_precommitted_profiles::<fp64::D128Dense>
+        baseline_precommitted_profiles::<fp64::Dense>
     ),
     family_row!(
-        "fp64_d128_onehot",
-        "FP64_D128_ONEHOT_SCHEDULES",
-        "fp64-d128-onehot",
-        FP64_D128_ONEHOT_KEYS,
-        fp64::D128OneHot,
+        "fp64_onehot",
+        "FP64_ONEHOT_SCHEDULES",
+        "fp64-onehot",
+        FP64_ONEHOT_KEYS,
+        fp64::OneHot,
         no_group_batch_keys,
-        baseline_precommitted_profiles::<fp64::D128OneHot>
+        baseline_precommitted_profiles::<fp64::OneHot>
     ),
     family_row!(
-        "fp64_d256_onehot",
-        "FP64_D256_ONEHOT_SCHEDULES",
-        "fp64-d256-onehot",
-        FP64_D256_ONEHOT_KEYS,
-        fp64::D256OneHot,
+        "fp32_dense",
+        "FP32_DENSE_SCHEDULES",
+        "fp32-dense",
+        FP32_DENSE_KEYS,
+        fp32::Dense,
         no_group_batch_keys,
-        baseline_precommitted_profiles::<fp64::D256OneHot>
+        baseline_precommitted_profiles::<fp32::Dense>
     ),
     family_row!(
-        "fp32_d128_dense",
-        "FP32_D128_DENSE_SCHEDULES",
-        "fp32-d128-dense",
-        FP32_D128_DENSE_KEYS,
-        fp32::D128Dense,
-        no_group_batch_keys,
-        baseline_precommitted_profiles::<fp32::D128Dense>
-    ),
-    family_row!(
-        "fp32_d128_onehot",
-        "FP32_D128_ONEHOT_SCHEDULES",
-        "fp32-d128-onehot",
-        FP32_D128_ONEHOT_KEYS,
-        fp32::D128OneHot,
-        no_group_batch_keys,
-        baseline_precommitted_profiles::<fp32::D128OneHot>
-    ),
-    family_row!(
-        "fp32_d256_onehot",
-        "FP32_D256_ONEHOT_SCHEDULES",
-        "fp32-d256-onehot",
-        FP32_D256_ONEHOT_KEYS,
-        fp32::D256OneHot,
-        no_group_batch_keys,
-        baseline_precommitted_profiles::<fp32::D256OneHot>
+        "fp32_onehot",
+        "FP32_ONEHOT_SCHEDULES",
+        "fp32-onehot",
+        FP32_ONEHOT_KEYS,
+        fp32::OneHot,
+        fp32_onehot_group_batch_keys,
+        baseline_precommitted_profiles::<fp32::OneHot>
     ),
 ];

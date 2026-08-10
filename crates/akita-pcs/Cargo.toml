@@ -61,13 +61,13 @@ profile-ci = [
 profile-bench-selected = []
 profile-ci-fp32 = [
   "profile-bench-selected",
-  "akita-config/schedules-fp32-d128-dense",
-  "akita-config/schedules-fp32-d128-onehot",
+  "akita-config/schedules-fp32-dense",
+  "akita-config/schedules-fp32-onehot",
 ]
 profile-ci-fp64 = [
   "profile-bench-selected",
-  "akita-config/schedules-fp64-d128-dense",
-  "akita-config/schedules-fp64-d128-onehot",
+  "akita-config/schedules-fp64-dense",
+  "akita-config/schedules-fp64-onehot",
 ]
 profile-ci-fp128-base = [
   "profile-bench-selected",

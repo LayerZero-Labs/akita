@@ -120,13 +120,11 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp128_multi_chunk_w4r2": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W4R2"
     ),
-    # Small fields fold securely only at D128/D256 under honest pricing; fp32
-    # ships no dense family.
-    "onehot_fp32_d128": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
-    "onehot_fp32_d256": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
-    "dense_fp64_d128": CaseMetadata("fp64", "dense", "dense", "D128"),
-    "onehot_fp64_d128": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
-    "onehot_fp64_d256": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
+    # Small-field modes replay their catalog-selected adaptive dimensions.
+    "dense_fp32": CaseMetadata("fp32", "dense", "dense", "adaptive"),
+    "onehot_fp32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
+    "dense_fp64": CaseMetadata("fp64", "dense", "dense", "adaptive"),
+    "onehot_fp64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
 }
 
 
@@ -165,6 +163,11 @@ def parse_args() -> argparse.Namespace:
     run_parser.add_argument("--binary", required=True, help="Path to the benchmark binary.")
     run_parser.add_argument(
         "--output-dir", required=True, help="Directory where logs and summary.json are written."
+    )
+    run_parser.add_argument(
+        "--benchmark-shard",
+        default="",
+        help="Workflow matrix shard that owns every configured case.",
     )
     run_parser.add_argument("--mode", default="onehot_fp128", help="Benchmark mode.")
     run_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
@@ -254,6 +257,11 @@ def parse_args() -> argparse.Namespace:
     )
     failure_parser.add_argument(
         "--output-dir", required=True, help="Directory where summary files are written."
+    )
+    failure_parser.add_argument(
+        "--benchmark-shard",
+        default="",
+        help="Workflow matrix shard that owns every configured case.",
     )
     failure_parser.add_argument("--mode", default="onehot_fp128", help="Benchmark mode.")
     failure_parser.add_argument("--num-vars", type=int, default=32, help="Number of variables.")
@@ -1210,6 +1218,7 @@ def compact_sample_summary(summary: dict[str, object]) -> dict[str, object]:
 
 SUMMARY_CSV_COLUMNS = (
     "case_id",
+    "benchmark_shard",
     "status",
     "failure_phase",
     "field_family",
@@ -1395,6 +1404,7 @@ def write_aggregate_summaries(
     cases: list[BenchmarkCaseSpec],
     results: list[tuple[ScheduledRun, dict[str, object]]],
     warmups: int,
+    benchmark_shard: str = "",
 ) -> None:
     """Aggregate recorded run summaries into summary.json/summary.csv per root."""
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -1416,7 +1426,10 @@ def write_aggregate_summaries(
             if failure is not None:
                 case_summaries = propagate_sibling_case_failure(case_summaries, failure)
             if case_summaries:
-                aggregate["cases"].append(combine_case_run_summaries(case_summaries))
+                combined = combine_case_run_summaries(case_summaries)
+                if benchmark_shard:
+                    combined["benchmark_shard"] = benchmark_shard
+                aggregate["cases"].append(combined)
         summary_dir.mkdir(parents=True, exist_ok=True)
         write_text(
             summary_dir / "summary.json",
@@ -1459,7 +1472,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     results, overall_return_code = execute_schedule(schedule)
     write_aggregate_summaries(
-        [summary_dir for _, summary_dir in binaries], cases, results, args.warmups
+        [summary_dir for _, summary_dir in binaries],
+        cases,
+        results,
+        args.warmups,
+        args.benchmark_shard,
     )
     return overall_return_code
 
@@ -1487,6 +1504,7 @@ def write_failure_summary(args: argparse.Namespace) -> int:
                 "num_vars": case.num_vars,
                 "num_polys": case.num_polys,
                 "case_id": case.case_id,
+                "benchmark_shard": args.benchmark_shard,
                 "collected_at": collected_at,
                 "runs": 0,
                 "samples": [],
@@ -1856,6 +1874,8 @@ def optional_value_with_baseline_delta(
     value = current.get(key)
     if value is None:
         return "n/a"
+    if compare_to_baseline and baseline is None:
+        return f"{formatter(float(value))}{unit}<br><sub>no matching merge-base case</sub>"
     baseline_value = baseline.get(key) if baseline is not None else None
     return value_with_baseline_delta(
         value,
@@ -1878,6 +1898,16 @@ def field_family_sort_key(case: dict[str, object]) -> int:
     because Python's sort is stable."""
     bits = field_family_bits(case.get("field_family", ""))
     return bits if bits is not None else 1 << 30
+
+
+def report_case_sort_key(case: dict[str, object]) -> tuple[object, ...]:
+    """Keep workflow shards together; use field order for legacy artifacts."""
+    shard = str(case.get("benchmark_shard", ""))
+    if shard:
+        prefix = re.match(r"(\d+)-", shard)
+        shard_index = int(prefix.group(1)) if prefix else 1 << 30
+        return (0, shard_index, shard)
+    return (1, field_family_sort_key(case))
 
 
 def human_case_label(summary: dict[str, object]) -> str:
@@ -2005,6 +2035,22 @@ def public_opening_statement(summary: dict[str, object]) -> str:
 
 
 def render_profile_definitions(cases: list[dict[str, object]]) -> None:
+    shards: dict[str, list[str]] = {}
+    for case in cases:
+        shard = str(case.get("benchmark_shard", "")) or "legacy artifact (shard not recorded)"
+        label = human_case_label(case)
+        labels = shards.setdefault(shard, [])
+        if label not in labels:
+            labels.append(label)
+
+    print("### Benchmark shards")
+    print()
+    print("| CI shard | Profiles |")
+    print("| --- | --- |")
+    for shard, labels in shards.items():
+        rendered_labels = "<br>".join(md_text(label) for label in labels)
+        print(f"| {code_text(shard)} | {rendered_labels} |")
+
     grouped: dict[str, list[str]] = {}
     for case in cases:
         statement = public_opening_statement(case)
@@ -2013,13 +2059,14 @@ def render_profile_definitions(cases: list[dict[str, object]]) -> None:
         if label not in labels:
             labels.append(label)
 
-    print("### Profiles measured")
     print()
-    print("| Profiles | Public opening statement |")
+    print("### Public opening statements")
+    print()
+    print("| Public opening statement | Profiles |")
     print("| --- | --- |")
     for statement, labels in grouped.items():
         rendered_labels = "<br>".join(md_text(label) for label in labels)
-        print(f"| {rendered_labels} | {md_text(statement)} |")
+        print(f"| {md_text(statement)} | {rendered_labels} |")
 
     if any(case.get("workload") == "onehot" for case in cases):
         print()
@@ -2179,7 +2226,10 @@ def render_matrix_summary(
 
     if main_baseline is not None:
         print()
-        print("Each delta compares the head with the merge base. Negative is smaller or faster.")
+        print(
+            "Deltas are shown only for profiles with a matching merge-base case. "
+            "Negative is smaller or faster."
+        )
 
     failing_cases = [case for case in current_cases if case_status(case) != "ok"]
     if failing_cases:
@@ -2690,7 +2740,7 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
 def render_report(args: argparse.Namespace) -> int:
     summary_path = pathlib.Path(args.summary)
     current_cases = load_case_summaries(summary_path)
-    current_cases.sort(key=field_family_sort_key)
+    current_cases.sort(key=report_case_sort_key)
     raw_summary = load_summary(summary_path)
     warmups = int(raw_summary.get("warmups", 0) or 0)
 
@@ -2775,10 +2825,20 @@ def render_report(args: argparse.Namespace) -> int:
             )
             print()
     if baselines[0][1] is not None:
-        print(
-            "Head and merge base binaries ran interleaved on the same runner. Each delta "
-            "below compares the head with that merge base."
+        matching_base_cases = sum(
+            str(case["case_id"]) in baselines[0][1] for case in current_cases
         )
+        print(
+            f"Merge-base comparisons are available for `{matching_base_cases}` of "
+            f"`{len(current_cases)}` profiles. For matching profiles, the head and merge-base "
+            "binaries ran interleaved on the same runner."
+        )
+        if matching_base_cases != len(current_cases):
+            print()
+            print(
+                "Profiles without a matching merge-base mode are measured at the head only "
+                "and are marked `no matching merge-base case` instead of showing a delta."
+            )
         print()
     render_profile_definitions(current_cases)
     print()

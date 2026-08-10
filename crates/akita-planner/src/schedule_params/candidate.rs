@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) use akita_schedules::planner_support::planned_next_witness_len;
-use akita_schedules::planner_support::{sis_key_at_dimension, RingDimensionCandidate};
+use akita_schedules::planner_support::{projected_collision_role_price, sis_key_at_dimension};
 
 mod recursive;
 mod setup_prefix;

@@ -27,13 +27,23 @@ normal release link look like a verifier regression.
 ## Presets and ring degrees
 
 The default direct **fp128** one-hot preset is adaptive: generated tables choose
-the first two fold levels and use D64 for the uniform suffix. Direct dense uses
-the same adaptive policy. Recursive and multi-chunk companion presets
-remain D64. Shipped direct tables are `fp128_onehot` and `fp128_dense`.
+the first two fold levels and use the D64 suffix domain. Direct dense uses the
+same adaptive policy. At dense `nv=26`, the root roles are A/B/D = 256/64/64,
+and every recursive fold and the terminal use D64. The preset's `Cfg::D = 256`
+records how the flat dense input was first viewed. The stored coefficients do
+not depend on that ring dimension. Each kernel uses the ring dimension in the
+generated schedule. Recursive and multi-chunk companion presets inherit their
+base adaptive policy and resolve their own generated catalog keys.
+Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
-**fp32/fp64** D32/D64 are not securable; the smallest secure shipped choice is
-**D128 one-hot**. This stack's generated CI rows cover `nv=28`.
+The small-field presets use larger A dimensions where they reduce setup, while
+keeping B and D at dimensions that remained competitive in measured search.
+fp32 searches A at D64 through D1024, B/D at D64 through D256, and a monotone
+D64/D128 suffix domain. fp64 searches A at D64 through D512, B/D at D64 through
+D256, and the D64 suffix domain. Larger B/D candidates were certified but
+removed from production search after exhaustive comparison showed that they
+never won. CI runs the one-hot cases at `nv=30` and dense at `nv=26`.
 
 The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
 `akita_config::proof_optimized::fp128::Dense`.
@@ -81,10 +91,10 @@ Committed-fold A-role pricing (every cell folds securely):
 
 | Case | nv | np | Setup mode |
 |------|----|----|------------|
-| `dense_fp32_d128` | 26 | 1 | `direct` |
-| `onehot_fp32_d128` | 28 | 1 | `direct` |
-| `dense_fp64_d128` | 26 | 1 | `direct` |
-| `onehot_fp64_d128` | 28 | 1 | `direct` |
+| `dense_fp32` | 26 | 1 | `direct` |
+| `onehot_fp32` | 30 | 1 | `direct` |
+| `dense_fp64` | 26 | 1 | `direct` |
+| `onehot_fp64` | 30 | 1 | `direct` |
 | `dense_fp128` | 26 | 1 | `direct` |
 | `onehot_fp128` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
@@ -96,8 +106,8 @@ Committed-fold A-role pricing (every cell folds securely):
 
 The base profiles are separated by field into `profile-ci-fp32`,
 `profile-ci-fp64`, and `profile-ci-fp128-base`. Each job compiles only its
-dense and one-hot schedule catalogs. The adaptive-dimension follow-up expands
-the small-field one-hot rows beyond this stack's current `nv=28` coverage.
+dense and one-hot schedule catalogs. The fp32 and fp64 one-hot jobs use generated
+`nv=30` schedules while keeping the 1 GiB equality-table allocation guard active.
 The long multi-group recursive rows run in separate parallel CI groups so each
 task keeps one benchmark case. The distributed rows also run in their own group
 and are compared against the merge base like the other rows.
@@ -112,7 +122,7 @@ Every row measures a complete PCS opening proof.
 | Profile family | Public opening statement |
 |----------------|--------------------------|
 | Dense `nv26` | One committed 26 variable multilinear polynomial with `2^26` coefficients, opened at one 26 coordinate point. |
-| One hot `nv28` | One committed 28 variable multilinear polynomial with `2^28` coefficients, opened at one 28 coordinate point. |
+| One hot `nv30` | One committed 30 variable multilinear polynomial with `2^30` coefficients, opened at one 30 coordinate point. |
 | One hot `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point. |
 | Multi group | Four polynomials in three groups. Two precommitted groups each contain one 16 variable polynomial and use independent 16 coordinate points. The final group contains two 32 variable polynomials that share one 32 coordinate point. |
 

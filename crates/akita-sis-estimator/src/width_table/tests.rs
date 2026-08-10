@@ -121,10 +121,15 @@ fn generation_filters_to_canonical_production_and_compression_cells() {
         512,
         2
     ));
-    assert!(!scalar_origin_is_canonical(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q64Offset59,
         512,
         2
+    ));
+    assert!(scalar_origin_is_canonical(
+        AkitaModulusProfileId::Q32Offset99,
+        512,
+        3
     ));
     assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,

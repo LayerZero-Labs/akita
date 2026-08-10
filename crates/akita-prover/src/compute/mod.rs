@@ -32,6 +32,7 @@ mod operation_plans;
 mod plans;
 mod poly;
 mod requirements;
+mod runtime_capabilities;
 mod stack;
 
 pub use backend::{
@@ -58,12 +59,15 @@ pub use poly::{
     CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
     ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend,
     RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
-    RootTensorSource, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
-    RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
-    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,
-    RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    TensorBackendFor,
+};
+pub use runtime_capabilities::{
+    RootProveFlowBackend, RuntimeCommitBackendFor, RuntimeCommitSource,
+    RuntimeOpeningProveBackendFor, RuntimeOpeningSource, RuntimeProveBackendFor,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor, RuntimeTensorSource,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 pub use stack::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,

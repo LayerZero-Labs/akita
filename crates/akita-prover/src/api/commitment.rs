@@ -3,7 +3,8 @@
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
     tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta,
-    RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly, UniformProverStack,
+    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
+    UniformProverStack,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use crate::RootTensorProjectionPoly;
@@ -311,12 +312,7 @@ where
         + HasWide
         + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootCommitSource<F, 32>
-        + RootCommitSource<F, 64>
-        + RootCommitSource<F, 128>
-        + RootCommitSource<F, 256>
-        + RootCommitSource<F, 512>
-        + RootPolyMeta<F>,
+    P: RuntimeCommitSource<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
     let backend = ctx.backend();
@@ -438,12 +434,7 @@ where
         + HasWide
         + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootCommitSource<F, 32>
-        + RootCommitSource<F, 64>
-        + RootCommitSource<F, 128>
-        + RootCommitSource<F, 256>
-        + RootCommitSource<F, 512>
-        + RootPolyMeta<F>,
+    P: RuntimeCommitSource<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
     let backend = ctx.backend();
@@ -574,12 +565,7 @@ where
         + HasWide
         + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootCommitSource<F, 32>
-        + RootCommitSource<F, 64>
-        + RootCommitSource<F, 128>
-        + RootCommitSource<F, 256>
-        + RootCommitSource<F, 512>
-        + RootPolyMeta<F>,
+    P: RuntimeCommitSource<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
     prepare_commit_inputs::<F, P>(polys, expanded)?;
@@ -995,12 +981,7 @@ where
         + HasWide
         + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootCommitSource<F, 32>
-        + RootCommitSource<F, 64>
-        + RootCommitSource<F, 128>
-        + RootCommitSource<F, 256>
-        + RootCommitSource<F, 512>
-        + RootPolyMeta<F>,
+    P: RuntimeCommitSource<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
     prepare_batched_commit_inputs::<F, P>(polys, expanded)?;

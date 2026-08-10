@@ -469,24 +469,20 @@ pub(crate) fn derive_selected_suffix_schedule(
                         level,
                         eor_key,
                         current_witness_len,
-                        dimensions.inner(),
+                        dimensions.d_a(),
                     )?
                     else {
                         continue;
                     };
-                    let ring_challenge_cfg = match dimensions {
-                        akita_schedules::planner_support::RingDimensionCandidate::Fixed(value)
-                            if value
-                                == CommitmentRingDims::uniform(policy.uniform_ring_dimension) =>
-                        {
-                            *default_ring_challenge_cfg
-                        }
-                        _ => {
-                            let Ok(config) = ring_challenge_config(dimensions.inner()) else {
-                                continue;
-                            };
-                            config
-                        }
+                    let ring_challenge_cfg = if dimensions
+                        == CommitmentRingDims::uniform(policy.uniform_ring_dimension)
+                    {
+                        *default_ring_challenge_cfg
+                    } else {
+                        let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
+                            continue;
+                        };
+                        config
                     };
                     let dimension_candidates = root_level_candidates_for_basis(
                         root_key,
@@ -521,12 +517,12 @@ pub(crate) fn derive_selected_suffix_schedule(
                         level,
                         eor_key,
                         current_witness_len,
-                        dimensions.inner(),
+                        dimensions.d_a(),
                     )?
                     else {
                         continue;
                     };
-                    let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.inner()) else {
+                    let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
                         continue;
                     };
                     for &mode in
