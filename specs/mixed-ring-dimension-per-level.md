@@ -49,20 +49,21 @@ dimension needed by this experiment:
   dimensions `d_a/d_b/d_d`, subject to A-to-role projection divisibility.
 
 The protocol, setup-contribution, quotient, and verifier paths consume this
-geometry. For the default direct scalar fp128 one-hot and dense families,
-including direct multi-chunk variants, the offline planner searches the
-admitted A dimensions and block splits. It currently derives B and D by minimum
-secure rank before complete schedule comparison. Full Cartesian B/D
-optimization for these direct families is deferred.
+geometry. For every adaptive direct family, including direct multi-chunk
+variants, the offline planner searches the exact Cartesian product of admitted
+A, B, and D dimensions during the adaptive prefix. It prices each complete
+schedule before selection. B and D are not chosen by a separate local rank
+heuristic.
 
 Grouped recursive-setup requests use a distinct adaptive path. Their suffix DP
 searches explicit per-matrix dimension tuples and jointly chooses role
 dimensions, block geometry, commitment payload mode, and whether each supported
 edge evaluates setup directly or offloads it through a carried setup-prefix
-opening. Direct grouped roots without recursive setup planning preserve their
-committed profiles and use the uniform D64 suffix policy. The fp128 direct and
-recursive families emit and replay generated catalogs; prover and verifier do
-not invoke the planner at runtime.
+opening. Direct grouped roots preserve their frozen committed profiles while
+searching the final-group A/B/D tuple under the direct setup-first objective.
+The generated catalogs include bounded grouped rows for fp128 and the shipped
+fp32/fp64 one-hot families. Prover and verifier do not invoke the planner at
+runtime.
 
 For recursive schedules, adaptive search is deliberately scoped to grouped
 requests with precommitted inputs: those inputs provide setup contributions
@@ -100,11 +101,11 @@ Supporting recursion required closing six planner/runtime gaps; registering an
 adaptive base config on the old recursive planner would still have produced a
 uniform-D64 suffix.
 
-1. **Do not take the grouped adaptive fallback.** Direct grouped requests still
-   preserve the established uniform-suffix fallback because their committed
-   input descriptors are frozen. A grouped request with
-   `recursive_setup_planning = true` now enters the setup-aware suffix DP, where
-   the root and recursive folds can search exact role tuples.
+1. **Use the objective selected by the request.** Direct grouped requests enter
+   the setup-envelope-first adaptive frontier while preserving frozen input
+   descriptors. Requests with `recursive_setup_planning = true` enter the
+   setup-aware suffix frontier, where offload edges and exact role tuples are
+   selected together.
 2. **Enumerate exact tuples under a per-role ceiling.** For each searched level,
    the DP enumerates the Cartesian product of the configured A/B/D domains,
    rejects non-divisor projections, and enforces
@@ -160,10 +161,9 @@ adaptive dimension policy with a proof-payload selection policy is rejected
 rather than silently changing objectives. Prover and verifier remain
 catalog-only and never run the planner.
 
-The current implementation applies this objective after choosing B and D by
-minimum secure rank. It is therefore not a global optimum over the full A/B/D
-Cartesian product. The complete Cartesian search and matching oracle are P0
-follow-up work below.
+The current implementation applies this objective to exact A/B/D tuples. Small
+independent-domain oracle tests vary B and D separately and compare the
+production frontier with an unpruned traversal.
 
 The currently preferred measured design remains:
 
@@ -397,9 +397,8 @@ the parent has priced every field it observes.
 ### Historical pre-cutover mixed-D gap
 
 The following list records the implementation gaps that motivated this cut.
-They are historical: the adaptive scalar, multi-chunk, and grouped recursive
-paths now address them. Direct grouped requests still intentionally use the
-uniform-suffix fallback rather than searching a heterogeneous root.
+They are historical: the adaptive scalar, multi-chunk, direct grouped, and
+grouped recursive paths now address them.
 
 The production planner assumes uniform D in all candidate derivation:
 
@@ -708,21 +707,20 @@ Do not infer timing weights from one machine or quietly add fold count as a
 hidden objective. The first implementation should follow the requested
 two-component policy unless this decision is changed before coding.
 
-### Recursive setup and multi-chunk policy
+### Historical recursive setup and multi-chunk plan
 
-Recursive setup catalogs currently optimize:
+This subsection records the plan before adaptive recursive catalogs shipped.
+The current recursive objective remains:
 
 ```text
 (first later direct setup scan, proof payload)
 ```
 
-and the production planner/catalog restricts setup-prefix commitments to D64.
-The synthetic experiment below proves that the protocol can consume a D128
-prefix source with a D64 outer commitment, but it does not change that planner
-policy. Recursive setup selection is a distinct semantic policy, not a special
-case of setup-envelope-first selection.
+Recursive setup selection is a distinct semantic policy, not a special case of
+setup-envelope-first selection. Setup-prefix commitments now use the consuming
+edge's exact A/B dimensions.
 
-Initial planner-native mixed-D work should:
+The original sequence was:
 
 - implement direct scalar schedules first;
 - keep recursive setup and recursive multi-chunk families on their current
@@ -730,18 +728,15 @@ Initial planner-native mixed-D work should:
 - reject enabling mixed-D candidates when
   `recursive_setup_planning == true`.
 
-A later cut may extend recursive setup after choosing an explicit objective.
-It must either retain the current first-direct-scan priority in a
-multi-objective frontier or introduce a new catalog-bound comparator. It must
-also decide whether planner candidates remain fixed at
-`SETUP_OFFLOAD_D_SETUP = 64` or gain an admitted prefix-dimension domain.
+That later cut shipped with the first-direct-scan priority retained in a
+multi-objective frontier and with edge-local prefix dimensions.
 
 Ordinary direct multi-chunk schedules can follow the scalar mixed-D design once
 candidate widths, chunk alignment, and local split frontiers are validated.
 
 ### Multi-group roots
 
-Multi-group support is a second implementation cut, not a different model.
+Multi-group support uses the same direct adaptive model.
 Frozen precommitted descriptors continue to own their exact A/B dimensions.
 For each candidate final-group tuple:
 
@@ -755,9 +750,8 @@ For each candidate final-group tuple:
 - physical setup cost includes every frozen and final A/B matrix plus shared D;
 - key identity continues to include exact frozen precommit descriptors.
 
-The planner must replace current uses of `policy.uniform_ring_dimension` in
-`d_segment_width` and carrier sizing with the selected shared D and the
-canonical maximum group carrier. Group order must not influence the result.
+The planner uses the selected shared D in `d_segment_width` and carrier sizing.
+Group order must not influence the result.
 Outgoing sizing must call the compact `WitnessLayout` and successor-domain
 geometry rather than recomputing ring slots. Authenticated order fixes bytes;
 changing stable group identifiers without changing that order must not change
@@ -971,9 +965,8 @@ policy, `nv=24` exceeded one minute and `nv=36` was stopped after five minutes.
 
 The speedup comes from stopping mixed dimensions after L1 and using the named
 bounded split domain for large states. Monotonicity removes upward transitions,
-and the complete D64 suffix reuses the same catalog-bound split policy. The current
-local B/D rank choice also reduces the search space, but it is not equivalent
-to the target Cartesian objective. The P0 follow-up must remove it.
+and the complete D64 suffix reuses the same catalog-bound split policy. Exact
+A/B/D tuples are still compared under the complete-schedule objective.
 
 For the PR recursive multi-group shape, the new entry point returns the
 expected unsupported-policy error because mixed recursive setup is a later
@@ -984,14 +977,11 @@ preservation, not planner-native recursive mixed-D support.
 
 ### Acceptance criteria
 
-The list below is the complete heterogeneous-planner target. This PR implements
-the catalog and runtime path and the bounded scalar fp128 protocol path. It does
-not yet satisfy the full planner optimality requirements in items 2 and 4. The
-checked unpruned traversal varies A while holding B and D at D64, and production
-chooses B and D by minimum secure rank before the complete schedule comparison.
-Full Cartesian B/D search is P0 follow-up work. Mixed multi-group replay,
-direct multi-chunk mixed search, and fp32/fp64 mixed catalogs also remain
-deferred. This PR does not describe these items as shipped capabilities.
+The list below is the complete heterogeneous-planner target. Direct scalar,
+direct multi-chunk, direct grouped, and grouped recursive planning use adaptive
+catalog generation and strict runtime replay. The fp32 and fp64 dense and
+one-hot base families also ship adaptive catalogs. Catalog coverage remains
+bounded to named supported workload keys.
 
 1. Existing `find_schedule` reproduces uniform schedules, estimates, and
    generated/runtime descriptor bytes. An adaptive policy must admit D64 for
@@ -1013,12 +1003,12 @@ deferred. This PR does not describe these items as shipped capabilities.
 8. Catalog validation rejects changes to candidate domains, selection policy,
    SIS digest, or challenge hooks.
 9. Runtime row misses reject without planner fallback or panic.
-10. Existing uniform direct, recursive, multi-chunk, and multi-group benchmark
-    paths retain their fast verifier kernels.
+10. Direct, recursive, multi-chunk, and multi-group benchmark paths retain their
+    fast verifier kernels.
 11. The scalar fp128 mixed-D E2Es cover honest verification, wrong openings,
     proof/commitment tampering, malformed dimensions, unsupported SIS cells,
-    and setup under-capacity. Mixed multi-group and mixed multi-chunk E2Es are
-    a later acceptance gate after their planner/catalog paths are implemented.
+    and setup under-capacity. Multi-group and multi-chunk E2Es exercise
+    generated adaptive rows.
 12. The `nv=36` constrained search completes, obeys all transition/rank caps,
     and the complete A/A′/B/E/F/C/D benchmark matrix is rerun from one build.
 
@@ -1715,36 +1705,23 @@ back.
 
 ## Known limits and next work
 
-### P0: broaden cataloged mixed planning
+### P0: broaden catalog coverage
 
-The direct scalar fp128 one-hot and dense families complete the catalog and
-runtime part of the bounded Cut 2 path. Their planner does not yet produce the
-global optimum over the full A/B/D Cartesian product. For example, at fp128
-one-hot `nv=14`, the current search selects `256/64/64` with 73,764 proof bytes.
-An explicit tuple traversal selects `256/128/128` with the same 65,536 setup
-field elements and 73,652 proof bytes.
+Adaptive planning is complete for the shipped objectives, but generated
+catalogs intentionally cover a finite workload set. Add rows only with an
+identified caller, capacity bound, profile/CI coverage, and drift test. Runtime
+misses must continue to reject without invoking the planner.
 
-The first follow-up must enumerate every role-valid B/D choice at L0 and L1,
-remove the local rank-based dimension choice, and compare the selected score
-and descriptor against a full-domain traversal. Later planner work includes
-multi-group and recursive setup admission under separately specified
-objectives. Remove the D512 D256-promotion heuristic only after the native
-planner reproduces or improves its geometry.
+### P1: broaden recursive profile shapes
 
-### P1: production heterogeneous-group admission
+Recursive setup planning is cataloged for the named fp128 grouped workloads.
+Additional fields, dense workloads, chunk profiles, or group shapes need their
+own bounded key sets and setup-capacity validation before runtime admission.
 
-`PlannerPolicy` still exposes one scalar `uniform_ring_dimension`. The protocol can
-consume group-local dimensions, but production planning and shipped catalogs
-cannot emit a heterogeneous-group root. Add explicit final/precommitted
-`CommitmentRingDims` to the planner boundary and generate an end-to-end catalog
-row.
+### P1: remove exploratory dimension promotion
 
-### P1: dynamic setup-prefix dimension
-
-Setup-prefix offload still uses the D64 registry contract for catalog
-recursive families. A production mixed batch whose common relation dimension is
-below 64 remains rejected until setup-prefix materialization, registry lookup,
-planner admission, and verifier dispatch select `d_setup` consistently.
+Remove the D512 D256-promotion heuristic only after the native planner
+reproduces or improves its geometry under a catalog-bound objective.
 
 ### P2: expand the sweep
 

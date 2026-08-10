@@ -220,7 +220,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
 fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     const PRE_NV: usize = 14;
     const FINAL_NV: usize = 20;
-    type ProtocolCfg = crate::test_support::EnvelopeFinalGroupConfig<fp32::OneHot, fp32::OneHot>;
+    type ProtocolCfg = fp32::OneHot;
     type ProtocolScheme = AkitaCommitmentScheme<ProtocolCfg>;
     let pre_group = PolynomialGroupLayout::new(PRE_NV, 1);
     let pre_params = ProtocolCfg::runtime_schedule(AkitaScheduleLookupKey::single(pre_group))
@@ -267,7 +267,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
             .group_role_dims(&grouped_layout, 1)
             .expect("final group dims")
             .d_a(),
-        128
+        256
     );
     let final_poly = grouped_onehot_poly(root_params, 2);
 

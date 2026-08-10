@@ -356,11 +356,35 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
             },
             vec![honest_fold_policy_of::<fp128::OneHotMultiChunkW2R2>()],
         )]
+    } else if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp32::OneHot>() {
+        small_field_onehot_group_batch_keys::<fp32::OneHot>()?
+    } else if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp64::OneHot>() {
+        small_field_onehot_group_batch_keys::<fp64::OneHot>()?
     } else {
         Vec::new()
     };
     keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
     Ok(keys)
+}
+
+fn small_field_onehot_group_batch_keys<BaseCfg: CommitmentConfig + 'static>(
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    let group = PolynomialGroupLayout::new(14, 1);
+    let precommitted = plan_standalone_precommit(
+        group,
+        &policy_of::<BaseCfg>(),
+        honest_fold_policy_of::<BaseCfg>(),
+        BaseCfg::ring_challenge_config,
+    )?
+    .selected
+    .profile;
+    Ok(vec![(
+        AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(20, 1),
+            precommitteds: vec![precommitted],
+        },
+        vec![honest_fold_policy_of::<BaseCfg>()],
+    )])
 }
 
 fn recursive_profile_group_batch_keys<Cfg: CommitmentConfig + 'static>(
@@ -761,6 +785,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp64::Dense
     ),
     family_row!(
+        group_batch,
         "fp64_onehot",
         "FP64_ONEHOT_SCHEDULES",
         "fp64-onehot",
@@ -775,6 +800,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp32::Dense
     ),
     family_row!(
+        group_batch,
         "fp32_onehot",
         "FP32_ONEHOT_SCHEDULES",
         "fp32-onehot",

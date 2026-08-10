@@ -341,6 +341,7 @@ fn terminal_candidates_compete_across_opening_bases() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(14),
         &policy,

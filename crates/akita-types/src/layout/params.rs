@@ -938,8 +938,10 @@ impl CommittedGroupParams {
         self.output_witness_len_for_field_bits(F::modulus_bits(), opening_batch)
     }
 
-    /// Exact live next-witness length for offline planning, where the field is
-    /// represented by its bit width rather than a concrete Rust type.
+    /// Exact live next-witness length using an explicit base-field bit width.
+    ///
+    /// Generated schedule replay uses the catalog-bound field width without
+    /// monomorphizing on a concrete field type.
     pub fn output_witness_len_for_field_bits(
         &self,
         field_bits: u32,

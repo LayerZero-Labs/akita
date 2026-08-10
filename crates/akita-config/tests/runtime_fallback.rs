@@ -369,7 +369,7 @@ fn policy_bridge_matches_cfg_hooks() {
 }
 
 #[test]
-fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
+fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
     type Cfg = fp128::Dense;
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 20;
@@ -402,7 +402,11 @@ fn adaptive_dense_plans_multi_group_roots_at_uniform_suffix_dimension() {
             .final_group
             .commitment
             .role_dims(),
-        CommitmentRingDims::uniform(64)
+        CommitmentRingDims {
+            inner: 256,
+            outer: 64,
+            opening: 64,
+        }
     );
     assert_eq!(
         planned.schedule.root.params.precommitted_groups[0].descriptor,
