@@ -74,6 +74,16 @@ struct MultiGroupRootCandidateCtx<'a> {
     source: crate::InnerBasisSource,
 }
 
+struct RootFinalGroupCandidateInput<'a> {
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    position_index_bits: usize,
+    block_index_bits: usize,
+    outer_slice_count: akita_types::CommitmentSliceCount,
+    precommitted_groups: &'a [PrecommittedLevelParams],
+    precommitted_d_width: usize,
+}
+
 fn precommitted_groups_for_open_basis(
     seeds: &[PrecommittedGroupSeed],
     policy: &PlannerPolicy,
@@ -231,13 +241,15 @@ pub(crate) fn root_level_candidates_for_basis(
             }
             let Some(mut candidate_params) = root_final_group_level_params_candidate(
                 &candidate_ctx,
-                candidate_log_basis_inner,
-                candidate_log_basis_open,
-                position_index_bits,
-                block_index_bits,
-                outer_slice_count,
-                &candidate_precommitted_groups,
-                candidate_precommitted_d_width,
+                RootFinalGroupCandidateInput {
+                    log_basis_inner: candidate_log_basis_inner,
+                    log_basis_open: candidate_log_basis_open,
+                    position_index_bits,
+                    block_index_bits,
+                    outer_slice_count,
+                    precommitted_groups: &candidate_precommitted_groups,
+                    precommitted_d_width: candidate_precommitted_d_width,
+                },
             )?
             else {
                 continue;
@@ -279,14 +291,17 @@ pub(crate) fn root_level_candidates_for_basis(
 
 fn root_final_group_level_params_candidate(
     ctx: &MultiGroupRootCandidateCtx<'_>,
-    log_basis_inner: u32,
-    log_basis_open: u32,
-    position_index_bits: usize,
-    block_index_bits: usize,
-    outer_slice_count: akita_types::CommitmentSliceCount,
-    precommitted_groups: &[PrecommittedLevelParams],
-    precommitted_d_width: usize,
+    input: RootFinalGroupCandidateInput<'_>,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
+    let RootFinalGroupCandidateInput {
+        log_basis_inner,
+        log_basis_open,
+        position_index_bits,
+        block_index_bits,
+        outer_slice_count,
+        precommitted_groups,
+        precommitted_d_width,
+    } = input;
     let policy = ctx.policy;
     let dimensions = ctx.dimensions;
     let d_a = dimensions.d_a();

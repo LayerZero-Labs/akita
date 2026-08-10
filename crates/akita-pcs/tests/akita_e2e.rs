@@ -360,6 +360,15 @@ fn chunked_multi_chunk_prove_verify() {
             chunked_levels >= 1,
             "multi-chunk preset must produce at least one chunked fold level"
         );
+        assert!(
+            plan.root
+                .params
+                .final_group
+                .commitment
+                .outer_slice_count
+                .is_sliced(),
+            "multi-chunk regression profile must also exercise sliced B"
+        );
 
         let layout = singleton_layout::<Cfg>(NV);
         let mut rng = StdRng::seed_from_u64(0x6b1d_c0de);

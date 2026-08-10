@@ -141,3 +141,31 @@ fn outer_slice_inputs_are_polynomial_major_and_zero_padded() {
         ]
     );
 }
+
+#[test]
+fn outer_slice_stream_reuses_one_physical_width_buffer() {
+    let digits =
+        akita_types::DigitBlocks::new((0..13).collect(), vec![1; 13], 1).expect("digit blocks");
+    let geometry = akita_types::CommitmentSliceGeometry::try_new(
+        akita_types::CommitmentSliceCount::FOUR,
+        13,
+        1,
+        1,
+        1,
+        1,
+        1,
+    )
+    .expect("slice geometry");
+    let planes = digits.typed_planes::<1>().expect("typed planes");
+    let mut addresses = Vec::new();
+
+    for_each_outer_slice_input::<1>(std::iter::once(planes), &geometry, |input| {
+        assert_eq!(input.len(), geometry.physical_input_width());
+        addresses.push(input.as_ptr());
+        Ok(())
+    })
+    .expect("stream slices");
+
+    assert_eq!(addresses.len(), 4);
+    assert!(addresses.windows(2).all(|pair| pair[0] == pair[1]));
+}

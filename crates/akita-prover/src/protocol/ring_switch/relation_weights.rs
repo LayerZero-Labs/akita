@@ -35,27 +35,74 @@ use akita_types::{
 fn evaluate_setup_columns<F, E>(
     family: &SetupRows<'_, F>,
     columns: Range<usize>,
-    row_weights: &[(usize, E)],
+    row_weights: &[(usize, Vec<E>)],
+    batch_count: usize,
     alpha_powers: &[E],
-) -> Result<Vec<E>, AkitaError>
+) -> Result<SetupColumnEvaluations<E>, AkitaError>
 where
     F: FieldCore,
     E: FieldCore + MulBaseUnreduced<F>,
 {
-    cfg_into_iter!(columns)
-        .map(|col| {
-            row_weights
-                .iter()
-                .try_fold(E::zero(), |acc, &(row, weight)| {
-                    Ok(acc
-                        + weight
-                            * eval_flat_ring_at_pows_fast(
-                                family.ring_slice(row, col)?,
-                                alpha_powers,
-                            ))
-                })
-        })
-        .collect()
+    if batch_count == 0
+        || row_weights
+            .iter()
+            .any(|(_, weights)| weights.len() != batch_count)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup column weight batches are malformed".into(),
+        ));
+    }
+    let column_count = columns.len();
+    let output_len = column_count
+        .checked_mul(batch_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup column batch size overflow".into()))?;
+    let mut values = vec![E::zero(); output_len];
+    cfg_chunks_mut!(&mut values, batch_count)
+        .enumerate()
+        .try_for_each(|(column_offset, output)| -> Result<(), AkitaError> {
+            let column = columns
+                .start
+                .checked_add(column_offset)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup column offset overflow".into()))?;
+            for (row, weights) in row_weights {
+                let evaluation =
+                    eval_flat_ring_at_pows_fast(family.ring_slice(*row, column)?, alpha_powers);
+                for (accumulator, &weight) in output.iter_mut().zip(weights) {
+                    if !weight.is_zero() {
+                        *accumulator += weight * evaluation;
+                    }
+                }
+            }
+            Ok(())
+        })?;
+    Ok(SetupColumnEvaluations {
+        batch_count,
+        column_count,
+        values,
+    })
+}
+
+struct SetupColumnEvaluations<E> {
+    batch_count: usize,
+    column_count: usize,
+    /// Column-major batches: `values[column * batch_count + batch]`.
+    values: Vec<E>,
+}
+
+impl<E: Copy> SetupColumnEvaluations<E> {
+    fn get(&self, batch: usize, column: usize) -> Result<E, AkitaError> {
+        if batch >= self.batch_count || column >= self.column_count {
+            return Err(AkitaError::InvalidProof);
+        }
+        let index = column
+            .checked_mul(self.batch_count)
+            .and_then(|offset| offset.checked_add(batch))
+            .ok_or(AkitaError::InvalidProof)?;
+        self.values
+            .get(index)
+            .copied()
+            .ok_or(AkitaError::InvalidProof)
+    }
 }
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
@@ -640,6 +687,22 @@ where
             group_d_a,
             group_d_b,
         )?;
+        let block_slice_locations = slice_geometry
+            .block_ranges()
+            .iter()
+            .enumerate()
+            .flat_map(|(slice_index, range)| {
+                range
+                    .clone()
+                    .enumerate()
+                    .map(move |(slice_block, _)| (slice_index, slice_block))
+            })
+            .collect::<Vec<_>>();
+        if block_slice_locations.len() != num_live_blocks_g {
+            return Err(AkitaError::InvalidSetup(
+                "B slices do not cover the live blocks".into(),
+            ));
+        }
         let b_width = slice_geometry.physical_input_width();
         let (setup_a_family, b_family) = if let Some(setup) = setup_matrix {
             let a_view = setup
@@ -698,9 +761,9 @@ where
         let d_setup_accs = if let Some(d_family) = &d_family {
             let _span = tracing::info_span!("relation_weight_d_setup_columns").entered();
             let row_weights = (0..n_d_active)
-                .map(|row| Ok((row, eq_tau1.eval_at(d_start + row)?)))
+                .map(|row| Ok((row, vec![eq_tau1.eval_at(d_start + row)?])))
                 .filter_map(|result| match result {
-                    Ok((_, weight)) if weight.is_zero() => None,
+                    Ok((_, weights)) if weights[0].is_zero() => None,
                     other => Some(other),
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -708,6 +771,7 @@ where
                 d_family,
                 d_setup_start..d_setup_end,
                 &row_weights,
+                1,
                 &group_alpha_pows_d,
             )?)
         } else {
@@ -715,26 +779,37 @@ where
         };
         let b_setup_accs = if let Some(b_family) = &b_family {
             let _span = tracing::info_span!("relation_weight_b_setup_columns").entered();
-            Some(
-                (0..group_lp.outer_slice_count().get())
-                    .map(|slice_index| {
-                        let row_start = b_range.start + slice_index * physical_n_b;
-                        let row_weights = (0..physical_n_b)
-                            .map(|row| Ok((row, eq_tau1.eval_at(row_start + row)?)))
-                            .filter_map(|result| match result {
-                                Ok((_, weight)) if weight.is_zero() => None,
-                                other => Some(other),
-                            })
-                            .collect::<Result<Vec<_>, AkitaError>>()?;
-                        evaluate_setup_columns(
-                            b_family,
-                            0..b_width,
-                            &row_weights,
-                            &group_alpha_pows_b,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, AkitaError>>()?,
-            )
+            let slice_count = group_lp.outer_slice_count().get();
+            let row_weights = (0..physical_n_b)
+                .map(|row| {
+                    let weights = (0..slice_count)
+                        .map(|slice_index| {
+                            let slice_row_offset = slice_index
+                                .checked_mul(physical_n_b)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let row_start = b_range
+                                .start
+                                .checked_add(slice_row_offset)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let logical_row =
+                                row_start.checked_add(row).ok_or(AkitaError::InvalidProof)?;
+                            eq_tau1.eval_at(logical_row)
+                        })
+                        .collect::<Result<Vec<_>, AkitaError>>()?;
+                    Ok((row, weights))
+                })
+                .filter_map(|result| match result {
+                    Ok((_, ref weights)) if weights.iter().all(|weight| weight.is_zero()) => None,
+                    other => Some(other),
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            Some(evaluate_setup_columns(
+                b_family,
+                0..b_width,
+                &row_weights,
+                slice_count,
+                &group_alpha_pows_b,
+            )?)
         } else {
             None
         };
@@ -750,13 +825,9 @@ where
                     })?;
                 let challenge_alpha =
                     challenges.eval_at_pows::<F, E>(challenge_index, &group_alpha_pows_a)?;
-                let (slice_index, slice_range) = slice_geometry
-                    .block_ranges()
-                    .iter()
-                    .enumerate()
-                    .find(|(_, range)| range.contains(&global_block))
+                let &(slice_index, slice_block) = block_slice_locations
+                    .get(global_block)
                     .ok_or(AkitaError::InvalidProof)?;
-                let slice_block = global_block - slice_range.start;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
                     for role_subcol in 0..d_ratio {
                         let physical_start = unit.e_coefficient_index(
@@ -783,7 +854,7 @@ where
                             let local_col = d_phys_col
                                 .checked_sub(d_setup_start)
                                 .ok_or(AkitaError::InvalidProof)?;
-                            *weights.get(local_col).ok_or(AkitaError::InvalidProof)?
+                            weights.get(0, local_col)?
                         } else {
                             E::zero()
                         };
@@ -839,10 +910,7 @@ where
                             )?;
                             let a_acc = a_row_weight * challenge_alpha * opening_gadget;
                             let b_acc = if let Some(slice_weights) = b_setup_accs.as_ref() {
-                                *slice_weights
-                                    .get(slice_index)
-                                    .and_then(|weights| weights.get(local_col))
-                                    .ok_or(AkitaError::InvalidProof)?
+                                slice_weights.get(slice_index, local_col)?
                             } else {
                                 E::zero()
                             };

@@ -1,4 +1,4 @@
-use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorState, SlicedSetupTensor};
+use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorState};
 use super::*;
 use akita_algebra::{
     offset_eq::{
@@ -364,8 +364,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         if group.physical_n_b == 0 {
             return Ok(());
         }
-        let lifted = lifted_b_setup_tensors(group)?;
-        for tensor in lifted {
+        for tensor in group.b_setup_tensors.iter().cloned() {
             push_projected_tensor(batches, group.b_ratio, tensor)?;
         }
         Ok(())
@@ -382,7 +381,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .ok_or_else(|| AkitaError::InvalidSetup("physical B footprint overflow".into()))?;
         self.materialize_role_tensor_weights(
             group.b_ratio,
-            &lifted_b_setup_tensors(group)?,
+            &group.b_setup_tensors,
             output_len,
             alpha,
         )
@@ -605,7 +604,7 @@ fn build_group_b_setup_tensors<E: FieldCore>(
     relation_geometry: RelationAddressGeometry,
     group: &SetupContributionGroupPlan<E>,
     witness_layout: &WitnessLayout,
-) -> Result<Vec<SlicedSetupTensor<E>>, AkitaError> {
+) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
     let slice_count = group
         .n_b
         .checked_div(group.physical_n_b)
@@ -660,6 +659,23 @@ fn build_group_b_setup_tensors<E: FieldCore>(
         block_setup_stride,
         "setup B claim stride overflow",
     )?;
+    let slice_row_weights = (0..slice_count.get())
+        .map(|slice_index| {
+            let row_start = slice_index
+                .checked_mul(group.physical_n_b)
+                .ok_or_else(|| AkitaError::InvalidSetup("B slice row offset overflow".into()))?;
+            Ok::<std::sync::Arc<[E]>, AkitaError>(
+                checked_slice(
+                    &group.b_weights,
+                    row_start,
+                    group.physical_n_b,
+                    "B slice row weights",
+                )?
+                .to_vec()
+                .into(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut tensors = Vec::new();
     for unit in witness_layout.units_for_group(group.group_id)? {
         let unit_start = unit.global_block_start();
@@ -701,58 +717,37 @@ fn build_group_b_setup_tensors<E: FieldCore>(
                     relation_geometry.relation_coefficient_block_len(),
                     "setup B coefficient address is not relation-block aligned",
                 )?;
-                tensors.push(SlicedSetupTensor {
-                    slice_index,
-                    family: EqPairTensorFamily::new(
-                        setup_column,
-                        relation_lane_start,
-                        E::one(),
-                        vec![
-                            EqPairTensorAxis::unit(group.depth_commit, 1, group.b_ratio),
-                            EqPairTensorAxis::unit(
-                                b_subcolumns,
-                                group.depth_commit,
-                                subcolumn_relation_stride,
-                            ),
-                            EqPairTensorAxis::unit(
-                                group.n_a,
-                                a_row_setup_stride,
-                                a_row_relation_stride,
-                            ),
-                            EqPairTensorAxis::unit(
-                                intersection_len,
-                                block_setup_stride,
-                                block_relation_stride,
-                            ),
-                        ],
-                    )?,
-                });
+                let row_weights = slice_row_weights.get(slice_index).ok_or_else(|| {
+                    AkitaError::InvalidSetup("B slice row weights are missing".into())
+                })?;
+                tensors.push(EqPairTensorFamily::new(
+                    setup_column,
+                    relation_lane_start,
+                    E::one(),
+                    vec![
+                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_ratio),
+                        EqPairTensorAxis::unit(
+                            b_subcolumns,
+                            group.depth_commit,
+                            subcolumn_relation_stride,
+                        ),
+                        EqPairTensorAxis::unit(
+                            group.n_a,
+                            a_row_setup_stride,
+                            a_row_relation_stride,
+                        ),
+                        EqPairTensorAxis::unit(
+                            intersection_len,
+                            block_setup_stride,
+                            block_relation_stride,
+                        ),
+                        EqPairTensorAxis::dense(group.physical_t_cols, 0, row_weights.clone()),
+                    ],
+                )?);
             }
         }
     }
     Ok(tensors)
-}
-
-fn lifted_b_setup_tensors<E: FieldCore>(
-    group: &SetupContributionGroupPlan<E>,
-) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
-    group
-        .b_setup_tensors
-        .iter()
-        .map(|tensor| {
-            let row_start = tensor
-                .slice_index
-                .checked_mul(group.physical_n_b)
-                .ok_or_else(|| AkitaError::InvalidSetup("B slice row offset overflow".into()))?;
-            let row_weights = checked_slice(
-                &group.b_weights,
-                row_start,
-                group.physical_n_b,
-                "B slice row weights",
-            )?;
-            lift_role_tensor(&tensor.family, 0, group.physical_t_cols, row_weights)
-        })
-        .collect()
 }
 
 fn lift_role_tensor<E: FieldCore>(

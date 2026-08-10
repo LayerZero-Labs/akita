@@ -394,13 +394,8 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(crate) b_setup_tensors: Vec<SlicedSetupTensor<E>>,
+    pub(crate) b_setup_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
-}
-
-pub(crate) struct SlicedSetupTensor<E: FieldCore> {
-    pub(crate) slice_index: usize,
-    pub(crate) family: EqPairTensorFamily<E>,
 }
 
 #[derive(Clone, Copy)]

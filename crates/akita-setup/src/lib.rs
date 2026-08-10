@@ -770,6 +770,7 @@ mod tests {
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
+                        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
                         log_basis_inner: 1,
                         num_digits_inner: 1,
                         inner_commit_matrix,
@@ -1057,11 +1058,32 @@ mod tests {
                             TEST_D,
                         >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
                         .unwrap();
+                    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+                        lp.outer_slice_count,
+                        lp.num_live_blocks,
+                        1,
+                        n_a,
+                        lp.num_digits_outer,
+                        TEST_D,
+                        TEST_D,
+                    )
+                    .unwrap();
+                    let block_width = slice_geometry.ring_elements_per_block_per_polynomial();
+                    let range = slice_geometry
+                        .block_ranges()
+                        .iter()
+                        .max_by_key(|range| range.len())
+                        .unwrap();
+                    let plane_start = range.start * block_width;
+                    let plane_end = range.end * block_width;
+                    let mut slice_digits =
+                        digits.typed_planes::<TEST_D>().unwrap()[plane_start..plane_end].to_vec();
+                    slice_digits.resize(slice_geometry.physical_input_width(), [0i8; TEST_D]);
                     CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer_commit_matrix.output_rank(),
-                            digits.typed_planes::<TEST_D>().unwrap(),
+                            &slice_digits,
                             lp.log_basis_outer,
                         )
                         .unwrap()

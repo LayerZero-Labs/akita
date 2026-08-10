@@ -57,7 +57,7 @@ fn event_stream_equality_small() {
         .expect("layout");
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
-        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_for_layout(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -298,7 +298,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         .expect("layout");
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
-        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_for_layout(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();

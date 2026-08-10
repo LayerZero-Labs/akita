@@ -71,6 +71,7 @@ impl GeneratedSetupPrefixInput {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
+        producer_fold_level: usize,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
         super::validate_certified_bases(
             self.commitment.inner_commit_matrix.log_basis,
@@ -179,7 +180,7 @@ impl GeneratedSetupPrefixInput {
         let outer_slice_count =
             CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
         outer_slice_count.validate_for_commitment(
-            0,
+            producer_fold_level,
             akita_types::CommitmentPayloadMode::Compressed,
             num_live_blocks,
         )?;
@@ -543,6 +544,7 @@ impl GeneratedCommittedGroup {
                 policy,
                 &ring_challenge_config,
                 log_basis_open,
+                fold_level,
             )?;
             let n_prefix = 1usize
                 .checked_shl(commitment_params.layout.group.num_vars() as u32)
@@ -1055,7 +1057,7 @@ mod tests {
         };
 
         let expanded = input
-            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
+            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3, 0)
             .expect("audited mixed-dimension setup-prefix layout");
 
         assert_eq!(&*requested_dimensions.borrow(), &[128]);
@@ -1068,5 +1070,39 @@ mod tests {
             SparseChallengeConfig::production_for_ring_dim(128)
                 .expect("production D128 challenge config")
         );
+    }
+
+    #[test]
+    fn setup_prefix_expansion_rejects_slicing_after_level_one() {
+        let input = GeneratedSetupPrefixInput {
+            natural_len: 1 << 16,
+            num_digits_fold: 4,
+            commitment: GeneratedCommittedGroup {
+                geometry: crate::generated::GeneratedBlockGeometry {
+                    live_ring_elements_per_claim: 512,
+                    positions_per_block: 32,
+                    live_blocks: 16,
+                },
+                inner_commit_matrix: crate::generated::GeneratedInnerCommitMatrix {
+                    ring_dimension: 128,
+                    log_basis: 3,
+                },
+                outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
+                    ring_dimension: 64,
+                    log_basis: 3,
+                },
+                outer_slice_count: 2,
+            },
+        };
+        let ring_challenge_config = |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        };
+
+        let error = input
+            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3, 2)
+            .expect_err("level-two setup-prefix slicing must be rejected");
+        assert!(matches!(error, AkitaError::InvalidSetup(_)));
     }
 }

@@ -22,11 +22,11 @@ use akita_types::{
 };
 
 mod inner;
-pub(crate) use inner::commit_outer_slices;
 #[cfg(test)]
 use inner::outer_slice_inputs;
 use inner::prepare_inner_commit_group;
 pub(crate) use inner::validate_commit_inner_shape;
+pub(crate) use inner::{commit_outer_slices, for_each_outer_slice_input};
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 ///
@@ -354,15 +354,11 @@ where
                         num_digits_open,
                         log_basis,
                     )?;
-                    let digit_blocks = prepared_polynomials
-                        .iter()
-                        .map(|(_, digits)| digits)
-                        .collect::<Vec<_>>();
                     let u = commit_outer_slices::<F, _, D_B>(
                         backend,
                         prepared,
                         n_b,
-                        &digit_blocks,
+                        prepared_polynomials.iter().map(|(_, digits)| digits),
                         &slice_geometry,
                         log_basis,
                     )?;
@@ -474,15 +470,11 @@ where
                         num_digits_open,
                         log_basis,
                     )?;
-                    let digit_blocks = prepared_polynomials
-                        .iter()
-                        .map(|(_, digits)| digits)
-                        .collect::<Vec<_>>();
                     let u = commit_outer_slices::<F, _, D_B>(
                         backend,
                         prepared,
                         n_b,
-                        &digit_blocks,
+                        prepared_polynomials.iter().map(|(_, digits)| digits),
                         &slice_geometry,
                         log_basis,
                     )?;

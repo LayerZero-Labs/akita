@@ -22,6 +22,12 @@ struct Stats {
     rejections: BTreeSet<String>,
 }
 
+struct SourceImageShape {
+    output_rank: usize,
+    ring_dimension: usize,
+    logical_images: usize,
+}
+
 fn git_head() -> String {
     Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -39,13 +45,12 @@ fn record(
     key: &str,
     profile: SisModulusProfileId,
     field_bytes: usize,
-    output_rank: usize,
-    ring_dimension: usize,
-    logical_images: usize,
+    shape: SourceImageShape,
 ) -> Result<(), String> {
-    let coefficients = output_rank
-        .checked_mul(ring_dimension)
-        .and_then(|count| count.checked_mul(logical_images))
+    let coefficients = shape
+        .output_rank
+        .checked_mul(shape.ring_dimension)
+        .and_then(|count| count.checked_mul(shape.logical_images))
         .ok_or_else(|| "source coefficient count overflow".to_string())?;
     let bytes = coefficients
         .checked_mul(field_bytes)
@@ -92,9 +97,11 @@ fn record_outer(
         key,
         profile,
         field_bytes,
-        matrix.output_rank(),
-        matrix.ring_dimension(),
-        slice_count.get(),
+        SourceImageShape {
+            output_rank: matrix.output_rank(),
+            ring_dimension: matrix.ring_dimension(),
+            logical_images: slice_count.get(),
+        },
     )
 }
 
@@ -112,9 +119,11 @@ fn record_open(
         key,
         profile,
         field_bytes,
-        matrix.output_rank(),
-        matrix.ring_dimension(),
-        1,
+        SourceImageShape {
+            output_rank: matrix.output_rank(),
+            ring_dimension: matrix.ring_dimension(),
+            logical_images: 1,
+        },
     )
 }
 

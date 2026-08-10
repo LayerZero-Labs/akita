@@ -119,7 +119,7 @@ where
                 backend,
                 prepared,
                 n_b,
-                &[&decomposed_inner_rows],
+                std::iter::once(&decomposed_inner_rows),
                 &slice_geometry,
                 level_params.layout.log_basis_outer,
             )?;

@@ -393,7 +393,8 @@ mod tests {
             CommitmentSliceGeometry::try_new(CommitmentSliceCount::ONE, 13, 2, 3, 5, 128, 64)
                 .expect("unsliced geometry");
 
-        assert_eq!(geometry.block_ranges(), &[0..13]);
+        assert_eq!(geometry.block_ranges().len(), 1);
+        assert_eq!(geometry.block_ranges()[0], 0..13);
         assert_eq!(geometry.physical_input_width(), 2 * 13 * 3 * 2 * 5);
         assert_eq!(geometry.logical_output_rows(7).expect("rows"), 7);
     }

@@ -127,7 +127,7 @@ where
                         backend,
                         prepared,
                         commit_params.outer_commit_matrix.output_rank(),
-                        &[&decomposed_inner_rows],
+                        std::iter::once(&decomposed_inner_rows),
                         &slice_geometry,
                         commit_params.log_basis_outer,
                     )?;
