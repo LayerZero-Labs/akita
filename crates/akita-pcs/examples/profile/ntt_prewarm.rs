@@ -3,7 +3,7 @@ use akita_prover::{
     prewarm_ntt_requirements, CpuBackend, NttExecutionRequirements, NttOperationCluster,
     UniformProverStack,
 };
-use akita_types::{FoldSchedule, NttTransformDomain};
+use akita_types::{FoldSchedule, NttCacheKey, NttTransformDomain};
 
 /// Prewarm the exact cache union for the profile's shared CPU owner.
 ///
@@ -23,9 +23,7 @@ where
     let mut requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     let root = &schedule.root.params;
     let final_layout = &root.final_group.commitment;
-    requirements.add_matrix(
-        0,
-        NttOperationCluster::Commit,
+    let final_inner_key = NttCacheKey::from_matrix_shape(
         final_layout.inner_commit_matrix.ring_dimension(),
         final_layout.inner_commit_matrix.output_rank(),
         final_layout.inner_commit_matrix.input_width(),
@@ -34,16 +32,24 @@ where
     requirements.add_matrix(
         0,
         NttOperationCluster::Commit,
+        final_inner_key,
+        final_inner_key.num_ring_elements,
+    )?;
+    let final_outer_key = NttCacheKey::from_matrix_shape(
         final_layout.outer_commit_matrix.ring_dimension(),
         final_layout.outer_commit_matrix.output_rank(),
         final_layout.outer_commit_matrix.input_width(),
         NttTransformDomain::Negacyclic,
     )?;
+    requirements.add_matrix(
+        0,
+        NttOperationCluster::Commit,
+        final_outer_key,
+        final_outer_key.num_ring_elements,
+    )?;
     for precommitted in &root.precommitted_groups {
         let layout = &precommitted.commitment.layout;
-        requirements.add_matrix(
-            0,
-            NttOperationCluster::Commit,
+        let inner_key = NttCacheKey::from_matrix_shape(
             layout.inner_commit_matrix.ring_dimension(),
             layout.inner_commit_matrix.output_rank(),
             layout.inner_commit_matrix.input_width(),
@@ -52,10 +58,20 @@ where
         requirements.add_matrix(
             0,
             NttOperationCluster::Commit,
+            inner_key,
+            inner_key.num_ring_elements,
+        )?;
+        let outer_key = NttCacheKey::from_matrix_shape(
             layout.outer_commit_matrix.ring_dimension(),
             layout.outer_commit_matrix.output_rank(),
             layout.outer_commit_matrix.input_width(),
             NttTransformDomain::Negacyclic,
+        )?;
+        requirements.add_matrix(
+            0,
+            NttOperationCluster::Commit,
+            outer_key,
+            outer_key.num_ring_elements,
         )?;
     }
     prewarm_ntt_requirements::<F, _>(stack, &requirements)

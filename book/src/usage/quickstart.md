@@ -47,5 +47,5 @@ recursive, tensor, and multi-chunk tests use their dedicated D64 companions.
 - `crates/akita-planner/src/resolve.rs` (`resolve_schedule`) and `crates/akita-schedules/src/generated/`.
 - Paper §3.5 `sec:akita-params`.
 - Paper §3.11 `sec:akita-planner` (tables + identical DP on miss).
-- `.github/workflows/profile-bench.yml` (`AKITA_BENCH_CASES`); `specs/profile-bench-coverage-matrix.md`.
+- `.github/workflows/profile-bench.yml` and [`profiling.md`](profiling.md).
 - `AGENTS.md` (Profiling).

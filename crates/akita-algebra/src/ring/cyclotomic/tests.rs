@@ -1,5 +1,5 @@
 use super::*;
-use akita_field::unreduced::{Fp128x8i32, Fp64x4i32};
+use akita_field::unreduced::{Fp128x8i32, Fp64x4i32, HasCommitAccum};
 use akita_field::{Fp64, Prime128Offset275, Prime32Offset99};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -134,6 +134,21 @@ fn wide_mul_by_monomial_sum_matches_narrow_fp64() {
     let wide_reduced: CyclotomicRing<F64, D> = wide_dst.reduce();
 
     assert_eq!(narrow, wide_reduced);
+}
+
+#[test]
+fn wide_shift_accumulation_matches_narrow_at_field_cap() {
+    let src = CyclotomicRing::<F64, D>::from_coefficients([-F64::one(); D]);
+    let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
+    let mut narrow = CyclotomicRing::<F64, D>::zero();
+    let mut wide = WideCyclotomicRing::<Fp64x4i32, D>::zero();
+
+    for _ in 0..<F64 as HasCommitAccum>::MAX_COMMIT_ACCUMULATIONS {
+        src.shift_accumulate_into(&mut narrow, 0);
+        wide_src.shift_accumulate_into(&mut wide, 0);
+    }
+
+    assert_eq!(wide.reduce::<F64>(), narrow);
 }
 
 #[test]

@@ -8,12 +8,15 @@ fn dense_group_commit_freezes_uniform_precommit_profile() {
     const NUM_VARS: usize = 16;
 
     let setup = DenseGroupScheme::setup_prover(NUM_VARS, 1).expect("dense group setup");
-    let prepared = CpuBackend
+    let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared dense group setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("dense group stack");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("dense group stack");
 
     let evals = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64((3 * index + 7) as u64))

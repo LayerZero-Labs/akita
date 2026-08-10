@@ -16,7 +16,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 use crate::backend::poly_helpers::{
     balanced_tight_digit_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
+use crate::compute::{CommitInnerPlan, CpuBackend, RootCommitKernel};
 use akita_sumcheck::EvaluationTable;
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_opening_split, FpExtEncoding, WitnessLayout,
@@ -491,57 +491,6 @@ where
             balanced_tight_digit_fold_partitioned::<D>(coeffs, challenges, num_positions_per_block);
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn commit_inner<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_inner_rows(
-            backend,
-            prepared,
-            plan.n_a,
-            plan.num_positions_per_block,
-            plan.num_digits_inner,
-            plan.log_basis_inner,
-        )?;
-
-        Ok(CommitInnerWitness::from_rows(t))
-    }
-
-    /// Compute the canonical inner commitment rows. Ordinary commitment
-    /// decomposes this result for B; terminal binding stops here.
-    pub(crate) fn commit_inner_rows<B>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        n_a: usize,
-        num_positions_per_block: usize,
-        num_digits_inner: usize,
-        log_basis_inner: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
-        backend.recursive_witness_commit_rows(
-            prepared,
-            RecursiveWitnessCommitRowsPlan {
-                coeffs: self.coeffs,
-                n_rows: n_a,
-                num_positions_per_block,
-                num_live_blocks,
-                num_digits_inner,
-                log_basis_inner,
-                known_balanced_log_basis: self.known_balanced_log_basis,
-            },
-        )
-    }
 }
 
 // ===========================================================================
@@ -550,8 +499,8 @@ where
 
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitSource, RootOpeningSource,
     RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
@@ -614,6 +563,20 @@ where
     }
 }
 
+impl<F, const D: usize> RootCommitSource<F, D> for RecursiveWitnessFlat
+where
+    F: FieldCore,
+{
+    type CommitView<'v>
+        = SuffixWitnessView<'v, F, D>
+    where
+        Self: 'v;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        self.view::<F, D>()
+    }
+}
+
 impl<F, const D: usize> RootOpeningSource<F, D> for RecursiveWitnessFlat
 where
     F: FieldCore,
@@ -663,6 +626,36 @@ where
             polys,
             _marker: PhantomData,
         })
+    }
+}
+
+impl<F, const D: usize> RootCommitKernel<SuffixWitnessView<'_, F, D>, F, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn commit_inner_group(
+        &self,
+        prepared: &Self::PreparedSetup,
+        sources: Vec<SuffixWitnessView<'_, F, D>>,
+        plan: CommitInnerPlan,
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        sources
+            .into_iter()
+            .map(|source| {
+                let num_live_blocks = source.num_live_blocks(plan.num_positions_per_block)?;
+                let rows = self.recursive_witness_commit_rows(
+                    prepared,
+                    source.coeffs,
+                    plan.n_a,
+                    plan.num_positions_per_block,
+                    num_live_blocks,
+                    plan.num_digits_inner,
+                    plan.log_basis_inner,
+                    source.known_balanced_log_basis,
+                )?;
+                Ok(CommitInnerWitness::from_rows(rows))
+            })
+            .collect()
     }
 }
 
@@ -867,7 +860,7 @@ mod tests {
         let witness = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = witness.tensor_view().expect("tensor view");
         let err = TensorProjectionKernel::<SuffixWitnessView<'_, F, D>, F, E, D>::root_projection(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             None,
             view,
         )
@@ -1001,12 +994,12 @@ mod tests {
         let view = w.view::<F, D>().expect("view");
         let challenges = vec![
             SparseChallenge {
-                positions: vec![0, 2],
-                coeffs: vec![1, -1],
+                positions: vec![0, 2].into(),
+                coeffs: vec![1, -1].into(),
             },
             SparseChallenge {
-                positions: vec![1, 3],
-                coeffs: vec![2, 1],
+                positions: vec![1, 3].into(),
+                coeffs: vec![2, 1].into(),
             },
         ];
 

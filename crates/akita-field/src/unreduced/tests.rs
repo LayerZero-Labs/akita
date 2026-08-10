@@ -1,4 +1,16 @@
 use super::*;
+
+#[test]
+fn commitment_accumulation_limit_is_the_exact_i32_limb_bound() {
+    let max_limb = i64::from(u16::MAX);
+    let limit = <F128 as HasCommitAccum>::MAX_COMMIT_ACCUMULATIONS;
+
+    assert_eq!(limit, (i32::MAX as usize) / (u16::MAX as usize));
+    assert!((limit as i64) * max_limb <= i64::from(i32::MAX));
+    assert!(((limit + 1) as i64) * max_limb > i64::from(i32::MAX));
+    assert_eq!(<F32 as HasCommitAccum>::MAX_COMMIT_ACCUMULATIONS, limit);
+    assert_eq!(<F64 as HasCommitAccum>::MAX_COMMIT_ACCUMULATIONS, limit);
+}
 use crate::RandomSampling;
 use crate::{Prime128Offset275, Prime24Offset3, Prime40Offset195};
 use rand::rngs::StdRng;

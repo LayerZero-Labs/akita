@@ -49,13 +49,17 @@ pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
-    /// Inner commitment that preserves the recomposed inner rows.
-    fn commit_inner(
+    /// Inner commitments for a same-shape group of sources.
+    ///
+    /// Every source of a committed group multiplies the same commit matrix,
+    /// so kernels can stream the matrix once for the whole group. Results are
+    /// returned per source in input order.
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: S,
+        sources: Vec<S>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError>;
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>;
 }
 
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.

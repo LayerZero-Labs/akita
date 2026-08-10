@@ -2,7 +2,7 @@
 
 use super::class_indexed_state::ClassIndexedTableState;
 use super::compact_digit_source::CompactDigitSource;
-use super::equality_tables::{materialize_remaining_equality, SplitEqualitySuffixMass};
+use super::equality_tables::{ExactPrefixTable, SplitEqualitySuffixMass};
 use super::range_class_tables::{
     FoldedProductPairTable, OrderedProductPairCoefficients, ProductNodeTable,
     SecondRoundProductQuartetCoefficients,
@@ -12,10 +12,12 @@ use super::round_accumulation::{
 };
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, ExtField, FieldCore, FromPrimitiveInt};
-use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, EvaluationTable};
+use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 use akita_types::DigitRangePlan;
+use core::marker::PhantomData;
 
 use crate::kernels::sumcheck::{SumcheckKernelPlan, SumcheckTableOperations};
 
@@ -32,8 +34,8 @@ struct FirstChallengeFoldedProductState<E: FieldCore, const LANES: usize> {
 }
 
 struct MaterializedProductState<F: FieldCore, E: ExtField<F>, const LANES: usize> {
-    lanes: [EvaluationTable<F, E>; LANES],
-    equality: EvaluationTable<F, E>,
+    rows: ExactPrefixTable<[E; LANES]>,
+    marker: PhantomData<fn() -> F>,
 }
 
 type ProductTableState<F, E, const LANES: usize> = ClassIndexedTableState<
@@ -147,13 +149,10 @@ impl<F: FieldCore, E: ExtField<F> + FromPrimitiveInt, const LANES: usize>
     pub(super) fn final_child_claims(&self) -> Vec<E> {
         match &self.product_table {
             ProductTableState::Materialized(table) => table
-                .lanes
-                .iter()
-                .map(|lane| {
-                    assert_eq!(lane.len(), 1, "product stage was not fully folded");
-                    lane.evaluation(0)
-                })
-                .collect(),
+                .rows
+                .final_value()
+                .expect("product stage was not fully folded")
+                .to_vec(),
             ProductTableState::Compact(_) | ProductTableState::FirstChallengeFolded(_) => {
                 panic!("product stage was not fully folded")
             }
@@ -232,15 +231,22 @@ impl<
                 let _span = tracing::info_span!(
                     "digit_range_product_materialized_round",
                     round = self.rounds_completed,
-                    materialized_rows = table.lanes[0].len(),
-                    domain_len = table.lanes[0].len(),
-                    kernel_strategy = "coefficient-first-product",
+                    materialized_rows = table.rows.explicit_len(),
+                    domain_len = table.rows.domain_len(),
+                    kernel_strategy = "exact-prefix-product",
                 )
                 .entered();
-                E::compute_weighted_affine_product_round(
-                    self.kernel_plan,
-                    &table.lanes,
-                    &table.equality,
+                accumulate_round(
+                    equality_prefix_weights,
+                    equality_suffix_weights,
+                    table.rows.explicit_len().div_ceil(2),
+                    table.rows.default_value(),
+                    |pair_index| {
+                        (
+                            table.rows.value_or_default(2 * pair_index),
+                            table.rows.value_or_default(2 * pair_index + 1),
+                        )
+                    },
                     self.arity,
                     &self.parent_weights,
                 )
@@ -378,31 +384,27 @@ impl<
                     )
                     .entered();
                     let fold_context = E::precompute_fold(challenge);
-                    let table_len = source.domain_len() / 4;
-                    let explicit_len = source.quartet_count();
+                    let explicit = cfg_into_iter!(0..source.quartet_count())
+                        .map(|quartet_index| {
+                            let (left_pair, right_pair) =
+                                source.ordered_pair_indices_for_quartet(quartet_index);
+                            let left = folded_pairs.row_by_pair_index(left_pair);
+                            let right = folded_pairs.row_by_pair_index(right_pair);
+                            std::array::from_fn(|lane| {
+                                E::fold_one(&fold_context, left[lane], right[lane])
+                            })
+                        })
+                        .collect();
                     let padding_pair = folded_pairs.row_by_pair_index(0);
-                    let padding: [E; LANES] = std::array::from_fn(|lane| {
+                    let padding = std::array::from_fn(|lane| {
                         E::fold_one(&fold_context, padding_pair[lane], padding_pair[lane])
                     });
-                    let lanes = EvaluationTable::from_multilinear_evaluation_array_fn(
-                        table_len,
-                        |lane, logical_row| {
-                            if logical_row < explicit_len {
-                                let (left_pair, right_pair) =
-                                    source.ordered_pair_indices_for_quartet(logical_row);
-                                let left = folded_pairs.row_by_pair_index(left_pair);
-                                let right = folded_pairs.row_by_pair_index(right_pair);
-                                E::fold_one(&fold_context, left[lane], right[lane])
-                            } else {
-                                padding[lane]
-                            }
-                        },
-                    )
-                    .expect("compact source and Boolean domain were validated");
-                    let (first, second) = self.split_eq.remaining_eq_tables();
-                    let equality = materialize_remaining_equality(first, second)
-                        .expect("split equality tables were validated");
-                    Some(MaterializedProductState { lanes, equality })
+                    let rows = ExactPrefixTable::new(source.domain_len() / 4, explicit, padding)
+                        .expect("compact source and Boolean domain were validated");
+                    Some(MaterializedProductState {
+                        rows,
+                        marker: PhantomData,
+                    })
                 }
                 ProductTableState::Compact(_) | ProductTableState::Materialized(_) => None,
             };
@@ -433,47 +435,43 @@ impl<
                     .entered();
                     FoldedProductPairTable::new(nodes, challenge)
                 };
-                let (first, second) = self.split_eq.remaining_eq_tables();
-                let table_len = source.domain_len() / 2;
-                let explicit_len = source.pair_count();
-                let padding = folded_pairs.row_by_pair_index(0);
-                let lanes = EvaluationTable::from_multilinear_evaluation_array_fn(
-                    table_len,
-                    |lane, logical_row| {
-                        if logical_row < explicit_len {
-                            folded_pairs.row_by_pair_index(source.ordered_pair_index(logical_row))
-                                [lane]
-                        } else {
-                            padding[lane]
-                        }
-                    },
+                let explicit = cfg_into_iter!(0..source.pair_count())
+                    .map(|pair_index| {
+                        folded_pairs.row_by_pair_index(source.ordered_pair_index(pair_index))
+                    })
+                    .collect();
+                let rows = ExactPrefixTable::new(
+                    source.domain_len() / 2,
+                    explicit,
+                    folded_pairs.row_by_pair_index(0),
                 )
                 .expect("compact source and Boolean domain were validated");
-                let equality = materialize_remaining_equality(first, second)
-                    .expect("split equality tables were validated");
-                Some(MaterializedProductState { lanes, equality })
+                Some(MaterializedProductState {
+                    rows,
+                    marker: PhantomData,
+                })
             }
             ProductTableState::FirstChallengeFolded(_) | ProductTableState::Materialized(_) => None,
         };
         if let Some(table) = folded_from_compact {
             self.product_table = ProductTableState::Materialized(table);
         } else if let ProductTableState::Materialized(table) = &mut self.product_table {
-            let materialized_rows = table.lanes[0].len();
             let _span = tracing::info_span!(
                 "digit_range_fold_lanes",
                 round = self.rounds_completed,
-                materialized_rows,
-                domain_len = materialized_rows,
+                materialized_rows = table.rows.explicit_len(),
+                domain_len = table.rows.domain_len(),
                 lane_count = LANES,
-                kernel_strategy = "coefficient-first-fold",
+                kernel_strategy = "exact-prefix-fold",
             )
             .entered();
-            for lane in &mut table.lanes {
-                E::fold_first_variable(self.kernel_plan, lane, challenge);
-            }
-            if table.equality.len() >= 2 {
-                table.equality.sum_first_variable_halves();
-            }
+            let fold_context = E::precompute_fold(challenge);
+            table
+                .rows
+                .fold_in_place(|left, right| {
+                    std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))
+                })
+                .expect("validated exact-prefix product state can fold");
         }
         self.rounds_completed += 1;
     }

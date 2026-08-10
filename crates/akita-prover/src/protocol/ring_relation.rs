@@ -18,12 +18,12 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
+use akita_types::RingMultiplierOpeningPoint;
 use akita_types::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, relation_rhs_layout_for, RingVec,
 };
 use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{CommittedGroupParams, RingRelationInstance};
-use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
@@ -206,23 +206,6 @@ where
     }
 }
 
-/// Convert scalar or multi-group opening-point carriers into the multi-group internal form.
-pub trait IntoRingOpeningPointVec<F: FieldCore> {
-    fn into_vec(self) -> Vec<RingOpeningPoint<F>>;
-}
-
-impl<F: FieldCore> IntoRingOpeningPointVec<F> for RingOpeningPoint<F> {
-    fn into_vec(self) -> Vec<RingOpeningPoint<F>> {
-        vec![self]
-    }
-}
-
-impl<F: FieldCore> IntoRingOpeningPointVec<F> for Vec<RingOpeningPoint<F>> {
-    fn into_vec(self) -> Vec<RingOpeningPoint<F>> {
-        self
-    }
-}
-
 /// Convert scalar or multi-group multiplier-point carriers into the multi-group internal form.
 pub trait IntoRingMultiplierOpeningPointVec<F: FieldCore> {
     fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>>;
@@ -307,8 +290,8 @@ pub(super) fn window_sparse_challenges(
                 challenge.clone()
             } else {
                 SparseChallenge {
-                    positions: Vec::new(),
-                    coeffs: Vec::new(),
+                    positions: Vec::new().into(),
+                    coeffs: Vec::new().into(),
                 }
             }
         })
@@ -327,8 +310,7 @@ impl RingRelationProver {
     /// Root-level constructor for one or more group-local opening points and
     /// polynomial slots.
     ///
-    /// `group_opening_points` and `group_ring_multiplier_points` contain one
-    /// prepared entry per ordered claim group.
+    /// `group_ring_multiplier_points` contains one prepared entry per ordered claim group.
     /// For the trivial single-claim case use `polys = &[poly]` and
     /// `gamma = vec![F::one()]`.
     ///
@@ -351,7 +333,6 @@ impl RingRelationProver {
     pub fn new<'a, F, PointF, T, P, OB, RB>(
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
-        group_opening_points: impl IntoRingOpeningPointVec<F>,
         group_ring_multiplier_points: impl IntoRingMultiplierOpeningPointVec<F>,
         block_claims: ProverOpeningData<'a, PointF, P, F>,
         pre_folded_e_by_poly: Vec<RingVec<F>>,
@@ -377,11 +358,8 @@ impl RingRelationProver {
         let dims = lp.role_dims();
         let opening_batch = block_claims.opening_claims().layout()?;
         let num_groups = block_claims.opening_claims().num_groups();
-        let group_opening_points = group_opening_points.into_vec();
         let group_ring_multiplier_points = group_ring_multiplier_points.into_vec();
-        if group_opening_points.len() != num_groups
-            || group_ring_multiplier_points.len() != num_groups
-        {
+        if group_ring_multiplier_points.len() != num_groups {
             return Err(AkitaError::InvalidInput(
                 "ring relation prover group point count mismatch".to_string(),
             ));
@@ -437,17 +415,9 @@ impl RingRelationProver {
             }
         }
         let commitment_rows = RingVec::from_coeffs(commitment_row_coeffs);
-        for group_index in 0..num_groups {
+        for (group_index, ring_multiplier_point) in group_ring_multiplier_points.iter().enumerate()
+        {
             let group_lp = lp.group_params(&opening_batch, group_index)?;
-            let opening_point = &group_opening_points[group_index];
-            let ring_multiplier_point = &group_ring_multiplier_points[group_index];
-            if opening_point.position_weights.len() != group_lp.num_positions_per_block()
-                || opening_point.live_block_weights.len() != group_lp.num_live_blocks()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover opening-point layout mismatch".to_string(),
-                ));
-            }
             if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
                 || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
             {
@@ -675,6 +645,7 @@ impl RingRelationProver {
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
+        let _grind_span = tracing::info_span!("fold_grind_sample").entered();
         let (grind_outputs, fold_grind_nonce) =
             fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, _, OB, T>(
                 opening_ctx,
@@ -685,6 +656,7 @@ impl RingRelationProver {
                 None,
             )
             .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
+        drop(_grind_span);
         let mut group_challenges = Vec::with_capacity(num_groups);
         let mut group_z = Vec::with_capacity(num_groups);
         for output in grind_outputs {
@@ -724,7 +696,6 @@ impl RingRelationProver {
 
         let instance = RingRelationInstance::new(
             group_challenges,
-            group_opening_points,
             group_ring_multiplier_points,
             opening_batch.clone(),
             gamma,

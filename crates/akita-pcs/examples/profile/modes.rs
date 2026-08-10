@@ -1,15 +1,16 @@
-#![cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
+#![cfg_attr(
+    any(feature = "profile-onehot-fp128", feature = "profile-bench-selected"),
+    allow(dead_code)
+)]
 
 use crate::report::print_layout;
 use crate::workload::{
-    profile_setup_contribution_mode, run_batched_onehot, run_dense_for, run_onehot,
-    run_recursive_multi_group_onehot,
+    onehot_k_for_num_vars, profile_setup_contribution_mode, run_batched_onehot, run_dense_for,
+    run_onehot, run_recursive_multi_group_onehot,
 };
-use crate::workload_params::onehot_k_for_num_vars;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::TranscriptChallenge;
 use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -23,6 +24,12 @@ use akita_types::{
 };
 
 type F = fp128::Field;
+
+const MULTI_GROUP_PRE_NUM_VARS: usize = 16;
+const MULTI_GROUP_FINAL_NUM_VARS: usize = 32;
+const MULTI_GROUP_PRE_GROUPS: usize = 2;
+const MULTI_GROUP_FINAL_POLYS: usize = 2;
+const MULTI_GROUP_TOTAL_POLYS: usize = MULTI_GROUP_PRE_GROUPS + MULTI_GROUP_FINAL_POLYS;
 
 fn fp128_prime_label() -> String {
     match <F as PseudoMersenneField>::MODULUS_OFFSET {
@@ -48,7 +55,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan), true);
 }
 
-#[cfg(not(feature = "profile-ci"))]
+#[cfg(not(feature = "profile-bench-selected"))]
 fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     title: &str,
@@ -62,6 +69,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -100,6 +108,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -177,51 +186,67 @@ struct ProfileMode {
     run: ProfileModeRunner,
 }
 
-#[cfg(all(not(feature = "profile-onehot-fp128"), feature = "profile-ci"))]
-const PROFILE_CI_MODES: &[ProfileMode] = &[
+#[cfg(all(
+    not(feature = "profile-onehot-fp128"),
+    feature = "profile-bench-selected"
+))]
+const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
+    #[cfg(feature = "profile-ci-fp128-dense")]
     ProfileMode {
         name: "dense_fp128",
         run: run_profile_dense_fp128,
     },
+    #[cfg(feature = "profile-ci-flat-onehot")]
     ProfileMode {
         name: "onehot_fp128",
         run: run_profile_onehot_fp128,
     },
+    #[cfg(feature = "profile-ci-multi-group-direct")]
     ProfileMode {
         name: "onehot_fp128_multi_group",
         run: run_profile_onehot_fp128_multi_group,
     },
+    #[cfg(feature = "profile-ci-multi-group-recursive")]
     ProfileMode {
         name: "onehot_fp128_multi_group_recursive",
         run: run_profile_onehot_fp128_multi_group_recursive,
     },
+    #[cfg(feature = "profile-ci-multi-group-recursive-w8r2")]
     ProfileMode {
         name: "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2,
     },
+    #[cfg(feature = "profile-ci-distributed")]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w2r2",
         run: run_profile_onehot_fp128_multi_chunk_w2r2,
     },
+    #[cfg(feature = "profile-ci-distributed")]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w4r2",
         run: run_profile_onehot_fp128_multi_chunk_w4r2,
     },
+    #[cfg(feature = "profile-ci-distributed")]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_multi_chunk_w8r2,
     },
+    #[cfg(feature = "profile-ci-flat-onehot")]
     ProfileMode {
         name: "onehot_fp32_d128",
         run: run_profile_onehot_fp32_d128,
     },
+    #[cfg(feature = "profile-ci-flat-onehot")]
     ProfileMode {
         name: "onehot_fp64_d128",
         run: run_profile_onehot_fp64_d128,
     },
 ];
 
-#[cfg(all(not(feature = "profile-onehot-fp128"), not(feature = "profile-ci")))]
+#[cfg(all(
+    not(feature = "profile-onehot-fp128"),
+    not(feature = "profile-bench-selected")
+))]
 const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128",
@@ -287,11 +312,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
 #[cfg(not(feature = "profile-onehot-fp128"))]
 fn profile_modes() -> &'static [ProfileMode] {
-    #[cfg(feature = "profile-ci")]
+    #[cfg(feature = "profile-bench-selected")]
     {
-        PROFILE_CI_MODES
+        PROFILE_SELECTED_MODES
     }
-    #[cfg(not(feature = "profile-ci"))]
+    #[cfg(not(feature = "profile-bench-selected"))]
     {
         PROFILE_ALL_MODES
     }
@@ -343,7 +368,7 @@ fn small_field_onehot_title(field_label: &str, d: usize, nv: usize, num_polys: u
     }
 }
 
-#[cfg(not(feature = "profile-ci"))]
+#[cfg(not(feature = "profile-bench-selected"))]
 fn small_field_dense_title(field_label: &str, d: usize) -> String {
     let schedule = small_field_schedule_source(d);
     format!("=== dense_{field_label}_d{d} ({field_label}, D={d}, {schedule}) ===")
@@ -396,9 +421,8 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
     run_onehot::<F, { Cfg::D }, Cfg>("onehot_fp128", nv, &layout, Some(&schedule), false);
 }
 
-/// Shared driver for the multi-group profiles. Every such profile
-/// fixes the same shape (two precommitted 16-var singleton groups + a 32-var
-/// main group with 2 polynomials, i.e. `num_polys == 4`); only the base preset
+/// Shared driver for the multi-group profiles. Every such profile fixes the
+/// shape declared by the `MULTI_GROUP_*` constants above; only the base preset
 /// (`Cfg`) and the `layout_note` describing its witness layout differ.
 fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
@@ -406,16 +430,24 @@ fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtFiel
     nv: usize,
     num_polys: usize,
 ) {
-    assert_eq!(nv, 32, "{label} fixes the main group at 32 variables");
     assert_eq!(
-        num_polys, 4,
+        nv, MULTI_GROUP_FINAL_NUM_VARS,
+        "{label} fixes the main-group arity"
+    );
+    assert_eq!(
+        num_polys, MULTI_GROUP_TOTAL_POLYS,
         "{label} opens two precommitted singleton groups plus two main polynomials"
     );
     tracing::info!(
-        "=== {label} (fp128, {}, config D={D}, flat public setup, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, config D={D}, flat public setup, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {MULTI_GROUP_FINAL_NUM_VARS}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
         fp128_prime_label()
     );
-    run_recursive_multi_group_onehot::<F, D, Cfg>(label, 16, 32, 2);
+    run_recursive_multi_group_onehot::<F, D, Cfg>(
+        label,
+        MULTI_GROUP_PRE_NUM_VARS,
+        MULTI_GROUP_FINAL_NUM_VARS,
+        MULTI_GROUP_FINAL_POLYS,
+    );
 }
 
 fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
@@ -499,14 +531,14 @@ fn run_profile_onehot_fp128_multi_chunk_w4r2(nv: usize, num_polys: usize) {
     );
 }
 
-#[cfg(not(feature = "profile-ci"))]
+#[cfg(not(feature = "profile-bench-selected"))]
 fn run_profile_onehot_fp32_d64(nv: usize, num_polys: usize) {
     type Cfg = fp32::D64OneHot;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
     run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d64", &title, nv, num_polys);
 }
 
-#[cfg(not(feature = "profile-ci"))]
+#[cfg(not(feature = "profile-bench-selected"))]
 fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
     type Cfg = fp32::D64Dense;
     assert_singleton_mode("dense_fp32_d64", num_polys);
@@ -514,7 +546,7 @@ fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
     run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d64", &title, nv);
 }
 
-#[cfg(not(feature = "profile-ci"))]
+#[cfg(not(feature = "profile-bench-selected"))]
 fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
     type Cfg = fp32::D128Dense;
     assert_singleton_mode("dense_fp32_d128", num_polys);
@@ -528,7 +560,7 @@ fn run_profile_onehot_fp32_d128(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d128", &title, nv, num_polys);
 }
 
-#[cfg(not(feature = "profile-ci"))]
+#[cfg(not(feature = "profile-bench-selected"))]
 fn run_profile_onehot_fp64_d64(nv: usize, num_polys: usize) {
     type Cfg = fp64::D64OneHot;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
@@ -541,7 +573,7 @@ fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d128", &title, nv, num_polys);
 }
 
-#[cfg(not(feature = "profile-ci"))]
+#[cfg(not(feature = "profile-bench-selected"))]
 fn run_profile_dense_fp64_d64(nv: usize, num_polys: usize) {
     type Cfg = fp64::D64Dense;
     assert_singleton_mode("dense_fp64_d64", num_polys);

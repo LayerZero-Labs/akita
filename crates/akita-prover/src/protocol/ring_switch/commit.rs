@@ -1,6 +1,6 @@
 use super::*;
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
-use crate::compute::{CommitInnerPlan, OperationCtx};
+use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{dispatch_for_field, CompressionChainPlan, TerminalCommittedGroupParams};
 
@@ -43,7 +43,7 @@ pub fn commit_w<Cfg, B>(
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    B: CommitmentComputeBackend<Cfg::Field>,
+    B: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>,
 {
     let dims = commit_params.role_dims();
     let backend = commit_ctx.backend();
@@ -90,7 +90,10 @@ where
 
             let w_view = w.view::<Cfg::Field, D_A>()?;
             let plan = CommitInnerPlan::from_level(commit_params);
-            let inner = w_view.commit_inner(backend, prepared, plan)?;
+            let inner_group = backend.commit_inner_group(prepared, vec![w_view], plan)?;
+            let [inner] = inner_group
+                .try_into()
+                .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
             validate_commit_inner_shape::<Cfg::Field, D_A>(
                 &inner,
                 commit_params.num_live_blocks,
@@ -192,7 +195,7 @@ pub fn commit_terminal_w<Cfg, B>(
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling,
-    B: CommitmentComputeBackend<Cfg::Field>,
+    B: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>,
 {
     let ring_dim = commit_params.d_a();
     let backend = commit_ctx.backend();
@@ -215,30 +218,17 @@ where
             };
             let witness = packed_witness.as_ref().unwrap_or(logical_w);
             let view = witness.view::<Cfg::Field, D_A>()?;
-            let rows = view.commit_inner_rows(
-                backend,
-                prepared,
-                commit_params.inner_commit_matrix.output_rank(),
-                commit_params.num_positions_per_block,
-                commit_params.num_digits_inner,
-                commit_params.log_basis_inner,
-            )?;
-            let coeff_len = rows
-                .iter()
-                .try_fold(0usize, |len, row| {
-                    len.checked_add(row.len().checked_mul(D_A)?)
-                })
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut coeffs = Vec::with_capacity(coeff_len);
-            for row in rows {
-                for ring in row {
-                    coeffs.extend_from_slice(ring.coefficients());
-                }
-            }
-            Ok::<_, AkitaError>((
-                packed_witness,
-                RingVec::from_coeffs_with_ring_dim(coeffs, D_A)?,
-            ))
+            let plan = CommitInnerPlan {
+                n_a: commit_params.inner_commit_matrix.output_rank(),
+                num_positions_per_block: commit_params.num_positions_per_block,
+                num_digits_inner: commit_params.num_digits_inner,
+                log_basis_inner: commit_params.log_basis_inner,
+            };
+            let inner_group = backend.commit_inner_group(prepared, vec![view], plan)?;
+            let [inner] = inner_group
+                .try_into()
+                .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
+            Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows()))
         }
     )?;
     Ok(NextWitnessStateOutput {

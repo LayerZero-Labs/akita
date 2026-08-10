@@ -102,7 +102,7 @@ where
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 
     let opening = OpeningFoldKernel::evaluate_and_fold(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         None,
         poly.opening_view()
             .map_err(|err| format!("opening view: {err}"))?,
@@ -289,11 +289,11 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
         .map_err(|err| format!("prover setup failed: {err}"))?;
-    let prepared = CpuBackend
+    let prepared = CpuBackend::DEFAULT
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &prepared,
         prover_setup.expanded.as_ref(),
     )

@@ -9,10 +9,15 @@ use std::sync::OnceLock;
 
 static POOLS: OnceLock<ProfileThreadPools> = OnceLock::new();
 
+#[cfg(feature = "parallel")]
+const PROFILE_STACK_SIZE: usize = 64 * 1024 * 1024;
+
 /// Per-phase thread pools for the profile harness.
 pub(crate) struct ProfileThreadPools {
     #[cfg(feature = "parallel")]
     verify_pool: Option<rayon::ThreadPool>,
+    #[cfg(feature = "parallel")]
+    single_verify_pool: rayon::ThreadPool,
 }
 
 impl ProfileThreadPools {
@@ -26,7 +31,7 @@ impl ProfileThreadPools {
     }
 
     /// Run verifier-side work on the verify pool when it differs from the prove pool.
-    pub(crate) fn in_verify<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
+    pub(crate) fn in_verify_multi<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
         #[cfg(feature = "parallel")]
         {
             if let Some(pool) = &self.verify_pool {
@@ -37,15 +42,26 @@ impl ProfileThreadPools {
         f()
     }
 
+    /// Run verifier-side work on a dedicated one-thread pool.
+    pub(crate) fn in_verify_single<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
+        #[cfg(feature = "parallel")]
+        {
+            self.single_verify_pool.install(f)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let _ = self;
+            f()
+        }
+    }
+
     fn from_env() -> Self {
         let prove_threads = env_thread_count("AKITA_PROFILE_PROVE_THREADS");
         let verify_threads = env_thread_count("AKITA_PROFILE_VERIFY_THREADS");
 
         #[cfg(feature = "parallel")]
         {
-            const PROVE_STACK_SIZE: usize = 64 * 1024 * 1024;
-
-            let prove_resolved = build_global_prove_pool(prove_threads, PROVE_STACK_SIZE);
+            let prove_resolved = build_global_prove_pool(prove_threads);
             let verify_resolved = if verify_threads > 0 {
                 verify_threads
             } else {
@@ -56,6 +72,7 @@ impl ProfileThreadPools {
             } else {
                 None
             };
+            let single_verify_pool = build_pool(1, "single-thread verify");
             let verify_resolved = verify_pool
                 .as_ref()
                 .map(rayon::ThreadPool::current_num_threads)
@@ -63,29 +80,37 @@ impl ProfileThreadPools {
 
             tracing::info!(
                 prove_threads = prove_resolved,
-                verify_threads = verify_resolved,
+                verify_multi_threads = verify_resolved,
+                verify_single_threads = 1,
                 prove_env = prove_threads,
                 verify_env = verify_threads,
                 separate_verify_pool = verify_pool.is_some(),
                 "profile thread pools"
             );
             eprintln!(
-                "[profile] prove_threads={prove_resolved} verify_threads={verify_resolved} \
+                "[profile] prove_threads={prove_resolved} verify_multi_threads={verify_resolved} \
+                 verify_single_threads=1 \
                  (env prove={prove_threads} verify={verify_threads}; 0 = Rayon default)"
             );
 
-            Self { verify_pool }
+            Self {
+                verify_pool,
+                single_verify_pool,
+            }
         }
         #[cfg(not(feature = "parallel"))]
         {
             tracing::info!(
-                prove_threads,
-                verify_threads,
+                prove_threads = 1,
+                verify_multi_threads = 1,
+                verify_single_threads = 1,
+                prove_env = prove_threads,
+                verify_env = verify_threads,
                 "profile thread pools (parallel disabled)"
             );
             eprintln!(
-                "[profile] prove_threads={prove_threads} verify_threads={verify_threads} \
-                 (parallel disabled)"
+                "[profile] prove_threads=1 verify_multi_threads=1 verify_single_threads=1 \
+                 (env prove={prove_threads} verify={verify_threads}; parallel disabled)"
             );
             Self {}
         }
@@ -105,8 +130,8 @@ fn env_thread_count(name: &str) -> usize {
 }
 
 #[cfg(feature = "parallel")]
-fn build_global_prove_pool(num_threads: usize, stack_size: usize) -> usize {
-    let mut builder = rayon::ThreadPoolBuilder::new().stack_size(stack_size);
+fn build_global_prove_pool(num_threads: usize) -> usize {
+    let mut builder = rayon::ThreadPoolBuilder::new().stack_size(PROFILE_STACK_SIZE);
     if num_threads > 0 {
         builder = builder.num_threads(num_threads);
     }
@@ -118,7 +143,7 @@ fn build_global_prove_pool(num_threads: usize, stack_size: usize) -> usize {
 
 #[cfg(feature = "parallel")]
 fn build_pool(num_threads: usize, label: &str) -> rayon::ThreadPool {
-    let mut builder = rayon::ThreadPoolBuilder::new();
+    let mut builder = rayon::ThreadPoolBuilder::new().stack_size(PROFILE_STACK_SIZE);
     if num_threads > 0 {
         builder = builder.num_threads(num_threads);
     }

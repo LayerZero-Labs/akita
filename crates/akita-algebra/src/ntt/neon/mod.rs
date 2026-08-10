@@ -1,8 +1,8 @@
 //! AArch64 NEON SIMD kernels for NTT butterfly, Montgomery conversion,
 //! and pointwise operations.
 //!
-//! Width-specific implementations live in [`i16_kernels`] and
-//! [`i32_kernels`]. Set `AKITA_SCALAR_NTT=1` to force scalar kernels for A/B
+//! Width-specific implementations live in `i16_kernels` and
+//! `i32_kernels`. Set `AKITA_SCALAR_NTT=1` to force scalar kernels for A/B
 //! measurements.
 
 use std::sync::OnceLock;

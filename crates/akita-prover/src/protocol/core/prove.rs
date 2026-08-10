@@ -1,10 +1,10 @@
 use super::*;
-use crate::backend::RecursiveFoldSource;
+use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
-    prewarm_ntt_requirements, CommitmentComputeBackend, ComputeBackendSetup,
-    DigitRowsComputeBackend, LevelProveStacks, NttExecutionRequirements,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    NttExecutionRequirements, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_config::{
@@ -63,7 +63,9 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
@@ -166,7 +168,9 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
@@ -243,6 +247,11 @@ where
     .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;
     let next_state = root.next_state;
     let root = root.level_proof;
+
+    // Prepared NTT state belongs to the supplied stack selector. Shared owners
+    // retain it by default; an owner with an isolated root cache may release it
+    // at this exact root/suffix boundary through the lifecycle hook.
+    stacks.after_root_fold()?;
 
     let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
         expanded,

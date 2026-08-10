@@ -385,15 +385,21 @@ pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     coeff_accum: [i32; D],
     modulus: u128,
 ) -> CyclotomicRing<F, D> {
-    let coeffs = from_fn(|k| {
+    CyclotomicRing::from_coefficients(signed_accum_to_coefficients(coeff_accum, modulus))
+}
+
+fn signed_accum_to_coefficients<F: CanonicalField, const D: usize>(
+    coeff_accum: [i32; D],
+    modulus: u128,
+) -> [F; D] {
+    from_fn(|k| {
         let v = coeff_accum[k];
         if v >= 0 {
             F::from_canonical_u128_reduced(v as u128)
         } else {
             F::from_canonical_u128_reduced(modulus - ((-v) as u128))
         }
-    });
-    CyclotomicRing::from_coefficients(coeffs)
+    })
 }
 
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
@@ -406,10 +412,14 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
-    let z_folded_rings = cfg_iter!(centered_coeffs)
-        .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
+    let z_folded_coeffs = cfg_iter!(centered_coeffs)
+        .map(|coeff_accum| signed_accum_to_coefficients::<F, D>(*coeff_accum, modulus))
         .collect();
-    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
+    DecomposeFoldWitness::from_coefficient_parts(
+        z_folded_coeffs,
+        centered_coeffs,
+        centered_inf_norm,
+    )
 }
 
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.
@@ -482,7 +492,10 @@ mod tests {
                 _ => -2,
             })
             .collect();
-        let challenge = SparseChallenge { positions, coeffs };
+        let challenge = SparseChallenge {
+            positions: positions.into(),
+            coeffs: coeffs.into(),
+        };
 
         let digit_plane: [i8; D] = std::array::from_fn(|k| (((7 * k as i64) % 13) - 6) as i8);
 
@@ -504,8 +517,8 @@ mod tests {
     fn sparse_mul_acc_simd_zero_position() {
         const D: usize = 64;
         let challenge = SparseChallenge {
-            positions: vec![0],
-            coeffs: vec![1],
+            positions: vec![0].into(),
+            coeffs: vec![1].into(),
         };
         let digit_plane: [i8; D] = std::array::from_fn(|k| (k as i8) - 32);
 
@@ -523,8 +536,8 @@ mod tests {
     fn sparse_mul_acc_simd_max_position() {
         const D: usize = 64;
         let challenge = SparseChallenge {
-            positions: vec![(D - 1) as u32],
-            coeffs: vec![-2],
+            positions: vec![(D - 1) as u32].into(),
+            coeffs: vec![-2].into(),
         };
         let digit_plane: [i8; D] = std::array::from_fn(|k| ((k as i8) - 32).wrapping_mul(3));
 
@@ -684,15 +697,17 @@ mod tests {
             positions: vec![
                 0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
                 25, 26, 27, 28, 29, 30, 31,
-            ],
+            ]
+            .into(),
             coeffs: vec![
                 2, 2, -1, 4, 1, -1, 5, 4, -3, -4, -3, -6, 2, -8, -4, -3, -7, -3, 4, -1, 4, -4, 5,
                 -2, -4, 6, 6, -3, 4, 4,
-            ],
+            ]
+            .into(),
         };
         let sparse = SparseChallenge {
-            positions: vec![1, 7, 19],
-            coeffs: vec![2, -1, 3],
+            positions: vec![1, 7, 19].into(),
+            coeffs: vec![2, -1, 3].into(),
         };
         assert!(should_use_rotated_challenge::<D>(&high_density));
         assert!(!should_use_rotated_challenge::<D>(&sparse));
@@ -763,8 +778,8 @@ mod tests {
                 .collect(),
         };
         let sparse = SparseChallenge {
-            positions: vec![1, 17, 33, 49],
-            coeffs: vec![2, -1, 1, -2],
+            positions: vec![1, 17, 33, 49].into(),
+            coeffs: vec![2, -1, 1, -2].into(),
         };
         assert!(should_use_rotated_challenge::<D>(&high_density));
         assert!(!should_use_rotated_challenge::<D>(&sparse));

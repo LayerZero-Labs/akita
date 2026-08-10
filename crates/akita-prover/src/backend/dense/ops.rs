@@ -10,9 +10,8 @@ use crate::backend::poly_helpers::{
     DecomposeParams,
 };
 use crate::backend::RootTensorProjectionPoly;
-use crate::compute::{CommitInnerPlan, CommitmentComputeBackend};
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::{CyclotomicRing, SplitEqEvals};
 use akita_challenges::SparseChallenge;
@@ -360,26 +359,5 @@ where
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
-    }
-
-    #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
-    pub(crate) fn commit_inner<B, const D: usize>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_rows::<B, D>(
-            backend,
-            prepared,
-            plan.n_a,
-            plan.num_positions_per_block,
-            plan.num_digits_inner,
-            plan.log_basis_inner,
-        )?;
-        Ok(CommitInnerWitness::from_rows(t))
     }
 }

@@ -1,10 +1,10 @@
 use super::*;
 use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    ProverComputeStack, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
+    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
     RuntimeTensorBackendFor,
 };
-use crate::RootTensorProjectionPoly;
+use crate::{RecursiveWitnessFlat, RootTensorProjectionPoly};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
@@ -64,7 +64,7 @@ where
         + AkitaSerialize
         + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
     TS: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
@@ -153,8 +153,8 @@ where
         + AkitaSerialize
         + crate::kernels::sumcheck::SumcheckTableOperations<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
-    C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
+    C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
         + DigitRowsComputeBackend<F>
         + ComputeBackendSetup<F>
@@ -162,7 +162,10 @@ where
     TS: RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
         + ComputeBackendSetup<F>
         + 'stack,
-    R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
+    R: RuntimeRingSwitchProveBackend<F>
+        + DigitRowsComputeBackend<F>
+        + ComputeBackendSetup<F>
+        + 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
     <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,

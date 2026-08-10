@@ -7,25 +7,14 @@
 //!
 //! # Module layout
 //!
-//! The module is organised as cohesive private submodules — entry types,
-//! flat block storage, and the polynomial inherent operation impl.
+//! The module is organized as private kernel and polynomial modules.
 //!
 //!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
 //!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
 //!     at the narrowest width that fits their hot positions.
-//!   - Per-block entry types: [`SingleChunkEntry`] (packed `u32 + u16`,
-//!     used when each ring element covers at most one hot element —
-//!     i.e. `K >= D && D | K`) and [`MultiChunkEntry`] (`u32 +
-//!     Vec<u16>`, used when a ring element can cover zero to many
-//!     hot elements — i.e. `K < D` with `K | D`). Coefficient indices fit
-//!     in `u16` because the supported ring degrees are small; the
-//!     bound is enforced in [`OneHotPoly::build_blocks_inner`].
-//!   - [`FlatBlocks<E>`]: a container storing the
-//!     variable-length per-block entry lists in one contiguous `Vec<E>`
-//!     plus a `Vec<u32>` offsets array.
-//!   - [`OneHotBlocks`]: a two-variant enum that wraps the built
-//!     `FlatBlocks<E>` so [`OneHotPoly`]'s ops can dispatch to the right
-//!     kernel based on the actual layout in use.
+//!   - One hot block views use the same [`SparseRingBlockEntry`] and
+//!     [`FlatBlocks<E>`] representation as sparse ring polynomials. Each hot
+//!     coefficient is one entry with value `1`.
 //!   - [`OneHotPoly<F, I>`]: the caller-facing polynomial. Storage is
 //!     D-free; ring-shaped ops take the kernel dispatch dimension as a
 //!     method-level const generic.
@@ -35,25 +24,17 @@ use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
 use akita_types::{FpExtEncoding, RingMatrixView};
-use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 
-use super::sparse_ring::SparseRingCoeff;
+use super::flat_blocks::FlatBlocks;
+use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{
-    CommitmentComputeBackend, FlatBlockTable, OneHotCommitBlocks, OneHotCommitRowsPlan,
-};
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
-
-/// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
-/// absorb at most 32,768 unit-scale additions before overflow.
-pub(super) const MAX_WIDE_SHIFT_ACCUMULATIONS: usize = 1 << 15;
 
 mod accumulate;
 mod blocks;
@@ -61,6 +42,7 @@ mod column_sweep;
 mod decompose_fold;
 mod entries;
 mod fold;
+#[cfg(test)]
 mod inner_ajtai;
 mod ops;
 mod poly;
@@ -69,10 +51,10 @@ pub(crate) mod test_helpers;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use blocks::{FlatBlocks, OneHotBlocks};
+#[cfg(test)]
 pub(crate) use column_sweep::column_sweep_ajtai_onehot;
-pub(super) use entries::{shift_accumulation_count, OneHotEntry};
-pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
+pub(crate) use column_sweep::column_sweep_ajtai_onehot_multi;
+pub use entries::OneHotIndex;
 #[cfg(test)]
 use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
 pub use ops::{OneHotBatchView, OneHotView};
