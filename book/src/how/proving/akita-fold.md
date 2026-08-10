@@ -47,6 +47,10 @@ described on this page.
   - [Inner-commitment consistency](#2-inner-commitment-consistency)
   - [Outer-commitment consistency](#3-outer-commitment-consistency)
   - [Opening-commitment consistency](#4-opening-commitment-consistency)
+- [Semantic relations and physical realizations](#semantic-relations-and-physical-realizations)
+  - [Raw realization](#raw-realization)
+  - [Compressed realization](#compressed-realization)
+  - [Planner-selected cutover](#planner-selected-cutover)
 - [Commitment compression realization](#commitment-compression-realization)
   - [Why recommit?](#why-recommit)
   - [One recommitment step](#one-recommitment-step)
@@ -246,9 +250,9 @@ blocks. The prover's commitment hint stores the recomposed inner images
 $\mathbf t_b$; this fold decomposes them to recover $\hat{\mathbf t}$. At a
 recursive level, the polynomial blocks, hint, and public payload were produced
 by the preceding level. At the root, they come from the original commitment.
-The verifier receives only the public payload from this commitment-side data:
-$\mathbf u$ in raw mode or $p_F$ in compressed mode. (to-revise: no need to mention the two different modes, only focus the semantic commitment in this section). Equations (1)--(4)
-describe the hidden opening that the later relation rows bind to that payload.
+The semantic commitment $\mathbf u$ fixes this commitment-side data.
+Equations (1)--(4) describe its hidden opening, which the later relation rows
+bind to $\mathbf u$.
 
 ### Partial evaluations and opening digits
 
@@ -284,9 +288,7 @@ $$
 \tag{7}
 $$
 
-Here $\mathbf D$ commits to the digit-decomposed partial evaluations. In raw
-mode, $\mathbf v_D$ is the opening-commitment payload sent to the verifier; in
-compressed mode, the terminal commitment $p_H$ is sent instead. (to-revise: no need to mentin the compressed mode or terminal commitment, only mention the semantic opening commitment)
+Here $\mathbf D$ commits to the digit-decomposed partial evaluations.
 
 The subscript in $\mathbf v_D$ distinguishes this ring-vector commitment from
 the scalar opening target $v$ and its trace-form counterpart
@@ -295,8 +297,7 @@ not by itself prove the scalar evaluation claim.
 
 ### The folded response and its digitization
 
-The semantic opening commitment $\mathbf v_D$, exposed directly in raw mode or
-bound through $p_H$ in compressed mode (to-revise: no need to mention two modes, only consider the semantic relations), commits the prover to
+The semantic opening commitment $\mathbf v_D$ commits the prover to
 $\hat{\mathbf e}$. It does not by itself show that the corresponding partial
 evaluations were computed from the incoming polynomial blocks. For every block
 $b$, correctness requires
@@ -441,8 +442,9 @@ does not impose any algebraic relation among them. Substituting the balanced
 recompositions from Equations (3), (6), and (10) into the recomposed identities
 (9a) and (9b) gives two relations among the private witness segments.
 Equations (4) and (7) provide two additional relations that define the
-semantic $\mathbf B$ and $\mathbf D$ commitments. (to-revise: should be the semantic commitments u and v computed from matrix B and D, respectively).Together, these give four
-families of linear equations over
+semantic commitments $\mathbf u$ and $\mathbf v_D$ computed by $\mathbf B$
+and $\mathbf D$, respectively. Together, these give four families of linear
+equations over
 
 $$
 R=F[X]/(X^D+1).
@@ -451,11 +453,7 @@ $$
 Every sum, product, and equality in this section is computed in $R$; vector
 equations are interpreted coordinatewise in $R$. The first two families
 connect the private witness segments to one another. The last two define the
-semantic commitments $\mathbf u$ and $\mathbf v_D$. The raw realization
-exposes those commitments directly; the compressed realization binds them to
-terminal payloads instead.
-
-(to-revise: I think we can add a separte sub-section at the end of this paragraph, discussing the semantic relations and its realization: raw realization and the compressed realization. Here the comrpessed realization are for the two semantic commitment u and semantic opening commitment v)
+semantic commitments $\mathbf u$ and $\mathbf v_D$.
 
 ### 1. Fold-evaluation consistency
 
@@ -543,6 +541,128 @@ instead. Together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
 binding, this prevents the prover from adapting the partial-evaluation digits
 after learning those challenges. Like the other three families, this is a
 ring-valued relation distinct from the field-valued scalar evaluation claim.
+
+## Semantic relations and physical realizations
+
+The four relations above are semantic: they state which algebraic constraints
+a valid fold must satisfy, without prescribing which commitment values are
+sent in the proof. A **physical realization** makes that second choice. It
+determines the public payload, any additional compression witness, and the
+right-hand side that the verifier uses for each physical relation row.
+
+Only the two commitment relations depend on this choice. Their semantic
+values are
+
+$$
+\mathbf u=\mathbf B\hat{\mathbf t},
+\qquad
+\mathbf v_D=\mathbf D\hat{\mathbf e}.
+$$
+
+The fold-evaluation and inner-commitment relations have the same physical form
+in both modes.
+
+### Raw realization
+
+In raw mode, the public payload *is* the semantic commitment. The prover
+computes $\mathbf u$ and $\mathbf v_D$ and transmits their complete ring
+vectors. They appear directly as the right-hand sides of the ordinary
+$\mathbf B$ and $\mathbf D$ rows:
+
+$$
+\mathbf B\hat{\mathbf t}=\mathbf u,
+\qquad
+\mathbf D\hat{\mathbf e}=\mathbf v_D.
+$$
+
+The verifier therefore receives the values defined by the semantic relations
+and places them directly in the raw relation instance. No compression digits
+or $\mathbf F/\mathbf H$ rows are present.
+
+### Compressed realization
+
+In compressed mode, the prover still computes the same semantic commitments,
+but does not transmit $\mathbf u$ or $\mathbf v_D$. Instead, it decomposes each
+one, recommits the resulting blocks through a two-map chain, and sends only the
+terminal payloads $p_F$ and $p_H$. The compression digits become additional
+private witness coordinates:
+
+$$
+\mathbf u
+\longrightarrow
+\boldsymbol\xi_{F,1}
+\overset{\mathbf F_1}{\longrightarrow}
+u^{(1)}
+\longrightarrow
+\boldsymbol\xi_{F,2}
+\overset{\mathbf F_2}{\longrightarrow}
+p_F,
+$$
+
+$$
+\mathbf v_D
+\longrightarrow
+\boldsymbol\xi_{H,1}
+\overset{\mathbf H_1}{\longrightarrow}
+v_D^{(1)}
+\longrightarrow
+\boldsymbol\xi_{H,2}
+\overset{\mathbf H_2}{\longrightarrow}
+p_H.
+$$
+
+These arrows are not a decoding procedure. In particular, the verifier does
+not recover $\mathbf u$ from $p_F$ or $\mathbf v_D$ from $p_H$. Instead, the
+physical rows prove that the unsent semantic commitments defined by the
+$\mathbf B$ and $\mathbf D$ rows recompose from the first digit layer, and
+that the two compression maps lead to the transmitted terminal payloads. The
+$\mathbf B$ and $\mathbf D$ right-hand sides are therefore zero in compressed
+mode; $p_F$ and $p_H$ appear only on the terminal $\mathbf F_2$ and
+$\mathbf H_2$ rows.
+
+From the verifier's perspective, the schedule already determines the payload
+mode. For a raw level, it assembles the ordinary relation right-hand side from
+$\mathbf u$ and $\mathbf v_D$. For a compressed level, it assembles the larger
+row layout from $p_F$ and $p_H$ and verifies the compression chains together
+with the ordinary relations. The proof does not carry a separate mode tag.
+
+| View | Raw realization | Compressed realization |
+|---|---|---|
+| Public payload | $\mathbf u,\mathbf v_D$ | $p_F,p_H$ |
+| Additional private witness | none | $\boldsymbol\xi_{F,1},\boldsymbol\xi_{F,2},\boldsymbol\xi_{H,1},\boldsymbol\xi_{H,2}$ |
+| $\mathbf B/\mathbf D$ right-hand sides | $\mathbf u,\mathbf v_D$ | zero |
+| Additional rows | none | $\mathbf F_1,\mathbf F_2,\mathbf H_1,\mathbf H_2$ |
+| What binds the payload | the ordinary commitment equations directly | the ordinary equations followed by the compression chains |
+
+### Planner-selected cutover
+
+Compression saves public payload bytes but adds digit witnesses, relation
+rows, quotient witnesses, and restricted range-check work. The planner prices
+both sides of this tradeoff for the complete recursive schedule; it does not
+choose a mode from the payload size alone.
+
+The current protocol requires standalone commitments and the root fold to use
+compressed payloads. The first recursive fold, when present, is also
+compressed, as is any later fold that consumes a setup prefix. At subsequent
+levels the planner may either continue the compressed prefix or begin a raw
+suffix. Once it selects raw mode, every later recursive level remains raw:
+
+$$
+\underbrace{\text{compressed}\;\longrightarrow\;\cdots\;\longrightarrow\;
+\text{compressed}}_{\text{planner-selected prefix}}
+\longrightarrow
+\underbrace{\text{raw}\;\longrightarrow\;\cdots\;\longrightarrow\;
+\text{raw}}_{\text{raw suffix}}.
+$$
+
+The prefix length is schedule-dependent. Some current generated schedules cut
+over immediately after the required first recursive fold, whereas deeper
+recursive schedules keep several early recursive levels compressed. Thus
+"root and early folds are compressed" describes a planner-selected prefix,
+not a fixed global cutover level.
+
+The next section expands the two commitment relations into their compressed
+physical rows.
 
 ## Commitment compression realization
 
@@ -691,11 +811,9 @@ $$
 \underbrace{p_F\in R_8}_{128\ \text{bytes}}.
 $$
 
-Standalone commitments and the root and early recursive folds use compressed
-payloads. At later recursive levels, the planner may switch to raw payloads
-when the compression witness costs more than the public bytes it saves. The
-selected sequence is always a compressed prefix followed by a raw suffix;
-compression never resumes after the cutover.
+The schedule's payload mode determines whether these chains are present at a
+particular recursive level, according to the planner-selected cutover
+described above.
 
 ### Compressed rows and witness
 
