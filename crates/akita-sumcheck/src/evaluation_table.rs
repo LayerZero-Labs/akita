@@ -539,21 +539,36 @@ where
     /// Build a dense multilinear table from logical LSB-first generated rows.
     ///
     /// The stored rows are in binding order, so the next variable selects
-    /// between two contiguous halves. The generator is called in ascending
-    /// logical-row order so producers can retain sequential source access.
+    /// between two contiguous halves. One-worker construction calls the
+    /// generator in ascending logical-row order for sequential source access.
+    /// Multi-worker construction partitions stored rows so every worker writes
+    /// contiguous coefficient ranges while evaluating its rows in parallel.
     ///
     /// # Errors
     ///
     /// Returns an error if `len` is zero or is not a power of two.
-    pub fn from_multilinear_evaluation_fn<G>(
-        len: usize,
-        mut evaluation: G,
-    ) -> Result<Self, AkitaError>
+    pub fn from_multilinear_evaluation_fn<G>(len: usize, evaluation: G) -> Result<Self, AkitaError>
     where
-        G: FnMut(usize) -> E,
+        G: Fn(usize) -> E + Sync,
     {
         Self::validate_multilinear_len(len)?;
         let mut coefficients = Self::uninitialized_coefficients(len);
+
+        #[cfg(feature = "parallel")]
+        if akita_field::parallel::__rayon_current_num_threads() > 1 {
+            initialize_multilinear_table::<F, E, _>(
+                &mut coefficients,
+                len,
+                0,
+                &|_, logical_row| evaluation(logical_row),
+            );
+
+            // SAFETY: every coefficient slot is written exactly once by the
+            // disjoint stored-row traversal.
+            let coefficients = unsafe { coefficients.assume_init() };
+            return Ok(Self::from_initialized(coefficients, len));
+        }
+
         for logical_row in 0..len {
             let value = evaluation(logical_row);
             let stored_row = Self::logical_row(logical_row, len);
