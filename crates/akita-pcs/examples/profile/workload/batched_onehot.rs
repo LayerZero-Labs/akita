@@ -158,7 +158,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             setup_contribution_mode,
             plan,
         );
-        emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(
+            label,
+            plan,
+            PolynomialGroupLayout::new(nv, num_polys),
+            Cfg::decomposition().field_bits(),
+        );
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -177,7 +182,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         emit_runtime_schedule_summary(
             label,
             &schedule,
-            num_polys,
+            PolynomialGroupLayout::new(nv, num_polys),
             Cfg::decomposition().field_bits(),
         );
         emit_proof_tail_report::<FF, Cfg::ExtField>(

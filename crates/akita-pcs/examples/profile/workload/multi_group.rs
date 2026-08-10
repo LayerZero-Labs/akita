@@ -186,8 +186,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     )
     .expect("precommit layout");
     let pre_descriptor = CommittedGroupProfile::from_params(pre_key, &pre_params);
+    let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(final_num_vars, final_num_polys),
+        final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
     let opening_layout = multi_group_key
@@ -389,10 +390,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         report_proof_size_against_planner(
             label,
             &proof,
-            planned_payload_bytes::<ProofCfg>(
-                &schedule,
-                PolynomialGroupLayout::new(final_num_vars, final_num_polys),
-            ),
+            planned_payload_bytes::<ProofCfg>(&schedule, final_group),
             "planned",
             setup_contribution_mode,
             &schedule,
@@ -406,7 +404,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     emit_runtime_schedule_summary(
         label,
         &schedule,
-        total_polys,
+        final_group,
         Cfg::decomposition().field_bits(),
     );
     emit_proof_tail_report::<FF, Cfg::ExtField>(

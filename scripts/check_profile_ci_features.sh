@@ -13,9 +13,14 @@ import re
 import sys
 from pathlib import Path
 
+from scripts.profile_ci_features import (
+    load_feature_graph,
+    resolve_feature,
+    schedule_features,
+)
+
 repo = Path(".")
 workflow = repo / ".github/workflows/profile-bench.yml"
-pcs = repo / "crates/akita-pcs/Cargo.toml"
 profile_main = repo / "crates/akita-pcs/examples/profile/main.rs"
 profile_modes = repo / "crates/akita-pcs/examples/profile/modes.rs"
 
@@ -60,37 +65,8 @@ MODE_SETUP["onehot_fp128_multi_group_recursive"] = "recursive"
 MODE_SETUP["onehot_fp128_multi_group_recursive_multi_chunk_w8r2"] = "recursive"
 PROFILE_BENCH_MARKER = "profile-bench-selected"
 
-text = pcs.read_text(encoding="utf-8")
-
-
-def parse_features() -> dict[str, list[str]]:
-    import tomllib
-
-    parsed = tomllib.loads(text)
-    return {name: list(members) for name, members in parsed["features"].items()}
-
-
-features = parse_features()
-
-
-def feature_members(feature: str, active: tuple[str, ...] = ()) -> set[str]:
-    if feature not in features:
-        print(f"{feature} feature not found in akita-pcs/Cargo.toml", file=sys.stderr)
-        raise SystemExit(1)
-    if feature in active:
-        print(f"Cargo feature cycle: {' -> '.join((*active, feature))}", file=sys.stderr)
-        raise SystemExit(1)
-    members: set[str] = set()
-    for member in features[feature]:
-        if member in features:
-            members.add(member)
-            members.update(feature_members(member, (*active, feature)))
-        else:
-            members.add(member.split("/", 1)[-1])
-    return members
-
-
-profile_ci = feature_members("profile-ci")
+feature_graph = load_feature_graph(repo)
+profile_ci_schedules = schedule_features(feature_graph, "akita-pcs", "profile-ci")
 
 wf = workflow.read_text(encoding="utf-8")
 case_line = re.compile(r"^([^:]+:\d+:\d+(?::[^:\s]+)?)\s*$")
@@ -155,26 +131,32 @@ for group_name, profile_feature, case_spec in bench_cases:
         continue
     required = MODE_FEATURE[mode]
     if profile_feature not in matrix_features:
-        matrix_features[profile_feature] = feature_members(profile_feature)
+        matrix_features[profile_feature] = schedule_features(
+            feature_graph, "akita-pcs", profile_feature
+        )
     selected = matrix_features[profile_feature]
     group_requirements.setdefault((group_name, profile_feature), set()).add(required)
-    if PROFILE_BENCH_MARKER not in selected:
+    if ("akita-pcs", PROFILE_BENCH_MARKER) not in resolve_feature(
+        feature_graph, "akita-pcs", profile_feature
+    ):
         print(
             f"matrix group '{group_name}' feature '{profile_feature}' does not enable "
             f"the '{PROFILE_BENCH_MARKER}' registry marker",
             file=sys.stderr,
         )
         failed = True
-    if required not in selected:
+    required_schedules = schedule_features(feature_graph, "akita-config", required)
+    if not required_schedules.issubset(selected):
         print(
             f"matrix group '{group_name}' feature '{profile_feature}' does not enable "
-            f"required feature '{required}' for bench mode '{mode}'",
+            f"required schedules {sorted(required_schedules)} for bench mode '{mode}'",
             file=sys.stderr,
         )
         failed = True
-    if required not in profile_ci:
+    if not required_schedules.issubset(profile_ci_schedules):
         print(
-            f"profile-ci does not enable required feature '{required}' for bench mode '{mode}'",
+            f"profile-ci does not enable required schedules {sorted(required_schedules)} "
+            f"for bench mode '{mode}'",
             file=sys.stderr,
         )
         failed = True
@@ -202,11 +184,13 @@ for group_name, profile_feature, case_spec in bench_cases:
 
 for (group_name, profile_feature), required in group_requirements.items():
     selected = matrix_features[profile_feature]
-    selected_schedules = {member for member in selected if member.startswith("schedules-")}
-    if selected_schedules != required:
+    required_schedules = set().union(
+        *(schedule_features(feature_graph, "akita-config", feature) for feature in required)
+    )
+    if selected != required_schedules:
         print(
             f"matrix group '{group_name}' feature '{profile_feature}' enables schedule "
-            f"features {sorted(selected_schedules)}, expected exactly {sorted(required)}",
+            f"features {sorted(selected)}, expected exactly {sorted(required_schedules)}",
             file=sys.stderr,
         )
         failed = True

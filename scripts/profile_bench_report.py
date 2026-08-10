@@ -1089,6 +1089,9 @@ def extract_summary(
             )
     if planned_levels:
         summary["planned_levels"] = [planned_levels[level] for level in sorted(planned_levels)]
+        warning = public_opening_groups_warning(summary)
+        if warning is not None:
+            summary.setdefault("warnings", []).append(warning)
     if proof_levels:
         summary["proof_levels"] = [proof_levels[level] for level in sorted(proof_levels)]
     if onehot_commit_schedules:
@@ -1552,6 +1555,9 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
             level.setdefault("setup_prefix_padded_field_elements", 0)
             normalized_levels.append(level)
         normalized["planned_levels"] = normalized_levels
+        warning = public_opening_groups_warning(normalized)
+        if warning is not None and warning not in normalized.get("warnings", []):
+            normalized.setdefault("warnings", []).append(warning)
     # All production CRT profiles currently use moduli below 2^30 stored in
     # signed 32-bit limbs. Old baseline artifacts only recorded the storage
     # width, so normalize their missing modulus width here.
@@ -1901,7 +1907,9 @@ def human_case_label(summary: dict[str, object]) -> str:
     return f"{label}, {setup_mode} setup check"
 
 
-def public_opening_groups(summary: dict[str, object]) -> list[dict[str, object]]:
+def public_opening_group_candidates(
+    summary: dict[str, object],
+) -> list[dict[str, object]]:
     levels = summary.get("planned_levels")
     if not isinstance(levels, list):
         return []
@@ -1922,6 +1930,27 @@ def public_opening_groups(summary: dict[str, object]) -> list[dict[str, object]]
         and group.get("group_role") in ("precommitted", "final")
         and int(group.get("public_num_polynomials", 0)) > 0
     ]
+
+
+def public_opening_groups_warning(summary: dict[str, object]) -> str | None:
+    groups = public_opening_group_candidates(summary)
+    if not groups:
+        return None
+    described = sum(int(group["public_num_polynomials"]) for group in groups)
+    expected = int(summary.get("num_polys", 1))
+    if described == expected:
+        return None
+    return (
+        f"public opening groups describe {described} of {expected} polynomials; "
+        "using the generic opening statement"
+    )
+
+
+def public_opening_groups(summary: dict[str, object]) -> list[dict[str, object]]:
+    groups = public_opening_group_candidates(summary)
+    if public_opening_groups_warning(summary) is not None:
+        return []
+    return groups
 
 
 def join_phrases(phrases: list[str]) -> str:
@@ -2080,14 +2109,14 @@ def render_matrix_summary(
             ],
         ),
         (
-            "Proof size",
+            "Proof size and protocol shape",
             [
                 Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
                 Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
                 Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
+                Metric("akita_levels", "Fold levels", "", fmt_count),
             ],
         ),
-        ("Protocol shape", [Metric("akita_levels", "Fold levels", "", fmt_count)]),
     ]
 
     for table_index, (title, metrics) in enumerate(tables):
@@ -2095,17 +2124,13 @@ def render_matrix_summary(
             print()
         print(f"### {title}")
         print()
-        headers = ["Profile", "Status", *(metric.name for metric in metrics)]
+        headers = ["Profile", *(metric.name for metric in metrics)]
         print("| " + " | ".join(headers) + " |")
-        print(
-            "| "
-            + " | ".join(["---", "---", *("---:" for _ in metrics)])
-            + " |"
-        )
+        print("| " + " | ".join(["---", *("---:" for _ in metrics)]) + " |")
 
         for current in current_cases:
             baseline = main_baseline.get(str(current["case_id"])) if main_baseline else None
-            row = [md_text(human_case_label(current)), code_text(case_status(current))]
+            row = [md_text(human_case_label(current))]
             for metric in metrics:
                 row.append(
                     optional_value_with_baseline_delta(
@@ -2115,7 +2140,7 @@ def render_matrix_summary(
                         metric.value_formatter,
                         metric.unit,
                         main_baseline is not None,
-                        " vs merge base",
+                        "",
                     )
                 )
             print("| " + " | ".join(row) + " |")
