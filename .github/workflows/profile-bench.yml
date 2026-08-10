@@ -179,16 +179,14 @@ jobs:
           lscpu || head -n 40 /proc/cpuinfo
           echo "::endgroup::"
 
-      # PR deltas must compare binaries measured on this runner: ubuntu-latest
-      # is a heterogeneous fleet, and baselines measured on different silicon
-      # produced phantom double-digit deltas.
+      # PR deltas compare binaries measured on the same custom runner so
+      # hardware differences cannot create false changes.
       - name: Verify profile benchmark feature coverage
         run: ./scripts/check_profile_ci_features.sh
 
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
         env:
-          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
@@ -201,10 +199,9 @@ jobs:
                 cargo build --release --quiet --example profile \
                   --no-default-features --features "$features"
             elif python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
-              fallback_features="${features/$AKITA_BENCH_PROFILE_FEATURE/profile-ci}"
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
-                  --no-default-features --features "$fallback_features"
+                  --no-default-features --features "parallel,profile-ci"
             else
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile
@@ -233,7 +230,6 @@ jobs:
 
       - name: Build profile binary
         env:
-          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
           features="parallel,$AKITA_BENCH_PROFILE_FEATURE"
@@ -241,7 +237,10 @@ jobs:
             --no-default-features --features "$features"
 
       - name: Verify profile linkage isolation
-        run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile
+        run: >-
+          ./scripts/check_profile_ci_linkage.sh
+          target/release/examples/profile
+          ${{ matrix.group.profile_feature }}
 
       # On PRs the head and merge-base binaries run interleaved (PR, base,
       # PR, base, ...) so machine-state drift on shared runners lands on both

@@ -16,6 +16,8 @@ from pathlib import Path
 repo = Path(".")
 workflow = repo / ".github/workflows/profile-bench.yml"
 pcs = repo / "crates/akita-pcs/Cargo.toml"
+profile_main = repo / "crates/akita-pcs/examples/profile/main.rs"
+profile_modes = repo / "crates/akita-pcs/examples/profile/modes.rs"
 
 MODE_FEATURE = {
     "onehot_fp32_d128": "schedules-fp32-d128-onehot",
@@ -61,24 +63,30 @@ PROFILE_BENCH_MARKER = "profile-bench-selected"
 text = pcs.read_text(encoding="utf-8")
 
 
-def feature_members(feature: str) -> set[str]:
-    match = re.search(
-        rf"^{re.escape(feature)}\s*=\s*\[(.*?)\]",
-        text,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    if not match:
+def parse_features() -> dict[str, list[str]]:
+    import tomllib
+
+    parsed = tomllib.loads(text)
+    return {name: list(members) for name, members in parsed["features"].items()}
+
+
+features = parse_features()
+
+
+def feature_members(feature: str, active: tuple[str, ...] = ()) -> set[str]:
+    if feature not in features:
         print(f"{feature} feature not found in akita-pcs/Cargo.toml", file=sys.stderr)
         raise SystemExit(1)
-
+    if feature in active:
+        print(f"Cargo feature cycle: {' -> '.join((*active, feature))}", file=sys.stderr)
+        raise SystemExit(1)
     members: set[str] = set()
-    for line in match.group(1).splitlines():
-        line = line.strip().rstrip(",")
-        if not line or line.startswith("#"):
-            continue
-        if "/" in line:
-            line = line.split("/", 1)[1]
-        members.add(line.strip('"'))
+    for member in features[feature]:
+        if member in features:
+            members.add(member)
+            members.update(feature_members(member, (*active, feature)))
+        else:
+            members.add(member.split("/", 1)[-1])
     return members
 
 
@@ -199,6 +207,18 @@ for (group_name, profile_feature), required in group_requirements.items():
         print(
             f"matrix group '{group_name}' feature '{profile_feature}' enables schedule "
             f"features {sorted(selected_schedules)}, expected exactly {sorted(required)}",
+            file=sys.stderr,
+        )
+        failed = True
+
+matrix_profile_features = set(matrix_features)
+feature_pattern = re.compile(r'feature\s*=\s*"(profile-ci-[^"]+)"')
+for source in (profile_main, profile_modes):
+    declared = set(feature_pattern.findall(source.read_text(encoding="utf-8")))
+    if declared != matrix_profile_features:
+        print(
+            f"{source} declares profile group features {sorted(declared)}, expected "
+            f"exactly {sorted(matrix_profile_features)}",
             file=sys.stderr,
         )
         failed = True

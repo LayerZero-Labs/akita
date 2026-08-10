@@ -9,6 +9,9 @@ use std::sync::OnceLock;
 
 static POOLS: OnceLock<ProfileThreadPools> = OnceLock::new();
 
+#[cfg(feature = "parallel")]
+const PROFILE_STACK_SIZE: usize = 64 * 1024 * 1024;
+
 /// Per-phase thread pools for the profile harness.
 pub(crate) struct ProfileThreadPools {
     #[cfg(feature = "parallel")]
@@ -58,9 +61,7 @@ impl ProfileThreadPools {
 
         #[cfg(feature = "parallel")]
         {
-            const PROVE_STACK_SIZE: usize = 64 * 1024 * 1024;
-
-            let prove_resolved = build_global_prove_pool(prove_threads, PROVE_STACK_SIZE);
+            let prove_resolved = build_global_prove_pool(prove_threads);
             let verify_resolved = if verify_threads > 0 {
                 verify_threads
             } else {
@@ -129,8 +130,8 @@ fn env_thread_count(name: &str) -> usize {
 }
 
 #[cfg(feature = "parallel")]
-fn build_global_prove_pool(num_threads: usize, stack_size: usize) -> usize {
-    let mut builder = rayon::ThreadPoolBuilder::new().stack_size(stack_size);
+fn build_global_prove_pool(num_threads: usize) -> usize {
+    let mut builder = rayon::ThreadPoolBuilder::new().stack_size(PROFILE_STACK_SIZE);
     if num_threads > 0 {
         builder = builder.num_threads(num_threads);
     }
@@ -142,7 +143,7 @@ fn build_global_prove_pool(num_threads: usize, stack_size: usize) -> usize {
 
 #[cfg(feature = "parallel")]
 fn build_pool(num_threads: usize, label: &str) -> rayon::ThreadPool {
-    let mut builder = rayon::ThreadPoolBuilder::new();
+    let mut builder = rayon::ThreadPoolBuilder::new().stack_size(PROFILE_STACK_SIZE);
     if num_threads > 0 {
         builder = builder.num_threads(num_threads);
     }

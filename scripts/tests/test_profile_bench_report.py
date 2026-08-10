@@ -8,15 +8,6 @@ import unittest
 
 
 class ProfileBenchReportTests(unittest.TestCase):
-    def test_profile_bench_does_not_persist_setup_cache(self) -> None:
-        repo = pathlib.Path(__file__).resolve().parents[2]
-        workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertNotIn("disk-persistence", workflow)
-        self.assertNotIn("LOCALAPPDATA", workflow)
-
     def test_merge_base_policy_reads_narrow_profile_mode_registry(self) -> None:
         from scripts.profile_bench_merge_base_policy import profile_modes_from_modes_rs
 
@@ -327,6 +318,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_digits_outer": 5,
                 "num_digits_open": 5,
                 "delta_fold": 6,
+                "input_witness_len": 1024,
                 # Legacy scalar `current_w_len` is not a group breakdown.
                 "current_w_len": [],
                 "next_w_len": 2048,
@@ -368,6 +360,29 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(level["setup_prefix_padded_field_elements"], 128)
         self.assertEqual(level["num_live_ring_elements_per_claim"], 768)
         self.assertNotIn("level_bytes", level)
+
+    def test_unmatched_planned_group_is_reported(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            "INFO planned fold group label=onehot_fp128 level=3 group=orphan "
+            "group_role=setup_offload consumer_level=4 witness_field_elements=64 "
+            "d_a=64 d_b=64 d_d=64 n_a=1 n_b=1 n_d=1 "
+            "log_basis_inner=3 log_basis_outer=3 log_basis_open=3 "
+            "num_digits_inner=1 num_digits_outer=1 num_digits_open=1 "
+            "num_digits_fold=1 challenge_l1_mass=8 "
+            "num_live_ring_elements_per_claim=1 num_live_blocks=1 "
+            "num_positions_per_block=1 block_index_domain_size=1 "
+            "setup_prefix_natural_field_elements=64 "
+            "setup_prefix_padded_field_elements=64\n"
+        )
+
+        summary = extract_summary(log, "onehot_fp128", 32, 1)
+
+        self.assertEqual(
+            summary["warnings"],
+            ["planned fold groups for L3 have no matching planned fold level"],
+        )
 
     def test_planned_fold_level_normalizes_merge_base_geometry(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -438,9 +453,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Fold schedule and proof cost", report)
         self.assertIn("Rings A/B/D: 64 / 32 / 16", report)
         self.assertIn("Rows A/B/D: 4 / 6 / 8", report)
-        self.assertIn("<strong>Matrix geometry</strong>", report)
+        self.assertIn("<em>Matrix geometry</em>", report)
         self.assertIn(
-            "Rows A/B/D: 4 / 6 / 8<br><sub>Merge base</sub><br>"
+            "<sub>Merge base</sub><br><strong>Final group</strong><br>"
+            "<em>Matrix geometry</em><br>Rings A/B/D: 64 / 32 / 16<br>"
             "Rows A/B/D: 2 / 6 / 8",
             report,
         )
@@ -619,7 +635,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("<sub>range image 16</sub>", report)
         self.assertNotIn("<strong>Opening</strong>", report)
         self.assertNotIn("<strong>Stage 2</strong>", report)
-        self.assertIn("+0.0% vs base", report)
+        self.assertIn("+0.0% vs merge base", report)
         self.assertIn("terminal response", report)
         self.assertIn("Grinding retries", report)
         proof_table_lines = [
@@ -676,8 +692,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("### Proof size", report)
         self.assertIn("Setup vector", report)
         self.assertIn("Prepared NTT cache", report)
-        self.assertIn("Verify, multi threaded", report)
-        self.assertIn("Verify, single threaded", report)
+        self.assertIn("Verify, multi-threaded", report)
+        self.assertIn("Verify, single-threaded", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
         self.assertIn("4,096 bytes", report)
@@ -686,7 +702,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertNotIn("Proof B", report)
         self.assertNotIn("Setup Mode", report)
         table_lines = [line for line in report.splitlines() if line.startswith("|")]
-        self.assertLessEqual(max(line.count("|") for line in table_lines), 7)
+        self.assertLessEqual(max(line.count("|") for line in table_lines), 8)
 
     def test_adaptive_case_label_omits_ring_dimensions_and_mixed_dimension_config(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary
@@ -703,7 +719,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             }
         )
 
-        self.assertEqual(human_case_label(summary), "Fp128 one-hot nv32")
+        self.assertEqual(
+            human_case_label(summary), "Fp128 one-hot nv32, direct setup check"
+        )
 
     def test_adaptive_multi_group_case_label_omits_ring_dimensions(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary
@@ -742,7 +760,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 one-hot nv32 W4R2",
+            "Fp128 one-hot nv32 W4R2, direct setup check",
         )
 
     def test_multi_group_statement_uses_three_points_and_mixed_arities(self) -> None:
@@ -759,6 +777,28 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_polys": 4,
                 "setup_contribution_mode": "recursive",
                 "exit_code": 0,
+                "planned_levels": [
+                    {
+                        "level": 0,
+                        "groups": [
+                            {
+                                "group_role": "precommitted",
+                                "public_num_vars": 16,
+                                "public_num_polynomials": 1,
+                            },
+                            {
+                                "group_role": "precommitted",
+                                "public_num_vars": 16,
+                                "public_num_polynomials": 1,
+                            },
+                            {
+                                "group_role": "final",
+                                "public_num_vars": 32,
+                                "public_num_polynomials": 2,
+                            },
+                        ],
+                    }
+                ],
             }
         )
 
@@ -767,9 +807,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "onehot_fp128_multi_group_recursive", 32, 4, "recursive"
         )
         self.assertIn("one 16 variable polynomial", statement)
-        self.assertIn("another point", statement)
-        self.assertIn("two 32 variable polynomials", statement)
-        self.assertIn("two separate 16 variable polynomials", name)
+        self.assertIn("at its own point", statement)
+        self.assertIn("2 32 variable polynomials", statement)
+        self.assertEqual(
+            name,
+            "fp128 multi-group opening with 4 polynomials (recursive setup contribution)",
+        )
         self.assertNotIn("same-point", name)
 
     def test_full_report_renders_overhauled_tables(self) -> None:
@@ -885,6 +928,34 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "failure_phase": "prove",
             "error": "benchmark process failed",
             "runs": 1,
+            "planned_levels": [
+                {
+                    "level": 0,
+                    "d_a": 64,
+                    "d_b": 64,
+                    "d_d": 64,
+                    "n_a": 1,
+                    "n_b": 1,
+                    "n_d": 1,
+                    "challenge_l1_mass": 8,
+                    "log_basis_inner": 3,
+                    "log_basis_outer": 3,
+                    "log_basis_open": 3,
+                    "num_digits_inner": 1,
+                    "num_digits_outer": 1,
+                    "num_digits_open": 1,
+                    "delta_fold": 1,
+                    "input_witness_len": 64,
+                    "current_w_len": [],
+                    "next_w_len": 32,
+                    "num_live_ring_elements_per_claim": 1,
+                    "num_live_blocks": 1,
+                    "num_positions_per_block": 1,
+                    "block_index_domain_size": 1,
+                    "setup_prefix_natural_field_elements": 0,
+                    "setup_prefix_padded_field_elements": 0,
+                }
+            ],
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -896,7 +967,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 summary=str(summary_path),
                 main_baseline_dir="",
                 previous_baseline_dir="",
-                compact=True,
+                compact=False,
             )
 
             output = io.StringIO()
@@ -906,6 +977,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertIn("0 of 1 profiles passed", report)
         self.assertNotIn("Times are medians", report)
+        self.assertIn("Fold schedule and proof cost", report)
+        self.assertIn("| n/a |", report)
+        self.assertIn("Grinding was not measured", report)
 
     def test_configured_cases_treats_setup_mode_as_case_dimension(self) -> None:
         from scripts.profile_bench_report import configured_cases

@@ -98,9 +98,8 @@ The long multi-group recursive rows run in separate parallel CI groups so each
 task keeps one benchmark case. The distributed rows also run in their own group
 and are compared against the merge base like the other rows.
 
-The workflow file is the source of truth for the exact active cases. The table
-above explains the checked in matrix, but it must not replace the workflow when
-the two disagree.
+The workflow file is the source of truth for the active cases. The table above
+is a summary and may lag.
 
 ### What the profiles prove
 
@@ -113,12 +112,12 @@ Every row measures a complete PCS opening proof.
 | One hot `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point. |
 | Multi group | Four polynomials in three groups. Two precommitted groups each contain one 16 variable polynomial and use independent 16 coordinate points. The final group contains two 32 variable polynomials that share one 32 coordinate point. |
 
-The one hot generator places one `1` in every consecutive 256 coefficient
+The one-hot generator places one `1` in every consecutive 256 coefficient
 chunk. This is the benchmark witness shape. The public statement checks only
-commitment and opening consistency. It does not assert one hot structure.
+commitment and opening consistency. It does not assert one-hot structure.
 
 `direct` evaluates the public setup matrix contribution during Stage 2.
-`recursive` carries the same check through a Stage 3 setup product sumcheck.
+`recursive` carries the same check through a Stage 3 setup-product sumcheck.
 Both modes execute the complete fold schedule and terminal verification. A
 `W2R2`, `W4R2`, or `W8R2` profile divides the witness relation into 2, 4, or 8
 exact chunks for the first two fold levels. Generated profiles may select
@@ -133,7 +132,7 @@ Each measured sample performs these operations:
 4. Produce and serialize a complete proof.
 5. Check the reported proof size.
 6. Build verifier setup once.
-7. Verify the claimed openings with the configured multi threaded pool.
+7. Verify the claimed openings with the configured multi-threaded pool.
 8. Verify the same proof and claims again with one thread.
 
 The profile workflow does not test malformed proofs or rejection paths. The
@@ -147,21 +146,23 @@ comment shows the public statements first. It then uses separate tables for
 phase time, memory and setup size, and proof size. This keeps each table narrow
 enough to read in a pull request.
 
-The full artifact keeps each fold in one side by side table. Each detailed cell
+The full artifact keeps each fold in one side-by-side table. Each detailed cell
 uses named blocks for matrix geometry, decomposition, challenge parameters,
 witness or setup input, relation geometry, and proof components. Multi group
 rows repeat those blocks for each precommitment, final group, and setup offload
 instead of joining unrelated values in one line.
 
-The phase table labels the existing verifier time as multi threaded and adds a
-separate single threaded verifier column. Both runs use the same proof, claims,
-and verifier setup. The multi threaded run comes first so comparisons with
+The phase table labels the existing verifier time as multi-threaded and adds a
+separate single-threaded verifier column. Both runs use the same proof, claims,
+and verifier setup. The multi-threaded run comes first so comparisons with
 older merge bases preserve the old measurement order. Profile CI sets both
 configured thread counts to the runner CPU count and rejects a runner with
-fewer than two CPUs.
+fewer than two CPUs. The single-threaded timing always uses one dedicated Rayon
+worker. Every profile Rayon pool uses a 64 MiB worker stack. Without the
+`parallel` feature, both verifier labels measure the same sequential execution.
 
 Pull request runs compare the head with its merge base. The two binaries run
-interleaved on the same runner. User facing report text must say merge base, not
+interleaved on the same runner. User-facing report text must say merge base, not
 main. The full artifact may also show a prior run from the same pull request,
 but that prior run is not the baseline for the reported delta.
 
