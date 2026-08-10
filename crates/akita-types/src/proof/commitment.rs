@@ -7,7 +7,8 @@ use crate::sis::{
 };
 use crate::transcript::AppendToTranscript;
 use crate::{
-    detect_field_modulus, CommittedGroupProfile, CompressionChainPlan, PolynomialGroupLayout,
+    detect_field_modulus, CommitmentSliceCount, CommittedGroupProfile, CompressionChainPlan,
+    PolynomialGroupLayout,
 };
 
 type MatrixFields = (
@@ -208,14 +209,12 @@ impl<F: FieldCore + CanonicalField + Valid> Valid for CommittedGroup<F> {
         self.commitment.check()?;
         let source_coefficients = self
             .profile
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(self.profile.outer_commit_matrix.ring_dimension())
-            .ok_or_else(|| {
-                SerializationError::InvalidData(
-                    "committed-group coefficient count overflow".to_string(),
-                )
-            })?;
+            .outer_slice_count
+            .complete_source_coefficients(
+                self.profile.outer_commit_matrix.output_rank(),
+                self.profile.outer_commit_matrix.ring_dimension(),
+            )
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let expected_coeffs = CompressionChainPlan::for_complete_source(
             self.profile
                 .outer_commit_matrix
@@ -264,6 +263,7 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
         ] {
             write_usize(&mut writer, value)?;
         }
+        write_usize(&mut writer, profile.outer_slice_count.get())?;
         profile
             .log_basis_inner
             .serialize_with_mode(&mut writer, Compress::No)?;
@@ -317,7 +317,7 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
     fn serialized_size(&self, compress: Compress) -> usize {
         const MATRIX_SIZE: usize = 1 + 1 + 1 + 32 + 4 + 8 + 8 + 16;
         1 + 16
-            + 24
+            + 32
             + 4
             + 8
             + MATRIX_SIZE
@@ -404,6 +404,8 @@ where
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
+        let outer_slice_count = CommitmentSliceCount::try_new(read_usize(&mut reader)?)
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let log_basis_inner =
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
         let num_digits_inner = read_usize(&mut reader)?;
@@ -441,6 +443,7 @@ where
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
+            outer_slice_count,
             log_basis_inner,
             num_digits_inner,
             inner_commit_matrix,
@@ -453,14 +456,12 @@ where
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let source_coefficients = descriptor
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
-            .ok_or_else(|| {
-                SerializationError::InvalidData(
-                    "committed-group coefficient count overflow".to_string(),
-                )
-            })?;
+            .outer_slice_count
+            .complete_source_coefficients(
+                descriptor.outer_commit_matrix.output_rank(),
+                descriptor.outer_commit_matrix.ring_dimension(),
+            )
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let num_coeffs = CompressionChainPlan::for_complete_source(
             descriptor
                 .outer_commit_matrix
@@ -560,6 +561,7 @@ mod committed_group_tests {
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 32,
             num_live_blocks: 1,
+            outer_slice_count: CommitmentSliceCount::ONE,
             log_basis_inner: 1,
             num_digits_inner: 1,
             inner_commit_matrix,

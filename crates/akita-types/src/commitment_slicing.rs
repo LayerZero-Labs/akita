@@ -109,6 +109,48 @@ impl CommitmentSliceCount {
         }
         Ok(ranges)
     }
+
+    /// Logical B relation rows in the complete stacked image.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the row count overflows or the
+    /// physical rank is zero.
+    pub fn logical_output_rows(self, physical_output_rank: usize) -> Result<usize, AkitaError> {
+        if physical_output_rank == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "physical B output rank must be nonzero".into(),
+            ));
+        }
+        physical_output_rank
+            .checked_mul(self.get())
+            .ok_or_else(|| AkitaError::InvalidSetup("logical B row count overflow".into()))
+    }
+
+    /// Field coefficients in the complete stacked B image.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the coefficient count
+    /// overflows or either physical dimension is zero.
+    pub fn complete_source_coefficients(
+        self,
+        physical_output_rank: usize,
+        outer_ring_dimension: usize,
+    ) -> Result<usize, AkitaError> {
+        if outer_ring_dimension == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "B ring dimension must be nonzero".into(),
+            ));
+        }
+        self.logical_output_rows(physical_output_rank)?
+            .checked_mul(outer_ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("complete B source size overflow".into()))
+    }
+
+    pub(crate) fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
+        bytes.push(self.0);
+    }
 }
 
 impl TryFrom<usize> for CommitmentSliceCount {
@@ -230,14 +272,7 @@ impl CommitmentSliceGeometry {
     ///
     /// Returns [`AkitaError::InvalidSetup`] when the row count overflows.
     pub fn logical_output_rows(&self, physical_output_rank: usize) -> Result<usize, AkitaError> {
-        if physical_output_rank == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "physical B output rank must be nonzero".into(),
-            ));
-        }
-        physical_output_rank
-            .checked_mul(self.slice_count.get())
-            .ok_or_else(|| AkitaError::InvalidSetup("logical B row count overflow".into()))
+        self.slice_count.logical_output_rows(physical_output_rank)
     }
 
     /// Field coefficients in the complete stacked B image.
@@ -250,9 +285,8 @@ impl CommitmentSliceGeometry {
         &self,
         physical_output_rank: usize,
     ) -> Result<usize, AkitaError> {
-        self.logical_output_rows(physical_output_rank)?
-            .checked_mul(self.outer_ring_dimension)
-            .ok_or_else(|| AkitaError::InvalidSetup("complete B source size overflow".into()))
+        self.slice_count
+            .complete_source_coefficients(physical_output_rank, self.outer_ring_dimension)
     }
 
     /// Ring elements stored by the one physical B matrix.

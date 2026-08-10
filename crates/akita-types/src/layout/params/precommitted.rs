@@ -213,16 +213,16 @@ impl PrecommittedLevelParams {
                     .to_string(),
             ));
         }
-        let outer_projection_ratio = inner_ring_dimension / outer_ring_dimension;
-        let expected_b_width = self
-            .layout
-            .inner_commit_matrix
-            .output_rank()
-            .checked_mul(self.layout.num_digits_outer)
-            .and_then(|width| width.checked_mul(self.layout.num_live_blocks))
-            .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
-            .and_then(|width| width.checked_mul(outer_projection_ratio))
-            .ok_or_else(|| AkitaError::InvalidSetup("precommitted B width overflow".to_string()))?;
+        let expected_b_width = crate::CommitmentSliceGeometry::try_new(
+            self.layout.outer_slice_count,
+            self.layout.num_live_blocks,
+            self.layout.group.num_polynomials(),
+            self.layout.inner_commit_matrix.output_rank(),
+            self.layout.num_digits_outer,
+            inner_ring_dimension,
+            outer_ring_dimension,
+        )?
+        .physical_input_width();
         if self.layout.inner_commit_matrix.input_width() != expected_a_width
             || self.layout.outer_commit_matrix.input_width() != expected_b_width
         {

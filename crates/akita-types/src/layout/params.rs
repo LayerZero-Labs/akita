@@ -104,6 +104,8 @@ pub struct CommittedGroupParams {
     pub num_positions_per_block: usize,
     /// Exact number of live blocks (`B = ceil(N / M)`).
     pub num_live_blocks: usize,
+    /// Number of logical B inputs committed through one physical B matrix.
+    pub outer_slice_count: crate::CommitmentSliceCount,
     pub fold_challenge_config: SparseChallengeConfig,
     /// Gadget decomposition depth for A/source coefficients.
     pub num_digits_inner: usize,
@@ -284,6 +286,7 @@ impl CommittedGroupParams {
             num_live_ring_elements_per_claim: 0,
             num_positions_per_block: 0,
             num_live_blocks: 0,
+            outer_slice_count: crate::CommitmentSliceCount::ONE,
             fold_challenge_config,
             num_digits_inner: 0,
             num_digits_outer: 0,
@@ -521,6 +524,7 @@ impl CommittedGroupParams {
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
+        self.outer_slice_count.append_descriptor_bytes(bytes);
         append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
@@ -1068,12 +1072,16 @@ impl CommittedGroupParams {
         let inner_width = num_positions_per_block
             .checked_mul(num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = self
-            .inner_commit_matrix
-            .output_rank()
-            .checked_mul(num_digits_outer)
-            .and_then(|x| x.checked_mul(num_live_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("outer width overflow".to_string()))?;
+        let outer_width = crate::CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            num_live_blocks,
+            1,
+            self.inner_commit_matrix.output_rank(),
+            num_digits_outer,
+            self.inner_commit_matrix.ring_dimension(),
+            self.outer_commit_matrix.ring_dimension(),
+        )?
+        .physical_input_width();
         let d_matrix_width = num_digits_open
             .checked_mul(num_live_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
@@ -1112,6 +1120,7 @@ impl CommittedGroupParams {
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
+            outer_slice_count: self.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
             num_digits_inner,
             num_digits_outer,
@@ -1176,6 +1185,7 @@ impl CommittedGroupParams {
             num_live_ring_elements_per_claim: other.num_live_ring_elements_per_claim,
             num_positions_per_block: other.num_positions_per_block,
             num_live_blocks: other.num_live_blocks,
+            outer_slice_count: other.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
             num_digits_inner: other.num_digits_inner,
             num_digits_outer: other.num_digits_outer,

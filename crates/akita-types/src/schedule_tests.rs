@@ -937,6 +937,7 @@ fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
         num_live_ring_elements_per_claim: 1usize << (num_vars - 6),
         num_positions_per_block: 16,
         num_live_blocks,
+        outer_slice_count: crate::CommitmentSliceCount::ONE,
         log_basis_inner: 1,
         num_digits_inner: 1,
         inner_commit_matrix,
