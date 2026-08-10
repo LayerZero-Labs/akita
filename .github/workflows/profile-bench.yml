@@ -62,7 +62,7 @@ jobs:
         # through multiple recursive levels. The fp128 cells fold aggressively enough
         # to stay at nv=32.
         group:
-          - name: 1-fp128-dense
+          - name: 1-dense-suite
             cases: |
               dense_fp32_d128:26:1
               dense_fp64_d128:26:1

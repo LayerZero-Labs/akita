@@ -363,7 +363,11 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(len({line.count("|") for line in proof_table_lines}), 1)
 
     def test_matrix_embeds_main_delta_in_every_numeric_metric(self) -> None:
-        from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
+        from scripts.profile_bench_report import (
+            fold_dimension_schedule,
+            normalize_case_summary,
+            render_matrix_summary,
+        )
 
         current = normalize_case_summary(
             {
@@ -403,6 +407,9 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(report.count("+100.00% vs main"), 8)
         self.assertIn("Setup vector size", report)
         self.assertIn("Prepared NTT cache size", report)
+        self.assertIn("Fold A/B/D schedule", report)
+        self.assertIn("64/64/64", report)
+        self.assertEqual(fold_dimension_schedule(current), "64/64/64")
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
         self.assertIn("4,096 bytes", report)
@@ -410,6 +417,20 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertNotIn("D=64", report)
         self.assertNotIn("Proof B", report)
         self.assertNotIn("Setup Mode", report)
+        matrix_lines = [line for line in report.splitlines() if line.startswith("| ")][:3]
+        self.assertEqual(len({line.count("|") for line in matrix_lines}), 1)
+
+    def test_fold_dimension_schedule_collapses_uniform_suffix(self) -> None:
+        from scripts.profile_bench_report import fold_dimension_schedule
+
+        summary = {
+            "planned_levels": [
+                {"d_a": 256, "d_b": 64, "d_d": 64},
+                {"d_a": 64, "d_b": 64, "d_d": 64},
+                {"d_a": 64, "d_b": 64, "d_d": 64},
+            ]
+        }
+        self.assertEqual(fold_dimension_schedule(summary), "256/64/64 → 64/64/64")
 
     def test_adaptive_case_label_omits_ring_dimensions_and_mixed_dimension_config(self) -> None:
         from scripts.profile_bench_report import human_case_label, normalize_case_summary

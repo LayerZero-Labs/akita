@@ -28,15 +28,35 @@ normal release link look like a verifier regression.
 
 The default direct **fp128** one-hot preset is adaptive: generated tables choose
 the first two fold levels and use D64 for the uniform suffix. Direct dense uses
-the same adaptive policy. Recursive and multi-chunk companion presets
-remain D64. Shipped direct tables are `fp128_onehot` and `fp128_dense`.
+the same adaptive policy. At dense `nv=26`, the root roles are A/B/D =
+256/64/64, and every recursive fold and the terminal use D64. The preset's
+`Cfg::D = 256` records how the flat dense input was first viewed. The stored
+coefficients do not depend on that ring dimension. Each kernel uses the ring
+dimension in the generated schedule. Recursive and multi-chunk companion
+presets remain D64. Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
-**fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
-one-hot** (CI benches at `nv=28`).
+**fp32/fp64** D32/D64 are not securable. D128 is the smallest secure choice
+for the shipped dense and one-hot families. CI runs the one-hot cases at
+`nv=28` and the dense cases at `nv=26`.
 
 The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
 `akita_config::proof_optimized::fp128::Dense`.
+
+The adaptive planner compares setup field count first and estimated proof bytes
+second. For dense fp128 at `nv=26`, restricting the root A dimension gives:
+
+| Largest root A dimension | Selected A rank | Setup field elements | Estimated proof bytes |
+|--------------------------|----------------:|---------------------:|----------------------:|
+| D64 | 8 | 16,777,216 | 87,364 |
+| D128 | 4 | 11,272,192 | 87,364 |
+| D256 | 2 | 7,864,320 | 87,860 |
+
+D256 cuts the selected setup by about 30 percent relative to D128. The estimated
+proof grows by 496 bytes. The planner therefore chooses D256 for the root A
+matrix. It keeps the root B and D matrices at D64 because it selects each role
+dimension separately. The D64 suffix then handles the much smaller recursive
+witnesses.
 
 ## Environment knobs
 
@@ -74,9 +94,11 @@ Committed-fold A-role pricing (every cell folds securely):
 
 | Case | nv | np | Setup mode |
 |------|----|----|------------|
+| `dense_fp32_d128` | 26 | 1 | `direct` |
+| `dense_fp64_d128` | 26 | 1 | `direct` |
+| `dense_fp128` | 26 | 1 | `direct` |
 | `onehot_fp32_d128` | 28 | 1 | `direct` |
 | `onehot_fp64_d128` | 28 | 1 | `direct` |
-| `dense_fp128` | 24 | 1 | `direct` |
 | `onehot_fp128` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
 | `onehot_fp128_multi_group_recursive` | 32 | 4 | `recursive` |
@@ -85,17 +107,38 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp128_multi_chunk_w4r2` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_chunk_w8r2` | 32 | 1 | `direct` |
 
-fp32/fp64 use `nv=28` because the ext-degree-4 challenge schedule exceeds the 1
-GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget at higher `num_vars`.
-The long multi-group recursive rows run in separate parallel CI groups so each
-task keeps one benchmark case. The distributed rows also run in their own group
-and are compared against merge-base like the other rows.
+The fp32 and fp64 one-hot cases use `nv=28` because the extension degree 4
+challenge schedule exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget
+at higher `num_vars`.
+The three dense rows run together in the dedicated `Bench (1-dense-suite)`
+check. The long multi-group recursive rows run in separate parallel CI groups.
+Each such task keeps one benchmark case. The distributed rows also run in their
+own group and are compared against the merge base like the other rows.
+
+Run the same dense suite locally from the repository root with:
+
+```bash
+cargo build --release --example profile --no-default-features \
+  --features parallel,profile-ci
+python3 scripts/profile_bench_report.py run \
+  --binary ./target/release/examples/profile \
+  --output-dir /tmp/akita-dense-suite \
+  --runs 3 --warmups 1 \
+  --case dense_fp32_d128:26:1 \
+  --case dense_fp64_d128:26:1 \
+  --case dense_fp128:26:1
+python3 scripts/profile_bench_report.py render \
+  /tmp/akita-dense-suite/summary.json --compact
+```
+
+The runner starts a new process for each field. This keeps peak memory and NTT
+cache measurements separate.
 
 Report pipeline: `scripts/profile_bench_report.py`.
 Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.
 
 `Setup and preparation` includes exact NTT prewarming for the resolved profile
-execution on its uniform CPU stack. This is an execution prewarm, not part of
+execution on its shared CPU stack. This is an execution prewarm, not part of
 public setup identity or `ComputeBackendSetup::prepare_setup`: it joins the root
 commitment requirements with `NttExecutionRequirements::from_prove_schedule`
 and materializes the resulting per-dimension, per-domain prefixes before the

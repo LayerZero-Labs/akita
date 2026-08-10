@@ -111,8 +111,8 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp128_multi_chunk_w4r2": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W4R2"
     ),
-    # Small fields fold securely only at D128/D256 under honest pricing; fp32
-    # ships no dense family.
+    # Small fields fold securely only at D128/D256 under honest pricing.
+    "dense_fp32_d128": CaseMetadata("fp32", "dense", "dense", "D128"),
     "onehot_fp32_d128": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D128"),
     "onehot_fp32_d256": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "D256"),
     "dense_fp64_d128": CaseMetadata("fp64", "dense", "dense", "D128"),
@@ -1737,6 +1737,26 @@ def human_case_label(summary: dict[str, object]) -> str:
     return " - ".join(segments)
 
 
+def fold_dimension_schedule(summary: dict[str, object]) -> str:
+    """Render consecutive distinct A/B/D tuples from the resolved fold plan."""
+    levels = summary.get("planned_levels")
+    if not isinstance(levels, list):
+        return "—"
+    tuples: list[tuple[int, int, int]] = []
+    for level in levels:
+        if not isinstance(level, dict):
+            continue
+        try:
+            dims = (int(level["d_a"]), int(level["d_b"]), int(level["d_d"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not tuples or tuples[-1] != dims:
+            tuples.append(dims)
+    if not tuples:
+        return "—"
+    return " → ".join(f"{d_a}/{d_b}/{d_d}" for d_a, d_b, d_d in tuples)
+
+
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     main_baseline: dict[str, dict[str, object]] | None,
@@ -1744,6 +1764,7 @@ def render_matrix_summary(
     headers = [
         "Status",
         "Workload",
+        "Fold A/B/D schedule",
         "Setup contribution",
         "Setup and preparation",
         "Setup vector size",
@@ -1763,6 +1784,7 @@ def render_matrix_summary(
         row = [
             case_status(current),
             md_text(human_case_label(current)),
+            fold_dimension_schedule(current),
             code_text(current.get("setup_contribution_mode", "direct")),
             optional_value_with_main_delta(
                 current, baseline, "setup_s", fmt_seconds, " s", main_baseline is not None
@@ -2111,8 +2133,7 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
         # Intentionally no per-level `level_bytes` vs `total_bytes` comparison.
         # The header-stripped planner estimate is only a conservative upper bound
         # in *aggregate*: it can over- or under-attribute bytes to any individual
-        # level (e.g. dense_fp128_d64 nv24 has levels where the runtime proof
-        # exceeds the per-level estimate while the total stays under it). The
+        # level while the total stays under the estimate. The
         # total-overcount invariant is asserted in the profile binary itself
         # (`ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES` in
         # `crates/akita-pcs/examples/profile/workload.rs`). Proof-size deltas vs
