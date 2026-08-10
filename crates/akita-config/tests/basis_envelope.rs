@@ -12,6 +12,9 @@ const BASIS_ENVELOPE_NUM_VARS: &[usize] = &[10, 16, 28, 30, 64, 120];
 #[test]
 fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     type Cfg = fp128::OneHot;
+    let inner_basis_max = Cfg::inner_basis_range().1;
+    let opening_basis_max = Cfg::opening_basis_range().1;
+    let mut covered = 0usize;
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
         let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
@@ -20,6 +23,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             Ok(schedule) => schedule,
             Err(_) => continue,
         };
+        covered += 1;
         let root = &schedule.root.params.final_group.commitment;
         assert_eq!(
             root.log_basis_inner,
@@ -66,18 +70,19 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             schedule.terminal.params.witness.log_basis_inner, source_basis,
             "terminal fold redecomposes its balanced-digit input at nv={nv}"
         );
-        let within_window = root.log_basis_inner <= 6
-            && root.log_basis_outer <= 6
-            && root.log_basis_open <= 6
+        let within_window = root.log_basis_inner <= inner_basis_max
+            && root.log_basis_outer <= opening_basis_max
+            && root.log_basis_open <= opening_basis_max
             && schedule.recursive_folds.iter().all(|fold| {
-                fold.params.witness.log_basis_inner <= 6
-                    && fold.params.witness.log_basis_outer <= 6
-                    && fold.params.witness.log_basis_open <= 6
+                fold.params.witness.log_basis_inner <= opening_basis_max
+                    && fold.params.witness.log_basis_outer <= opening_basis_max
+                    && fold.params.witness.log_basis_open <= opening_basis_max
             })
-            && schedule.terminal.params.witness.log_basis_inner <= 6;
+            && schedule.terminal.params.witness.log_basis_inner <= opening_basis_max;
         assert!(
             within_window,
-            "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {schedule:?}"
+            "adaptive onehot schedule exceeded its configured basis range at nv={nv}: {schedule:?}"
         );
     }
+    assert!(covered > 0, "basis-envelope test resolved no catalog rows");
 }

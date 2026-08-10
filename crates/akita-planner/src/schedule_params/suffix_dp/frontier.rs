@@ -35,7 +35,7 @@ pub(super) fn consider_child_suffixes<'a>(
             continue;
         };
         if incoming_setup_prefix.is_some_and(|natural_len| {
-            candidate.suffix_folds.len() + 1 < 2
+            candidate.suffix_folds.is_empty()
                 || candidate.metrics().first_direct_setup_capacity
                     >= crate::schedule_params::SetupPrefixCapacity::for_natural_len(natural_len)
         }) {
@@ -54,6 +54,20 @@ fn parent_visible_cost(first: Option<&akita_types::CommittedGroupParams>) -> Fir
 
 fn first_parent_visible_cost(candidate: &ScheduleCandidate) -> FirstFoldKey {
     parent_visible_cost(candidate.first_fold_params())
+}
+
+fn setup_score(
+    metrics: super::super::CandidateMetrics,
+) -> (crate::schedule_params::SetupPrefixCapacity, usize, usize) {
+    (
+        metrics.first_direct_setup_capacity,
+        metrics.proof_bytes,
+        metrics.setup_field_elements,
+    )
+}
+
+fn payload_score(metrics: super::super::CandidateMetrics) -> (usize, usize) {
+    (metrics.proof_bytes, metrics.setup_field_elements)
 }
 
 #[derive(Clone, Default)]
@@ -82,23 +96,14 @@ impl ProjectedFrontier {
                 .and_then(|choices| choices.setup.as_ref())
                 .is_none_or(|best| {
                     let best = best.metrics();
-                    (
-                        metrics.first_direct_setup_capacity,
-                        metrics.proof_bytes,
-                        metrics.setup_field_elements,
-                    ) <= (
-                        best.first_direct_setup_capacity,
-                        best.proof_bytes,
-                        best.setup_field_elements,
-                    )
+                    setup_score(metrics) <= setup_score(best)
                 });
         let payload = projection.includes_payload()
             && choices
                 .and_then(|choices| choices.payload.as_ref())
                 .is_none_or(|best| {
                     let best = best.metrics();
-                    (metrics.proof_bytes, metrics.setup_field_elements)
-                        <= (best.proof_bytes, best.setup_field_elements)
+                    payload_score(metrics) <= payload_score(best)
                 });
         setup || payload
     }
@@ -113,18 +118,10 @@ impl ProjectedFrontier {
         let metrics = candidate.metrics();
         let choices = self.by_parent_cost.entry(parent_cost).or_default();
         if policy.recursive_setup_planning && projection.includes_first_direct_setup() {
-            let score = (
-                metrics.first_direct_setup_capacity,
-                metrics.proof_bytes,
-                metrics.setup_field_elements,
-            );
+            let score = setup_score(metrics);
             let improves = if let Some(best) = choices.setup.as_ref() {
                 let best_metrics = best.metrics();
-                let best_score = (
-                    best_metrics.first_direct_setup_capacity,
-                    best_metrics.proof_bytes,
-                    best_metrics.setup_field_elements,
-                );
+                let best_score = setup_score(best_metrics);
                 score < best_score
                     || (score == best_score
                         && super::super::candidate_schedule_descriptor_bytes(&candidate)?
@@ -137,10 +134,10 @@ impl ProjectedFrontier {
             }
         }
         if projection.includes_payload() {
-            let score = (metrics.proof_bytes, metrics.setup_field_elements);
+            let score = payload_score(metrics);
             let improves = if let Some(best) = choices.payload.as_ref() {
                 let best_metrics = best.metrics();
-                let best_score = (best_metrics.proof_bytes, best_metrics.setup_field_elements);
+                let best_score = payload_score(best_metrics);
                 score < best_score
                     || (score == best_score
                         && super::super::candidate_schedule_descriptor_bytes(&candidate)?

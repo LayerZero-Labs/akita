@@ -17,6 +17,8 @@ pub(super) fn certified_boundary_from_hint<F>(
 where
     F: FnMut(u64) -> Result<bool>,
 {
+    // The predicate must be true on one prefix and false thereafter. This
+    // search is not valid for non-monotone projected security rows.
     if cap == 0 {
         return Err(EstimatorError::InvalidConfig {
             field: "search_cap",
@@ -121,6 +123,7 @@ pub(super) fn max_true_in_prefix<F>(
 where
     F: FnMut(u64) -> Result<bool>,
 {
+    // The predicate must be true on one prefix and false thereafter.
     if start == 0 || cap < start {
         return Err(EstimatorError::InvalidConfig {
             field: "search range",

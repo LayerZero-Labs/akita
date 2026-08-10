@@ -4,7 +4,8 @@ use super::{
     checked_align_up, dyadic_block_ranges, witness_unit_lengths, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
 use crate::{
-    CommittedGroupParams, CompressionChainPlan, OpeningClaimsLayout, COMPRESSION_MAP_COUNT,
+    relation_rhs_layout_for, CommittedGroupParams, CompressionChainPlan, OpeningClaimsLayout,
+    RelationRowFamily, COMPRESSION_MAP_COUNT,
 };
 
 impl WitnessLayout {
@@ -75,18 +76,20 @@ impl WitnessLayout {
                 .ok_or_else(|| AkitaError::InvalidSetup("witness unit range overflow".into()))?;
         }
 
-        let a_rows = params
-            .a_rows_len()
-            .checked_add(1)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation A row count overflow".into()))?;
-        for (rows, ring_dim) in [
-            (a_rows, role_dims.d_a()),
-            (params.b_rows_len(), role_dims.d_b()),
-            (lp.open_commit_matrix.output_rank(), role_dims.d_d()),
-        ] {
-            let len = rows
-                .checked_mul(quotient_depth)
-                .and_then(|n| n.checked_mul(ring_dim))
+        let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+        let row_families = relation_layout.row_families()?;
+        let first_compression_row = row_families
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+                )
+            })
+            .unwrap_or(row_families.len());
+        for row in &row_families[..first_compression_row] {
+            let len = quotient_depth
+                .checked_mul(row.ring_dim())
                 .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
             cursor = cursor
                 .checked_add(len)

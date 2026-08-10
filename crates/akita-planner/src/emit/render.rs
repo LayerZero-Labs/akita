@@ -2,8 +2,9 @@
 
 use super::*;
 
-fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
-    let mut out = String::new();
+fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
+    let mut declarations = String::new();
+    let mut accessors = String::new();
     let mut seen = std::collections::BTreeSet::new();
     for spec in specs {
         if !seen.insert(spec.module_name) {
@@ -12,13 +13,16 @@ fn emit_module_declarations(specs: &[EmitSpec]) -> Result<String, String> {
         let module_name = spec.module_name;
         let precommitted_module_name = precommitted_profiles_module_name(spec);
         let feat = spec.schedule_feature;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(out, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(out, "pub mod {precommitted_module_name};").map_err(|e| e.to_string())?;
+        writeln!(declarations, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
+        writeln!(declarations, "pub mod {module_name};").map_err(|e| e.to_string())?;
+        writeln!(declarations, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
+        writeln!(declarations, "pub mod {precommitted_module_name};").map_err(|e| e.to_string())?;
+        accessors.push_str(&emit_table_accessor(spec)?);
+        accessors.push('\n');
     }
-    writeln!(out).map_err(|e| e.to_string())?;
-    Ok(out)
+    declarations.push('\n');
+    declarations.push_str(&accessors);
+    Ok(declarations)
 }
 
 fn table_fn_name(module_name: &str) -> String {
@@ -36,19 +40,6 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
         "#[cfg(feature = \"{feat}\")]\n\
          pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        precommitted_profiles: {precommitted_module_name}::{precommitted_profiles_const},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
-}
-
-fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
-    let mut out = emit_module_declarations(specs)?;
-    let mut seen = std::collections::BTreeSet::new();
-    for spec in specs {
-        if !seen.insert(spec.module_name) {
-            continue;
-        }
-        out.push_str(&emit_table_accessor(spec)?);
-        out.push('\n');
-    }
-    Ok(out)
 }
 
 fn replace_between_markers(

@@ -61,6 +61,14 @@ pub(crate) unsafe fn sparse_mul_acc_neon(
 }
 
 /// Signed-i16 variant used by large inner decomposition bases.
+///
+/// # Safety
+///
+/// - `digit_plane` must point to at least `d` valid `i16` values.
+/// - `acc` must point to at least `d` valid `i32` values.
+/// - Every challenge position must be less than `d`.
+/// - `positions` and `coeffs` must have equal lengths.
+/// - `d` must be a multiple of 8.
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn sparse_mul_acc_i16_neon(
     digit_plane: *const i16,

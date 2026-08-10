@@ -4,17 +4,15 @@ use std::collections::VecDeque;
 
 #[test]
 fn suffix_cache_gives_referenced_entry_a_second_chance() {
-    let key = |level| {
-        (
-            level,
-            1024,
-            3,
-            0,
-            64,
-            64,
-            64,
-            akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        )
+    let key = |level| super::ScheduleMemoKey {
+        level,
+        current_witness_len: 1024,
+        current_lb: 3,
+        incoming_setup_prefix: None,
+        d_a: 64,
+        d_b: 64,
+        d_d: 64,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
     };
     let hot = key(1);
     let cold = key(2);

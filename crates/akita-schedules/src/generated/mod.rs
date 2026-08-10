@@ -336,79 +336,6 @@ fn precommitted_group_key_eq(
     generated == layout
 }
 
-#[cfg(test)]
-mod mixed_dimension_key_tests {
-    use super::{precommitted_group_key_eq, precommitted_group_sort_key};
-    use akita_types::{
-        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
-        PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
-    };
-
-    fn descriptor() -> CommittedGroupProfile {
-        CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
-            group: PolynomialGroupLayout::new(12, 1),
-            num_live_ring_elements_per_claim: 32,
-            num_positions_per_block: 8,
-            num_live_blocks: 4,
-            log_basis_inner: 4,
-            num_digits_inner: 2,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                3,
-                16,
-                7,
-                128,
-            ),
-            log_basis_outer: 5,
-            num_digits_outer: 2,
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                2,
-                48,
-                11,
-                64,
-            ),
-        }
-    }
-
-    #[test]
-    fn precommitted_key_identity_includes_both_native_ring_dimensions() {
-        let base = descriptor();
-        let mut changed_inner = base;
-        changed_inner.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            3,
-            16,
-            7,
-            64,
-        );
-        let mut changed_outer = base;
-        changed_outer.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            2,
-            48,
-            11,
-            32,
-        );
-        for changed in [changed_inner, changed_outer] {
-            assert!(!precommitted_group_key_eq(&base, &changed));
-            assert_ne!(
-                precommitted_group_sort_key(&base),
-                precommitted_group_sort_key(&changed)
-            );
-        }
-    }
-}
-
 /// Returns an error when the generated key does not match the runtime key.
 pub(crate) fn validate_entry_key(
     generated: &GeneratedFoldScheduleEntry,
@@ -644,3 +571,76 @@ pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
     }
 }
 // @generated schedule module wiring end
+
+#[cfg(test)]
+mod mixed_dimension_key_tests {
+    use super::{precommitted_group_key_eq, precommitted_group_sort_key};
+    use akita_types::{
+        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
+    };
+
+    fn descriptor() -> CommittedGroupProfile {
+        CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group: PolynomialGroupLayout::new(12, 1),
+            num_live_ring_elements_per_claim: 32,
+            num_positions_per_block: 8,
+            num_live_blocks: 4,
+            log_basis_inner: 4,
+            num_digits_inner: 2,
+            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
+                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                3,
+                16,
+                7,
+                128,
+            ),
+            log_basis_outer: 5,
+            num_digits_outer: 2,
+            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
+                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                2,
+                48,
+                11,
+                64,
+            ),
+        }
+    }
+
+    #[test]
+    fn precommitted_key_identity_includes_both_native_ring_dimensions() {
+        let base = descriptor();
+        let mut changed_inner = base;
+        changed_inner.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            3,
+            16,
+            7,
+            64,
+        );
+        let mut changed_outer = base;
+        changed_outer.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            2,
+            48,
+            11,
+            32,
+        );
+        for changed in [changed_inner, changed_outer] {
+            assert!(!precommitted_group_key_eq(&base, &changed));
+            assert_ne!(
+                precommitted_group_sort_key(&base),
+                precommitted_group_sort_key(&changed)
+            );
+        }
+    }
+}

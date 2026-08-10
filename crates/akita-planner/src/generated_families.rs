@@ -34,7 +34,7 @@ pub const DEFAULT_STANDALONE_PRECOMMIT_NUM_VARS: &[usize] = &[14, 15, 16];
 /// Polynomial counts emitted for standalone frozen precommit descriptors.
 pub const DEFAULT_STANDALONE_PRECOMMIT_NUM_POLYNOMIALS: &[usize] = &[1, 2];
 
-const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
+const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::new(16, 2),
@@ -47,8 +47,6 @@ const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(44),
     PolynomialGroupLayout::singleton(50),
 ];
-
-const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = FP128_D64_DENSE_KEYS;
 
 const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(12),
@@ -201,33 +199,6 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
 }
 
-/// Offline regeneration for the catalog-backed default fp128 onehot profile.
-fn regen_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    type Cfg = fp128::OneHot;
-    let policy = policy_of::<Cfg>();
-    Ok(find_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        honest_fold_policy_of::<Cfg>(),
-        &[],
-        &policy,
-        Cfg::ring_challenge_config,
-    )?
-    .schedule)
-}
-
-/// Offline regeneration for the catalog-backed default fp128 dense profile.
-fn regen_fp128_dense(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    type Cfg = fp128::Dense;
-    Ok(find_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        honest_fold_policy_of::<Cfg>(),
-        &[],
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-    )?
-    .schedule)
-}
-
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
 fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     key: AkitaScheduleLookupKey,
@@ -254,7 +225,7 @@ fn push_unique_profile(profiles: &mut Vec<CommittedGroupProfile>, profile: Commi
     }
 }
 
-fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
+fn baseline_precommitted_profiles<Cfg: CommitmentConfig>(
 ) -> Result<Vec<CommittedGroupProfile>, AkitaError> {
     let mut profiles = Vec::new();
     for &num_vars in DEFAULT_STANDALONE_PRECOMMIT_NUM_VARS {
@@ -271,112 +242,103 @@ fn precommitted_profiles<Cfg: CommitmentConfig + 'static>(
         }
     }
 
-    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>()
-        || std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunk>()
-    {
-        push_unique_profile(
-            &mut profiles,
-            plan_standalone_precommit(
-                PolynomialGroupLayout::new(16, 1),
-                &policy_of::<Cfg>(),
-                honest_fold_policy_of::<Cfg>(),
-                Cfg::ring_challenge_config,
-            )?
-            .selected
-            .profile,
-        );
-    }
-    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>() {
-        push_unique_profile(
-            &mut profiles,
-            plan_standalone_precommit(
-                PolynomialGroupLayout::new(15, 2),
-                &policy_of::<Cfg>(),
-                honest_fold_policy_of::<Cfg>(),
-                Cfg::ring_challenge_config,
-            )?
-            .selected
-            .profile,
-        );
-    }
-    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>() {
-        push_unique_profile(
-            &mut profiles,
-            plan_standalone_precommit(
-                PolynomialGroupLayout::new(20, 1),
-                &policy_of::<Cfg>(),
-                honest_fold_policy_of::<Cfg>(),
-                Cfg::ring_challenge_config,
-            )?
-            .selected
-            .profile,
-        );
-    }
-    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::Dense>() {
-        push_unique_profile(
-            &mut profiles,
-            plan_standalone_precommit(
-                PolynomialGroupLayout::new(15, 2),
-                &policy_of::<Cfg>(),
-                honest_fold_policy_of::<Cfg>(),
-                Cfg::ring_challenge_config,
-            )?
-            .selected
-            .profile,
-        );
-    }
-
     profiles.sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
     Ok(profiles)
 }
 
-fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    let mut keys = if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHot>() {
-        let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>()?;
-        keys.push(heterogeneous_onehot_catalog_key()?);
-        keys.extend(onehot_group_batch_test_keys::<fp128::OneHot>()?);
-        keys
-    } else if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunk>() {
-        recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>()?
-    } else if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::OneHotMultiChunkW2R2>()
-    {
-        let group = PolynomialGroupLayout::new(14, 1);
-        let precommitted = plan_standalone_precommit(
-            group,
-            &policy_of::<fp128::OneHotMultiChunkW2R2>(),
-            honest_fold_policy_of::<fp128::OneHotMultiChunkW2R2>(),
-            fp128::OneHotMultiChunkW2R2::ring_challenge_config,
-        )?
-        .selected
-        .profile;
-        vec![(
-            AkitaScheduleLookupKey {
-                final_group: group,
-                precommitteds: vec![precommitted],
-            },
-            vec![honest_fold_policy_of::<fp128::OneHotMultiChunkW2R2>()],
-        )]
-    } else {
-        Vec::new()
-    };
-    keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
-    Ok(keys)
+fn require_precommitted_profile<Cfg: CommitmentConfig>(
+    profiles: &mut Vec<CommittedGroupProfile>,
+    group: PolynomialGroupLayout,
+) -> Result<(), AkitaError> {
+    let profile = plan_standalone_precommit(
+        group,
+        &policy_of::<Cfg>(),
+        honest_fold_policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )?
+    .selected
+    .profile;
+    push_unique_profile(profiles, profile);
+    Ok(())
 }
 
-fn recursive_profile_group_batch_keys<Cfg: CommitmentConfig + 'static>(
+fn fp128_onehot_precommitted_profiles() -> Result<Vec<CommittedGroupProfile>, AkitaError> {
+    let mut profiles = baseline_precommitted_profiles::<fp128::OneHot>()?;
+    for group in [
+        PolynomialGroupLayout::new(16, 1),
+        PolynomialGroupLayout::new(15, 2),
+        PolynomialGroupLayout::new(20, 1),
+    ] {
+        require_precommitted_profile::<fp128::OneHot>(&mut profiles, group)?;
+    }
+    profiles.sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
+    Ok(profiles)
+}
+
+fn fp128_onehot_multichunk_precommitted_profiles() -> Result<Vec<CommittedGroupProfile>, AkitaError>
+{
+    let mut profiles = baseline_precommitted_profiles::<fp128::OneHotMultiChunk>()?;
+    require_precommitted_profile::<fp128::OneHotMultiChunk>(
+        &mut profiles,
+        PolynomialGroupLayout::new(16, 1),
+    )?;
+    profiles.sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
+    Ok(profiles)
+}
+
+fn fp128_dense_precommitted_profiles() -> Result<Vec<CommittedGroupProfile>, AkitaError> {
+    let mut profiles = baseline_precommitted_profiles::<fp128::Dense>()?;
+    require_precommitted_profile::<fp128::Dense>(&mut profiles, PolynomialGroupLayout::new(15, 2))?;
+    profiles.sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
+    Ok(profiles)
+}
+
+fn sorted_group_batch_keys(
+    mut keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
+) -> Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)> {
+    keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
+    keys
+}
+
+fn no_group_batch_keys(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    if std::any::TypeId::of::<Cfg>()
-        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::OneHot>>()
-    {
-        return recursive_onehot_profile_keys::<fp128::OneHot>();
-    }
-    if std::any::TypeId::of::<Cfg>()
-        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>()
-    {
-        return recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>();
-    }
     Ok(Vec::new())
+}
+
+fn fp128_onehot_group_batch_keys(
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>()?;
+    keys.push(heterogeneous_onehot_catalog_key()?);
+    keys.extend(onehot_group_batch_test_keys::<fp128::OneHot>()?);
+    Ok(sorted_group_batch_keys(keys))
+}
+
+fn fp128_onehot_multichunk_group_batch_keys(
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    Ok(sorted_group_batch_keys(recursive_onehot_profile_keys::<
+        fp128::OneHotMultiChunk,
+    >()?))
+}
+
+fn fp128_onehot_multichunk_w2r2_group_batch_keys(
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    type Cfg = fp128::OneHotMultiChunkW2R2;
+    let group = PolynomialGroupLayout::new(14, 1);
+    let precommitted = plan_standalone_precommit(
+        group,
+        &policy_of::<Cfg>(),
+        honest_fold_policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )?
+    .selected
+    .profile;
+    Ok(vec![(
+        AkitaScheduleLookupKey {
+            final_group: group,
+            precommitteds: vec![precommitted],
+        },
+        vec![honest_fold_policy_of::<Cfg>()],
+    )])
 }
 
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
@@ -484,76 +446,8 @@ fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
     ])
 }
 
-/// Selected multi-group recursive keys for setup-prefix capacity work.
-///
-/// Returns the bounded supported set: generated-catalog multi-group rows under
-/// capacity, plus the explicit recursive profiling key(s). This is intentionally
-/// not a dense `1..=max_nv` grid. Setup envelope inflation and exact prefix-slot
-/// materialization both walk this set; other recursive shapes remain planner-
-/// constructible but are admitted only when their slots already fit the
-/// materialized artifact (`ensure_prover_schedule_fits_setup` / missing-slot reject).
-///
-/// Does not run the planner; callers resolve each selected key.
-pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    if !Cfg::recursive_setup_planning()
-        || Cfg::decomposition().log_commit_bound != 1
-        || max_num_batched_polys == 0
-    {
-        return Ok(Vec::new());
-    }
-
-    let mut keys = Vec::new();
-    if let Some(catalog) = Cfg::schedule_catalog() {
-        for entry in catalog.entries {
-            if entry.root.precommitted_groups.is_empty() {
-                continue;
-            }
-            let candidate = AkitaScheduleLookupKey {
-                final_group: entry.root.final_group.layout,
-                precommitteds: entry
-                    .root
-                    .precommitted_groups
-                    .iter()
-                    .map(|group| group.descriptor)
-                    .collect(),
-            };
-            if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
-                push_unique_schedule_key(&mut keys, candidate);
-            }
-        }
-    }
-
-    // Explicit profiling keys stay selected even when the recursive catalog
-    // feature is off or the table has not been regenerated yet. The plain
-    // recursive adapter and its multi-chunk (distributed-prover) companion share
-    // the same profiling key shape; they differ only in the chunked witness
-    // layout the policy prices.
-    for (candidate, _) in recursive_profile_group_batch_keys::<Cfg>()? {
-        if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
-            push_unique_schedule_key(&mut keys, candidate);
-        }
-    }
-
-    keys.sort_by(runtime_schedule_key_cmp);
-    Ok(keys)
-}
-
-fn push_unique_schedule_key(
-    keys: &mut Vec<AkitaScheduleLookupKey>,
-    candidate: AkitaScheduleLookupKey,
-) {
-    // Full-key equality: same group shapes with different frozen precommit
-    // metadata (semantic bases / n_a / n_b) stay distinct.
-    if !keys.contains(&candidate) {
-        keys.push(candidate);
-    }
-}
-
 macro_rules! family_row {
-    (group_batch, $module:literal, $const:literal, $feat:literal, $keys:expr, $cfg:ty) => {
+    ($module:literal, $const:literal, $feat:literal, $keys:expr, $cfg:ty, $group_keys:expr, $precommitted_profiles:expr) => {
         GeneratedFamily {
             module_name: $module,
             const_name: $const,
@@ -561,17 +455,17 @@ macro_rules! family_row {
             scalar_keys: $keys,
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
-            group_batch_keys: group_batch_keys::<$cfg>,
+            group_batch_keys: $group_keys,
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
-            precommitted_profiles: precommitted_profiles::<$cfg>,
+            precommitted_profiles: $precommitted_profiles,
             explicit_precommitted_group: explicit_precommitted_group::<$cfg>,
         }
     };
     // Recursion adapter families: like `group_batch`, but grouped keys come from
     // the fixed recursive profiling shape rather than the generic per-`Cfg` grid.
-    (recursive, $module:literal, $const:literal, $feat:literal, $keys:expr, $cfg:ty, $base_cfg:ty) => {
+    (recursive, $module:literal, $const:literal, $feat:literal, $keys:expr, $cfg:ty, $base_cfg:ty, $group_keys:expr, $precommitted_profiles:expr) => {
         GeneratedFamily {
             module_name: $module,
             const_name: $const,
@@ -579,7 +473,7 @@ macro_rules! family_row {
             scalar_keys: $keys,
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
-            group_batch_keys: recursive_profile_group_batch_keys::<$cfg>,
+            group_batch_keys: $group_keys,
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -587,24 +481,8 @@ macro_rules! family_row {
             // configuration. Adaptive base configs are catalog-only at
             // runtime, so asking the recursive adapter to rediscover them
             // during offline generation would leave this registry empty.
-            precommitted_profiles: precommitted_profiles::<$base_cfg>,
+            precommitted_profiles: $precommitted_profiles,
             explicit_precommitted_group: explicit_precommitted_group::<$base_cfg>,
-        }
-    };
-    ($module:literal, $const:literal, $feat:literal, $keys:expr, $cfg:ty) => {
-        GeneratedFamily {
-            module_name: $module,
-            const_name: $const,
-            schedule_feature: $feat,
-            scalar_keys: $keys,
-            regen: regen::<$cfg>,
-            regen_group_batch: regen_group_batch::<$cfg>,
-            group_batch_keys: group_batch_keys::<$cfg>,
-            table_backed: table_backed::<$cfg>,
-            policy: family_policy::<$cfg>,
-            ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
-            precommitted_profiles: precommitted_profiles::<$cfg>,
-            explicit_precommitted_group: explicit_precommitted_group::<$cfg>,
         }
     };
 }
@@ -677,20 +555,15 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
 /// here; both the table emitter and the drift-guard test pick it up
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
-    GeneratedFamily {
-        module_name: "fp128_onehot",
-        const_name: "FP128_ONEHOT_SCHEDULES",
-        schedule_feature: "fp128-onehot",
-        scalar_keys: FP128_ONEHOT_KEYS,
-        regen: regen_fp128_onehot,
-        regen_group_batch: regen_group_batch::<fp128::OneHot>,
-        group_batch_keys: group_batch_keys::<fp128::OneHot>,
-        table_backed: table_backed::<fp128::OneHot>,
-        policy: family_policy::<fp128::OneHot>,
-        ring_challenge_config: <fp128::OneHot as CommitmentConfig>::ring_challenge_config,
-        precommitted_profiles: precommitted_profiles::<fp128::OneHot>,
-        explicit_precommitted_group: explicit_precommitted_group::<fp128::OneHot>,
-    },
+    family_row!(
+        "fp128_onehot",
+        "FP128_ONEHOT_SCHEDULES",
+        "fp128-onehot",
+        FP128_ONEHOT_KEYS,
+        fp128::OneHot,
+        fp128_onehot_group_batch_keys,
+        fp128_onehot_precommitted_profiles
+    ),
     family_row!(
         recursive,
         "fp128_onehot_recursive",
@@ -698,7 +571,9 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-onehot-recursive",
         &[],
         RecursiveCommitmentConfig<fp128::OneHot>,
-        fp128::OneHot
+        fp128::OneHot,
+        recursive_onehot_profile_keys::<fp128::OneHot>,
+        fp128_onehot_precommitted_profiles
     ),
     family_row!(
         recursive,
@@ -707,93 +582,107 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-onehot-recursive-multi-chunk-w8r2",
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
-        fp128::OneHotMultiChunk
+        fp128::OneHotMultiChunk,
+        recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>,
+        fp128_onehot_multichunk_precommitted_profiles
     ),
-    GeneratedFamily {
-        module_name: "fp128_dense",
-        const_name: "FP128_DENSE_SCHEDULES",
-        schedule_feature: "fp128-dense",
-        scalar_keys: FP128_DENSE_KEYS,
-        regen: regen_fp128_dense,
-        regen_group_batch: regen_group_batch::<fp128::Dense>,
-        group_batch_keys: group_batch_keys::<fp128::Dense>,
-        table_backed: table_backed::<fp128::Dense>,
-        policy: family_policy::<fp128::Dense>,
-        ring_challenge_config: <fp128::Dense as CommitmentConfig>::ring_challenge_config,
-        precommitted_profiles: precommitted_profiles::<fp128::Dense>,
-        explicit_precommitted_group: explicit_precommitted_group::<fp128::Dense>,
-    },
     family_row!(
-        group_batch,
+        "fp128_dense",
+        "FP128_DENSE_SCHEDULES",
+        "fp128-dense",
+        FP128_DENSE_KEYS,
+        fp128::Dense,
+        no_group_batch_keys,
+        fp128_dense_precommitted_profiles
+    ),
+    family_row!(
         "fp128_onehot_multi_chunk",
         "FP128_ONEHOT_MULTI_CHUNK_SCHEDULES",
         "fp128-onehot-multi-chunk",
         FP128_ONEHOT_MULTI_CHUNK_KEYS,
-        fp128::OneHotMultiChunk
+        fp128::OneHotMultiChunk,
+        fp128_onehot_multichunk_group_batch_keys,
+        fp128_onehot_multichunk_precommitted_profiles
     ),
     family_row!(
-        group_batch,
         "fp128_onehot_multi_chunk_w2r2",
         "FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
         "fp128-onehot-multi-chunk-w2r2",
         FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS,
-        fp128::OneHotMultiChunkW2R2
+        fp128::OneHotMultiChunkW2R2,
+        fp128_onehot_multichunk_w2r2_group_batch_keys,
+        baseline_precommitted_profiles::<fp128::OneHotMultiChunkW2R2>
     ),
     family_row!(
-        group_batch,
         "fp128_onehot_multi_chunk_w4r2",
         "FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
         "fp128-onehot-multi-chunk-w4r2",
         FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS,
-        fp128::OneHotMultiChunkW4R2
+        fp128::OneHotMultiChunkW4R2,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp128::OneHotMultiChunkW4R2>
     ),
     family_row!(
         "fp128_dense_multi_chunk",
         "FP128_DENSE_MULTI_CHUNK_SCHEDULES",
         "fp128-dense-multi-chunk",
         FP128_DENSE_MULTI_CHUNK_KEYS,
-        fp128::DenseMultiChunk
+        fp128::DenseMultiChunk,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp128::DenseMultiChunk>
     ),
     family_row!(
         "fp64_d128_dense",
         "FP64_D128_DENSE_SCHEDULES",
         "fp64-d128-dense",
         FP64_D128_DENSE_KEYS,
-        fp64::D128Dense
+        fp64::D128Dense,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp64::D128Dense>
     ),
     family_row!(
         "fp64_d128_onehot",
         "FP64_D128_ONEHOT_SCHEDULES",
         "fp64-d128-onehot",
         FP64_D128_ONEHOT_KEYS,
-        fp64::D128OneHot
+        fp64::D128OneHot,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp64::D128OneHot>
     ),
     family_row!(
         "fp64_d256_onehot",
         "FP64_D256_ONEHOT_SCHEDULES",
         "fp64-d256-onehot",
         FP64_D256_ONEHOT_KEYS,
-        fp64::D256OneHot
+        fp64::D256OneHot,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp64::D256OneHot>
     ),
     family_row!(
         "fp32_d128_dense",
         "FP32_D128_DENSE_SCHEDULES",
         "fp32-d128-dense",
         FP32_D128_DENSE_KEYS,
-        fp32::D128Dense
+        fp32::D128Dense,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp32::D128Dense>
     ),
     family_row!(
         "fp32_d128_onehot",
         "FP32_D128_ONEHOT_SCHEDULES",
         "fp32-d128-onehot",
         FP32_D128_ONEHOT_KEYS,
-        fp32::D128OneHot
+        fp32::D128OneHot,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp32::D128OneHot>
     ),
     family_row!(
         "fp32_d256_onehot",
         "FP32_D256_ONEHOT_SCHEDULES",
         "fp32-d256-onehot",
         FP32_D256_ONEHOT_KEYS,
-        fp32::D256OneHot
+        fp32::D256OneHot,
+        no_group_batch_keys,
+        baseline_precommitted_profiles::<fp32::D256OneHot>
     ),
 ];

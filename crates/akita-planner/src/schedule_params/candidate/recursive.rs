@@ -449,6 +449,89 @@ fn recursive_level_base_candidate_for_split(
     Ok(Some(candidate_params))
 }
 
+#[derive(Clone, Copy)]
+struct RecursiveSplitBounds {
+    score: Option<usize>,
+    witness_body: Option<usize>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_recursive_splits(
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: RingDimensionCandidate<'_>,
+    search: &RecursiveLevelSearch,
+    source: crate::InnerBasisSource,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    fold_level: usize,
+    mut admit_split: impl FnMut(usize, RecursiveSplitBounds) -> bool,
+    mut visit: impl FnMut(LayoutCandidateScore, usize, CommittedGroupParams, usize),
+) -> Result<(), AkitaError> {
+    let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
+    let delta_open = num_digits_open(DecompositionParams {
+        log_basis: log_basis_open,
+        ..policy.decomposition
+    });
+    let splits = recursive_split_search_domain(
+        policy.recursive_split_search_policy,
+        search.num_ring_elems,
+        search.reduced_vars,
+        delta_commit,
+        delta_open,
+        search.num_chunks,
+    );
+    for r in splits {
+        let lower_bound_input = RecursiveSplitLowerBoundInput {
+            num_ring_elems: search.num_ring_elems,
+            ring_dimension: dimensions.inner(),
+            reduced_vars: search.reduced_vars,
+            r,
+            delta_commit,
+            delta_open,
+            num_chunks: search.num_chunks,
+        };
+        if !admit_split(
+            r,
+            RecursiveSplitBounds {
+                score: recursive_split_lower_bound(lower_bound_input),
+                witness_body: recursive_witness_body_lower_bound(lower_bound_input),
+            },
+        ) {
+            continue;
+        }
+        let Some(base_candidate) = recursive_level_base_candidate_for_split(
+            policy,
+            payload_mode,
+            ring_challenge_cfg,
+            dimensions,
+            search,
+            source,
+            log_basis_inner,
+            log_basis_open,
+            fold_level,
+            r,
+        )?
+        else {
+            continue;
+        };
+        for setup_prefix in &search.setup_prefixes {
+            let Some((score, params, next_witness_len)) = finalize_recursive_level_candidate(
+                policy,
+                search,
+                setup_prefix.as_ref(),
+                base_candidate.clone(),
+            )?
+            else {
+                continue;
+            };
+            visit(score, r, params, next_witness_len);
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params(
     setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
@@ -479,71 +562,32 @@ pub(crate) fn derive_candidate_level_params(
 
     // Larger `r` wins exact score ties inside the policy-selected domain.
     let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
-    let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
-    let delta_open = num_digits_open(DecompositionParams {
-        log_basis: log_basis_open,
-        ..policy.decomposition
-    });
-    let candidates = recursive_split_search_domain(
-        policy.recursive_split_search_policy,
-        search.num_ring_elems,
-        search.reduced_vars,
-        delta_commit,
-        delta_open,
-        search.num_chunks,
-    );
-
-    // Apply an admissible witness lower bound inside the selected domain.
-    for r in candidates {
-        if let Some((best_score, _, _, _)) = &best {
-            if let Some(lower_bound) = recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
-                num_ring_elems: search.num_ring_elems,
-                ring_dimension: dimensions.inner(),
-                reduced_vars: search.reduced_vars,
-                r,
-                delta_commit,
-                delta_open,
-                num_chunks: search.num_chunks,
-            }) {
-                if lower_bound > best_score.0 {
-                    continue;
-                }
-            }
-        }
-        let Some(base_candidate) = recursive_level_base_candidate_for_split(
-            policy,
-            payload_mode,
-            ring_challenge_cfg,
-            dimensions,
-            &search,
-            source,
-            log_basis_inner,
-            log_basis_open,
-            fold_level,
-            r,
-        )?
-        else {
-            continue;
-        };
-        for setup_prefix in &search.setup_prefixes {
-            let Some((score, candidate_params, next_witness_len)) =
-                finalize_recursive_level_candidate(
-                    policy,
-                    &search,
-                    setup_prefix.as_ref(),
-                    base_candidate.clone(),
-                )?
-            else {
-                continue;
-            };
+    let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
+    walk_recursive_splits(
+        policy,
+        payload_mode,
+        ring_challenge_cfg,
+        dimensions,
+        &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        |_, bounds| {
+            best_score
+                .get()
+                .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
+        },
+        |score, r, candidate_params, next_witness_len| {
             if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
                 recursive_candidate_order_key(score, r)
                     < recursive_candidate_order_key(*best_score, *best_r)
             }) {
+                best_score.set(Some(score));
                 best = Some((score, r, candidate_params, next_witness_len));
             }
-        }
-    }
+        },
+    )?;
 
     let Some((_, _, candidate_params, next_witness_len)) = best else {
         return Ok(None);
@@ -589,63 +633,27 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     else {
         return Ok(Vec::new());
     };
-    let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
-    let delta_open = num_digits_open(DecompositionParams {
-        log_basis: log_basis_open,
-        ..policy.decomposition
-    });
     let mut candidates = Vec::new();
-    let split_candidates = recursive_split_search_domain(
-        policy.recursive_split_search_policy,
-        search.num_ring_elems,
-        search.reduced_vars,
-        delta_commit,
-        delta_open,
-        search.num_chunks,
-    );
-    for block_index_bits in split_candidates {
-        if recursive_witness_body_lower_bound(RecursiveSplitLowerBoundInput {
-            num_ring_elems: search.num_ring_elems,
-            ring_dimension: dimensions.inner(),
-            reduced_vars: search.reduced_vars,
-            r: block_index_bits,
-            delta_commit,
-            delta_open,
-            num_chunks: search.num_chunks,
-        })
-        .is_some_and(|lower_bound| lower_bound >= current_witness_len)
-        {
-            continue;
-        }
-        let Some(base_candidate) = recursive_level_base_candidate_for_split(
-            policy,
-            payload_mode,
-            ring_challenge_cfg,
-            dimensions,
-            &search,
-            source,
-            log_basis_inner,
-            log_basis_open,
-            fold_level,
-            block_index_bits,
-        )?
-        else {
-            continue;
-        };
-        for setup_prefix in &search.setup_prefixes {
-            let Some((_, params, next_witness_len)) = finalize_recursive_level_candidate(
-                policy,
-                &search,
-                setup_prefix.as_ref(),
-                base_candidate.clone(),
-            )?
-            else {
-                continue;
-            };
+    walk_recursive_splits(
+        policy,
+        payload_mode,
+        ring_challenge_cfg,
+        dimensions,
+        &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        |_, bounds| {
+            bounds
+                .witness_body
+                .is_none_or(|bound| bound < current_witness_len)
+        },
+        |_, _, params, next_witness_len| {
             if next_witness_len < current_witness_len {
                 candidates.push((params, next_witness_len));
             }
-        }
-    }
+        },
+    )?;
     Ok(candidates)
 }

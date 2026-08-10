@@ -41,8 +41,8 @@ fn generated_artifacts_match_both_runtime_digests() {
     hasher.update(base_digest);
     hasher.update(SisModulusProfileId::Q128OffsetA7F7.modulus().to_le_bytes());
     hasher.update(512u32.to_le_bytes());
-    hasher.update(6_400_000_000_000u64.to_le_bytes());
-    hasher.update(20u32.to_le_bytes());
+    hasher.update(super::super::SIS_REQUIRED_MAX_WIDTH.to_le_bytes());
+    hasher.update(super::super::SIS_MAX_MODULE_RANK.to_le_bytes());
     hasher.update(
         u64::try_from(COEFF_LINF_BUCKETS.len())
             .expect("bucket count fits u64")
@@ -59,7 +59,7 @@ fn generated_artifacts_match_both_runtime_digests() {
             bound,
         )
         .expect("generated q128 Inner/512 row");
-        assert_eq!(widths.len(), 20);
+        assert_eq!(widths.len(), super::super::SIS_MAX_MODULE_RANK as usize);
         for &width in widths {
             hasher.update(width.to_le_bytes());
         }

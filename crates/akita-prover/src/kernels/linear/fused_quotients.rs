@@ -821,6 +821,9 @@ fn centered_quotient_rows_with_i16_tail_params<
                 }
                 let j = start + offset;
                 let (z_neg, z_cyc) = if let Some(ref lut) = base_lut {
+                    // SAFETY: `actual_bound` bounds every centered coefficient in
+                    // `z_folded_rings`; the LUT is built for that bound, and `j`
+                    // ranges only over the validated `0..width` source rows.
                     unsafe {
                         CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
                             z_ring, params, lut,

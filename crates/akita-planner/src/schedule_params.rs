@@ -31,6 +31,7 @@ use crate::{InnerBasisSource, PlannerPolicy};
 
 mod candidate;
 mod objective;
+mod pareto;
 mod setup_score;
 mod suffix_dp;
 #[cfg(test)]
@@ -412,10 +413,6 @@ pub fn plan_standalone_precommit(
         };
     direct_policy.selection_policy =
         crate::SelectionPolicyId::for_policy(false, direct_policy.ring_dimension_schedule_mode);
-    direct_policy.opening_basis_range = (
-        direct_policy.opening_basis_range.0,
-        direct_policy.opening_basis_range.0,
-    );
     akita_schedules::planner_support::validate_policy(&direct_policy)?;
     let witness_len = 1usize
         .checked_shl(key.num_vars() as u32)
@@ -432,6 +429,13 @@ pub fn plan_standalone_precommit(
     );
     let ring_challenge_cfg = ring_challenge_config(precommit_dimension)?;
     let mut frontier: Vec<(StandalonePrecommitCandidate, Vec<u8>)> = Vec::new();
+    let objective_coords = |candidate: &StandalonePrecommitCandidate| {
+        [
+            candidate.next_witness_len,
+            candidate.padded_ab_setup_field_elements,
+            candidate.ab_setup_field_elements,
+        ]
+    };
 
     for candidate_open_basis in min_open_basis..=max_open_basis {
         for candidate_inner_basis in min_inner_basis..=max_inner_basis {
@@ -457,37 +461,19 @@ pub fn plan_standalone_precommit(
                     ab_setup_field_elements: setup,
                     padded_ab_setup_field_elements: padded_setup_prefix_len(setup),
                 };
-                let coords = (
-                    candidate.next_witness_len,
-                    candidate.padded_ab_setup_field_elements,
-                    candidate.ab_setup_field_elements,
-                );
                 let descriptor = candidate.profile.canonical_descriptor_bytes();
-                if frontier.iter().any(|(best, best_descriptor)| {
-                    let best_coords = (
-                        best.next_witness_len,
-                        best.padded_ab_setup_field_elements,
-                        best.ab_setup_field_elements,
-                    );
-                    best_coords.0 <= coords.0
-                        && best_coords.1 <= coords.1
-                        && best_coords.2 <= coords.2
-                        && (best_coords != coords || best_descriptor <= &descriptor)
-                }) {
-                    continue;
-                }
-                frontier.retain(|(other, other_descriptor)| {
-                    let other_coords = (
-                        other.next_witness_len,
-                        other.padded_ab_setup_field_elements,
-                        other.ab_setup_field_elements,
-                    );
-                    !(coords.0 <= other_coords.0
-                        && coords.1 <= other_coords.1
-                        && coords.2 <= other_coords.2
-                        && (coords != other_coords || descriptor < *other_descriptor))
-                });
-                frontier.push((candidate, descriptor));
+                pareto::insert(
+                    &mut frontier,
+                    (candidate, descriptor),
+                    |(left, left_descriptor), (right, right_descriptor)| {
+                        pareto::canonical_dominates(
+                            &objective_coords(left),
+                            left_descriptor,
+                            &objective_coords(right),
+                            right_descriptor,
+                        )
+                    },
+                );
             }
         }
     }

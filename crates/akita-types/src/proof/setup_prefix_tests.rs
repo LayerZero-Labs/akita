@@ -20,7 +20,10 @@ fn sample_level_params() -> CommittedGroupParams {
 }
 
 fn prefix_eligible_level_params() -> CommittedGroupParams {
-    let field_element_digits = crate::sis::compute_num_digits_field_width(128, 3);
+    let field_element_digits = crate::sis::compute_num_digits_field_width(
+        SisModulusProfileId::Q32Offset99.field_bits(),
+        3,
+    );
     CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         64,
