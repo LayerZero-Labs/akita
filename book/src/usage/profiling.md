@@ -95,8 +95,9 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp32` | 30 | 1 | `direct` |
 | `dense_fp64` | 26 | 1 | `direct` |
 | `onehot_fp64` | 30 | 1 | `direct` |
-| `dense_fp128` | 26 | 1 | `direct` |
-| `onehot_fp128` | 32 | 1 | `direct` |
+| `dense_fp128` | 28 | 1 | `direct` |
+| `onehot_fp128` | 36 | 1 | `direct` |
+| `onehot_fp128` | 36 | 1 | `recursive` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
 | `onehot_fp128_multi_group_recursive` | 32 | 4 | `recursive` |
 | `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 32 | 4 | `recursive` |
@@ -105,9 +106,11 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp128_multi_chunk_w8r2` | 32 | 1 | `direct` |
 
 The base profiles are separated by field into `profile-ci-fp32`,
-`profile-ci-fp64`, and `profile-ci-fp128-base`. Each job compiles only its
-dense and one-hot schedule catalogs. The fp32 and fp64 one-hot jobs use generated
-`nv=30` schedules while keeping the 1 GiB equality-table allocation guard active.
+`profile-ci-fp64`, and `profile-ci-fp128-base`. Each job compiles only the
+schedule catalogs required by its rows. The fp128 base shard includes the
+direct and recursive one-hot catalogs so its two `nv=36` rows use the same
+binary. The fp32 and fp64 one-hot jobs use generated `nv=30` schedules while
+keeping the 1 GiB equality-table allocation guard active.
 The long multi-group recursive rows run in separate parallel CI groups so each
 task keeps one benchmark case. The distributed rows also run in their own group
 and are compared against the merge base like the other rows.
@@ -121,9 +124,11 @@ Every row measures a complete PCS opening proof.
 
 | Profile family | Public opening statement |
 |----------------|--------------------------|
-| Dense `nv26` | One committed 26 variable multilinear polynomial with `2^26` coefficients, opened at one 26 coordinate point. |
+| Dense `nv26` | One committed 26 variable multilinear polynomial with `2^26` coefficients, opened at one 26 coordinate point for fp32 and fp64. |
+| Dense Fp128 `nv28` | One committed 28 variable multilinear polynomial with `2^28` coefficients, opened at one 28 coordinate point. |
 | One hot `nv30` | One committed 30 variable multilinear polynomial with `2^30` coefficients, opened at one 30 coordinate point. |
-| One hot `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point. |
+| One hot `nv36` | One committed 36 variable multilinear polynomial with `2^36` coefficients, opened at one 36 coordinate point. The direct and recursive rows prove this same statement. |
+| One hot distributed `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point with W2R2, W4R2, or W8R2 witness partitioning. |
 | Multi group | Four polynomials in three groups. Two precommitted groups each contain one 16 variable polynomial and use independent 16 coordinate points. The final group contains two 32 variable polynomials that share one 32 coordinate point. |
 
 The one-hot generator places one `1` in every consecutive 256 coefficient

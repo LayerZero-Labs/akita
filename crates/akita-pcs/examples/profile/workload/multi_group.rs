@@ -72,8 +72,7 @@ where
     Ok(())
 }
 
-/// Required setup-contribution mode for config-typed multi-group profiles.
-/// Scalar profiles are direct by construction.
+/// Setup-contribution mode selected by the benchmark case.
 pub(crate) fn profile_setup_contribution_mode() -> SetupContributionMode {
     match std::env::var("AKITA_SETUP_MODE").ok().as_deref() {
         Some("recursive") => SetupContributionMode::Recursive,

@@ -9,7 +9,7 @@ use crate::workload::{
     run_onehot, run_recursive_multi_group_onehot,
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::TranscriptChallenge;
 use akita_field::{
@@ -377,12 +377,32 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
-    type Cfg = fp128::OneHot;
+    match profile_setup_contribution_mode() {
+        SetupContributionMode::Direct => {
+            type Cfg = fp128::OneHot;
+            run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128", nv, num_polys);
+        }
+        SetupContributionMode::Recursive => {
+            type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
+            assert_eq!(nv, 36, "recursive onehot_fp128 profiles nv=36");
+            run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128", nv, num_polys);
+        }
+    }
+}
+
+fn run_profile_onehot_fp128_with_cfg<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+>(
+    label: &str,
+    nv: usize,
+    num_polys: usize,
+) {
     assert!(
         matches!(nv, 32 | 36),
         "fp128 one-hot profile supports generated nv=32 and nv=36 rows"
     );
-    assert_singleton_mode("onehot_fp128", num_polys);
+    assert_singleton_mode(label, num_polys);
 
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
@@ -403,13 +423,13 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
 
     let layout = resolve_layout::<F, Cfg>(nv);
     tracing::info!(
-        "=== onehot_fp128 (fp128, flat public setup, generated per-level dimensions, 1-of-256) ==="
+        "=== {label} (fp128, flat public setup, generated per-level dimensions, 1-of-256) ==="
     );
     print_layout(&layout, 1, Cfg::decomposition().field_bits());
     // The catalog row selected here is the same exact row used by the PCS
     // prover and verifier. The benchmark intentionally does not compare it
     // against a different uniform-D family.
-    run_onehot::<F, { Cfg::D }, Cfg>("onehot_fp128", nv, &layout, Some(&schedule), false);
+    run_onehot::<F, D, Cfg>(label, nv, &layout, Some(&schedule), false);
 }
 
 /// Shared driver for the multi-group profiles. Every such profile fixes the

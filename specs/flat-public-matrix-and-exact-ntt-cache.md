@@ -1125,10 +1125,11 @@ This follow-up is not complete until all merge-blocking criteria below are satis
   without changing transcript identity.
 - [x] `parallel`, no-default-feature, and `disk-persistence` feature graphs use
   identical public stream coefficients.
-- [x] The fp128 one-hot nv32 mixed-dimension CI bench runs through production
+- [x] The fp128 one-hot nv36 mixed-dimension CI benches run through production
   schedule resolution, prewarms the exact shared-owner commit-and-prove union
   in its preparation phase, rejects online cache growth, and reports exact
-  setup fields plus per-D/domain/cluster NTT bytes.
+  setup fields plus per-D/domain/cluster NTT bytes for direct and recursive
+  setup contribution.
 - [x] No setup code uses a config/preset D or `D512OneHot` as public-matrix
   identity or allocation unit.
 
@@ -1201,11 +1202,11 @@ silently bypass the compiler.
 
 #### End-to-end tests
 
-Run commit/prove/verify for the production fp128 nv32 one-hot mixed-dimension
-schedule, including setup offloading when selected. Run the same proof with
+Run commit/prove/verify for the production fp128 nv36 one-hot mixed-dimension
+schedule in both direct and recursive setup modes. Run the same proof with
 different covering materialization capacities. Exercise multi-group and
-multi-chunk layouts together because their interaction is the easiest place to
-accidentally sum overlapping prefixes or duplicate caches.
+multi-chunk layouts together because their interaction is the easiest place
+to accidentally sum overlapping prefixes or duplicate caches.
 
 Malformed verifier tests cover zero/overflowing dimensions, overflowing
 row-width products, insufficient field prefixes, wrong public matrix IDs,
@@ -1220,10 +1221,10 @@ The cutover has three required measurements:
    domain, and profile;
 3. setup derivation, prefix preprocessing, commit, prove, and verify time.
 
-The fp128 one-hot nv32 mixed-dimension CI bench is the primary regression
-fixture. Its report MUST show both the provisioned setup requirement and the
-concrete execution-cache requirement. A single aggregate `setup_ring_elements`
-number is insufficient.
+The direct and recursive fp128 one-hot nv36 mixed-dimension CI benches are the
+primary regression fixtures. Their reports MUST show both the provisioned
+setup requirement and the concrete execution-cache requirement. A single
+aggregate `setup_ring_elements` number is insufficient.
 
 Expected direction:
 

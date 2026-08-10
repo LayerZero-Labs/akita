@@ -298,18 +298,18 @@ fn adaptive_catalog_identity_rejects_terminal_dimension_growth() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn recursive_companion_catalogs_contain_only_grouped_keys() {
+fn recursive_companion_catalogs_contain_only_offloaded_schedules() {
     for family in ALL_GENERATED_FAMILIES {
         if !(family.policy)().recursive_setup_planning {
             continue;
         }
         let catalog = prepare_family_catalog(family, &[]);
         assert!(
-            catalog
-                .entries
+            catalog.entries.iter().all(|entry| entry
+                .recursive_folds
                 .iter()
-                .all(|entry| !entry.root.precommitted_groups.is_empty()),
-            "recursive companion family {} contains an unreachable scalar row",
+                .any(|fold| fold.incoming_setup_prefix.is_some())),
+            "recursive companion family {} contains a schedule without setup offloading",
             family.module_name
         );
     }
