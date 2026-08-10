@@ -295,20 +295,23 @@ pub fn relation_rhs_layout_for(
     if !lp.has_precommitted_groups() {
         let role_dims = lp.role_dims();
         role_dims.validate_role_projection()?;
+        let logical_b_rows = lp
+            .outer_slice_count
+            .logical_output_rows(lp.outer_commit_matrix.output_rank())?;
         let group_indices = opening_batch.root_group_order()?;
         let groups = group_indices
             .iter()
             .map(|_| RelationGroupRows {
                 role_dims,
                 n_a: lp.inner_commit_matrix.output_rank(),
-                commit_rows: lp.outer_commit_matrix.output_rank(),
+                commit_rows: logical_b_rows,
                 b_inner_rows: 0,
             })
             .collect::<Vec<_>>();
         let compression = if let Some(opening_plan) = opening_plan {
             let group_plan = compression_plan(
                 lp.outer_commit_matrix.sis_modulus_profile(),
-                lp.outer_commit_matrix.output_rank(),
+                logical_b_rows,
                 role_dims.d_b(),
             )?;
             Some(RelationCompressionLayout {
@@ -330,36 +333,43 @@ pub fn relation_rhs_layout_for(
     }
     let final_group_index = lp.validate_opening_batch(opening_batch)?;
     let final_role_dims = lp.group_role_dims(opening_batch, final_group_index)?;
+    let final_b_rows = lp
+        .outer_slice_count
+        .logical_output_rows(lp.outer_commit_matrix.output_rank())?;
     let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
     let mut group_indices = Vec::with_capacity(lp.precommitted_group_count() + 1);
     let mut group_plans = Vec::with_capacity(lp.precommitted_group_count() + 1);
     groups.push(RelationGroupRows {
         role_dims: final_role_dims,
         n_a: lp.inner_commit_matrix.output_rank(),
-        commit_rows: lp.outer_commit_matrix.output_rank(),
+        commit_rows: final_b_rows,
         b_inner_rows: 0,
     });
     group_indices.push(final_group_index);
     if opening_plan.is_some() {
         group_plans.push(compression_plan(
             lp.outer_commit_matrix.sis_modulus_profile(),
-            lp.outer_commit_matrix.output_rank(),
+            final_b_rows,
             final_role_dims.d_b(),
         )?);
     }
     for (group_index, group) in lp.precommitted_group_iter().enumerate() {
         let role_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let logical_b_rows = group
+            .layout
+            .outer_slice_count
+            .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?;
         groups.push(RelationGroupRows {
             role_dims,
             n_a: group.layout.inner_commit_matrix.output_rank(),
-            commit_rows: group.layout.outer_commit_matrix.output_rank(),
+            commit_rows: logical_b_rows,
             b_inner_rows: 0,
         });
         group_indices.push(group_index);
         if opening_plan.is_some() {
             group_plans.push(compression_plan(
                 group.layout.outer_commit_matrix.sis_modulus_profile(),
-                group.layout.outer_commit_matrix.output_rank(),
+                logical_b_rows,
                 role_dims.d_b(),
             )?);
         }

@@ -42,10 +42,7 @@ fn active_setup_field_len_matches_packed_role_maximum() {
     let lp = sample_level_params();
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
     let w_a = lp.num_positions_per_block * lp.num_digits_inner;
-    let w_b = opening_batch.num_total_polynomials()
-        * lp.inner_commit_matrix.output_rank()
-        * lp.num_live_blocks
-        * lp.num_digits_open;
+    let w_b = lp.outer_commit_matrix.input_width();
     let w_d = opening_batch.num_total_polynomials() * lp.num_live_blocks * lp.num_digits_open;
     let expected_ring_slots = lp
         .inner_commit_matrix
@@ -76,6 +73,62 @@ fn active_setup_field_len_matches_packed_role_maximum() {
 }
 
 #[test]
+fn active_setup_field_len_prices_one_physical_sliced_b_matrix() {
+    let mut lp = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q32Offset99,
+        64,
+        3,
+        3,
+        3,
+        2,
+        SparseChallengeConfig::pm1_only(3),
+    )
+    .with_decomp(4, 32, 2, 2, 2)
+    .expect("sliced level params");
+    let opening_batch = OpeningClaimsLayout::new(7, 3).expect("opening batch");
+    lp.outer_slice_count = crate::CommitmentSliceCount::FOUR;
+    let slice_geometry = crate::CommitmentSliceGeometry::try_new(
+        lp.outer_slice_count,
+        lp.num_live_blocks,
+        opening_batch.num_total_polynomials(),
+        lp.inner_commit_matrix.output_rank(),
+        lp.num_digits_outer,
+        lp.inner_commit_matrix.ring_dimension(),
+        lp.outer_commit_matrix.ring_dimension(),
+    )
+    .expect("slice geometry");
+    let outer = lp.outer_commit_matrix;
+    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        slice_geometry.physical_input_width(),
+        outer.coeff_linf_bound(),
+        outer.ring_dimension(),
+    );
+
+    let geometry =
+        active_setup_projection_geometry(&lp, &opening_batch).expect("projection geometry");
+    let base_d = geometry.base_ring_dim();
+    let expected_b_projection = lp.outer_commit_matrix.output_rank()
+        * slice_geometry.physical_input_width()
+        * (lp.outer_commit_matrix.ring_dimension() / base_d);
+    assert_eq!(geometry.b_projection_width(), expected_b_projection);
+
+    let logical_unsliced_projection = lp
+        .outer_slice_count
+        .logical_output_rows(lp.outer_commit_matrix.output_rank())
+        .expect("logical B rows")
+        * opening_batch.num_total_polynomials()
+        * lp.inner_commit_matrix.output_rank()
+        * lp.num_live_blocks
+        * lp.num_digits_outer
+        * (lp.outer_commit_matrix.ring_dimension() / base_d);
+    assert!(geometry.b_projection_width() < logical_unsliced_projection);
+}
+
+#[test]
 fn active_setup_field_len_includes_mixed_role_subcolumns() {
     let mut lp = sample_level_params();
     let inner = &lp.inner_commit_matrix;
@@ -91,12 +144,7 @@ fn active_setup_field_len_includes_mixed_role_subcolumns() {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
     let a_slots =
         lp.inner_commit_matrix.output_rank() * lp.num_positions_per_block * lp.num_digits_inner * 2;
-    let b_slots = lp.outer_commit_matrix.output_rank()
-        * opening_batch.num_total_polynomials()
-        * lp.inner_commit_matrix.output_rank()
-        * lp.num_live_blocks
-        * lp.num_digits_outer
-        * 2;
+    let b_slots = lp.outer_commit_matrix.output_rank() * lp.outer_commit_matrix.input_width() * 2;
     let d_slots = lp.open_commit_matrix.output_rank()
         * opening_batch.num_total_polynomials()
         * lp.num_live_blocks
@@ -192,11 +240,7 @@ fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
             .group_role_dims(&opening_batch, group_index)
             .expect("group role dimensions");
         let a_cols = group_params.num_positions_per_block() * group_params.num_digits_inner();
-        let b_cols = group_layout.num_polynomials()
-            * group_params.a_rows_len()
-            * group_params.num_live_blocks()
-            * group_params.num_digits_outer()
-            * (dims.d_a() / dims.d_b());
+        let b_cols = group_params.b_col_len();
         let d_cols = group_layout.num_polynomials()
             * group_params.num_live_blocks()
             * group_params.num_digits_open()

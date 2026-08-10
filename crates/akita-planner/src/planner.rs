@@ -3,9 +3,9 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_open, rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_open,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OuterCommitMatrixParams,
 };
 use akita_types::{
@@ -216,35 +216,62 @@ pub(crate) fn root_level_candidates_for_basis(
         )?;
     for block_index_bits in split_domain {
         let position_index_bits = reduced_vars - block_index_bits;
-        let Some(mut candidate_params) = root_final_group_level_params_candidate(
-            &candidate_ctx,
-            candidate_log_basis_inner,
-            candidate_log_basis_open,
-            position_index_bits,
-            block_index_bits,
-            &candidate_precommitted_groups,
-            candidate_precommitted_d_width,
-        )?
-        else {
-            continue;
-        };
-        candidate_params.witness_chunk = crate::policy::witness_chunk_at_level(policy, 0);
-        let Some(output_witness_len) =
-            root_batch_next_w_len(field_bits, &candidate_params, &opening_batch)?
-        else {
-            continue;
-        };
-        if require_witness_contraction
-            && output_witness_len
-                .checked_mul(candidate_log_basis_open as usize)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root batch next witness bit length overflow".into())
-                })?
-                >= initial_witness_len_bits
-        {
-            continue;
+        let num_live_blocks = 1usize << block_index_bits;
+        let mut slice_candidates = Vec::new();
+        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+            if outer_slice_count
+                .validate_for_commitment(
+                    0,
+                    akita_types::CommitmentPayloadMode::Compressed,
+                    num_live_blocks,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            let Some(mut candidate_params) = root_final_group_level_params_candidate(
+                &candidate_ctx,
+                candidate_log_basis_inner,
+                candidate_log_basis_open,
+                position_index_bits,
+                block_index_bits,
+                outer_slice_count,
+                &candidate_precommitted_groups,
+                candidate_precommitted_d_width,
+            )?
+            else {
+                continue;
+            };
+            candidate_params.witness_chunk = crate::policy::witness_chunk_at_level(policy, 0);
+            if !candidate_params.compression_sources_supported()? {
+                continue;
+            }
+            slice_candidates.push(candidate_params);
         }
-        candidates.push((candidate_params, output_witness_len));
+        for candidate_params in crate::schedule_params::prune_locally_unprofitable_slices(
+            policy,
+            &opening_batch,
+            slice_candidates,
+        )? {
+            let Some(output_witness_len) =
+                root_batch_next_w_len(field_bits, &candidate_params, &opening_batch)?
+            else {
+                continue;
+            };
+            if require_witness_contraction
+                && output_witness_len
+                    .checked_mul(candidate_log_basis_open as usize)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "root batch next witness bit length overflow".into(),
+                        )
+                    })?
+                    >= initial_witness_len_bits
+            {
+                continue;
+            }
+            candidates.push((candidate_params, output_witness_len));
+        }
     }
 
     Ok(candidates)
@@ -256,6 +283,7 @@ fn root_final_group_level_params_candidate(
     log_basis_open: u32,
     position_index_bits: usize,
     block_index_bits: usize,
+    outer_slice_count: akita_types::CommitmentSliceCount,
     precommitted_groups: &[PrecommittedLevelParams],
     precommitted_d_width: usize,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
@@ -332,21 +360,33 @@ fn root_final_group_level_params_candidate(
     };
     let n_a = inner_commit_matrix.output_rank();
 
-    let Some(width_t) =
-        decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, ctx.main_num_polys)
-    else {
-        return Ok(None);
-    };
-    let Some((outer_key, width_t)) = projected_collision_role_price(
-        policy,
-        akita_types::SisMatrixRole::Outer,
+    let Ok(slice_geometry) = akita_types::CommitmentSliceGeometry::try_new(
+        outer_slice_count,
+        num_live_blocks,
+        ctx.main_num_polys,
+        n_a,
+        num_digits_outer,
         d_a,
         dimensions.d_b(),
-        width_t,
+    ) else {
+        return Ok(None);
+    };
+    let Some(norm_t) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        family,
+        akita_types::SisMatrixRole::Outer,
+        dimensions.d_b(),
         log_basis_open,
     ) else {
         return Ok(None);
     };
+    let outer_key = sis_key_at_dimension(
+        policy,
+        akita_types::SisMatrixRole::Outer,
+        dimensions.d_b(),
+        norm_t,
+    );
+    let width_t = slice_geometry.physical_input_width();
     let Ok(outer_commit_matrix) =
         OuterCommitMatrixParams::try_new_with_min_rank(outer_key, width_t)
     else {
@@ -390,6 +430,7 @@ fn root_final_group_level_params_candidate(
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
+        outer_slice_count,
         fold_challenge_config: *ctx.ring_challenge_cfg,
         num_digits_inner,
         num_digits_outer,

@@ -200,7 +200,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
                 let mut weights = vec![E::zero(); setup.len()];
                 for (group, projection) in self.groups.iter().zip(projections) {
-                    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
+                    let direct = group.direct_scan_weights.as_ref().ok_or_else(|| {
+                        AkitaError::InvalidSetup("direct setup scan weights are missing".into())
+                    })?;
+                    let (e_eq_slice, t_eq_slice, z_eq_slice) =
+                        (&direct.e[..], &direct.b_setup[..], &direct.z[..]);
                     let first = group.segments.partition_point(|segment| segment.hi <= lo);
                     for segment in group.segments.iter().skip(first) {
                         if segment.lo >= hi {

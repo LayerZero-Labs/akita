@@ -624,26 +624,23 @@ where
         let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();
         let n_a = group_lp.a_rows_len();
-        let n_b = group_lp.b_rows_len();
+        let physical_n_b = group_lp.b_rows_len();
+        let n_b = group_lp.logical_b_rows_len()?;
         let inner_width = group_lp.a_col_len();
         // Hoist per-group geometry into `Copy` locals so the parallel closures
         // below capture scalars instead of the `!Sync` `&dyn LevelParamsLike`.
         let num_live_blocks_g = group_lp.num_live_blocks();
         let num_positions_per_block_g = group_lp.num_positions_per_block();
-        let semantic_t_vector_width = n_a
-            .checked_mul(depth_commit)
-            .and_then(|len| len.checked_mul(num_live_blocks_g))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
-            })?;
-        let t_vector_width = semantic_t_vector_width
-            .checked_mul(b_ratio)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
-            })?;
-        let b_width = k_g
-            .checked_mul(t_vector_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
+        let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+            group_lp.outer_slice_count(),
+            num_live_blocks_g,
+            k_g,
+            n_a,
+            depth_commit,
+            group_d_a,
+            group_d_b,
+        )?;
+        let b_width = slice_geometry.physical_input_width();
         let (setup_a_family, b_family) = if let Some(setup) = setup_matrix {
             let a_view = setup
                 .shared_matrix
@@ -654,9 +651,11 @@ where
                     .collect::<Result<Vec<_>, _>>()?,
                 ring_d: group_d_a,
             };
-            let b_view = setup.shared_matrix.ring_view_dyn(n_b, b_width, group_d_b)?;
+            let b_view = setup
+                .shared_matrix
+                .ring_view_dyn(physical_n_b, b_width, group_d_b)?;
             let b_family = SetupRows {
-                rows: (0..n_b)
+                rows: (0..physical_n_b)
                     .map(|row| b_view.row_flat(row))
                     .collect::<Result<Vec<_>, _>>()?,
                 ring_d: group_d_b,
@@ -669,7 +668,7 @@ where
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         let consistency_weight =
             eq_tau1.eval_at(lp.consistency_row_index(opening_batch, group_index)?)?;
-        if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() {
+        if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() || b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }
         let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis_open)
@@ -716,19 +715,26 @@ where
         };
         let b_setup_accs = if let Some(b_family) = &b_family {
             let _span = tracing::info_span!("relation_weight_b_setup_columns").entered();
-            let row_weights = (0..n_b)
-                .map(|row| Ok((row, eq_tau1.eval_at(b_range.start + row)?)))
-                .filter_map(|result| match result {
-                    Ok((_, weight)) if weight.is_zero() => None,
-                    other => Some(other),
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            Some(evaluate_setup_columns(
-                b_family,
-                0..b_width,
-                &row_weights,
-                &group_alpha_pows_b,
-            )?)
+            Some(
+                (0..group_lp.outer_slice_count().get())
+                    .map(|slice_index| {
+                        let row_start = b_range.start + slice_index * physical_n_b;
+                        let row_weights = (0..physical_n_b)
+                            .map(|row| Ok((row, eq_tau1.eval_at(row_start + row)?)))
+                            .filter_map(|result| match result {
+                                Ok((_, weight)) if weight.is_zero() => None,
+                                other => Some(other),
+                            })
+                            .collect::<Result<Vec<_>, AkitaError>>()?;
+                        evaluate_setup_columns(
+                            b_family,
+                            0..b_width,
+                            &row_weights,
+                            &group_alpha_pows_b,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()?,
+            )
         } else {
             None
         };
@@ -744,6 +750,13 @@ where
                     })?;
                 let challenge_alpha =
                     challenges.eval_at_pows::<F, E>(challenge_index, &group_alpha_pows_a)?;
+                let (slice_index, slice_range) = slice_geometry
+                    .block_ranges()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, range)| range.contains(&global_block))
+                    .ok_or(AkitaError::InvalidProof)?;
+                let slice_block = global_block - slice_range.start;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
                     for role_subcol in 0..d_ratio {
                         let physical_start = unit.e_coefficient_index(
@@ -795,9 +808,10 @@ where
                 for a_idx in 0..n_a {
                     let a_row_weight = eq_tau1.eval_at(a_range.start + a_idx)?;
                     for (digit, &opening_gadget) in t_commit_gadget.iter().enumerate() {
-                        let block_claim = num_live_blocks_g
+                        let block_claim = slice_geometry
+                            .max_blocks_per_slice()
                             .checked_mul(claim)
-                            .and_then(|base| base.checked_add(global_block))
+                            .and_then(|base| base.checked_add(slice_block))
                             .ok_or(AkitaError::InvalidProof)?;
                         let row_block_claim = n_a
                             .checked_mul(block_claim)
@@ -824,8 +838,11 @@ where
                                 0,
                             )?;
                             let a_acc = a_row_weight * challenge_alpha * opening_gadget;
-                            let b_acc = if let Some(weights) = b_setup_accs.as_ref() {
-                                *weights.get(local_col).ok_or(AkitaError::InvalidProof)?
+                            let b_acc = if let Some(slice_weights) = b_setup_accs.as_ref() {
+                                *slice_weights
+                                    .get(slice_index)
+                                    .and_then(|weights| weights.get(local_col))
+                                    .ok_or(AkitaError::InvalidProof)?
                             } else {
                                 E::zero()
                             };

@@ -159,7 +159,9 @@ fn accumulate_compression_matrix_field_elements_for_level(
     include_compression_setup(
         max_field_elements,
         params.outer_commit_matrix.sis_modulus_profile(),
-        params.outer_commit_matrix.output_rank(),
+        params
+            .outer_slice_count
+            .logical_output_rows(params.outer_commit_matrix.output_rank())?,
         params.role_dims().d_b(),
         "outer compression setup",
     )?;
@@ -167,7 +169,10 @@ fn accumulate_compression_matrix_field_elements_for_level(
         include_compression_setup(
             max_field_elements,
             group.layout.outer_commit_matrix.sis_modulus_profile(),
-            group.layout.outer_commit_matrix.output_rank(),
+            group
+                .layout
+                .outer_slice_count
+                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?,
             group.layout.outer_commit_matrix.ring_dimension(),
             "precommitted outer compression setup",
         )?;
@@ -223,7 +228,10 @@ pub fn setup_prefix_slot_field_elements(slot: &SetupPrefixSlotId) -> Result<usiz
     include_compression_setup(
         &mut max_field_elements,
         params.layout.outer_commit_matrix.sis_modulus_profile(),
-        params.layout.outer_commit_matrix.output_rank(),
+        params
+            .layout
+            .outer_slice_count
+            .logical_output_rows(params.layout.outer_commit_matrix.output_rank())?,
         params.layout.outer_commit_matrix.ring_dimension(),
         "setup-prefix outer compression setup",
     )?;

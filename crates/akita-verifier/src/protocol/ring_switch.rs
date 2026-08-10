@@ -379,7 +379,7 @@ where
         validate_log_basis(log_basis_outer)?;
         validate_log_basis(log_basis_open)?;
         let n_a = group_lp.a_rows_len();
-        let n_b = group_lp.b_rows_len();
+        let n_b = group_lp.logical_b_rows_len()?;
         let inner_width = group_lp.a_col_len();
         let expected_inner_width = num_positions_per_block
             .checked_mul(depth_witness)

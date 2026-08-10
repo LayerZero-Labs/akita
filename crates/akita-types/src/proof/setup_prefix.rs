@@ -1249,20 +1249,14 @@ fn active_setup_projection_geometry(
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
         let group_role_dims = level_params.group_role_dims(opening_batch, group_index)?;
-        let (b_subcolumns, d_subcolumns) =
+        let (_, d_subcolumns) =
             crate::SetupProjectionGeometry::native_role_subcolumn_counts(group_role_dims)?;
         let a_cols = group_params
             .num_positions_per_block()
             .checked_mul(group_params.num_digits_inner())
             .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
 
-        let b_cols = group_layout
-            .num_polynomials()
-            .checked_mul(group_params.a_rows_len())
-            .and_then(|n| n.checked_mul(group_params.num_live_blocks()))
-            .and_then(|n| n.checked_mul(group_params.num_digits_outer()))
-            .and_then(|n| n.checked_mul(b_subcolumns))
-            .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
+        let b_cols = group_params.b_col_len();
 
         let d_active_cols = group_layout
             .num_polynomials()

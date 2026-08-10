@@ -460,7 +460,8 @@ where
         let num_digits_outer = group.params.num_digits_outer();
         let num_digits_open = group.params.num_digits_open();
         let n_a = group.params.a_rows_len();
-        let n_b = group.params.b_rows_len();
+        let physical_n_b = group.params.b_rows_len();
+        let n_b = group.params.logical_b_rows_len()?;
         let num_live_blocks_per_claim = group.params.num_live_blocks();
         let inner_width = group.params.a_col_len();
         validate_i8_setup_log_basis(log_basis_outer, "for multi-group relation quotient")?;
@@ -542,6 +543,15 @@ where
         {
             return Err(AkitaError::InvalidProof);
         }
+        let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+            group.params.outer_slice_count(),
+            num_live_blocks_per_claim,
+            group_layout.num_polynomials(),
+            n_a,
+            num_digits_outer,
+            group_dims.d_a(),
+            group_dims.d_b(),
+        )?;
 
         let (consistency_quotient, a_quotients) = akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -613,44 +623,63 @@ where
             F,
             group_dims.d_b(),
             |D_B| {
-                let (t_hat_rows, remainder) = group.t_hat.digits().as_chunks::<D_B>();
-                if !remainder.is_empty() {
-                    return Err(AkitaError::InvalidProof);
+                let blocks = group.t_hat.iter_blocks().collect::<Vec<_>>();
+                let mut b_cyclic = Vec::with_capacity(n_b);
+                for range in slice_geometry.block_ranges() {
+                    let mut slice_input = Vec::with_capacity(slice_geometry.physical_input_width());
+                    for claim in 0..group_layout.num_polynomials() {
+                        let claim_start = claim * num_live_blocks_per_claim;
+                        for block in range.clone() {
+                            let (planes, remainder) =
+                                blocks[claim_start + block].as_chunks::<D_B>();
+                            if !remainder.is_empty() {
+                                return Err(AkitaError::InvalidProof);
+                            }
+                            slice_input.extend_from_slice(planes);
+                        }
+                        slice_input.resize(
+                            slice_input.len()
+                                + (slice_geometry.max_blocks_per_slice() - range.len())
+                                    * expected_t_hat_block_digits,
+                            [0i8; D_B],
+                        );
+                    }
+                    let b_rows = RingSwitchRelationKernel::relation_rows(
+                        backend,
+                        prepared,
+                        RingSwitchRelationView {
+                            e_hat: &[],
+                            t_hat: &slice_input,
+                            z_segment: &[],
+                            z_folded_centered_inf_norm: 0,
+                        },
+                        RingSwitchRelationPlan {
+                            n_d: 0,
+                            n_b: physical_n_b,
+                            n_a: 0,
+                            log_basis_open,
+                            log_basis_outer,
+                        },
+                    )
+                    .map_err(|err| {
+                        AkitaError::InvalidInput(format!("B quotient rows failed: {err:?}"))
+                    })?;
+                    if b_rows.b_cyclic.len() != physical_n_b
+                        || !b_rows.d_cyclic.is_empty()
+                        || !b_rows.a_quotients.is_empty()
+                    {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    b_cyclic.extend(b_rows.b_cyclic);
                 }
-                let b_rows = RingSwitchRelationKernel::relation_rows(
-                    backend,
-                    prepared,
-                    RingSwitchRelationView {
-                        e_hat: &[],
-                        t_hat: t_hat_rows,
-                        z_segment: &[],
-                        z_folded_centered_inf_norm: 0,
-                    },
-                    RingSwitchRelationPlan {
-                        n_d: 0,
-                        n_b,
-                        n_a: 0,
-                        log_basis_open,
-                        log_basis_outer,
-                    },
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!("B quotient rows failed: {err:?}"))
-                })?;
-                if b_rows.b_cyclic.len() != n_b
-                    || !b_rows.d_cyclic.is_empty()
-                    || !b_rows.a_quotients.is_empty()
-                {
+                if b_cyclic.len() != n_b {
                     return Err(AkitaError::InvalidProof);
                 }
                 for (commit_idx, row_idx) in b_range.clone().enumerate() {
                     let reduced = ring_from_flat_y::<F, D_B>(&recomposed_b, commit_idx * D_B)?;
                     result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
                         quotient_from_cyclic_and_reduced(
-                            b_rows
-                                .b_cyclic
-                                .get(commit_idx)
-                                .ok_or(AkitaError::InvalidProof)?,
+                            b_cyclic.get(commit_idx).ok_or(AkitaError::InvalidProof)?,
                             &reduced,
                         ),
                     ));

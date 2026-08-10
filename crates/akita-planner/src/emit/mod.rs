@@ -138,8 +138,8 @@ fn committed_group(p: &CommittedGroupParams) -> GeneratedCommittedGroup {
         outer_commit_matrix: GeneratedOuterCommitMatrix {
             ring_dimension: p.outer_commit_matrix.ring_dimension() as u32,
             log_basis: p.log_basis_outer,
-            slice_count: 1,
         },
+        outer_slice_count: p.outer_slice_count.get() as u32,
     }
 }
 
@@ -147,7 +147,6 @@ fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedOp
     GeneratedOpenCommitMatrix {
         ring_dimension: p.ring_dimension() as u32,
         log_basis,
-        slice_count: 1,
     }
 }
 
@@ -178,8 +177,8 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
             outer_commit_matrix: GeneratedOuterCommitMatrix {
                 ring_dimension: group.layout.outer_commit_matrix.ring_dimension() as u32,
                 log_basis: group.layout.log_basis_outer,
-                slice_count: 1,
             },
+            outer_slice_count: group.layout.outer_slice_count.get() as u32,
         },
     }
 }
@@ -217,8 +216,8 @@ fn generated_entry(
                     ring_dimension: group.commitment.layout.outer_commit_matrix.ring_dimension()
                         as u32,
                     log_basis: group.commitment.layout.log_basis_outer,
-                    slice_count: 1,
                 },
+                outer_slice_count: group.commitment.layout.outer_slice_count.get() as u32,
             },
         })
         .collect::<Vec<_>>();
@@ -319,11 +318,18 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 
 fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
     format!(
-        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
+        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
         emit_key(layout.group),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
+        match layout.outer_slice_count {
+            akita_types::CommitmentSliceCount::ONE => "ONE",
+            akita_types::CommitmentSliceCount::TWO => "TWO",
+            akita_types::CommitmentSliceCount::FOUR => "FOUR",
+            akita_types::CommitmentSliceCount::EIGHT => "EIGHT",
+            _ => unreachable!("checked commitment slice count"),
+        },
         layout.log_basis_inner,
         layout.num_digits_inner,
         emit_profile_matrix(
@@ -367,7 +373,7 @@ fn emit_generated_precommitted_profile(profile: &CommittedGroupProfile) -> Strin
 
 fn emit_generated_committed_profile_group(profile: &CommittedGroupProfile) -> String {
     format!(
-        "GeneratedCommittedGroup {{ geometry: GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: 1 }} }}",
+        "GeneratedCommittedGroup {{ geometry: GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_slice_count: {} }}",
         profile.num_live_ring_elements_per_claim,
         profile.num_positions_per_block,
         profile.num_live_blocks,
@@ -375,6 +381,7 @@ fn emit_generated_committed_profile_group(profile: &CommittedGroupProfile) -> St
         profile.log_basis_inner,
         profile.outer_commit_matrix.ring_dimension(),
         profile.log_basis_outer,
+        profile.outer_slice_count.get(),
     )
 }
 
@@ -405,20 +412,20 @@ fn emit_geometry(value: GeneratedBlockGeometry) -> String {
 
 fn emit_committed_group(value: GeneratedCommittedGroup) -> String {
     format!(
-        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: {} }} }}",
+        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_slice_count: {} }}",
         emit_geometry(value.geometry),
         value.inner_commit_matrix.ring_dimension,
         value.inner_commit_matrix.log_basis,
         value.outer_commit_matrix.ring_dimension,
         value.outer_commit_matrix.log_basis,
-        value.outer_commit_matrix.slice_count,
+        value.outer_slice_count,
     )
 }
 
 fn emit_open_matrix(value: GeneratedOpenCommitMatrix) -> String {
     format!(
-        "GeneratedOpenCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: {} }}",
-        value.ring_dimension, value.log_basis, value.slice_count
+        "GeneratedOpenCommitMatrix {{ ring_dimension: {}, log_basis: {} }}",
+        value.ring_dimension, value.log_basis
     )
 }
 

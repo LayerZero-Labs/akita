@@ -217,7 +217,7 @@ count.
 
 #### Planner selection
 
-At eligible levels, the planner enumerates all valid counts from
+At eligible levels, the planner constructs every valid count from
 `{1, 2, 4, 8}`. It rejects each candidate independently when `S > B`, when its
 complete compressed B source exceeds 8 KiB, or when its physical B matrix has
 no secure rank.
@@ -227,8 +227,32 @@ Secure rank can change when physical width changes. It must evaluate each of
 the four bounded candidates directly.
 
 The 8 KiB limit is an admission rule. It does not select the largest feasible
-slice count. The existing complete schedule objective selects among admitted
-candidates:
+slice count.
+
+The planner applies one local profitability rule before it computes the next
+witness or searches the suffix:
+
+- `MinEstimatedProofPayload` keeps every admitted count for normal proof size
+  selection.
+- `MinSetupMatrixFieldElementsThenProofPayload` computes the exact local setup
+  envelope for every admitted count. It keeps the smallest `S` that reaches
+  the minimum.
+- `MinFirstDirectSetupThenPayload` computes the exact padded active setup
+  capacity for every admitted count. It keeps the smallest `S` that reaches
+  the minimum.
+
+The first rule preserves proof focused search. The other two rules stop adding
+logical B rows once further slicing does not improve their local setup goal.
+They evaluate all four bounded values before choosing. They do not stop at the
+first worse value.
+
+This is a normative local slicing policy. It does not claim that every removed
+count is dominated under the old whole schedule objective. Slice count changes
+the successor witness, so that stronger global claim would require carrying
+the counts through suffix search. The local rule deliberately avoids that
+search multiplication at the two eligible levels.
+
+The normal complete schedule objective selects among the retained candidates:
 
 - `MinEstimatedProofPayload` compares proof bytes before setup size.
 - `MinSetupMatrixFieldElementsThenProofPayload` compares setup size before
@@ -245,6 +269,11 @@ Candidate pricing must distinguish these quantities:
 - Compression digit and quotient sizes come from one chain over that complete
   source.
 - D pricing is unchanged and independent.
+
+The exact level setup envelope includes A, the one physical B matrix, D,
+precommitted groups, setup prefixes, and all compression maps. The 8 KiB source
+cap bounds a compression map to at most 65,536 field elements. This is at most
+1 MiB for the 128 bit field. The planner still computes this term exactly.
 
 The canonical candidate descriptor remains the final tie breaker. It includes
 the selected B slice count.
@@ -331,7 +360,10 @@ an unchecked count.
 - [ ] Setup prefix producers and consumers agree on the frozen count.
 - [ ] Planner metrics price physical setup and logical proof geometry
       separately.
-- [ ] Every complete selection policy chooses from all admitted slice counts.
+- [ ] Proof focused selection keeps all admitted slice counts until complete
+      schedule scoring.
+- [ ] Setup focused selection keeps the smallest slice count that reaches its
+      exact local setup minimum before witness sizing and suffix search.
 - [ ] Schedule descriptors and generated catalog identities change when `S`
       changes.
 - [ ] Malformed verifier inputs return typed errors without panic.
@@ -372,9 +404,12 @@ groups, mixed role dimensions, and irregular block counts.
 #### Planner tests
 
 For each selection policy, construct candidates where different slice counts
-win. Assert that proof first policy may keep `S = 1`, while setup first policy
-may select a larger count. Check the exact 8 KiB boundary, missing secure rank,
-`S > B`, level gating, and raw mode rejection.
+win. Assert that proof first policy may keep `S = 1`. Assert that setup first
+policy keeps the smallest count at the exact setup floor. Include a case where
+the physical B matrix shrinks again after the selected count to prove that the
+planner checks every admitted value rather than stopping at the first worse
+value. Check the exact 8 KiB boundary, missing secure rank, `S > B`, level
+gating, and raw mode rejection.
 
 Regenerate every schedule family. Run catalog drift tests and the compression
 schedule census. Check that every emitted count is valid and every complete B
@@ -553,8 +588,10 @@ matrix.
 ### Planner and generated catalogs
 
 Slice count joins the adaptive commitment candidate tuple selected on the PR
-#377 stack. Candidate enumeration order does not define policy. The complete
-objective and canonical descriptor order define the winner.
+#377 stack. Candidate enumeration order does not define policy. The local
+profitability rule first removes setup neutral counts for setup focused
+policies. The complete objective and canonical descriptor order then define
+the winner.
 
 Standalone profile generation searches the same eligible counts under its
 existing exact profile objective. The emitted `CommittedGroupProfile` freezes
@@ -601,8 +638,10 @@ once. Akita follows that construction.
 #### Force the largest feasible slice count
 
 Larger counts can reduce physical setup while increasing logical rows and
-compression work. No one count is best for every selection policy. The
-existing complete objective makes the choice.
+compression work. No one count is best for every selection policy. Setup
+focused policies stop at the smallest count that reaches their exact local
+setup minimum. Proof focused policy leaves the choice to the complete
+objective.
 
 #### Couple `S` to `W`
 

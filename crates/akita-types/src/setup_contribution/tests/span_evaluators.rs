@@ -29,7 +29,7 @@ fn projected_setup_weight_reference(
     for base_idx in 0..required {
         let mut weight = F::zero();
         for group in &plan.groups {
-            let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
+            let (e_eq_slice, _t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
             let d_idx = base_idx / d_ratio;
             if d_idx < plan.d_rows * plan.d_physical_cols {
                 let d_col = d_idx % plan.d_physical_cols;
@@ -41,10 +41,9 @@ fn projected_setup_weight_reference(
                 }
             }
             let b_idx = base_idx / b_ratio;
-            if b_idx < group.n_b * group.t_cols {
-                let b_col = b_idx % group.t_cols;
-                let b_row = b_idx / group.t_cols;
-                weight += b_scales[base_idx % b_ratio] * group.b_weights[b_row] * t_eq_slice[b_col];
+            if b_idx < group.physical_n_b * group.physical_t_cols {
+                weight += b_scales[base_idx % b_ratio]
+                    * group.direct_scan_weights.as_ref().unwrap().b_setup[b_idx];
             }
             let a_idx = base_idx / a_ratio;
             if a_idx < group.n_a * group.z_cols {
@@ -231,6 +230,68 @@ fn span_setup_index_mle_matches_dense_multi_chunk() {
     let alpha = test_scalar(3);
     let rho = rho_for_required(plan.required());
     assert_span_mle_matches_dense(&plan, &rho, alpha);
+}
+
+#[test]
+fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
+    let slice_count = crate::CommitmentSliceCount::try_new(4).unwrap();
+    let (_, _, _, plan, _, _, _) = structured_weight_fixture_with_slices(
+        8,
+        &[3, 5],
+        CommitmentRingDims::uniform(TEST_D),
+        TEST_D,
+        slice_count,
+    );
+    let group = &plan.groups[0];
+    let (_, logical_t, _) = group.column_eq_slices().unwrap();
+    let physical = &group.direct_scan_weights.as_ref().unwrap().b_setup;
+    let ranges = slice_count.block_ranges(group.num_live_blocks).unwrap();
+    let max_blocks = ranges.iter().map(std::ops::Range::len).max().unwrap();
+    let per_block = group.physical_t_cols / (group.num_claims * max_blocks);
+    let mut expected = vec![F::zero(); group.physical_n_b * group.physical_t_cols];
+    for row in 0..group.physical_n_b {
+        for (slice_index, range) in ranges.iter().enumerate() {
+            let row_weight = group.b_weights[slice_index * group.physical_n_b + row];
+            for claim in 0..group.num_claims {
+                for local_block in 0..range.len() {
+                    for offset in 0..per_block {
+                        let physical_col = (claim * max_blocks + local_block) * per_block + offset;
+                        let logical_col =
+                            (claim * group.num_live_blocks + range.start + local_block) * per_block
+                                + offset;
+                        expected[row * group.physical_t_cols + physical_col] +=
+                            row_weight * logical_t[logical_col];
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(physical, &expected);
+
+    let alpha = test_scalar(3);
+    let rho = rho_for_required(plan.required());
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
+    let setup_ring_elements = plan.required();
+    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: setup_ring_elements * TEST_D,
+            setup_seed: [0u8; 32].into(),
+        },
+        FlatMatrix::from_flat_data(
+            (0..setup_ring_elements * TEST_D)
+                .map(|idx| test_scalar(1201 + idx as u128))
+                .collect(),
+        ),
+    );
+    let alpha_pows = scalar_powers(alpha, TEST_D);
+    assert_eq!(
+        plan.evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
+            .unwrap(),
+        plan.evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D,)
+            .unwrap()
+    );
 }
 
 #[test]

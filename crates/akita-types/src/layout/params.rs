@@ -148,10 +148,13 @@ impl CommittedGroupParams {
 
     /// Checked wire geometry for this level's final-group B image.
     pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        let logical_rows = self
+            .outer_slice_count
+            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
         crate::CommitmentPayloadGeometry::for_mode(
             self.payload_mode,
             self.outer_commit_matrix.sis_modulus_profile(),
-            self.outer_commit_matrix.output_rank(),
+            logical_rows,
             self.role_dims().d_b(),
         )
     }
@@ -171,11 +174,10 @@ impl CommittedGroupParams {
         if !self.payload_mode.is_compressed() {
             return Ok(true);
         }
-        let final_outer = self
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(self.role_dims().d_b())
-            .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
+        let final_outer = self.outer_slice_count.complete_source_coefficients(
+            self.outer_commit_matrix.output_rank(),
+            self.role_dims().d_b(),
+        )?;
         if crate::CompressionChainPlan::try_for_complete_source(
             self.outer_commit_matrix.sis_modulus_profile(),
             final_outer,
@@ -187,12 +189,11 @@ impl CommittedGroupParams {
         for group in self.precommitted_group_iter() {
             let source = group
                 .layout
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(group.layout.outer_commit_matrix.ring_dimension())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("precommitted B compression shape overflow".into())
-                })?;
+                .outer_slice_count
+                .complete_source_coefficients(
+                    group.layout.outer_commit_matrix.output_rank(),
+                    group.layout.outer_commit_matrix.ring_dimension(),
+                )?;
             if crate::CompressionChainPlan::try_for_complete_source(
                 group.layout.outer_commit_matrix.sis_modulus_profile(),
                 source,
@@ -755,11 +756,17 @@ impl CommittedGroupParams {
     ) -> Result<usize, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index == final_group_index {
-            return Ok(self.outer_commit_matrix.output_rank());
+            return self
+                .outer_slice_count
+                .logical_output_rows(self.outer_commit_matrix.output_rank());
         }
-        self.precommitted_group_params(group_index)
-            .map(|group| group.layout.outer_commit_matrix.output_rank())
-            .ok_or(AkitaError::InvalidProof)
+        let group = self
+            .precommitted_group_params(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        group
+            .layout
+            .outer_slice_count
+            .logical_output_rows(group.layout.outer_commit_matrix.output_rank())
     }
 
     /// Group-local parameter view for folded opening work.
@@ -790,8 +797,11 @@ impl CommittedGroupParams {
         let mut rows = 1usize
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
+        let final_b_rows = self
+            .outer_slice_count
+            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
         rows = rows
-            .checked_add(self.outer_commit_matrix.output_rank())
+            .checked_add(final_b_rows)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for group in self.precommitted_group_iter() {
             rows = rows
@@ -800,8 +810,12 @@ impl CommittedGroupParams {
             rows = rows
                 .checked_add(group.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
+            let group_b_rows = group
+                .layout
+                .outer_slice_count
+                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?;
             rows = rows
-                .checked_add(group.layout.outer_commit_matrix.output_rank())
+                .checked_add(group_b_rows)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         let base = rows
@@ -835,7 +849,10 @@ impl CommittedGroupParams {
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         start = start
-            .checked_add(self.outer_commit_matrix.output_rank())
+            .checked_add(
+                self.outer_slice_count
+                    .logical_output_rows(self.outer_commit_matrix.output_rank())?,
+            )
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior_index in 0..group_index {
             let prior = self
@@ -848,7 +865,12 @@ impl CommittedGroupParams {
                 .checked_add(prior.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.layout.outer_commit_matrix.output_rank())
+                .checked_add(
+                    prior
+                        .layout
+                        .outer_slice_count
+                        .logical_output_rows(prior.layout.outer_commit_matrix.output_rank())?,
+                )
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         start
@@ -890,14 +912,16 @@ impl CommittedGroupParams {
         final_group_index: usize,
     ) -> Result<usize, AkitaError> {
         if group_index == final_group_index {
-            Ok(self.outer_commit_matrix.output_rank())
+            self.outer_slice_count
+                .logical_output_rows(self.outer_commit_matrix.output_rank())
         } else {
-            Ok(self
+            let group = self
                 .precommitted_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or(AkitaError::InvalidProof)?;
+            group
                 .layout
-                .outer_commit_matrix
-                .output_rank())
+                .outer_slice_count
+                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())
         }
     }
 
@@ -986,9 +1010,10 @@ impl CommittedGroupParams {
             .a_start()
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        let commitment_rows = self
-            .outer_commit_matrix
-            .output_rank()
+        let logical_b_rows = self
+            .outer_slice_count
+            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
+        let commitment_rows = logical_b_rows
             .checked_mul(num_commitments)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         let after_commitment = after_a

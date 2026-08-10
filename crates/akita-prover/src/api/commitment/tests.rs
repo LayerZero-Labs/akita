@@ -116,10 +116,28 @@ fn commit_b_input_len_rejects_overflow() {
 }
 
 #[test]
-fn commit_outer_input_validation_allows_logical_input_longer_than_setup_stride() {
-    validate_commit_outer_input_nonempty(9).expect("logical B input may exceed row stride");
-    assert!(matches!(
-        validate_commit_outer_input_nonempty(0),
-        Err(AkitaError::InvalidSetup(_))
-    ));
+fn outer_slice_inputs_are_polynomial_major_and_zero_padded() {
+    let first = akita_types::DigitBlocks::new(vec![10, 11, 12, 13, 14], vec![1; 5], 1)
+        .expect("first digit blocks");
+    let second = akita_types::DigitBlocks::new(vec![20, 21, 22, 23, 24], vec![1; 5], 1)
+        .expect("second digit blocks");
+    let geometry = akita_types::CommitmentSliceGeometry::try_new(
+        akita_types::CommitmentSliceCount::TWO,
+        5,
+        2,
+        1,
+        1,
+        1,
+        1,
+    )
+    .expect("slice geometry");
+
+    let inputs = outer_slice_inputs::<1>(&[&first, &second], &geometry).expect("slice inputs");
+    assert_eq!(
+        inputs,
+        vec![
+            vec![[10], [11], [0], [20], [21], [0]],
+            vec![[12], [13], [14], [22], [23], [24]],
+        ]
+    );
 }

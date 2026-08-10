@@ -41,9 +41,11 @@ fn record(
     field_bytes: usize,
     output_rank: usize,
     ring_dimension: usize,
+    logical_images: usize,
 ) -> Result<(), String> {
     let coefficients = output_rank
         .checked_mul(ring_dimension)
+        .and_then(|count| count.checked_mul(logical_images))
         .ok_or_else(|| "source coefficient count overflow".to_string())?;
     let bytes = coefficients
         .checked_mul(field_bytes)
@@ -82,6 +84,7 @@ fn record_outer(
     profile: SisModulusProfileId,
     field_bytes: usize,
     matrix: &OuterCommitMatrixParams,
+    slice_count: akita_types::CommitmentSliceCount,
 ) -> Result<(), String> {
     record(
         stats,
@@ -91,6 +94,7 @@ fn record_outer(
         field_bytes,
         matrix.output_rank(),
         matrix.ring_dimension(),
+        slice_count.get(),
     )
 }
 
@@ -110,6 +114,7 @@ fn record_open(
         field_bytes,
         matrix.output_rank(),
         matrix.ring_dimension(),
+        1,
     )
 }
 
@@ -133,6 +138,7 @@ fn record_schedule(
             profile,
             field_bytes,
             &group.commitment.layout.outer_commit_matrix,
+            group.commitment.layout.outer_slice_count,
         )?;
     }
     record_outer(
@@ -142,6 +148,7 @@ fn record_schedule(
         profile,
         field_bytes,
         &root.final_group.commitment.outer_commit_matrix,
+        root.final_group.commitment.outer_slice_count,
     )?;
     record_open(
         stats,
@@ -160,6 +167,7 @@ fn record_schedule(
                 profile,
                 field_bytes,
                 &group.layout.outer_commit_matrix,
+                group.layout.outer_slice_count,
             )?;
         }
         record_outer(
@@ -169,6 +177,7 @@ fn record_schedule(
             profile,
             field_bytes,
             &fold.params.witness.outer_commit_matrix,
+            fold.params.witness.outer_slice_count,
         )?;
         record_open(
             stats,

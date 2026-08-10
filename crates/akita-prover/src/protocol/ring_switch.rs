@@ -1,7 +1,5 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
-use crate::api::commitment::{
-    validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
-};
+use crate::api::commitment::{validate_commit_inner_shape, validate_commit_level_params};
 use crate::protocol::ring_relation::compute_multi_group_relation_quotient;
 use crate::{tensor_pack_recursive_witness, RecursiveWitnessFlat};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;

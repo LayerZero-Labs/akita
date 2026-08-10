@@ -116,6 +116,7 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
             1,
             64,
             64,
+            0,
         )
         .expect("setup-prefix frontier");
         for params in groups {

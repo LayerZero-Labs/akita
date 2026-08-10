@@ -22,6 +22,9 @@ use akita_types::{
 };
 
 mod inner;
+pub(crate) use inner::commit_outer_slices;
+#[cfg(test)]
+use inner::outer_slice_inputs;
 use inner::prepare_inner_commit_group;
 pub(crate) use inner::validate_commit_inner_shape;
 
@@ -210,15 +213,6 @@ where
     validate_commitment_geometry::<F>(profile.into(), setup)
 }
 
-pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<(), AkitaError> {
-    if active_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "commit B input must be nonempty".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 /// Validate a singleton commitment request against prover setup capacity.
 ///
 /// # Errors
@@ -326,6 +320,15 @@ where
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
     let n_b = params.outer_commit_matrix.output_rank();
+    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+        params.outer_slice_count,
+        num_live_blocks,
+        polys.len(),
+        params.inner_commit_matrix.output_rank(),
+        num_digits_open,
+        dims.d_a(),
+        dims.d_b(),
+    )?;
     let (commitment, inner_rows, compression_witness, compression_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -351,28 +354,18 @@ where
                         num_digits_open,
                         log_basis,
                     )?;
-                    let total_planes =
-                        prepared_polynomials
-                            .iter()
-                            .try_fold(0usize, |total, (_, digits)| {
-                                total.checked_add(digits.total_planes()).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "commit B input plane count overflow".to_string(),
-                                    )
-                                })
-                            })?;
-                    validate_commit_outer_input_nonempty(total_planes)?;
-                    let mut b_input_digits = Vec::with_capacity(total_planes);
-                    for (_, digits) in &prepared_polynomials {
-                        b_input_digits.extend_from_slice(digits.typed_planes::<D_B>()?);
-                    }
-                    let u = backend.digit_rows::<D_B>(prepared, n_b, &b_input_digits, log_basis)?;
-                    if u.len() != n_b {
-                        return Err(AkitaError::InvalidSetup(format!(
-                            "backend returned {} B commitment rows, expected {n_b}",
-                            u.len(),
-                        )));
-                    }
+                    let digit_blocks = prepared_polynomials
+                        .iter()
+                        .map(|(_, digits)| digits)
+                        .collect::<Vec<_>>();
+                    let u = commit_outer_slices::<F, _, D_B>(
+                        backend,
+                        prepared,
+                        n_b,
+                        &digit_blocks,
+                        &slice_geometry,
+                        log_basis,
+                    )?;
                     let source = RingVec::from_ring_elems(&u);
                     let plan = CompressionChainPlan::for_complete_source(
                         params.outer_commit_matrix.sis_table_key().modulus_profile,
@@ -449,6 +442,15 @@ where
     let num_digits_open = profile.num_digits_outer;
     let log_basis = profile.log_basis_outer;
     let n_b = profile.outer_commit_matrix.output_rank();
+    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+        profile.outer_slice_count,
+        num_live_blocks,
+        polys.len(),
+        profile.inner_commit_matrix.output_rank(),
+        num_digits_open,
+        dims.d_a(),
+        dims.d_b(),
+    )?;
     let (commitment, inner_rows, compression_witness, compression_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -472,28 +474,18 @@ where
                         num_digits_open,
                         log_basis,
                     )?;
-                    let total_planes =
-                        prepared_polynomials
-                            .iter()
-                            .try_fold(0usize, |total, (_, digits)| {
-                                total.checked_add(digits.total_planes()).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "commit B input plane count overflow".to_string(),
-                                    )
-                                })
-                            })?;
-                    validate_commit_outer_input_nonempty(total_planes)?;
-                    let mut b_input_digits = Vec::with_capacity(total_planes);
-                    for (_, digits) in &prepared_polynomials {
-                        b_input_digits.extend_from_slice(digits.typed_planes::<D_B>()?);
-                    }
-                    let u = backend.digit_rows::<D_B>(prepared, n_b, &b_input_digits, log_basis)?;
-                    if u.len() != n_b {
-                        return Err(AkitaError::InvalidSetup(format!(
-                            "backend returned {} B commitment rows, expected {n_b}",
-                            u.len(),
-                        )));
-                    }
+                    let digit_blocks = prepared_polynomials
+                        .iter()
+                        .map(|(_, digits)| digits)
+                        .collect::<Vec<_>>();
+                    let u = commit_outer_slices::<F, _, D_B>(
+                        backend,
+                        prepared,
+                        n_b,
+                        &digit_blocks,
+                        &slice_geometry,
+                        log_basis,
+                    )?;
                     let source = RingVec::from_ring_elems(&u);
                     let plan = CompressionChainPlan::for_complete_source(
                         profile.outer_commit_matrix.sis_table_key().modulus_profile,

@@ -106,6 +106,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let log_basis_outer = group_params.log_basis_outer();
                 let n_a = group.n_a(level_params, opening_batch)?;
                 let n_b = group.n_b(level_params, opening_batch)?;
+                let physical_n_b = group_params.b_rows_len();
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
                 let d_col_range = d_col_range.clone();
                 let t_cols = group
@@ -113,6 +114,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .checked_mul(t_vector_width)
                     .and_then(|cols| cols.checked_mul(*b_subcolumns))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
+                let slice_geometry = crate::CommitmentSliceGeometry::try_new(
+                    group_params.outer_slice_count(),
+                    num_live_blocks,
+                    group.num_claims,
+                    n_a,
+                    depth_commit,
+                    role_dims.d_a(),
+                    role_dims.d_b(),
+                )?;
+                let physical_t_cols = slice_geometry.physical_input_width();
                 let z_cols = num_positions_per_block
                     .checked_mul(depth_witness)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
@@ -179,9 +190,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     log_basis_open,
                     d_col_range,
                     t_cols,
+                    physical_t_cols,
                     z_cols,
                     n_a,
                     n_b,
+                    physical_n_b,
                     required: 0,
                     segments: Vec::new().into(),
                     a_row_weights,
@@ -192,6 +205,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     num_physical_units,
                     d_tensors: Vec::new(),
                     b_tensors: Vec::new(),
+                    b_setup_tensors: Vec::new(),
                     a_tensors: Vec::new(),
                 })
             })
@@ -203,8 +217,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     role_dims: planned.role_dims,
                     a_rows: planned.n_a,
                     a_cols: planned.z_cols,
-                    b_rows: planned.n_b,
-                    b_cols: planned.t_cols,
+                    b_rows: planned.physical_n_b,
+                    b_cols: planned.physical_t_cols,
                     d_active_cols: planned.d_col_range.len(),
                 })
             })
@@ -262,7 +276,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             {
                 continue;
             }
-            let (e, t, z) = {
+            let (e, t, b_setup, z) = {
                 let group = self
                     .groups
                     .get(group_index)
@@ -285,6 +299,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         alpha,
                     )?
                 };
+                let b_setup = {
+                    let _span =
+                        tracing::info_span!("setup_materialize_physical_b_weights").entered();
+                    self.materialize_physical_b_weights(group, alpha)?
+                };
                 let z = {
                     let _span = tracing::info_span!("setup_materialize_z_weights").entered();
                     self.materialize_role_tensor_weights(
@@ -294,13 +313,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         alpha,
                     )?
                 };
-                (e, t, z)
+                (e, t, b_setup, z)
             };
             let group = self
                 .groups
                 .get_mut(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            group.direct_scan_weights = Some(DirectScanWeights { e, t, z });
+            group.direct_scan_weights = Some(DirectScanWeights { e, t, b_setup, z });
             {
                 let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
                 group.refresh_segments(
@@ -379,12 +398,17 @@ fn validate_static_inputs<E: FieldCore>(
                 "A-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let expected_b_width = group_layout
-            .num_polynomials()
-            .checked_mul(group_params.a_rows_len())
-            .and_then(|width| width.checked_mul(depth_commit))
-            .and_then(|width| width.checked_mul(num_live_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
+        let role_dims = level_params.group_role_dims(opening_batch, group_index)?;
+        let expected_b_width = crate::CommitmentSliceGeometry::try_new(
+            group_params.outer_slice_count(),
+            num_live_blocks,
+            group_layout.num_polynomials(),
+            group_params.a_rows_len(),
+            depth_commit,
+            role_dims.d_a(),
+            role_dims.d_b(),
+        )?
+        .physical_input_width();
         if group_params.b_col_len() < expected_b_width {
             return Err(AkitaError::InvalidSetup(
                 "B-key column width is too small for setup contribution layout".into(),

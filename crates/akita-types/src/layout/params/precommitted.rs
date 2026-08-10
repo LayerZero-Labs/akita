@@ -291,6 +291,11 @@ pub trait LevelParamsLike {
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
     fn b_rows_len(&self) -> usize;
+    fn outer_slice_count(&self) -> crate::CommitmentSliceCount;
+    fn logical_b_rows_len(&self) -> Result<usize, AkitaError> {
+        self.outer_slice_count()
+            .logical_output_rows(self.b_rows_len())
+    }
     fn b_col_len(&self) -> usize;
     fn num_live_ring_elements_per_claim(&self) -> usize;
     fn num_positions_per_block(&self) -> usize;
@@ -322,6 +327,10 @@ impl LevelParamsLike for CommittedGroupParams {
 
     fn b_rows_len(&self) -> usize {
         self.outer_commit_matrix.output_rank()
+    }
+
+    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
+        self.outer_slice_count
     }
 
     fn b_col_len(&self) -> usize {
@@ -396,6 +405,10 @@ impl LevelParamsLike for PrecommittedLevelParams {
 
     fn b_rows_len(&self) -> usize {
         self.layout.outer_commit_matrix.output_rank()
+    }
+
+    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
+        self.layout.outer_slice_count
     }
 
     fn b_col_len(&self) -> usize {

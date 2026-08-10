@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::commitment::commit_outer_slices;
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
@@ -113,17 +114,23 @@ where
                         commit_params.num_digits_outer,
                         commit_params.log_basis_outer,
                     )?;
-                    validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
-                    let outer_input = decomposed_inner_rows.typed_planes::<D_B>()?;
-                    let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = backend.digit_rows::<D_B>(
+                    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+                        commit_params.outer_slice_count,
+                        commit_params.num_live_blocks,
+                        1,
+                        n_a,
+                        commit_params.num_digits_outer,
+                        D_A,
+                        D_B,
+                    )?;
+                    let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = commit_outer_slices(
+                        backend,
                         prepared,
                         commit_params.outer_commit_matrix.output_rank(),
-                        outer_input,
+                        &[&decomposed_inner_rows],
+                        &slice_geometry,
                         commit_params.log_basis_outer,
                     )?;
-                    if u.len() != commit_params.outer_commit_matrix.output_rank() {
-                        return Err(AkitaError::InvalidProof);
-                    }
                     let source = RingVec::from_ring_elems(&u);
                     if !commit_params.payload_mode.is_compressed() {
                         Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows(), source, None))

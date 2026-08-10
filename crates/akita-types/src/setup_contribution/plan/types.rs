@@ -232,9 +232,8 @@ impl SetupContributionGroupInputs {
         level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .b_rows_len())
+        self.group_params_for(level_params, opening_batch)?
+            .logical_b_rows_len()
     }
 
     pub(crate) fn t_vector_width(
@@ -353,9 +352,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 pub(crate) struct DirectScanWeights<E> {
     pub(crate) e: Vec<E>,
     pub(crate) t: Vec<E>,
+    pub(crate) b_setup: Vec<E>,
     pub(crate) z: Vec<E>,
 }
 
+#[cfg(test)]
 type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
 
 pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
@@ -376,9 +377,11 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) log_basis_open: u32,
     pub(crate) d_col_range: Range<usize>,
     pub(crate) t_cols: usize,
+    pub(crate) physical_t_cols: usize,
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
     pub(crate) n_b: usize,
+    pub(crate) physical_n_b: usize,
     pub(crate) required: usize,
     pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) a_row_weights: Arc<[E]>,
@@ -391,7 +394,13 @@ pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(crate) b_setup_tensors: Vec<SlicedSetupTensor<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
+}
+
+pub(crate) struct SlicedSetupTensor<E: FieldCore> {
+    pub(crate) slice_index: usize,
+    pub(crate) family: EqPairTensorFamily<E>,
 }
 
 #[derive(Clone, Copy)]
@@ -407,6 +416,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             .map(|weights| (&weights.e[..], &weights.t[..], &weights.z[..]))
     }
 
+    #[cfg(test)]
     pub(crate) fn require_column_eq_slices(&self) -> Result<ColumnEqSlices<'_, E>, AkitaError> {
         self.column_eq_slices().ok_or_else(|| {
             AkitaError::InvalidSetup(

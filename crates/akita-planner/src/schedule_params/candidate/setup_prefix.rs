@@ -11,11 +11,29 @@ struct SetupPrefixSearchKey {
     num_chunks: usize,
     inner_ring_dimension: usize,
     outer_ring_dimension: usize,
+    fold_level: usize,
 }
 
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+}
+
+fn setup_prefix_slice_counts(
+    fold_level: usize,
+    num_live_blocks: usize,
+) -> impl Iterator<Item = akita_types::CommitmentSliceCount> {
+    akita_types::CommitmentSliceCount::ALL
+        .into_iter()
+        .filter(move |&count| {
+            count
+                .validate_for_commitment(
+                    fold_level,
+                    akita_types::CommitmentPayloadMode::Compressed,
+                    num_live_blocks,
+                )
+                .is_ok()
+        })
 }
 
 fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
@@ -40,6 +58,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     num_chunks: usize,
     inner_ring_dimension: usize,
     outer_ring_dimension: usize,
+    fold_level: usize,
 ) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
     let cache_key = SetupPrefixSearchKey {
         ring_challenge: *ring_challenge_cfg,
@@ -48,6 +67,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         num_chunks,
         inner_ring_dimension,
         outer_ring_dimension,
+        fold_level,
     };
     if let Some(cached) = cache.entries.get(&cache_key) {
         return Ok(cached.to_vec());
@@ -171,97 +191,97 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             ) else {
                 continue;
             };
-            let Some(width_t) = decomposed_t_ring_count(
-                inner_commit_matrix.output_rank(),
-                num_digits_outer,
-                num_live_blocks,
-                1,
-            )
-            .and_then(|width| width.checked_mul(d / outer_ring_dimension)) else {
-                continue;
-            };
-            let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-                sis_key_at_dimension(
-                    policy,
-                    akita_types::SisMatrixRole::Outer,
+            for outer_slice_count in setup_prefix_slice_counts(fold_level, num_live_blocks) {
+                let Ok(slice_geometry) = akita_types::CommitmentSliceGeometry::try_new(
+                    outer_slice_count,
+                    num_live_blocks,
+                    1,
+                    inner_commit_matrix.output_rank(),
+                    num_digits_outer,
+                    d,
                     outer_ring_dimension,
-                    norm_t,
-                ),
-                width_t,
-            ) else {
-                continue;
-            };
-            let layout = CommittedGroupProfile {
-                version: CommittedGroupProfile::VERSION,
-                group: PolynomialGroupLayout::singleton(prefix_num_vars),
-                num_live_ring_elements_per_claim: ring_slots,
-                num_positions_per_block,
-                num_live_blocks,
-                log_basis_inner,
-                num_digits_inner,
-                inner_commit_matrix,
-                log_basis_outer: log_basis_open,
-                num_digits_outer,
-                outer_commit_matrix,
-            };
-            let params = PrecommittedLevelParams {
-                layout,
-                log_basis_open,
-                fold_challenge_config: *ring_challenge_cfg,
-                num_digits_open: num_digits_open_val,
-                num_digits_fold,
-            };
-            let physical_width = akita_schedules::planner_support::grouped_segment_rings(
-                1,
-                num_live_blocks,
-                num_chunks,
-                num_positions_per_block,
-                params.layout.inner_commit_matrix.output_rank(),
-                num_digits_inner,
-                num_digits_outer,
-                num_digits_open_val,
-                num_digits_fold,
-            )?;
-            let score = layout_candidate_score(physical_width, num_live_blocks, num_chunks)?;
-            let compression_source_coefficients = params
-                .layout
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(params.layout.outer_commit_matrix.ring_dimension())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "setup-prefix outer compression source overflow".into(),
-                    )
-                })?;
-            if CompressionChainPlan::try_for_complete_source(
-                params.layout.outer_commit_matrix.sis_modulus_profile(),
-                compression_source_coefficients,
-            )?
-            .is_none()
-            {
-                continue;
+                ) else {
+                    continue;
+                };
+                let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
+                    sis_key_at_dimension(
+                        policy,
+                        akita_types::SisMatrixRole::Outer,
+                        outer_ring_dimension,
+                        norm_t,
+                    ),
+                    slice_geometry.physical_input_width(),
+                ) else {
+                    continue;
+                };
+                let layout = CommittedGroupProfile {
+                    version: CommittedGroupProfile::VERSION,
+                    group: PolynomialGroupLayout::singleton(prefix_num_vars),
+                    num_live_ring_elements_per_claim: ring_slots,
+                    num_positions_per_block,
+                    num_live_blocks,
+                    outer_slice_count,
+                    log_basis_inner,
+                    num_digits_inner,
+                    inner_commit_matrix,
+                    log_basis_outer: log_basis_open,
+                    num_digits_outer,
+                    outer_commit_matrix,
+                };
+                let params = PrecommittedLevelParams {
+                    layout,
+                    log_basis_open,
+                    fold_challenge_config: *ring_challenge_cfg,
+                    num_digits_open: num_digits_open_val,
+                    num_digits_fold,
+                };
+                let physical_width = akita_schedules::planner_support::grouped_segment_rings(
+                    1,
+                    num_live_blocks,
+                    num_chunks,
+                    num_positions_per_block,
+                    params.layout.inner_commit_matrix.output_rank(),
+                    num_digits_inner,
+                    num_digits_outer,
+                    num_digits_open_val,
+                    num_digits_fold,
+                )?;
+                let score = layout_candidate_score(physical_width, num_live_blocks, num_chunks)?;
+                let compression_source_coefficients = outer_slice_count
+                    .complete_source_coefficients(
+                        params.layout.outer_commit_matrix.output_rank(),
+                        params.layout.outer_commit_matrix.ring_dimension(),
+                    )?;
+                if CompressionChainPlan::try_for_complete_source(
+                    params.layout.outer_commit_matrix.sis_modulus_profile(),
+                    compression_source_coefficients,
+                )?
+                .is_none()
+                {
+                    continue;
+                }
+                let setup_fields = akita_types::setup_prefix_slot_field_elements(
+                    &akita_types::setup_prefix_slot_id(n_prefix, params.clone()),
+                )?;
+                let padded_setup_fields = padded_setup_prefix_len(setup_fields);
+                let coords = [physical_width, padded_setup_fields];
+                let descriptor = params.canonical_descriptor_bytes();
+                crate::schedule_params::pareto::insert(
+                    &mut frontier,
+                    (coords, descriptor, score, params),
+                    |(best, best_descriptor, best_score, _),
+                     (candidate, candidate_descriptor, candidate_score, _)| {
+                        let best_tie = (*best_score, best_descriptor.as_slice());
+                        let candidate_tie = (*candidate_score, candidate_descriptor.as_slice());
+                        crate::schedule_params::pareto::canonical_dominates(
+                            best,
+                            &best_tie,
+                            candidate,
+                            &candidate_tie,
+                        )
+                    },
+                );
             }
-            let setup_fields = akita_types::setup_prefix_slot_field_elements(
-                &akita_types::setup_prefix_slot_id(n_prefix, params.clone()),
-            )?;
-            let padded_setup_fields = padded_setup_prefix_len(setup_fields);
-            let coords = [physical_width, padded_setup_fields];
-            let descriptor = params.canonical_descriptor_bytes();
-            crate::schedule_params::pareto::insert(
-                &mut frontier,
-                (coords, descriptor, score, params),
-                |(best, best_descriptor, best_score, _),
-                 (candidate, candidate_descriptor, candidate_score, _)| {
-                    let best_tie = (*best_score, best_descriptor.as_slice());
-                    let candidate_tie = (*candidate_score, candidate_descriptor.as_slice());
-                    crate::schedule_params::pareto::canonical_dominates(
-                        best,
-                        &best_tie,
-                        candidate,
-                        &candidate_tie,
-                    )
-                },
-            );
         }
     }
 
@@ -280,4 +300,25 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         .collect();
     cache.entries.insert(cache_key, Arc::clone(&result));
     Ok(result.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_prefix_slicing_uses_the_absolute_producer_level() {
+        assert_eq!(
+            setup_prefix_slice_counts(1, 8)
+                .map(akita_types::CommitmentSliceCount::get)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 4, 8]
+        );
+        assert_eq!(
+            setup_prefix_slice_counts(2, 8)
+                .map(akita_types::CommitmentSliceCount::get)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
 }

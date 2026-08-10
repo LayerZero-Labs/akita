@@ -14,16 +14,19 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         b_ratio: usize,
         d_ratio: usize,
     ) -> Result<(), AkitaError> {
-        let (e_eq_slice, _, _) = self.require_column_eq_slices()?;
+        let weights = self.direct_scan_weights.as_ref().ok_or_else(|| {
+            AkitaError::InvalidSetup("direct setup scan weights are missing".into())
+        })?;
+        let one = [E::one()];
         let (required, segments) = build_packed_segments(
             self.d_col_range.start,
-            e_eq_slice.len(),
-            self.t_cols,
+            weights.e.len(),
+            weights.b_setup.len(),
             self.z_cols,
             self.n_a,
-            self.n_b,
+            1,
             &self.a_row_weights,
-            &self.b_weights,
+            &one,
             d_weights,
             d_rows,
             d_physical_cols,

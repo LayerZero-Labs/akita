@@ -308,7 +308,7 @@ where
         let group_layout = opening_batch.group_layout(group_index)?;
         let num_claims = group_layout.num_polynomials();
         let n_a = group_lp.a_rows_len();
-        let n_b = group_lp.b_rows_len();
+        let n_b = group_lp.logical_b_rows_len()?;
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a || b_range.len() != n_b {
