@@ -220,6 +220,11 @@ mod entropy_tests {
 
     #[test]
     fn production_ladder_matches_proof_optimized_dims() {
+        assert_eq!(
+            PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len(),
+            PRODUCTION_FOLD_CHALLENGE_LADDER.len(),
+            "the production dimension and challenge ladders must have identical coverage"
+        );
         for (&d, &(_, _, _, support_floor_bits)) in PRODUCTION_FOLD_CHALLENGE_RING_DIMS
             .iter()
             .zip(PRODUCTION_FOLD_CHALLENGE_LADDER)
@@ -236,16 +241,22 @@ mod entropy_tests {
                 _ => unreachable!("production dimension list is exhaustive"),
             };
             assert_eq!(computed_floor, support_floor_bits, "d={d}");
-            assert!(
-                cfg.validate_min_entropy_for_ring_dim(d, support_floor_bits)
-                    .is_ok(),
-                "d={d}"
-            );
-            assert!(
-                cfg.validate_min_entropy_for_ring_dim(d, support_floor_bits + 1)
-                    .is_err(),
-                "d={d}"
-            );
+            for required_bits in 0..=support_floor_bits + 2 {
+                let generic = match d {
+                    64 => cfg.validate_min_entropy::<64>(required_bits),
+                    128 => cfg.validate_min_entropy::<128>(required_bits),
+                    256 => cfg.validate_min_entropy::<256>(required_bits),
+                    512 => cfg.validate_min_entropy::<512>(required_bits),
+                    1024 => cfg.validate_min_entropy::<1024>(required_bits),
+                    2048 => cfg.validate_min_entropy::<2048>(required_bits),
+                    _ => unreachable!("production dimension list is exhaustive"),
+                };
+                assert_eq!(
+                    cfg.validate_min_entropy_for_ring_dim(d, required_bits),
+                    generic,
+                    "fast and generic entropy checks disagree for d={d}, required={required_bits}"
+                );
+            }
         }
     }
 

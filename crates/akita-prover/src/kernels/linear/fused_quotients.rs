@@ -2,13 +2,6 @@ use super::*;
 use std::mem::size_of;
 use std::ops::Range;
 
-mod streamed;
-
-use streamed::{
-    fused_split_eq_quotients_one_shot_streamed, streamed_centered_quotient_rows_chunked,
-    streamed_cyclic_i8_rows_chunked,
-};
-
 /// Minimum number of Rayon work-units for the fused one-shot kernel.
 const MIN_FUSED_TILES: usize = 30;
 #[cfg(target_arch = "aarch64")]
@@ -94,19 +87,82 @@ impl FusedQuotientPlan {
         let start = chunk_index * width;
         start..(start + width).min(len)
     }
+}
 
-    fn validate_streamed<F: FieldCore, const D: usize>(
-        self,
-        source: &[CyclotomicRing<F, D>],
-    ) -> Result<(), AkitaError> {
-        if source.len() < self.matrix_extent {
+enum FusedMatrixSource<'a, F: FieldCore, W: PrimeWidth, const K: usize, const D: usize> {
+    Cached {
+        negacyclic: &'a [CyclotomicCrtNtt<W, K, D>],
+        cyclic: &'a [CyclotomicCrtNtt<W, K, D>],
+    },
+    Field(&'a [CyclotomicRing<F, D>]),
+}
+
+impl<'a, F, W, const K: usize, const D: usize> FusedMatrixSource<'a, F, W, K, D>
+where
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+{
+    fn validate(&self, plan: FusedQuotientPlan) -> Result<(), AkitaError> {
+        let (cyclic_len, negacyclic_len) = match self {
+            Self::Cached { negacyclic, cyclic } => (cyclic.len(), negacyclic.len()),
+            Self::Field(source) => (source.len(), source.len()),
+        };
+        if cyclic_len < plan.matrix_extent {
             return Err(AkitaError::InvalidSetup(format!(
-                "streamed fused quotients need {} setup ring elements, got {}",
-                self.matrix_extent,
-                source.len()
+                "fused quotient cyclic matrix needs {} elements, got {cyclic_len}",
+                plan.matrix_extent
+            )));
+        }
+        let negacyclic_extent = plan.n_a.checked_mul(plan.z_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("fused quotient negacyclic extent overflow".into())
+        })?;
+        if negacyclic_len < negacyclic_extent {
+            return Err(AkitaError::InvalidSetup(format!(
+                "fused quotient negacyclic matrix needs {negacyclic_extent} elements, got {negacyclic_len}"
             )));
         }
         Ok(())
+    }
+
+    #[inline(always)]
+    fn with_cyclic<R>(
+        &self,
+        index: usize,
+        params: &CrtNttParamSet<W, K, D>,
+        f: impl FnOnce(&CyclotomicCrtNtt<W, K, D>) -> R,
+    ) -> R {
+        match self {
+            Self::Cached { cyclic, .. } => f(&cyclic[index]),
+            Self::Field(source) => {
+                let value = CyclotomicCrtNtt::from_ring_cyclic(&source[index], params);
+                f(&value)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn with_pair<R>(
+        &self,
+        index: usize,
+        params: &CrtNttParamSet<W, K, D>,
+        f: impl FnOnce(&CyclotomicCrtNtt<W, K, D>, &CyclotomicCrtNtt<W, K, D>) -> R,
+    ) -> R {
+        match self {
+            Self::Cached { negacyclic, cyclic } => f(&negacyclic[index], &cyclic[index]),
+            Self::Field(source) => {
+                let (negacyclic, cyclic) =
+                    CyclotomicCrtNtt::from_ring_pair_with_params(&source[index], params);
+                f(&negacyclic, &cyclic)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn field_ring(&self, index: usize, params: &CrtNttParamSet<W, K, D>) -> CyclotomicRing<F, D> {
+        match self {
+            Self::Cached { negacyclic, .. } => negacyclic[index].to_ring(params),
+            Self::Field(source) => source[index],
+        }
     }
 }
 
@@ -223,10 +279,7 @@ fn fused_split_eq_quotients_with_params<
     const K: usize,
     const D: usize,
 >(
-    d_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    b_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    a_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    source: FusedMatrixSource<'_, F, W, K, D>,
     e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
@@ -240,6 +293,7 @@ fn fused_split_eq_quotients_with_params<
     ),
     AkitaError,
 > {
+    source.validate(plan)?;
     if plan.max_col == 0 {
         return Ok((
             vec![CyclotomicRing::<F, D>::zero(); plan.n_d],
@@ -250,10 +304,7 @@ fn fused_split_eq_quotients_with_params<
 
     if plan.is_one_shot() {
         return Ok(fused_split_eq_quotients_one_shot(
-            d_cyc_rows,
-            b_cyc_rows,
-            a_cyc_rows,
-            neg_rows,
+            &source,
             e_hat,
             t_hat,
             z_folded_rings,
@@ -269,31 +320,22 @@ fn fused_split_eq_quotients_with_params<
         AkitaError::InvalidSetup("CRT parameters cannot represent one t_hat term".to_string())
     })?;
     let d_result = accumulate_cyclic_i8_rows(
-        d_cyc_rows,
-        plan.n_d,
+        &source,
         e_hat,
-        plan.witness_len,
+        plan,
+        DigitRole::Witness,
         w_chunk_width,
-        plan.w_digit_abs_bound,
         params,
     );
     let b_result = accumulate_cyclic_i8_rows(
-        b_cyc_rows,
-        plan.n_b,
+        &source,
         t_hat,
-        plan.t_len,
-        t_chunk_width,
-        plan.t_digit_abs_bound,
-        params,
-    );
-    let a_result = accumulate_centered_quotient_rows(
-        neg_rows,
-        a_cyc_rows,
-        plan.n_a,
-        z_folded_rings,
         plan,
+        DigitRole::Outer,
+        t_chunk_width,
         params,
     );
+    let a_result = accumulate_centered_quotient_rows(&source, z_folded_rings, plan, params);
 
     Ok((d_result, b_result, a_result))
 }
@@ -305,10 +347,7 @@ fn fused_split_eq_quotients_one_shot<
     const K: usize,
     const D: usize,
 >(
-    d_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    b_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    a_cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
+    source: &FusedMatrixSource<'_, F, W, K, D>,
     e_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
@@ -351,16 +390,20 @@ fn fused_split_eq_quotients_one_shot<
                 if j < plan.witness_len && !is_zero_plane(&e_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&e_hat[j], params, lut);
-                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(d_cyc_rows.iter()) {
-                        accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
+                    for (i, acc_d) in accs.0.iter_mut().enumerate() {
+                        source.with_cyclic(plan.d_row(i).start + j, params, |cyclic| {
+                            accumulate_pointwise_product_into(acc_d, cyclic, &ntt_w, params);
+                        });
                     }
                 }
 
                 if j < plan.t_len && !is_zero_plane(&t_hat[j]) {
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
-                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(b_cyc_rows.iter()) {
-                        accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
+                    for (i, acc_b) in accs.1.iter_mut().enumerate() {
+                        source.with_cyclic(plan.b_row(i).start + j, params, |cyclic| {
+                            accumulate_pointwise_product_into(acc_b, cyclic, &ntt_t, params);
+                        });
                     }
                 }
 
@@ -383,14 +426,13 @@ fn fused_split_eq_quotients_one_shot<
                             params,
                         )
                     };
-                    for ((acc_neg, acc_cyc), (neg_row, cyc_row)) in accs
-                        .2
-                        .iter_mut()
-                        .zip(accs.3.iter_mut())
-                        .zip(neg_rows.iter().zip(a_cyc_rows.iter()))
+                    for (i, (acc_neg, acc_cyc)) in
+                        accs.2.iter_mut().zip(accs.3.iter_mut()).enumerate()
                     {
-                        accumulate_pointwise_product_into(acc_neg, &neg_row[j], &ntt_z_neg, params);
-                        accumulate_pointwise_product_into(acc_cyc, &cyc_row[j], &ntt_z_cyc, params);
+                        source.with_pair(plan.a_row(i).start + j, params, |neg, cyclic| {
+                            accumulate_pointwise_product_into(acc_neg, neg, &ntt_z_neg, params);
+                            accumulate_pointwise_product_into(acc_cyc, cyclic, &ntt_z_cyc, params);
+                        });
                     }
                 }
             }
@@ -443,7 +485,8 @@ fn fused_split_eq_quotients_one_shot<
 /// Entries stream from `flat`, A's field-form prefix covering every product's
 /// `rows x width` extent. Roles that exceed one CRT accumulator are reduced in
 /// capacity-safe chunks. If the selected protocol CRT profile cannot represent
-/// one term, this rejects without allocating a retained NTT cache.
+/// one centered quotient term, the shared arithmetic falls back to exact
+/// field-ring multiplication, matching the cached route's acceptance set.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
@@ -484,66 +527,14 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                 t_digit_abs_bound,
                 &params,
             )?;
-            plan.validate_streamed(source)?;
-            if plan.is_one_shot() {
-                return Ok(fused_split_eq_quotients_one_shot_streamed(
-                    source,
-                    e_hat,
-                    t_hat,
-                    z_folded_rings,
-                    plan,
-                    &params,
-                ));
-            }
-
-            let w_chunk_width = plan.w_chunk_width.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "CRT parameters cannot represent one streamed e_hat term".to_string(),
-                )
-            })?;
-            let t_chunk_width = plan.t_chunk_width.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "CRT parameters cannot represent one streamed t_hat term".to_string(),
-                )
-            })?;
-            let z_chunk_width = plan.z_chunk_width.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "CRT parameters cannot represent one streamed centered term".to_string(),
-                )
-            })?;
-            tracing::info!(
-                witness_len = plan.witness_len,
-                w_chunk_width,
-                t_len = plan.t_len,
-                t_chunk_width,
-                z_len = plan.z_len,
-                z_chunk_width,
-                "streamed fused quotients using CRT-safe chunks"
-            );
-            let d_rows = streamed_cyclic_i8_rows_chunked(
-                source,
+            fused_split_eq_quotients_with_params(
+                FusedMatrixSource::Field(source),
                 e_hat,
-                plan,
-                DigitRole::Witness,
-                w_chunk_width,
-                &params,
-            );
-            let b_rows = streamed_cyclic_i8_rows_chunked(
-                source,
                 t_hat,
-                plan,
-                DigitRole::Outer,
-                t_chunk_width,
-                &params,
-            );
-            let a_rows = streamed_centered_quotient_rows_chunked(
-                source,
                 z_folded_rings,
                 plan,
-                z_chunk_width,
                 &params,
-            );
-            Ok((d_rows, b_rows, a_rows))
+            )
         }};
     }
     match select_crt_ntt_params::<F, D>()? {
@@ -559,14 +550,14 @@ fn accumulate_cyclic_i8_rows<
     const K: usize,
     const D: usize,
 >(
-    cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    num_rows: usize,
+    source: &FusedMatrixSource<'_, F, W, K, D>,
     rhs: &[[i8; D]],
-    rhs_len: usize,
+    plan: FusedQuotientPlan,
+    role: DigitRole,
     chunk_width: usize,
-    rhs_abs_bound: u64,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
+    let (num_rows, rhs_len, rhs_abs_bound) = plan.digit_shape(role);
     if num_rows == 0 {
         return vec![];
     }
@@ -589,8 +580,10 @@ fn accumulate_cyclic_i8_rows<
                     continue;
                 }
                 let ntt_rhs = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&rhs[j], params, &lut);
-                for (acc, row) in accs.iter_mut().zip(cyc_rows.iter()) {
-                    accumulate_pointwise_product_into(acc, &row[j], &ntt_rhs, params);
+                for (row, acc) in accs.iter_mut().enumerate() {
+                    source.with_cyclic(plan.digit_row(role, row).start + j, params, |cyclic| {
+                        accumulate_pointwise_product_into(acc, cyclic, &ntt_rhs, params);
+                    });
                 }
             }
 
@@ -634,13 +627,12 @@ fn accumulate_centered_quotient_rows<
     const K: usize,
     const D: usize,
 >(
-    neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    num_rows: usize,
+    source: &FusedMatrixSource<'_, F, W, K, D>,
     z_folded_rings: &[[i32; D]],
     plan: FusedQuotientPlan,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
+    let num_rows = plan.n_a;
     if num_rows == 0 {
         return vec![];
     }
@@ -653,14 +645,7 @@ fn accumulate_centered_quotient_rows<
     }
 
     let Some(chunk_width) = plan.z_chunk_width else {
-        return accumulate_centered_quotient_rows_field(
-            neg_rows,
-            cyc_rows,
-            num_rows,
-            z_folded_rings,
-            plan.z_len,
-            params,
-        );
+        return accumulate_centered_quotient_rows_field(source, z_folded_rings, plan, params);
     };
     let centered_lut = (plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, plan.z_bounds.lut as i32));
@@ -693,13 +678,13 @@ fn accumulate_centered_quotient_rows<
                 } else {
                     CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_folded_rings[j], params)
                 };
-                for ((neg_acc, cyc_acc), (neg_row, cyc_row)) in neg_accs
-                    .iter_mut()
-                    .zip(cyc_accs.iter_mut())
-                    .zip(neg_rows.iter().zip(cyc_rows.iter()))
+                for (row, (neg_acc, cyc_acc)) in
+                    neg_accs.iter_mut().zip(cyc_accs.iter_mut()).enumerate()
                 {
-                    accumulate_pointwise_product_into(neg_acc, &neg_row[j], &ntt_z_neg, params);
-                    accumulate_pointwise_product_into(cyc_acc, &cyc_row[j], &ntt_z_cyc, params);
+                    source.with_pair(plan.a_row(row).start + j, params, |neg, cyclic| {
+                        accumulate_pointwise_product_into(neg_acc, neg, &ntt_z_neg, params);
+                        accumulate_pointwise_product_into(cyc_acc, cyclic, &ntt_z_cyc, params);
+                    });
                 }
             }
 
@@ -725,26 +710,23 @@ fn accumulate_centered_quotient_rows_field<
     const K: usize,
     const D: usize,
 >(
-    neg_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    cyc_rows: &[&[CyclotomicCrtNtt<W, K, D>]],
-    num_rows: usize,
+    source: &FusedMatrixSource<'_, F, W, K, D>,
     z_folded_rings: &[[i32; D]],
-    z_len: usize,
+    plan: FusedQuotientPlan,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
-    cfg_into_iter!(0..num_rows)
+    cfg_into_iter!(0..plan.n_a)
         .map(|row_idx| {
             let mut out = CyclotomicRing::<F, D>::zero();
-            for j in 0..z_len {
-                if is_zero_centered_row(&z_folded_rings[j]) {
+            for (j, z_folded) in z_folded_rings.iter().enumerate().take(plan.z_len) {
+                if is_zero_centered_row(z_folded) {
                     continue;
                 }
-                let z = centered_i32_ring::<F, D>(&z_folded_rings[j]);
-                let neg_lhs: CyclotomicRing<F, D> = neg_rows[row_idx][j].to_ring(params);
-                let cyc_lhs: CyclotomicRing<F, D> = cyc_rows[row_idx][j].to_ring_cyclic(params);
-                let neg_product = neg_lhs * z;
+                let z = centered_i32_ring::<F, D>(z_folded);
+                let lhs = source.field_ring(plan.a_row(row_idx).start + j, params);
+                let neg_product = lhs * z;
                 let mut cyc_product = CyclotomicRing::<F, D>::zero();
-                add_cyclic_product_into(&mut cyc_product, &cyc_lhs, &z);
+                add_cyclic_product_into(&mut cyc_product, &lhs, &z);
                 out += quotient_from_cyclic_and_negacyclic(&cyc_product, &neg_product);
             }
             out
@@ -821,6 +803,9 @@ fn centered_quotient_rows_with_i16_tail_params<
                 }
                 let j = start + offset;
                 let (z_neg, z_cyc) = if let Some(ref lut) = base_lut {
+                    // SAFETY: `actual_bound` bounds every centered coefficient in
+                    // `z_folded_rings`; the LUT is built for that bound, and `j`
+                    // ranges only over the validated `0..width` source rows.
                     unsafe {
                         CyclotomicCrtNtt::from_centered_i32_pair_with_lut_unchecked(
                             z_ring, params, lut,
@@ -1082,15 +1067,11 @@ fn fused_split_eq_quotients_with_digit_bound<
                 t_digit_abs_bound,
                 params,
             )?;
-            let neg_rows = matrix_rows(neg, plan.n_a, |row| plan.a_row(row), "negacyclic")?;
-            let d_rows = matrix_rows(cyc, plan.n_d, |row| plan.d_row(row), "D cyclic")?;
-            let b_rows = matrix_rows(cyc, plan.n_b, |row| plan.b_row(row), "B cyclic")?;
-            let a_rows = matrix_rows(cyc, plan.n_a, |row| plan.a_row(row), "A cyclic")?;
             fused_split_eq_quotients_with_params(
-                &d_rows,
-                &b_rows,
-                &a_rows,
-                &neg_rows,
+                FusedMatrixSource::Cached {
+                    negacyclic: neg,
+                    cyclic: cyc,
+                },
                 e_hat,
                 t_hat,
                 z_folded_rings,
@@ -1114,20 +1095,4 @@ fn fused_split_eq_quotients_with_digit_bound<
             "cyclic and negacyclic NTT profiles do not match".into(),
         )),
     }
-}
-
-fn matrix_rows<'a, T>(
-    flat: &'a [T],
-    num_rows: usize,
-    row_range: impl Fn(usize) -> Range<usize>,
-    role: &str,
-) -> Result<Vec<&'a [T]>, AkitaError> {
-    let needed = num_rows.checked_sub(1).map_or(0, |row| row_range(row).end);
-    if flat.len() < needed {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{role} fused quotient matrix needs {needed} elements, got {}",
-            flat.len()
-        )));
-    }
-    Ok((0..num_rows).map(|row| &flat[row_range(row)]).collect())
 }

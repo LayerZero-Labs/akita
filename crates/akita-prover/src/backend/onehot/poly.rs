@@ -411,14 +411,10 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             chunks = self.indices.len()
         )
         .entered();
-        let double_width = width.checked_mul(2).ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "tensor width is too large for root ring projection".to_string(),
-            )
-        })?;
         let packed_len = D / width;
-        let half = D / double_width;
-        let step = D / double_width;
+        // Frobenius packing divides each half-ring into `width` equal shifts,
+        // so the half boundary and the coordinate stride have the same value.
+        let half_step = D / double_width;
         let mut coeffs = Vec::with_capacity(self.indices.len() * width.min(2));
 
         for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
@@ -430,12 +426,12 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             let coord = field_pos % width;
             let ring_idx = tail / packed_len;
             let slot_idx = tail % packed_len;
-            if slot_idx < half {
+            if slot_idx < half_step {
                 let shift = slot_idx;
                 if coord == 0 {
                     coeffs.push(SparseRingCoeff::from_ring_coords(ring_idx, shift, D, 1)?);
                 } else {
-                    let pos_offset = coord * step;
+                    let pos_offset = coord * half_step;
                     coeffs.push(SparseRingCoeff::from_ring_coords(
                         ring_idx,
                         shift + pos_offset,
@@ -450,11 +446,11 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                     )?);
                 }
             } else {
-                let shift = slot_idx - half + D / 2;
+                let shift = slot_idx - half_step + D / 2;
                 if coord == 0 {
                     coeffs.push(SparseRingCoeff::from_ring_coords(ring_idx, shift, D, 1)?);
                 } else {
-                    let pos_offset = coord * step;
+                    let pos_offset = coord * half_step;
                     coeffs.push(SparseRingCoeff::from_ring_coords(
                         ring_idx,
                         shift - pos_offset,

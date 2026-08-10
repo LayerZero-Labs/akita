@@ -635,7 +635,6 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-
             fn inner_basis_range() -> (u32, u32) {
                 $crate::proof_optimized::proof_optimized_inner_basis_range(
                     Self::sis_modulus_profile(),

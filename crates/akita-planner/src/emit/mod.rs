@@ -51,13 +51,16 @@ pub struct EmitSpec {
 
 const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
+// Schedule search is memory bound. Keep the default below host-wide
+// parallelism while allowing explicit tuning for large generation machines.
+const DEFAULT_SCHEDULE_GENERATION_WORKERS: usize = 2;
 
 pub(crate) fn schedule_generation_worker_count(work_items: usize) -> usize {
     let configured = std::env::var("AKITA_SCHEDULE_GEN_JOBS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&value| value > 0)
-        .unwrap_or(2);
+        .unwrap_or(DEFAULT_SCHEDULE_GENERATION_WORKERS);
     std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1)
@@ -74,6 +77,8 @@ where
     T: Sync,
     R: Send,
 {
+    // A private scoped pool gives this memory-heavy phase an explicit bound;
+    // the workspace Rayon pool follows host-wide parallelism instead.
     if workers <= 1 || items.len() < 2 * workers {
         return items
             .iter()

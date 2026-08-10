@@ -60,7 +60,9 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
 mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
-pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
+pub use precommitted::{
+    LevelParamsLike, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+};
 
 /// Gadget basis used by opening-digit segments in the shared D product.
 ///

@@ -63,18 +63,10 @@ pub(super) fn insert_mixed_frontier(
     {
         return;
     }
-    let same_first_fold =
-        |other: &ScheduleCandidate| other.first_fold_params() == candidate.first_fold_params();
-    if frontier.iter().any(|other| {
-        same_first_fold(other) && dominates_mixed_score(mixed_score(other), mixed_score(&candidate))
-    }) {
-        return;
-    }
-    frontier.retain(|other| {
-        !same_first_fold(other)
-            || !dominates_mixed_score(mixed_score(&candidate), mixed_score(other))
+    crate::schedule_params::pareto::insert(frontier, candidate, |left, right| {
+        left.first_fold_params() == right.first_fold_params()
+            && dominates_mixed_score(mixed_score(left), mixed_score(right))
     });
-    frontier.push(candidate);
 }
 
 /// Parent-visible first-fold class. A parent edge prices the child's outgoing
@@ -85,16 +77,23 @@ pub(crate) struct FirstFoldKey {
     pub(super) descriptor: Option<Vec<u8>>,
 }
 
-type ScheduleMemoKey = (
-    usize,
-    usize,
-    u32,
-    usize,
-    usize,
-    usize,
-    usize,
-    akita_types::CommitmentPayloadPhase,
-);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct ScheduleMemoKey {
+    pub(super) level: usize,
+    pub(super) current_witness_len: usize,
+    pub(super) current_lb: u32,
+    pub(super) incoming_setup_prefix: Option<usize>,
+    pub(super) d_a: usize,
+    pub(super) d_b: usize,
+    pub(super) d_d: usize,
+    pub(super) payload_phase: akita_types::CommitmentPayloadPhase,
+}
+
+impl ScheduleMemoKey {
+    const fn is_direct(self) -> bool {
+        self.incoming_setup_prefix.is_none()
+    }
+}
 
 pub(crate) struct ScheduleMemo {
     entries: HashMap<ScheduleMemoKey, MemoEntry>,
@@ -165,7 +164,7 @@ impl ScheduleMemo {
             });
             return;
         }
-        let (insertion_order, capacity) = if key.3 == 0 {
+        let (insertion_order, capacity) = if key.is_direct() {
             (
                 &mut self.direct_insertion_order,
                 MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
@@ -229,19 +228,7 @@ pub(crate) struct SuffixState {
 }
 
 impl SuffixState {
-    pub(super) fn memo_key(
-        self,
-        policy: &PlannerPolicy,
-    ) -> (
-        usize,
-        usize,
-        u32,
-        usize,
-        usize,
-        usize,
-        usize,
-        akita_types::CommitmentPayloadPhase,
-    ) {
+    pub(super) fn memo_key(self, policy: &PlannerPolicy) -> ScheduleMemoKey {
         let memo_dimensions = match policy.ring_dimension_schedule_mode {
             crate::RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels,
@@ -256,15 +243,15 @@ impl SuffixState {
             }
             _ => self.dimension_ceiling,
         };
-        (
-            self.level,
-            self.current_witness_len,
-            self.current_lb,
-            self.incoming_setup_prefix.unwrap_or(0),
-            memo_dimensions.d_a(),
-            memo_dimensions.d_b(),
-            memo_dimensions.d_d(),
-            self.payload_phase,
-        )
+        ScheduleMemoKey {
+            level: self.level,
+            current_witness_len: self.current_witness_len,
+            current_lb: self.current_lb,
+            incoming_setup_prefix: self.incoming_setup_prefix,
+            d_a: memo_dimensions.d_a(),
+            d_b: memo_dimensions.d_b(),
+            d_d: memo_dimensions.d_d(),
+            payload_phase: self.payload_phase,
+        }
     }
 }

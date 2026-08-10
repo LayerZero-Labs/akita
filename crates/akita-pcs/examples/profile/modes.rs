@@ -24,6 +24,12 @@ use akita_types::{
 
 type F = fp128::Field;
 
+const MULTI_GROUP_PRE_NUM_VARS: usize = 16;
+const MULTI_GROUP_FINAL_NUM_VARS: usize = 32;
+const MULTI_GROUP_PRE_GROUPS: usize = 2;
+const MULTI_GROUP_FINAL_POLYS: usize = 2;
+const MULTI_GROUP_TOTAL_POLYS: usize = MULTI_GROUP_PRE_GROUPS + MULTI_GROUP_FINAL_POLYS;
+
 fn fp128_prime_label() -> String {
     match <F as PseudoMersenneField>::MODULUS_OFFSET {
         2355 => "q=2^128-2355".to_string(),
@@ -178,7 +184,7 @@ struct ProfileMode {
 
 #[cfg(all(
     not(feature = "profile-onehot-fp128"),
-    any(feature = "profile-ci", feature = "profile-bench-selected")
+    feature = "profile-bench-selected"
 ))]
 const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
     #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
@@ -191,35 +197,32 @@ const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
         name: "onehot_fp128",
         run: run_profile_onehot_fp128,
     },
-    #[cfg(any(feature = "profile-ci", feature = "profile-ci-multi-group-direct"))]
+    #[cfg(feature = "profile-ci-multi-group-direct")]
     ProfileMode {
         name: "onehot_fp128_multi_group",
         run: run_profile_onehot_fp128_multi_group,
     },
-    #[cfg(any(feature = "profile-ci", feature = "profile-ci-multi-group-recursive"))]
+    #[cfg(feature = "profile-ci-multi-group-recursive")]
     ProfileMode {
         name: "onehot_fp128_multi_group_recursive",
         run: run_profile_onehot_fp128_multi_group_recursive,
     },
-    #[cfg(any(
-        feature = "profile-ci",
-        feature = "profile-ci-multi-group-recursive-w8r2"
-    ))]
+    #[cfg(feature = "profile-ci-multi-group-recursive-w8r2")]
     ProfileMode {
         name: "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2,
     },
-    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
+    #[cfg(feature = "profile-ci-distributed")]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w2r2",
         run: run_profile_onehot_fp128_multi_chunk_w2r2,
     },
-    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
+    #[cfg(feature = "profile-ci-distributed")]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w4r2",
         run: run_profile_onehot_fp128_multi_chunk_w4r2,
     },
-    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
+    #[cfg(feature = "profile-ci-distributed")]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_multi_chunk_w8r2,
@@ -248,7 +251,7 @@ const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
 
 #[cfg(all(
     not(feature = "profile-onehot-fp128"),
-    not(any(feature = "profile-ci", feature = "profile-bench-selected"))
+    not(feature = "profile-bench-selected")
 ))]
 const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
@@ -303,11 +306,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
 #[cfg(not(feature = "profile-onehot-fp128"))]
 fn profile_modes() -> &'static [ProfileMode] {
-    #[cfg(any(feature = "profile-ci", feature = "profile-bench-selected"))]
+    #[cfg(feature = "profile-bench-selected")]
     {
         PROFILE_SELECTED_MODES
     }
-    #[cfg(not(any(feature = "profile-ci", feature = "profile-bench-selected")))]
+    #[cfg(not(feature = "profile-bench-selected"))]
     {
         PROFILE_ALL_MODES
     }
@@ -406,9 +409,8 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
     run_onehot::<F, { Cfg::D }, Cfg>("onehot_fp128", nv, &layout, Some(&schedule), false);
 }
 
-/// Shared driver for the multi-group profiles. Every such profile
-/// fixes the same shape (two precommitted 16-var singleton groups + a 32-var
-/// main group with 2 polynomials, i.e. `num_polys == 4`); only the base preset
+/// Shared driver for the multi-group profiles. Every such profile fixes the
+/// shape declared by the `MULTI_GROUP_*` constants above; only the base preset
 /// (`Cfg`) and the `layout_note` describing its witness layout differ.
 fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
@@ -416,16 +418,24 @@ fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtFiel
     nv: usize,
     num_polys: usize,
 ) {
-    assert_eq!(nv, 32, "{label} fixes the main group at 32 variables");
     assert_eq!(
-        num_polys, 4,
+        nv, MULTI_GROUP_FINAL_NUM_VARS,
+        "{label} fixes the main-group arity"
+    );
+    assert_eq!(
+        num_polys, MULTI_GROUP_TOTAL_POLYS,
         "{label} opens two precommitted singleton groups plus two main polynomials"
     );
     tracing::info!(
-        "=== {label} (fp128, {}, config D={D}, flat public setup, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, config D={D}, flat public setup, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {MULTI_GROUP_FINAL_NUM_VARS}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
         fp128_prime_label()
     );
-    run_recursive_multi_group_onehot::<F, D, Cfg>(label, 16, 32, 2);
+    run_recursive_multi_group_onehot::<F, D, Cfg>(
+        label,
+        MULTI_GROUP_PRE_NUM_VARS,
+        MULTI_GROUP_FINAL_NUM_VARS,
+        MULTI_GROUP_FINAL_POLYS,
+    );
 }
 
 fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {

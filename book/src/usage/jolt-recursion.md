@@ -58,7 +58,7 @@ AkitaCommitmentScheme::<Cfg>::batched_prove(
 Jolt may use `CpuBackend::with_resource_limits` instead of the default. Keep
 the chosen backend value alive for as long as the prepared stack borrows it.
 The default retains ring switch operations through `2^21` ring elements and
-allows 8 MiB of one hot scratch space for each worker. Change these limits only
+allows 8 MiB of sparse commitment scratch space for each worker. Change these limits only
 after measuring the complete Jolt prover. They change CPU work and memory use,
 but they do not change Akita proof bytes.
 

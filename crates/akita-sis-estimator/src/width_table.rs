@@ -91,10 +91,10 @@ pub static FAMILIES: LazyLock<Vec<AkitaModulusProfileId>> = LazyLock::new(|| {
 });
 
 /// Maximum module rank emitted for each scalar row.
-pub const DEFAULT_MAX_RANK: u32 = 20;
+pub const DEFAULT_MAX_RANK: u32 = akita_types::sis::SIS_MAX_MODULE_RANK;
 
 /// Policy table search cap.
-pub const DEFAULT_SEARCH_CAP: u64 = 6_400_000_000_000;
+pub const DEFAULT_SEARCH_CAP: u64 = akita_types::sis::SIS_REQUIRED_MAX_WIDTH;
 
 /// Legacy L2 generator cap retained for the independent Euclidean table.
 /// The quantum infinity table itself uses [`DEFAULT_SEARCH_CAP`] uniformly.

@@ -4,7 +4,8 @@ use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::{
     CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
+    PolynomialGroupLayout, RelationAddressGeometry, SetupContributionMode, SignedDigitKernel,
+    TerminalResponseShape,
 };
 use akita_field::{AkitaError, CanonicalField};
 
@@ -125,9 +126,14 @@ impl CommittedGroupProfile {
                     .to_string(),
             ));
         }
-        if self.log_basis_inner == 0 || self.num_digits_inner == 0 {
+        if SignedDigitKernel::for_log_basis(self.log_basis_inner).is_none()
+            || self.num_digits_inner == 0
+            || self.num_digits_inner
+                > crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_inner)
+        {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero inner basis and digit depth".to_string(),
+                "commitment group inner basis or digit depth exceeds the supported field decomposition"
+                    .to_string(),
             ));
         }
         if self.log_basis_outer == 0 || self.num_digits_outer == 0 {

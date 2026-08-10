@@ -82,8 +82,12 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     };
     let num_digits_outer = num_digits_open(open_decomp);
     let num_digits_open_val = num_digits_open(open_decomp);
-    let mut frontier: Vec<(usize, usize, LayoutCandidateScore, PrecommittedLevelParams)> =
-        Vec::new();
+    let mut frontier: Vec<(
+        [usize; 2],
+        Vec<u8>,
+        LayoutCandidateScore,
+        PrecommittedLevelParams,
+    )> = Vec::new();
 
     let (inner_basis_min, inner_basis_max) = crate::InnerBasisSource::RawCoefficients {
         log_bound: policy.decomposition.field_bits(),
@@ -241,22 +245,30 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 &akita_types::setup_prefix_slot_id(n_prefix, params.clone()),
             )?;
             let padded_setup_fields = padded_setup_prefix_len(setup_fields);
-            if frontier.iter().any(|(best_witness, best_setup, _, _)| {
-                *best_witness <= physical_width && *best_setup <= padded_setup_fields
-            }) {
-                continue;
-            }
-            frontier.retain(|(other_witness, other_setup, _, _)| {
-                physical_width > *other_witness || padded_setup_fields > *other_setup
-            });
-            frontier.push((physical_width, padded_setup_fields, score, params));
+            let coords = [physical_width, padded_setup_fields];
+            let descriptor = params.canonical_descriptor_bytes();
+            crate::schedule_params::pareto::insert(
+                &mut frontier,
+                (coords, descriptor, score, params),
+                |(best, best_descriptor, best_score, _),
+                 (candidate, candidate_descriptor, candidate_score, _)| {
+                    let best_tie = (*best_score, best_descriptor.as_slice());
+                    let candidate_tie = (*candidate_score, candidate_descriptor.as_slice());
+                    crate::schedule_params::pareto::canonical_dominates(
+                        best,
+                        &best_tie,
+                        candidate,
+                        &candidate_tie,
+                    )
+                },
+            );
         }
     }
 
-    frontier.sort_by_key(|(witness, setup, score, params)| {
+    frontier.sort_by_key(|(coords, _, score, params)| {
         (
-            *witness,
-            *setup,
+            coords[0],
+            coords[1],
             *score,
             params.layout.log_basis_inner,
             params.layout.num_live_blocks,

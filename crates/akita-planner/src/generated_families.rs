@@ -35,7 +35,7 @@ pub const DEFAULT_STANDALONE_PRECOMMIT_NUM_VARS: &[usize] = &[14, 15, 16];
 /// Polynomial counts emitted for standalone frozen precommit descriptors.
 pub const DEFAULT_STANDALONE_PRECOMMIT_NUM_POLYNOMIALS: &[usize] = &[1, 2];
 
-const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
+const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::new(16, 2),
@@ -48,8 +48,6 @@ const FP128_D64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(44),
     PolynomialGroupLayout::singleton(50),
 ];
-
-const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = FP128_D64_DENSE_KEYS;
 
 const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(12),
@@ -207,33 +205,6 @@ fn plan_regen<Cfg: CommitmentConfig>(
 /// Pure DP regeneration for `Cfg` — never consults the generated table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
-}
-
-/// Offline regeneration for the catalog-backed default fp128 onehot profile.
-fn regen_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    type Cfg = fp128::OneHot;
-    let policy = policy_of::<Cfg>();
-    Ok(find_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        honest_fold_policy_of::<Cfg>(),
-        &[],
-        &policy,
-        Cfg::ring_challenge_config,
-    )?
-    .schedule)
-}
-
-/// Offline regeneration for the catalog-backed default fp128 dense profile.
-fn regen_fp128_dense(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    type Cfg = fp128::Dense;
-    Ok(find_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        honest_fold_policy_of::<Cfg>(),
-        &[],
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-    )?
-    .schedule)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -627,22 +598,15 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
 /// here; both the table emitter and the drift-guard test pick it up
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
-    GeneratedFamily {
-        module_name: "fp128_onehot",
-        const_name: "FP128_ONEHOT_SCHEDULES",
-        schedule_feature: "fp128-onehot",
-        scalar_keys: FP128_ONEHOT_KEYS,
-        regen: regen_fp128_onehot,
-        regen_group_batch: regen_group_batch::<fp128::OneHot>,
-        group_batch_keys: fp128_onehot_group_batch_keys,
-        runtime_schedule: runtime_schedule::<fp128::OneHot>,
-        schedule_catalog: schedule_catalog::<fp128::OneHot>,
-        runtime_precommitted_profile: runtime_precommitted_profile::<fp128::OneHot>,
-        policy: family_policy::<fp128::OneHot>,
-        ring_challenge_config: <fp128::OneHot as CommitmentConfig>::ring_challenge_config,
-        precommitted_profiles: fp128_onehot_precommitted_profiles,
-        explicit_precommitted_group: explicit_precommitted_group::<fp128::OneHot>,
-    },
+    family_row!(
+        "fp128_onehot",
+        "FP128_ONEHOT_SCHEDULES",
+        "fp128-onehot",
+        FP128_ONEHOT_KEYS,
+        fp128::OneHot,
+        fp128_onehot_group_batch_keys,
+        fp128_onehot_precommitted_profiles
+    ),
     family_row!(
         recursive,
         "fp128_onehot_recursive",
@@ -665,22 +629,15 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>,
         fp128_onehot_multichunk_precommitted_profiles
     ),
-    GeneratedFamily {
-        module_name: "fp128_dense",
-        const_name: "FP128_DENSE_SCHEDULES",
-        schedule_feature: "fp128-dense",
-        scalar_keys: FP128_DENSE_KEYS,
-        regen: regen_fp128_dense,
-        regen_group_batch: regen_group_batch::<fp128::Dense>,
-        group_batch_keys: no_group_batch_keys,
-        runtime_schedule: runtime_schedule::<fp128::Dense>,
-        schedule_catalog: schedule_catalog::<fp128::Dense>,
-        runtime_precommitted_profile: runtime_precommitted_profile::<fp128::Dense>,
-        policy: family_policy::<fp128::Dense>,
-        ring_challenge_config: <fp128::Dense as CommitmentConfig>::ring_challenge_config,
-        precommitted_profiles: fp128_dense_precommitted_profiles,
-        explicit_precommitted_group: explicit_precommitted_group::<fp128::Dense>,
-    },
+    family_row!(
+        "fp128_dense",
+        "FP128_DENSE_SCHEDULES",
+        "fp128-dense",
+        FP128_DENSE_KEYS,
+        fp128::Dense,
+        no_group_batch_keys,
+        fp128_dense_precommitted_profiles
+    ),
     family_row!(
         "fp128_onehot_multi_chunk",
         "FP128_ONEHOT_MULTI_CHUNK_SCHEDULES",

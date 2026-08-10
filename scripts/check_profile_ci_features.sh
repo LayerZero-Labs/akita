@@ -16,7 +16,9 @@ from pathlib import Path
 repo = Path(".")
 workflow = repo / ".github/workflows/profile-bench.yml"
 pcs = repo / "crates/akita-pcs/Cargo.toml"
-modes_rs = repo / "crates/akita-pcs/examples/profile/modes.rs"
+profile_main = repo / "crates/akita-pcs/examples/profile/main.rs"
+profile_modes = repo / "crates/akita-pcs/examples/profile/modes.rs"
+modes_rs = profile_modes
 linkage = repo / "scripts/check_profile_ci_linkage.sh"
 
 MODE_FEATURE = {
@@ -69,24 +71,30 @@ PROFILE_BENCH_MARKER = "profile-bench-selected"
 text = pcs.read_text(encoding="utf-8")
 
 
-def feature_members(feature: str) -> set[str]:
-    match = re.search(
-        rf"^{re.escape(feature)}\s*=\s*\[(.*?)\]",
-        text,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    if not match:
+def parse_features() -> dict[str, list[str]]:
+    import tomllib
+
+    parsed = tomllib.loads(text)
+    return {name: list(members) for name, members in parsed["features"].items()}
+
+
+features = parse_features()
+
+
+def feature_members(feature: str, active: tuple[str, ...] = ()) -> set[str]:
+    if feature not in features:
         print(f"{feature} feature not found in akita-pcs/Cargo.toml", file=sys.stderr)
         raise SystemExit(1)
-
+    if feature in active:
+        print(f"Cargo feature cycle: {' -> '.join((*active, feature))}", file=sys.stderr)
+        raise SystemExit(1)
     members: set[str] = set()
-    for line in match.group(1).splitlines():
-        line = line.strip().rstrip(",")
-        if not line or line.startswith("#"):
-            continue
-        if "/" in line:
-            line = line.split("/", 1)[1]
-        members.add(line.strip('"'))
+    for member in features[feature]:
+        if member in features:
+            members.add(member)
+            members.update(feature_members(member, (*active, feature)))
+        else:
+            members.add(member.split("/", 1)[-1])
     return members
 
 
@@ -104,12 +112,14 @@ if not selected_match:
 selected_modes = set(re.findall(r'name:\s*"([^"]+)"', selected_match.group(1)))
 
 linkage_text = linkage.read_text(encoding="utf-8")
-forbidden_match = re.search(r"forbidden=\(\n(.*?)\n\)", linkage_text, flags=re.DOTALL)
-if not forbidden_match:
-    print("forbidden symbol list not found in profile linkage guard", file=sys.stderr)
+outside_match = re.search(
+    r"outside_profile_symbols=\(\n(.*?)\n\)", linkage_text, flags=re.DOTALL
+)
+if not outside_match:
+    print("outside-profile symbol list not found in profile linkage guard", file=sys.stderr)
     raise SystemExit(1)
-forbidden_symbols = set(
-    re.findall(r"^\s*([A-Z0-9_]+)\s*$", forbidden_match.group(1), flags=re.MULTILINE)
+outside_symbols = set(
+    re.findall(r"^\s*([A-Z0-9_]+)\s*$", outside_match.group(1), flags=re.MULTILINE)
 )
 feature_symbols = {
     "schedules-fp32-onehot": "FP32_ONEHOT_SCHEDULES",
@@ -221,7 +231,7 @@ for group_name, profile_feature, case_spec in bench_cases:
     if linked_symbol is None:
         print(f"schedule feature '{required}' has no linkage symbol mapping", file=sys.stderr)
         failed = True
-    elif linked_symbol in forbidden_symbols:
+    elif linked_symbol in outside_symbols:
         print(
             f"bench mode '{mode}' requires symbol '{linked_symbol}' but the linkage guard forbids it",
             file=sys.stderr,
@@ -256,6 +266,18 @@ for (group_name, profile_feature), required in group_requirements.items():
         print(
             f"matrix group '{group_name}' feature '{profile_feature}' enables schedule "
             f"features {sorted(selected_schedules)}, expected exactly {sorted(required)}",
+            file=sys.stderr,
+        )
+        failed = True
+
+matrix_profile_features = set(matrix_features)
+feature_pattern = re.compile(r'feature\s*=\s*"(profile-ci-[^"]+)"')
+for source in (profile_main, profile_modes):
+    declared = set(feature_pattern.findall(source.read_text(encoding="utf-8")))
+    if declared != matrix_profile_features:
+        print(
+            f"{source} declares profile group features {sorted(declared)}, expected "
+            f"exactly {sorted(matrix_profile_features)}",
             file=sys.stderr,
         )
         failed = True

@@ -36,7 +36,7 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
         n_a,
         active_a_cols,
         1,
-        crate::compute::CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+        crate::compute::CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
         OneHotSweep::Bucketed,
     )
     .unwrap();
@@ -46,7 +46,7 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
         n_a,
         active_a_cols,
         1,
-        crate::compute::CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+        crate::compute::CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
         OneHotSweep::Merge,
     )
     .unwrap();
@@ -142,7 +142,7 @@ fn production_selector_has_measured_regions_and_explicit_boundaries() {
 #[test]
 fn retained_sweeps_handle_oversized_and_empty_blocks() {
     use super::super::column_sweep::{
-        bucketed_sweep_tile_checked, direct_sweep_tile, merge_sweep_tile, MERGE_COL_CHUNK,
+        bucketed_sweep_tile, direct_sweep_tile, merge_sweep_tile, MERGE_COL_CHUNK,
     };
 
     type F = Prime128Offset275;
@@ -172,7 +172,7 @@ fn retained_sweeps_handle_oversized_and_empty_blocks() {
     let mut chunk_buf = vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
     let merge = merge_sweep_tile(&a_view, &views, n_a, active_a_cols, 1, &mut chunk_buf);
     let direct = direct_sweep_tile(&a_view, &views, 1);
-    let bucketed = bucketed_sweep_tile_checked(&a_view, &views, n_a, active_a_cols, 1);
+    let bucketed = bucketed_sweep_tile(&a_view, &views, n_a, active_a_cols, 1);
     assert_eq!(merge, direct);
     assert_eq!(bucketed, direct);
 }
@@ -201,7 +201,7 @@ where
                 n_a,
                 active_a_cols,
                 1,
-                crate::compute::CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER,
+                crate::compute::CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
                 sweep,
             )
             .unwrap(),

@@ -86,8 +86,9 @@ one hot polynomial does not share mutable derived state.
 
 Tile size and arithmetic traversal solve different problems.
 
-The tile size bounds temporary memory. The default CPU backend uses an 8 MiB
-scratch budget per worker. An application may choose another nonzero budget.
+The tile size bounds temporary memory. The default CPU backend uses one 8 MiB
+sparse commitment scratch budget per worker. One-hot and signed sparse-ring
+commitments both use it. An application may choose another nonzero budget.
 The estimate includes sparse entries, sweep indexes, wide accumulators,
 reduced rows, and small offset arrays. In simplified form,
 
@@ -117,14 +118,14 @@ a route change is visible even when total runtime is noisy.
 
 `CpuBackend` owns two deployment limits. The first is the largest ring switch
 operation that keeps a complete transformed matrix prefix. The second is the
-one hot scratch budget for each worker. `CpuBackend::DEFAULT` uses `2^21` ring
+sparse commitment scratch budget for each worker. `CpuBackend::DEFAULT` uses `2^21` ring
 elements and 8 MiB. Applications may use `CpuBackend::with_resource_limits` to
 choose other values.
 
 A zero ring switch limit streams every ring switch operation that has a
-streamed implementation. `usize::MAX` retains every supported operation. A one
-hot scratch budget must be nonzero. The kernel returns `InvalidSetup` before
-allocation if even one block cannot fit.
+streamed implementation. `usize::MAX` retains every supported operation. The
+commitment scratch budget must be nonzero. Each one-hot or sparse-ring kernel
+returns `InvalidSetup` before its tile allocation if even one block cannot fit.
 
 These limits choose equivalent CPU execution paths. They do not change the
 proof schedule, transcript, setup bytes, proof bytes, or verifier behavior.
@@ -136,10 +137,10 @@ Commitment kernels accumulate several products before reducing to the base
 field. The safe number of additions depends on the field and CRT profile.
 `F::MAX_COMMIT_ACCUMULATIONS` is the single contract for this limit.
 
-If a block contains more terms than the limit, the kernel splits it into safe
-segments and adds the reduced segment results. Ring shift helpers preserve
-negacyclic wrap. Tests reach the exact addition cap with maximal canonical
-limbs and cover wrapped shifts.
+If a one-hot block contains more terms than the limit, both retained sweeps
+reduce the wide accumulator at the same cap and continue from zero. Ring shift
+helpers preserve negacyclic wrap. Tests reach the exact addition cap with
+maximal canonical limbs and cover wrapped shifts.
 
 ## Prepared NTT state
 

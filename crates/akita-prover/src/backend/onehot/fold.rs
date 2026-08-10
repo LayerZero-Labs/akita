@@ -12,9 +12,10 @@ where
 
     for entry in entries {
         let pos = entry.pos_in_block();
+        let coeff_idx = entry.coeff_idx();
         if pos < scalars.len() && pos < num_positions_per_block {
             let s = scalars[pos];
-            coeffs_acc[entry.coeff_idx()] += s;
+            coeffs_acc[coeff_idx] += s;
         }
     }
 
@@ -33,8 +34,9 @@ where
 
     for entry in entries {
         let pos = entry.pos_in_block();
+        let coeff_idx = entry.coeff_idx();
         if pos < scalars.len() && pos < num_positions_per_block {
-            scalars[pos].shift_accumulate_into(&mut acc, entry.coeff_idx());
+            scalars[pos].shift_accumulate_into(&mut acc, coeff_idx);
         }
     }
 

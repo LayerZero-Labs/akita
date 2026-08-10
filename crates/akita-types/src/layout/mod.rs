@@ -24,7 +24,8 @@ pub use opening_point::{
 };
 pub use params::{
     shared_d_digit_log_basis, CommittedGroupParams, InnerCommitMatrixParams, LevelParamsLike,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedLevelParams, SisModulusProfileId,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy,
+    PrecommittedLevelParams, SisModulusProfileId,
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,

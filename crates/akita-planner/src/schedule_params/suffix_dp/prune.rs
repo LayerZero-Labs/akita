@@ -2,12 +2,15 @@ use akita_field::AkitaError;
 use akita_types::{active_setup_field_len, CommittedGroupParams, OpeningClaimsLayout};
 
 use crate::schedule_params::level_setup_field_elements;
+use crate::schedule_params::pareto;
+
+type LevelFrontierEntry = ([usize; 5], Vec<u8>, CommittedGroupParams, usize, usize);
 
 pub(super) fn level_candidates(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<(CommittedGroupParams, usize, usize)>,
 ) -> Result<Vec<(CommittedGroupParams, usize, usize)>, AkitaError> {
-    let mut frontier: Vec<([usize; 5], CommittedGroupParams, usize, usize)> = Vec::new();
+    let mut frontier: Vec<LevelFrontierEntry> = Vec::new();
     for (params, next_witness_len, eor_bytes) in candidates {
         let outer_payload_coeffs = params.outer_payload_geometry()?.transmitted_coefficients();
         let coords = [
@@ -26,29 +29,25 @@ pub(super) fn level_candidates(
                 .ok_or_else(|| AkitaError::InvalidSetup("D output dimension overflow".into()))?,
         ];
         let descriptor = params.canonical_descriptor_bytes();
-        if frontier
-            .iter()
-            .any(|(best, best_params, best_next_witness_len, _)| {
-                best_params.payload_mode == params.payload_mode
-                    && best_params.role_dims() == params.role_dims()
-                    && *best_next_witness_len == next_witness_len
-                    && best.iter().zip(coords).all(|(lhs, rhs)| *lhs <= rhs)
-                    && (best != &coords || best_params.canonical_descriptor_bytes() <= descriptor)
-            })
-        {
-            continue;
-        }
-        frontier.retain(|(other, other_params, other_next_witness_len, _)| {
-            other_params.payload_mode != params.payload_mode
-                || other_params.role_dims() != params.role_dims()
-                || *other_next_witness_len != next_witness_len
-                || !coords.iter().zip(*other).all(|(lhs, rhs)| *lhs <= rhs)
-                || (other == &coords && other_params.canonical_descriptor_bytes() < descriptor)
-        });
-        frontier.push((coords, params, next_witness_len, eor_bytes));
+        pareto::insert(
+            &mut frontier,
+            (coords, descriptor, params, next_witness_len, eor_bytes),
+            |(best, best_descriptor, best_params, best_next_witness_len, _),
+             (candidate, candidate_descriptor, candidate_params, candidate_next_witness_len, _)| {
+                best_params.payload_mode == candidate_params.payload_mode
+                    && best_params.role_dims() == candidate_params.role_dims()
+                    && best_next_witness_len == candidate_next_witness_len
+                    && pareto::canonical_dominates(
+                        best,
+                        best_descriptor,
+                        candidate,
+                        candidate_descriptor,
+                    )
+            },
+        );
     }
     Ok(frontier
         .into_iter()
-        .map(|(_, params, next_witness_len, eor_bytes)| (params, next_witness_len, eor_bytes))
+        .map(|(_, _, params, next_witness_len, eor_bytes)| (params, next_witness_len, eor_bytes))
         .collect())
 }

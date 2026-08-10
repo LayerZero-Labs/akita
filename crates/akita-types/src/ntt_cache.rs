@@ -911,6 +911,7 @@ fn validate_i16_rhs<const D: usize>(log_basis: u32, rhs: &[[i16; D]]) -> Result<
     if rhs.is_empty() {
         return Err(AkitaError::InvalidProof);
     }
+    // At basis 16 every i16 value is already inside the balanced digit range.
     if bound == 1u64 << (i16::BITS - 1) {
         return Ok(bound);
     }

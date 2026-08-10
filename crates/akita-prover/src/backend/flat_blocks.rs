@@ -52,10 +52,11 @@ impl<E> FlatBlocks<E> {
         block_idx: usize,
         num_live_blocks: usize,
     ) -> Result<(), AkitaError> {
-        debug_assert!(
-            block_idx <= num_live_blocks,
-            "FlatBlocks: block index {block_idx} out of range for {num_live_blocks} blocks"
-        );
+        if block_idx > num_live_blocks {
+            return Err(AkitaError::InvalidInput(format!(
+                "flat block index {block_idx} exceeds {num_live_blocks} live blocks"
+            )));
+        }
         while *current_block < block_idx {
             self.offsets.push(self.entry_offset()?);
             *current_block += 1;
@@ -70,10 +71,11 @@ impl<E> FlatBlocks<E> {
         num_live_blocks: usize,
         entry: E,
     ) -> Result<(), AkitaError> {
-        debug_assert!(
-            block_idx < num_live_blocks,
-            "FlatBlocks: block index {block_idx} out of range for {num_live_blocks} blocks"
-        );
+        if block_idx >= num_live_blocks {
+            return Err(AkitaError::InvalidInput(format!(
+                "flat block index {block_idx} is out of range for {num_live_blocks} live blocks"
+            )));
+        }
         self.advance_to_block(current_block, block_idx, num_live_blocks)?;
         self.entries.push(entry);
         Ok(())
@@ -113,12 +115,20 @@ fn checked_entry_offset(len: usize) -> Result<u32, AkitaError> {
 
 #[cfg(test)]
 mod tests {
-    use super::checked_entry_offset;
+    use super::{checked_entry_offset, FlatBlocks};
 
     #[test]
     fn rejects_entry_offset_above_u32_max() {
         if let Some(too_large) = (u32::MAX as usize).checked_add(1) {
             assert!(checked_entry_offset(too_large).is_err());
         }
+    }
+
+    #[test]
+    fn push_entry_rejects_out_of_range_block_in_release_builds() {
+        let mut blocks = FlatBlocks::with_capacity(1, 1);
+        let mut current = 0;
+        assert!(blocks.push_entry(&mut current, 1, 1, 7u8).is_err());
+        assert_eq!(blocks.num_live_blocks(), 0);
     }
 }

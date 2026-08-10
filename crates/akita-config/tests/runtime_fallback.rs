@@ -12,6 +12,11 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
+#[cfg(all(
+    feature = "schedules-fp128-onehot",
+    not(feature = "schedules-fp128-onehot-recursive")
+))]
+use akita_config::RecursiveCommitmentConfig;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
 use akita_schedules::resolve_schedule;
@@ -285,6 +290,10 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
     }
 }
 
+#[cfg(all(
+    feature = "schedules-fp128-onehot",
+    not(feature = "schedules-fp128-onehot-recursive")
+))]
 #[test]
 #[cfg(not(any(
     feature = "schedules-fp128-onehot-recursive",

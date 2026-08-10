@@ -4,9 +4,9 @@
 |-------|-------|
 | Author(s) | Quang Dao |
 | Created | 2026-07-30 |
-| Revised | 2026-07-31 |
+| Revised | 2026-08-10 |
 | Status | active |
-| PR | [#338](https://github.com/LayerZero-Labs/akita/pull/338) |
+| PR | [#338](https://github.com/LayerZero-Labs/akita/pull/338), [#355](https://github.com/LayerZero-Labs/akita/pull/355) |
 | Supersedes | Earlier source-provider and fold-admission revisions of this specification |
 | Superseded-by | |
 | Book-chapter | how/architecture.md |
@@ -138,6 +138,51 @@ snap, safety factor, discount, or source-specific correction to it.
 The core planner MUST still reject a result that fails a hard protocol check,
 including arithmetic capacity, matrix capacity, dimension validity, or SIS
 security.
+
+### Source decomposition basis
+
+The A commitment basis and the response or opening basis are independent
+planner coordinates. `inner_basis_range` is the catalog-bound search policy for
+the A source. `opening_basis_range` is the catalog-bound search policy for the
+fold response and the B, D, and opening commitments. A generated catalog MUST
+bind both complete ranges, including candidates that do not win a row.
+
+The offline planner classifies the A source as exactly one of these cases:
+
+- `RawCoefficients { log_bound }` searches the configured inner range, capped
+  by the source bound. Its digit depth is derived from that bound and the
+  selected inner basis.
+- `UnitOneHot` uses one exact digit at the minimum configured inner basis. It
+  MUST NOT be priced as a dense field element.
+- `BalancedDigits { log_basis }` is an already decomposed recursive witness. It
+  uses one digit at the basis that produced it.
+
+An already balanced recursive witness MUST NOT be decomposed again at another
+basis. Re-decomposition would change the source representation whose norm was
+used to select the preceding fold depth. Each recursive level therefore carries
+the predecessor response basis into its A source. This source classification is
+offline policy only. Runtime profiles carry the resulting exact basis, digit
+depth, widths, ranks, and bounds without a source tag.
+
+Proof-optimized catalogs currently admit inner bases 3 through 10 for the Q32
+modulus profile and 3 through 11 for Q64 and Q128. These upper limits are
+versioned search-policy choices from exhaustive schedule sweeps, not protocol
+or signed-storage limits. Bases 9 through 11 require the exact signed-i16
+commitment path. The underlying kernel admits bases through 16, so widening a
+catalog range requires a new sweep, SIS coverage for every admitted A cell,
+catalog regeneration, and a changed catalog identity. It does not require a
+wire-format change.
+
+The source norm MUST be computed from the selected inner basis and A ring
+dimension. Balanced sources use
+`FoldWitnessNorms::bounded(log_basis_inner, d_a)`; unit one-hot sources use their
+profile-owned sparse norm. The honest fold policy derives `num_digits_fold`
+from that source norm and the selected response basis. The A-role SIS collision
+bound is then computed from the A ring dimension, response basis, selected fold
+digit depth, and challenge distribution. Planner pricing and runtime admission
+MUST use those same values. Decoupling the response basis therefore does not
+weaken the A bound: the source norm fixes the required response depth, and that
+exact response plan fixes the certified A-role bound.
 
 ### Generated schedule rows
 

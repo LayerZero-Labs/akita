@@ -211,42 +211,39 @@ fn resolved_output_path(path: &Path) -> Result<PathBuf, String> {
             .map_err(|error| format!("read current directory: {error}"))?
             .join(path)
     };
-    let mut normalized = PathBuf::new();
+    let mut resolved = PathBuf::new();
+    let mut missing = Vec::new();
     for component in absolute.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                if !normalized.pop() {
+                let removed = if missing.is_empty() {
+                    resolved.pop()
+                } else {
+                    missing.pop();
+                    true
+                };
+                if !removed {
                     return Err(format!(
                         "output path escapes the filesystem root: {}",
                         path.display()
                     ));
                 }
             }
-            _ => normalized.push(component.as_os_str()),
+            Component::Normal(name) if missing.is_empty() => {
+                let candidate = resolved.join(name);
+                if candidate.exists() {
+                    resolved = fs::canonicalize(&candidate)
+                        .map_err(|error| format!("resolve {}: {error}", candidate.display()))?;
+                } else {
+                    missing.push(name.to_os_string());
+                }
+            }
+            Component::Normal(name) => missing.push(name.to_os_string()),
+            Component::Prefix(_) | Component::RootDir => resolved.push(component.as_os_str()),
         }
     }
-
-    let mut existing = normalized.as_path();
-    let mut missing = Vec::new();
-    while !existing.exists() {
-        let file_name = existing.file_name().ok_or_else(|| {
-            format!(
-                "output path has no existing ancestor: {}",
-                normalized.display()
-            )
-        })?;
-        missing.push(file_name.to_os_string());
-        existing = existing.parent().ok_or_else(|| {
-            format!(
-                "output path has no existing ancestor: {}",
-                normalized.display()
-            )
-        })?;
-    }
-    let mut resolved = fs::canonicalize(existing)
-        .map_err(|error| format!("resolve {}: {error}", existing.display()))?;
-    for component in missing.into_iter().rev() {
+    for component in missing {
         resolved.push(component);
     }
     Ok(resolved)
@@ -573,5 +570,27 @@ mod tests {
             .expect("isolated explicit output");
         validate_explicit_output_isolation(&checked_in_generated_dir, &ExplicitRows::default())
             .expect("ordinary full regeneration may target the checked-in catalog");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_resolution_applies_parent_after_resolving_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = env::temp_dir().join(format!(
+            "akita-schedule-path-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let target = root.join("real/deep");
+        fs::create_dir_all(&target).expect("create symlink target");
+        symlink(&target, root.join("link")).expect("create test symlink");
+
+        let resolved = resolved_output_path(&root.join("link/../isolated"))
+            .expect("resolve output through symlink");
+        let canonical_root = fs::canonicalize(&root).expect("canonical test root");
+        assert_eq!(resolved, canonical_root.join("real/isolated"));
+
+        fs::remove_dir_all(&root).expect("remove test directory");
     }
 }

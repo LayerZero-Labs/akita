@@ -431,7 +431,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         "verifier_setup",
         t_verifier_setup.elapsed().as_secs_f64(),
     );
-    let verify = || {
+    let prepare = || {
         let mut verifier_groups = Vec::with_capacity(PRE_GROUPS + 1);
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             verifier_groups.push(
@@ -451,20 +451,23 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             )
             .expect("final verifier group"),
         );
+        GroupBatchStatement::new(
+            selection,
+            OpeningClaims::from_groups(verifier_groups).expect("verifier claims"),
+        )
+        .expect("verifier statement")
+    };
+    let verify = |statement| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
         AkitaCommitmentScheme::<ProofCfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            GroupBatchStatement::new(
-                selection,
-                OpeningClaims::from_groups(verifier_groups).expect("verifier claims"),
-            )
-            .expect("verifier statement"),
+            statement,
             BasisMode::Lagrange,
         )
     };
-    run_verifier_timings(label, pools, "multi-group profile", verify);
+    run_verifier_timings(label, pools, "multi-group profile", prepare, verify);
     report_verifier_ntt_cache_size(
         label,
         verifier_setup
