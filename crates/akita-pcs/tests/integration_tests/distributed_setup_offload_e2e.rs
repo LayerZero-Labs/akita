@@ -13,13 +13,9 @@
 //! The fixture is production-sized and must be run explicitly in an optimized
 //! profile:
 //!
-//! `cargo test --release -p akita-pcs --test distributed_setup_offload_e2e --features profile-ci -- --ignored`
+//! `cargo test --release -p akita-pcs --test integration_tests --features profile-ci distributed_setup_offload_e2e:: -- --ignored`
 
-#![cfg(feature = "profile-ci")]
-#![allow(missing_docs)]
-
-mod common;
-
+use crate::common::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::{
@@ -27,7 +23,6 @@ use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, PolynomialGroupLayout,
     SetupContributionMode,
 };
-use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 

@@ -137,7 +137,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 
 Existing tests that must continue passing:
 
-- All integration tests under `crates/akita-pcs/tests/`, especially `akita_e2e.rs`, `single_poly_e2e.rs`, `multipoint_batched_e2e.rs`, `batched_aggregated_e2e.rs`, and `setup.rs`.
+- All integration tests under `crates/akita-pcs/tests/integration_tests/`, especially `akita_e2e.rs`, `single_poly_e2e.rs`, `multipoint_batched_e2e.rs`, `batched_aggregated_e2e.rs`, and `setup.rs`.
 - All protocol tests embedded in `crates/akita-pcs/src/lib.rs`, integration tests under `crates/akita-pcs/tests/`, and tests in the owning extracted crates.
 - All algebra and NTT tests after extraction to `akita-algebra`.
 - All examples and benches that are listed in workspace manifests.

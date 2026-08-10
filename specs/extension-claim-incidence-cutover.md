@@ -201,7 +201,7 @@ Deferred to a later spec:
 - `crates/akita-prover/src/{lib,api/scheme,protocol/flow,protocol/ring_switch,protocol/quadratic_equation}.rs`
 - `crates/akita-verifier/src/{proof/claims,protocol/batched,protocol/levels,protocol/ring_switch}.rs`
 - `crates/akita-config/src/{lib,proof_optimized}.rs`
-- `crates/akita-pcs/tests/{akita_e2e,batched_aggregated_e2e,multipoint_batched_e2e,transcript}.rs`
+- `crates/akita-pcs/tests/integration_tests/{akita_e2e,batched_aggregated_e2e,multipoint_batched_e2e,transcript}.rs`
 - `specs/extension-field-opening-batching.md` (umbrella update; the umbrella is later shrunk into per-PR specs by the retrospective scoping pass)
 
 ## References

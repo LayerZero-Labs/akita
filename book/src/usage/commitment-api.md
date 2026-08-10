@@ -57,7 +57,7 @@ coordinate-routing object.
   `SelectedProverOpeningData`).
 - `crates/akita-prover/src/api/prepared_group.rs` (coarse prepared group
   carrier).
-- `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
+- `crates/akita-pcs/tests/integration_tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
 
 ## Setup and caching
 

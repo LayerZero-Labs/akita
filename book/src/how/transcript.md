@@ -19,7 +19,7 @@ Active hardening pillars:
 Deferred work (prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, NARG migration): [`specs/transcript-hardening.md`](../../../specs/transcript-hardening.md).
 
 Implementation: `crates/akita-transcript/`.
-Tests: `crates/akita-pcs/tests/transcript_hardening.rs`.
+Tests: `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs`.
 
 ## AkitaInstanceDescriptor
 

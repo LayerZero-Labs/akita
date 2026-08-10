@@ -126,9 +126,9 @@ Required local and CI checks:
 - `cargo test -p akita-config fp128_family_selector --all-features`
 - `cargo test -p akita-prover --lib`
 - `cargo test -p akita-pcs --lib`
-- `cargo test -p akita-pcs --test transcript`
+- `cargo test -p akita-pcs --test integration_tests transcript::`
 - `cargo test -p akita-pcs --test sparse_challenge`
-- `cargo test -p akita-pcs --test single_poly_e2e single_onehot_nv10 -- --exact`
+- `cargo test -p akita-pcs --test integration_tests single_poly_e2e::single_onehot_nv12 -- --exact`
 - `cargo test -p akita-sumcheck --test drivers`
 - `cargo clippy --all --all-targets --all-features -- -D warnings`
 - `cargo clippy --all --all-targets --no-default-features -- -D warnings`

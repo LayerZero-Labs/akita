@@ -12,6 +12,7 @@ Run the cheap repository-wide gates before starting expensive compilation:
 
 ```bash
 scripts/generate-schedule-tables.sh
+python3 scripts/check_pcs_integration_tests.py
 cargo fmt --all --check
 taplo fmt --check
 scripts/test-rust-file-lines.sh
@@ -50,6 +51,13 @@ Use [`rtk`](https://github.com/rtk-ai/rtk) for verbose dev commands (`rtk cargo 
 For focused feedback, scope Cargo's build graph with `-p`, `--lib`, `--bin`, or
 `--test` before adding a nextest `-E` expression. `-E` filters test execution,
 not compilation. Use the dev profile while iterating.
+
+`akita-pcs` integration tests share the `integration_tests` target. Select one
+source module with a test-name filter, for example:
+
+```bash
+cargo test -p akita-pcs --test integration_tests transcript::
+```
 
 For final CI-fidelity validation, copy the current test-pass invocation from
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml). That workflow is the

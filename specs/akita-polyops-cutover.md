@@ -209,7 +209,7 @@ surface is exactly this built-in list.
       operation methods such as `tensor_extension_column_partials` or
       `tensor_packed_extension_sparse_linear_combination` on a polynomial
       object.
-- [x] `crates/akita-pcs/tests/commitment_contract.rs` is updated so its dummy
+- [x] `crates/akita-pcs/tests/integration_tests/commitment_contract.rs` is updated so its dummy
       downstream-like polynomial uses the new open representation boundary.
       This test remains the canary for out-of-crate custom polynomial support.
 - [x] All existing tests that covered dense, one-hot, sparse-ring,
@@ -251,9 +251,8 @@ Targeted checks while implementing:
 ```bash
 cargo test -p akita-prover backend::dense
 cargo test -p akita-prover backend::onehot
-cargo test -p akita-prover protocol::ring_relation
-cargo test -p akita-pcs --test akita_e2e
-cargo test -p akita-pcs --test commitment_contract
+ cargo test -p akita-prover protocol::quadratic_equation
+ cargo test -p akita-pcs --test integration_tests
 cargo test -p akita-pcs --test ring_switch
 cargo test -p akita-pcs --test zk
 ```
@@ -283,7 +282,7 @@ New or strengthened tests:
   can implement the commitment kernel for `CpuBackend` without changing an
   Akita source enum, and that a custom local ring-switch relation view can do
   the same for the ring-switch kernel.
-- Strengthen `crates/akita-pcs/tests/commitment_contract.rs` so its local
+- Strengthen `crates/akita-pcs/tests/integration_tests/commitment_contract.rs` so its local
   custom source view implements an Akita kernel trait for `CpuBackend`. This is
   the orphan-rule canary: the source view is local to the downstream-like test,
   while the backend trait and backend type are Akita-owned.

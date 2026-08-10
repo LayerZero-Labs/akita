@@ -51,7 +51,7 @@ two parts:
 - **Part 2: the end-to-end prover / verifier / setup path.** The runtime
   machinery *largely composes* already; the genuinely new interaction points are
   the two chunked+recursive leading fold levels, now exercised end to end by
-  `crates/akita-pcs/tests/distributed_setup_offload_e2e.rs`. See
+  `crates/akita-pcs/tests/integration_tests/distributed_setup_offload_e2e.rs`. See
   [Part 2: end-to-end plan](#part-2-end-to-end-implementation-plan).
 
 ## Intent
@@ -155,7 +155,7 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
   (`crates/akita-pcs/src/scheme/tests/onehot.rs::multi_group_multi_chunk_fold_round_trips`,
   `fp128::OneHotMultiChunkW2R2`).
 - **Recursive setup offloading + multi-group already round-trips**
-  (`crates/akita-pcs/tests/recursive_setup_e2e.rs`,
+  (`crates/akita-pcs/tests/integration_tests/recursive_setup_e2e.rs`,
   `RecursiveCommitmentConfig<OneHotCfg>`).
 - **The carried setup-prefix group folds per-chunk via the generic mechanism.**
   `fold_probe_witness_kernel` (`crates/akita-prover/src/protocol/fold_grind.rs`)
@@ -299,7 +299,7 @@ geometry for the mix. If it is, unify on the planner's derived geometry.
 
 ### Step 2 — End-to-end prove/verify test scaffolding
 
-**What.** `crates/akita-pcs/tests/distributed_setup_offload_e2e.rs`, sharing the
+**What.** `crates/akita-pcs/tests/integration_tests/distributed_setup_offload_e2e.rs`, sharing the
 `recursive_multi_group_round_trip` helper with `recursive_setup_e2e.rs`,
 parameterized on `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>`. Same key
 (`final_group = (32, 2)`, two `(16, 1)` precommits), same flow: `setup_prover`,
@@ -508,6 +508,6 @@ cycles saved by offloading vs the extra chunked-witness bytes.
 - `crates/akita-types/src/witness.rs`
 - `crates/akita-config/src/setup_prefix_slots.rs`
 - `crates/akita-setup/src/recursive_prefixes.rs`
-- `crates/akita-pcs/tests/recursive_setup_e2e.rs`
+- `crates/akita-pcs/tests/integration_tests/recursive_setup_e2e.rs`
 - `crates/akita-pcs/src/scheme/tests/onehot.rs` (`multi_group_multi_chunk_fold_round_trips`)
 - `crates/akita-schedules/src/generated/fp128_d64_onehot_recursive_multi_chunk_w8r2.rs`

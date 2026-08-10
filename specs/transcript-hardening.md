@@ -80,7 +80,7 @@ The implementation must preserve the following invariants. Where a check is mech
 - [x] Invariant 5 (labels never enter the production sponge) is verified by a dedicated unit test.
 - [x] `LoggingTranscript<Sponge>` is published as a real `pub` helper in `akita-transcript`, behind `feature = "logging-transcript"`, with a small CLI example `crates/akita-pcs/examples/transcript_schedule` that dumps the schedule. Cross-crate integration tests that need rich labels enable the feature explicitly.
 - [x] The five smell checks listed in §Smell Checks below pass on the hardening tests that opt into `LoggingTranscript`.
-- [x] A new `crates/akita-pcs/tests/transcript_hardening.rs` integration test exists and exercises: (a) preamble separation under perturbed descriptors, (b) prover/verifier event-stream equality, (c) the smell checks.
+- [x] A new `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs` integration test exists and exercises: (a) preamble separation under perturbed descriptors, (b) prover/verifier event-stream equality, (c) the smell checks.
 - [x] A differential property test (using `proptest`) under `crates/akita-pcs/tests/` fuzzes batch incidence and asserts event-stream equality + verify-success. The seed corpus covers smallest valid `nv`, mid-range, near-canonical `nv=20`, both Lagrange and Monomial basis modes, and non-uniform batch groupings `[1, 2]` / `[2, 1]`.
 - [x] The previous `crates/akita-pcs/tests/transcript_trace.rs` diagnostic is replaced by `LoggingTranscript` hardening tests plus the `transcript_schedule` example; the stale local test file no longer exists on this branch.
 - [x] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`, and `cargo test` pass under `--features transcript-blake2b`, `--features transcript-blake2b,logging-transcript`, `--features transcript-keccak,logging-transcript --no-default-features`, and repository all-features CI.
@@ -104,11 +104,11 @@ Each smell check is an ordinary assertion-shaped guard inside `LoggingTranscript
 - `crates/akita-types/src/instance_descriptor.rs::tests::canonical_encoding_roundtrip` — `AkitaSerialize` / `AkitaDeserialize` round-trip on the four-section descriptor.
 - `crates/akita-types/src/instance_descriptor.rs::tests::cross_side_equality` — construct from prover-side inputs (setup + commit + open args) vs verifier-side inputs (setup + proof header); assert byte-identical.
 - `crates/akita-transcript/src/lib.rs::tests::labels_never_in_production_sponge` — Invariant 5.
-- `crates/akita-pcs/tests/transcript_hardening.rs::preamble_separation` — perturbing each descriptor field changes challenge #1.
-- `crates/akita-pcs/tests/transcript_hardening.rs::event_stream_equality_small` — single fixture, full inspection.
-- `crates/akita-pcs/tests/transcript_hardening.rs::smell_checks_pass_for_matched_wire_absorb` — exercises the positive wire-coverage path, with unit tests in `akita-transcript` covering the individual negative smell-check cases.
-- `crates/akita-pcs/tests/transcript_hardening_proptest.rs` — `proptest`-driven fuzz over batch incidence, plus a deterministic seed corpus over `nv`, incidence, and basis, asserting event-stream equality and verify-success.
-- `crates/akita-pcs/tests/transcript_hardening.rs::pr88_regression` — explicit replay of the PR #88 setup; smell check #4 must fail for the legacy shape that absorbs `next_w_commitment` but consumes cleartext `final_w`, and must also fail if `final_w` is mutated after a matching absorb. Locks in the bug class.
+- `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs::preamble_separation` — perturbing each descriptor field changes challenge #1.
+- `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs::event_stream_equality_small` — single fixture, full inspection.
+- `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs::smell_checks_pass_for_matched_wire_absorb` — exercises the positive wire-coverage path, with unit tests in `akita-transcript` covering the individual negative smell-check cases.
+- `crates/akita-pcs/tests/integration_tests/transcript_hardening_proptest.rs` — `proptest`-driven fuzz over batch incidence, plus a deterministic seed corpus over `nv`, incidence, and basis, asserting event-stream equality and verify-success.
+- `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs::pr88_regression` — explicit replay of the PR #88 setup; smell check #4 must fail for the legacy shape that absorbs `next_w_commitment` but consumes cleartext `final_w`, and must also fail if `final_w` is mutated after a matching absorb. Locks in the bug class.
 
 **Existing tests that must keep passing (with transcript-bytes updated):**
 
@@ -522,7 +522,7 @@ Suggested order:
 5. **Cutover.** Replace today's `Blake2bTranscript` / `KeccakTranscript` types with `AkitaTranscript`, and keep only the local generic `Transcript<F>` protocol trait needed by prover/verifier/logging wrappers. Migrate all in-tree callsites in one pass (per workspace rule "Full Cutover, No Backward Compatibility"). Verify `cargo fmt && cargo clippy && cargo test` pass.
 6. **`LoggingTranscript<Sponge>`.** Promote from `crates/akita-pcs/tests/transcript_trace.rs` into `akita-transcript` under `feature = "logging-transcript"`. Drop the local mutex / coalescing scaffolding. Add the `record_wire_use` instrumentation hook, or a `TrackedAkitaBatchedProof` view backed by that hook, for smell check #4.
 7. **Smell checks.** Implement the five smell checks in `LoggingTranscript`. Each is an ordinary assertion-shaped guard active only when the wrapper is.
-8. **Hardening tests.** Write `crates/akita-pcs/tests/transcript_hardening.rs` (preamble separation, event-stream equality, smell checks, PR #88 regression) and `transcript_hardening_proptest.rs` (proptest fuzz over batch incidence plus deterministic coverage of `nv` and basis).
+8. **Hardening tests.** Write `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs` (preamble separation, event-stream equality, smell checks, PR #88 regression) and `transcript_hardening_proptest.rs` (proptest fuzz over batch incidence plus deterministic coverage of `nv` and basis).
 9. **Replace `transcript_trace.rs`.** Use durable `LoggingTranscript` hardening tests plus the `transcript_schedule` example.
 10. **`transcript_schedule` example.** New small CLI under `crates/akita-pcs/examples/`.
 11. **Cross-feature CI.** Verify `cargo test` passes under `--features transcript-blake2b`, `--features transcript-blake2b,logging-transcript`, `--features transcript-keccak,logging-transcript --no-default-features`, and repository all-features CI.

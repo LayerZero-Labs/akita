@@ -147,9 +147,9 @@ Existing tests that must continue passing:
 - `cargo fmt -q`
 - `cargo clippy --all --all-targets --all-features -- -D warnings`
 - `cargo test`
-- fp128 E2E tests in `crates/akita-pcs/tests/akita_e2e.rs`
+- fp128 E2E tests in `crates/akita-pcs/tests/integration_tests/akita_e2e.rs`
 - batched and multipoint E2E tests in `crates/akita-pcs/tests/`
-- transcript tests in `crates/akita-pcs/tests/transcript.rs`
+- transcript tests in `crates/akita-pcs/tests/integration_tests/transcript.rs`
 
 Targeted tests added or exercised by this PR:
 
@@ -446,8 +446,8 @@ Explicitly deferred to follow-up:
 - `crates/akita-types/src/schedule.rs`
 - `crates/akita-planner/src/proof_size.rs`
 - `crates/akita-planner/src/search.rs`
-- `crates/akita-pcs/tests/transcript.rs`
-- `crates/akita-pcs/tests/akita_e2e.rs`
+- `crates/akita-pcs/tests/integration_tests/transcript.rs`
+- `crates/akita-pcs/tests/integration_tests/akita_e2e.rs`
 - `specs/general-field-support.md`
 - `specs/extension-field-opening-batching.md`
 
@@ -466,8 +466,8 @@ Explicitly deferred to follow-up:
 - Proof-size accounting:
   `crates/akita-planner/src/proof_size.rs`
 - Transcript coverage:
-  `crates/akita-pcs/tests/transcript.rs`
+  `crates/akita-pcs/tests/integration_tests/transcript.rs`
 - Small-field E2E coverage:
-  `crates/akita-pcs/tests/akita_e2e.rs`
+  `crates/akita-pcs/tests/integration_tests/akita_e2e.rs`
 - Follow-up batching and extension-opening design:
   `specs/extension-field-opening-batching.md`

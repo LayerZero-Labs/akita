@@ -59,7 +59,7 @@ Key abstractions and surfaces:
 
 - **Prover/verifier symmetry.** A proof produced under `Recursive` verifies
   under `Recursive`; a proof produced under `Direct` verifies under `Direct`.
-  Protected by `crates/akita-pcs/tests/recursive_setup_e2e.rs`
+  Protected by `crates/akita-pcs/tests/integration_tests/recursive_setup_e2e.rs`
   (`recursive_onehot_nv20`, `recursive_onehot_nv25`).
 - **Mode is load-bearing, not cosmetic.** A `Recursive` proof must be rejected
   under `Direct` and vice versa, because the modes disagree on whether the
@@ -118,7 +118,7 @@ Key abstractions and surfaces:
 
 ### Testing Strategy
 
-- New: `crates/akita-pcs/tests/recursive_setup_e2e.rs` — recursive prove +
+- New: `crates/akita-pcs/tests/integration_tests/recursive_setup_e2e.rs` — recursive prove +
   serialize round-trip + verify (one-hot D=64, nv=20/25), plus a cross-mode
   rejection test. Uses `run_on_large_stack` and the shared `common` fixtures.
 - Must continue passing: all existing `Direct`-mode e2e suites

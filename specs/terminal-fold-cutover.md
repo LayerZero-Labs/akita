@@ -82,8 +82,8 @@ the baseline planner.
   depend on the exact witness the verifier later consumes. For
   intermediate levels this remains the SIS commitment; for the
   terminal level it is the cleartext `PackedDigits` final witness.
-  Protected by `tests/single_poly_e2e.rs`,
-  `crates/akita-pcs/tests/akita_e2e.rs::*round_trip`,
+  Protected by `tests/integration_tests/single_poly_e2e.rs`,
+  `crates/akita-pcs/tests/integration_tests/akita_e2e.rs::*round_trip`,
   `crates/akita-scheme/src/tests.rs::verify_*`, and the
   `crates/akita-pcs/tests/transcript_trace.rs` audit fixture.
 - **Terminal sumcheck shape.** The terminal relation sumcheck runs in
@@ -153,10 +153,10 @@ the baseline planner.
 
 Existing tests that must continue passing:
 
-- `crates/akita-pcs/tests/akita_e2e.rs`: all e2e fixtures
+- `crates/akita-pcs/tests/integration_tests/akita_e2e.rs`: all e2e fixtures
   (single-poly, batched same-point, fp32/fp64 static dense, adaptive
   envelope, tamper rejection).
-- `crates/akita-pcs/tests/single_poly_e2e.rs`: nv-15 single-poly
+- `crates/akita-pcs/tests/integration_tests/single_poly_e2e.rs`: nv-15 single-poly
   round trip.
 - `crates/akita-pcs/tests/ring_switch.rs`: ring-switch direct tests
   with explicit `RelationMatrixRowLayout` plumbing.
@@ -370,7 +370,7 @@ Affected crates and the change at each boundary:
 
 - `AGENTS.md` / `CLAUDE.md`: no changes required; the canonical
   profiling command is unchanged.
-- `crates/akita-pcs/tests/transcript_hardening.rs` (audit fixture): now
+- `crates/akita-pcs/tests/integration_tests/transcript_hardening.rs` (audit fixture): now
   shows terminal `w_hat`, sparse seed, final-witness remainder,
   ring-switch `alpha`, and `tau1` in order, with no terminal `tau0`
   and no `next_w_commitment` / `next_w_eval` / stage-1 sumcheck absorbs

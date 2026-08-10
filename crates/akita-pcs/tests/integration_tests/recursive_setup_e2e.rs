@@ -9,7 +9,7 @@
 //! The fixture is production-sized and must be run explicitly in an optimized
 //! profile:
 //!
-//! `cargo test --release -p akita-pcs --test recursive_setup_e2e --features profile-ci -- --ignored`
+//! `cargo test --release -p akita-pcs --test integration_tests --features profile-ci recursive_setup_e2e:: -- --ignored`
 
 use crate::common::*;
 

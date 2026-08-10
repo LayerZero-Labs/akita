@@ -32,8 +32,8 @@ Its smell checks assert:
 The PCS integration tests enable this with:
 
 ```bash
-cargo test -p akita-pcs --features logging-transcript --test transcript_hardening
-cargo test -p akita-pcs --features logging-transcript --test transcript_hardening_proptest
+cargo test -p akita-pcs --features logging-transcript --test integration_tests transcript_hardening::
+cargo test -p akita-pcs --features logging-transcript --test integration_tests transcript_hardening_proptest::
 ```
 
 For the full design and deferred follow-ups, see `specs/transcript-hardening.md`.

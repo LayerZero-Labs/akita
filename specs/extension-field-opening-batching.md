@@ -1368,7 +1368,7 @@ configs.
 - `crates/akita-sumcheck/src/extension_opening_reduction.rs` owns the
   reference degree-two extension-opening reduction sumcheck boundary.
 - `crates/akita-scheme/src/tests.rs`, `crates/akita-pcs/tests/ring_switch.rs`,
-  and `crates/akita-pcs/tests/transcript.rs` are the focused regression suites
+  and `crates/akita-pcs/tests/integration_tests/transcript.rs` are the focused regression suites
   for this PR's extension path.
 
 ## Review Checklist
