@@ -646,7 +646,7 @@ mod fp128_policy_tests {
             <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 ..
             }
         ));
@@ -660,7 +660,7 @@ mod fp128_policy_tests {
             <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 ..
             }
         ));

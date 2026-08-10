@@ -75,13 +75,23 @@ fn dimension_candidates(
         }
         crate::RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
         } => {
             if level >= num_search_levels {
-                vec![CommitmentRingDims::uniform(uniform_suffix_dimension)]
+                let Some(maximum_suffix_dimension) =
+                    suffix_dimension_ceiling(suffix_dimensions, ceiling)
+                else {
+                    return Ok(Vec::new());
+                };
+                suffix_dimensions
+                    .iter()
+                    .copied()
+                    .take_while(|&dimension| dimension <= maximum_suffix_dimension)
+                    .map(CommitmentRingDims::uniform)
+                    .collect()
             } else {
                 let mut candidates = Vec::new();
                 for &inner in potential_a_dimensions {
@@ -109,6 +119,18 @@ fn dimension_candidates(
         }
     };
     Ok(candidates)
+}
+
+fn suffix_dimension_ceiling(
+    suffix_dimensions: &[usize],
+    ceiling: CommitmentRingDims,
+) -> Option<usize> {
+    let role_ceiling = ceiling.d_a().min(ceiling.d_b()).min(ceiling.d_d());
+    suffix_dimensions
+        .iter()
+        .rev()
+        .copied()
+        .find(|&dimension| dimension <= role_ceiling)
 }
 
 #[cfg(test)]
@@ -381,9 +403,10 @@ pub fn plan_standalone_precommit(
     let precommit_dimension = match policy.ring_dimension_schedule_mode {
         crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => ring_dimension,
         crate::RingDimensionScheduleMode::AdaptiveDimension {
-            uniform_suffix_dimension,
-            ..
-        } => uniform_suffix_dimension,
+            suffix_dimensions, ..
+        } => suffix_dimensions.last().copied().ok_or_else(|| {
+            AkitaError::InvalidSetup("adaptive suffix dimension domain must be nonempty".into())
+        })?,
     };
     direct_policy.uniform_ring_dimension = precommit_dimension;
     direct_policy.ring_dimension_schedule_mode =

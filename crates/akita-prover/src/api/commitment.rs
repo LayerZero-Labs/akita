@@ -350,6 +350,7 @@ where
         + RootCommitSource<F, 128>
         + RootCommitSource<F, 256>
         + RootCommitSource<F, 512>
+        + RootCommitSource<F, 1024>
         + RootPolyMeta<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
@@ -481,6 +482,7 @@ where
         + RootCommitSource<F, 128>
         + RootCommitSource<F, 256>
         + RootCommitSource<F, 512>
+        + RootCommitSource<F, 1024>
         + RootPolyMeta<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
@@ -623,6 +625,7 @@ where
         + RootCommitSource<F, 128>
         + RootCommitSource<F, 256>
         + RootCommitSource<F, 512>
+        + RootCommitSource<F, 1024>
         + RootPolyMeta<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
@@ -1044,6 +1047,7 @@ where
         + RootCommitSource<F, 128>
         + RootCommitSource<F, 256>
         + RootCommitSource<F, 512>
+        + RootCommitSource<F, 1024>
         + RootPolyMeta<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {

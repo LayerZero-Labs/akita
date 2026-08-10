@@ -214,6 +214,36 @@ mod tests {
     }
 
     #[test]
+    fn small_field_commitment_dispatch_reaches_profile_caps() {
+        for (d, expected) in [(512usize, 512), (1024, 1024)] {
+            assert_eq!(
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    Prime32Offset99,
+                    d,
+                    |D| Ok(D)
+                )
+                .expect("supported fp32 inner dimension"),
+                expected
+            );
+        }
+        assert!(dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Outer),
+            Prime64Offset59,
+            512usize,
+            |D| Ok(D)
+        )
+        .is_err());
+        assert!(dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            Prime64Offset59,
+            1024usize,
+            |D| Ok(D)
+        )
+        .is_err());
+    }
+
+    #[test]
     fn outer_dispatch_floor_is_d64_on_every_profile() {
         for d in [16usize, 32] {
             assert!(dispatch_for_field!(
@@ -335,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_role_dims_for_field_rejects_ladder_dims_without_inner_dispatch() {
+    fn validate_role_dims_for_field_rejects_nonproduction_role_dimensions() {
         let fp32_ok = CommitmentRingDims {
             inner: 64,
             outer: 64,
@@ -348,7 +378,14 @@ mod tests {
             outer: 64,
             opening: 64,
         };
-        assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_a).is_err());
+        assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_a).is_ok());
+
+        let fp32_high_b = CommitmentRingDims {
+            inner: 512,
+            outer: 512,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_b).is_err());
 
         let fp128_high_b = CommitmentRingDims {
             inner: 64,

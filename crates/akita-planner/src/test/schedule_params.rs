@@ -55,7 +55,7 @@ fn policy_for_domain(
         }
         crate::RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels: 2,
-            uniform_suffix_dimension: 64,
+            suffix_dimensions: &[64],
             potential_a_dimensions: Box::leak(a.into_boxed_slice()),
             potential_b_dimensions: Box::leak(b.into_boxed_slice()),
             potential_d_dimensions: Box::leak(d.into_boxed_slice()),
@@ -156,6 +156,33 @@ fn adaptive_dimension_candidates_enumerate_exact_role_cartesian_product() {
 }
 
 #[cfg(feature = "catalog-gen")]
+#[test]
+fn fp32_suffix_candidates_are_uniform_and_monotone() {
+    use akita_config::{policy_of, proof_optimized::fp32::OneHot};
+    let policy = policy_of::<OneHot>();
+    let candidates = dimension_candidates(
+        &policy,
+        akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        CommitmentRingDims::uniform(256),
+    )
+    .expect("fp32 suffix candidates");
+    assert_eq!(
+        candidates,
+        vec![
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims::uniform(128)
+        ]
+    );
+    let after_drop = dimension_candidates(
+        &policy,
+        akita_schedules::ADAPTIVE_SEARCH_LEVELS + 1,
+        CommitmentRingDims::uniform(64),
+    )
+    .expect("fp32 suffix candidates after D64 transition");
+    assert_eq!(after_drop, vec![CommitmentRingDims::uniform(64)]);
+}
+
+#[cfg(feature = "catalog-gen")]
 fn assert_adaptive_small_field_keys<Cfg: akita_config::CommitmentConfig>(
     family: &str,
     keys: &[PolynomialGroupLayout],
@@ -204,6 +231,7 @@ fn adaptive_fp32_onehot_plans_supported_profile_keys() {
             PolynomialGroupLayout::new(16, 2),
             PolynomialGroupLayout::singleton(20),
             PolynomialGroupLayout::singleton(28),
+            PolynomialGroupLayout::singleton(30),
         ],
     );
 }
@@ -229,7 +257,10 @@ fn adaptive_fp64_onehot_plans_supported_profile_keys() {
 
     assert_adaptive_small_field_keys::<fp64::OneHot>(
         "fp64 onehot",
-        &[PolynomialGroupLayout::singleton(28)],
+        &[
+            PolynomialGroupLayout::singleton(28),
+            PolynomialGroupLayout::singleton(30),
+        ],
     );
 }
 

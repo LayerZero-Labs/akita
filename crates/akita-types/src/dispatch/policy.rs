@@ -51,7 +51,7 @@ macro_rules! protocol_dispatch_policy {
     ) => {
         /// All A/B/D commitment-role dispatch arms across field tiers.
         #[allow(dead_code)]
-        pub(crate) const ALL_COMMITMENT_ROLE_DISPATCH_ARMS: &[usize] = &[64, 128, 256, 512];
+        pub(crate) const ALL_COMMITMENT_ROLE_DISPATCH_ARMS: &[usize] = &[64, 128, 256, 512, 1024];
 
         #[inline]
         #[must_use]
@@ -222,10 +222,10 @@ macro_rules! __dispatch_for_field_inner {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256, 512 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256, 512 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256, 512, 1024 })
             }
         }
     }};
@@ -389,24 +389,24 @@ protocol_dispatch_policy! {
         inner: [64, 128, 256, 512]
         outer: [64, 128, 256]
         opening: [64, 128, 256]
-        uniform_policy: [64, 128, 256, 512]
+        uniform_policy: [64, 128, 256]
         ntt: [16, 32, 64, 128, 256, 512]
         compression: [8, 16]
         min_bd: 64
         ntt_max: 512
     }
     Fp64: {
-        inner: [64, 128, 256]
+        inner: [64, 128, 256, 512]
         outer: [64, 128, 256]
         opening: [64, 128, 256]
-        uniform_policy: [64, 128, 256]
+        uniform_policy: [64, 128, 256, 512]
         ntt: [32, 64, 128, 256, 512, 1024]
         compression: [16, 32]
         min_bd: 64
         ntt_max: 1024
     }
     Fp32: {
-        inner: [64, 128, 256]
+        inner: [64, 128, 256, 512, 1024]
         outer: [64, 128, 256]
         opening: [64, 128, 256]
         uniform_policy: [64, 128, 256]

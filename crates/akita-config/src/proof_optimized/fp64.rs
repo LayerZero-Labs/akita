@@ -12,7 +12,8 @@ pub type ExtensionField = Ext2<Field>;
 pub struct Dense;
 
 impl Dense {
-    pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
+    pub const SUFFIX_RING_DIMENSIONS: [usize; 1] = [64];
+    pub const A_RING_DIMENSIONS: [usize; 4] = [64, 128, 256, 512];
     pub const B_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
     pub const D_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
 }
@@ -22,7 +23,8 @@ impl Dense {
 pub struct OneHot;
 
 impl OneHot {
-    pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
+    pub const SUFFIX_RING_DIMENSIONS: [usize; 1] = [64];
+    pub const A_RING_DIMENSIONS: [usize; 4] = [64, 128, 256, 512];
     pub const B_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
     pub const D_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
 }
@@ -39,7 +41,7 @@ impl_proof_optimized_preset!(
     schedules = ("schedules-fp64-dense", "fp64_dense", fp64_dense_table),
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
-        uniform_suffix_dimension: 64,
+        suffix_dimensions: &Dense::SUFFIX_RING_DIMENSIONS,
         potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
         potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
         potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
@@ -57,7 +59,7 @@ impl_proof_optimized_preset!(
     schedules = ("schedules-fp64-onehot", "fp64_onehot", fp64_onehot_table),
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
-        uniform_suffix_dimension: 64,
+        suffix_dimensions: &OneHot::SUFFIX_RING_DIMENSIONS,
         potential_a_dimensions: &OneHot::A_RING_DIMENSIONS,
         potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
         potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,

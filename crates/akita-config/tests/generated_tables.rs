@@ -265,7 +265,7 @@ fn mixed_catalog_identity_binds_candidate_dimensions() {
     let mut mutated = catalog;
     let akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels,
-        uniform_suffix_dimension,
+        suffix_dimensions,
         potential_b_dimensions,
         potential_d_dimensions,
         ..
@@ -276,7 +276,7 @@ fn mixed_catalog_identity_binds_candidate_dimensions() {
     mutated.identity.ring_dimension_schedule_mode =
         akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions: WITHOUT_NONWINNER,
             potential_b_dimensions,
             potential_d_dimensions,

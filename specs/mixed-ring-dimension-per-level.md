@@ -90,8 +90,8 @@ W8R2:
 ```
 
 The frozen precommit descriptors remain part of the root lookup key. Root
-precommits are selected independently at the uniform suffix A/B dimensions
-`64/64`; their dimensions do not follow the adaptive final-group root. At every
+precommits are selected independently at the largest admitted suffix A/B
+dimensions; their dimensions do not follow the adaptive final-group root. At every
 offloaded edge the setup-prefix commitment inherits the consuming fold's exact
 A/B dimensions; it does not use a global fixed prefix dimension.
 
@@ -110,15 +110,16 @@ uniform-D64 suffix.
    the DP enumerates the Cartesian product of the configured A/B/D domains,
    rejects non-divisor projections, and enforces
    `next.d_role <= current.d_role` independently for A, B, and D. The selected
-   tuple becomes the child state's ceiling. At `num_search_levels`, enumeration
-   stops and the configured uniform suffix dimension is used.
+   tuple becomes the child state's ceiling. At `num_search_levels`, the planner
+   switches to the configured suffix domain and retains only dimensions no
+   larger than the incoming ceiling.
 3. **Price each tuple with its own geometry.** Root group expansion receives a
    fixed exact A/B/D tuple, including the shared opening D used by frozen
    precommits. Recursive candidates derive their fold challenge, extension
    opening reduction bytes, block splits, matrices, ranks, and setup footprint
    at that tuple. During adaptive levels all policy-admitted block splits are
    retained for comparison. After the search window the same catalog-bound
-   split domain governs the uniform suffix.
+   split domain governs the suffix.
 4. **Make setup-prefix dimensions edge-local.** A prefix is produced for a
    successor but committed as an input of that successor. Prefix derivation
    therefore receives the consuming candidate's exact A and B dimensions.
@@ -342,7 +343,7 @@ verifier-reachable dynamic programming.
 | Policy input | Current meaning |
 |---|---|
 | `uniform_ring_dimension` | Uniform-only A/B/D candidate; ignored by adaptive search |
-| `ring_dimension_schedule_mode` | Uniform candidate or catalog-bound adaptive A/B/D domains plus the uniform suffix |
+| `ring_dimension_schedule_mode` | Uniform candidate or catalog-bound adaptive A/B/D domains plus a monotone uniform-tuple suffix domain |
 | `decomposition`, `basis_range` | Digit policy; root basis is pinned to the configured minimum, later bases are searched and non-decreasing |
 | SIS profile, policy, table digest | Exact role-aware minimum-rank lookup identity |
 | ring challenge closure | Sparse A-role fold challenge selected by dimension |
@@ -380,7 +381,7 @@ The shared suffix planner now does the following:
 3. Enter the memoized suffix search with the exact witness boundary and the
    selected tuple as the componentwise dimension ceiling.
 4. At each recursive state, enumerate non-decreasing bases and every exact
-   tuple below that ceiling. Adaptive and uniform suffix levels both enumerate
+   tuple below that ceiling. Adaptive and suffix levels both enumerate
    the splits returned by the catalog-bound `recursive_split_search_domain`,
    then use `layout_candidate_score` within that domain.
 5. Compare direct termination with another fold and, for recursive-setup
@@ -433,7 +434,7 @@ PlannerRingDimensionPolicy {
     a_candidates,
     b_candidates,
     d_candidates,
-    uniform_suffix_dimension,
+    suffix_dimensions,
 }
 ```
 
@@ -445,8 +446,9 @@ normative:
 - `a_candidates` are dimensions with production fold-challenge support and an
   audited A-role SIS cell.
 - `b_candidates` and `d_candidates` are independently audited role domains.
-- `uniform_suffix_dimension` is the dimension used after the adaptive search
-  prefix. It must be admitted for A, B, and D.
+- `suffix_dimensions` is the sorted set of uniform A/B/D tuples admitted after
+  the adaptive search prefix. Each entry must be admitted for A, B, and D, and
+  suffix transitions must remain non-increasing.
 - Candidate lists are sorted, unique, non-empty, and catalog-identity-bound.
 - The planner enumerates the Cartesian product and keeps only tuples satisfying
   the canonical A-to-role divisibility validation.
@@ -471,14 +473,12 @@ D: 32, 64, 128, 256
 Actual admission is still exact-cell driven: a tuple is infeasible when its
 computed coefficient bucket or width lacks a minimum secure rank.
 
-Today D512 A coverage uses the additive
-`SisTableDigest::Q128_INNER_D512`, while all existing cells use
-`SisTableDigest::CURRENT`. A single `PlannerPolicy::sis_table_digest` cannot
-honestly describe a schedule whose A key uses the additive digest and whose
-B/D keys use the current digest. Before D512 becomes a native candidate, fold
-the audited D512 A cell into one canonical generated SIS table and issue one
-new whole-table digest. Do not add dimension-specific digest switching inside
-the planner.
+D512 and D1024 coverage now lives in the canonical generated SIS table under
+one whole-table `SisTableDigest::CURRENT` identity. fp32 certifies role cells
+through D1024, fp64 through D512, and fp128 keeps its existing role-specific
+ceiling. The production planner still prunes B/D above D256 because an
+exhaustive comparison found no winning schedule in that region. There is no
+dimension-specific digest switching inside the planner.
 
 ### Canonical setup objective
 
@@ -635,27 +635,30 @@ domain is part of catalog identity:
    and otherwise keeps the two extremes plus a radius-two balance window.
 2. A child tuple is admitted only when each of `d_a`, `d_b`, and `d_d` is no
    larger than the corresponding parent dimension.
-3. From L2 onward, dimensions are fixed to `64/64/64` and candidate split
-   derivation reuses the existing uniform-D64 planner path.
-4. A mixed domain must contain `64/64/64`, and every admitted component must
-   be at least 64 so the transition back to D64 cannot increase a dimension.
+3. From L2 onward, dimensions come from the catalog-bound suffix domain and
+   remain uniform within each level. fp128 and fp64 use `{64}`. fp32 uses
+   `{64, 128}`, subject to the incoming component-wise ceiling.
+4. A mixed domain must contain its smallest suffix tuple. Every admitted
+   component must be at least that dimension so entering the suffix cannot
+   increase a dimension.
 5. Enumerate direct-terminal and direct-child edges over the selected split
    domain, price them with the
    existing exact proof-size functions, combine physical setup cost by `max`,
    and retain the required frontier per full canonical first-step descriptor. Exact-cost ties
    survive until the root descriptor comparator chooses a canonical winner.
 6. Do not terminate before L2: the terminal and every fold from L2 onward use
-   D64.
+   a tuple admitted by the suffix domain.
 7. At the root, choose the global minimum by the requested score.
 
 The split frontier at each mixed level follows the catalog-bound split policy.
-Once the schedule returns to D64, the same policy continues to govern the
-uniform suffix. Bounded catalogs are selected within their declared search
+The same policy continues to govern the suffix. Bounded catalogs are selected within their declared search
 domain and do not claim global split optimality.
 
 The L1 mixed-D memo state includes the complete parent A/B/D tuple. L2 and
-later states canonicalize that ceiling to `64/64/64`, allowing suffix memo
-reuse across different roots without weakening the monotonic transition.
+later states canonicalize the ceiling to the largest suffix dimension no
+greater than the incoming tuple. This allows memo reuse across roots that
+admit the same remaining suffix domain without weakening the monotonic
+transition.
 
 The suffix context must resolve the A-role ring challenge per candidate
 `d_a`; it cannot cache one policy-wide challenge. If setup-prefix dimensions
@@ -855,8 +858,8 @@ byte-identical.
 3. Remove setup-generation dimension from candidate admission and setup
    accounting.
 4. Bind candidate domains and challenge coverage into catalog identity. ✅
-5. Merge D512 A coverage into one canonical SIS table digest before admitting
-   D512.
+5. Merge D512 and D1024 coverage into one canonical SIS table digest before
+   admitting either dimension. ✅
 
 #### Cut 1: direct scalar search
 
@@ -864,8 +867,8 @@ byte-identical.
    `CommitmentRingDims`.
 2. Derive role-local physical widths, norms, and ranks directly.
 3. Enumerate all admitted tuples and block splits at L0 and L1.
-4. Enforce component-wise non-increasing transitions and a uniform-D64 L2+
-   suffix.
+4. Enforce component-wise non-increasing transitions and a catalog-bound L2+
+   suffix domain.
 5. Retain the unpruned L0/L1 frontier; do not apply rank-one dimension caps
    until an equivalence key is proved against the unpruned reference traversal.
 6. Retain edge-safe setup/proof frontiers across the mixed boundary, then
@@ -1016,15 +1019,15 @@ bounded to named supported workload keys.
 
 | Test | Required assertion |
 |---|---|
-| Candidate-domain validation | Sorted unique role domains; uniform D64 suffix present; each advertised dimension has role-specific dispatch, challenge (A), and SIS-table coverage |
+| Candidate-domain validation | Sorted unique role and suffix domains; each advertised dimension has role-specific dispatch, challenge (A), and SIS-table coverage |
 | Role-width unit tests | B/D widths equal native width times exact A-source/role ratio |
 | SIS admission tests | Unsupported role/dimension/bucket/width is candidate infeasibility; malformed policy is an error |
 | Unpruned reference traversal | Constrained L0/L1 frontier and selected schedule match the same canonical candidate set without production pruning |
 | Independent formula regressions | Hand-calculated setup rounding, EOR feasibility, SIS-cell skipping, and complete-schedule descriptor ties match the implementation |
 | Parent-envelope counterexample | The DP retains the lower-proof child after a larger parent setup masks child setup differences |
-| Transition tests | A/B/D are component-wise non-increasing; L2+ is exactly D64 |
+| Transition tests | A/B/D are component-wise non-increasing; L2+ is uniform and belongs to the configured suffix domain |
 | Deterministic tie-break | Exact-cost ties resolve by full canonical schedule descriptor bytes |
-| Terminal tests | Mixed search does not terminate before the D64 suffix boundary |
+| Terminal tests | Mixed search does not terminate before the suffix boundary |
 | Generated parity | Planner schedule equals emitted/expanded schedule and estimate |
 | Identity drift | Every candidate-domain or objective change invalidates the old table |
 | Setup parity | Planned field-element envelope equals allocated setup capacity and runtime fit checks |

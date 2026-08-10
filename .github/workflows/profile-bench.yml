@@ -53,14 +53,10 @@ jobs:
         # deterministically, fixing case order in the comment. `cases` is a
         # newline-separated list of MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE] specs.
         #
-        # The adaptive small-field (fp32/fp64) one-hot cells run at nv=28, not nv=32.
-        # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
-        # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
-        # for fp128), so at nv>=30 the prover's eq-evaluation table exceeds the
-        # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
-        # is the largest validated size that both fits that budget and still folds
-        # through multiple recursive levels. The fp128 cells fold aggressively enough
-        # to stay at nv=32.
+        # The adaptive small-field (fp32/fp64) one-hot cells run at nv=30. This
+        # exercises two more variables than the previous nv=28 fixture while
+        # retaining a generated schedule and the equality-table allocation guard.
+        # The fp128 cell remains at nv=32.
         group:
           - name: 1-dense-suite
             cases: |
@@ -69,8 +65,8 @@ jobs:
               dense_fp128:26:1
           - name: 3-flat-onehot-suite
             cases: |
-              onehot_fp32:28:1
-              onehot_fp64:28:1
+              onehot_fp32:30:1
+              onehot_fp64:30:1
               onehot_fp128:32:1
           - name: 4-multi-group-direct
             cases: |

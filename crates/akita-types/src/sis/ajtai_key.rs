@@ -9,9 +9,7 @@
 use akita_field::AkitaError;
 
 use super::coverage::{sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
-use super::generated_sis_table::{
-    sis_max_widths as generated_sis_max_widths, Q128_INNER_D512_DIGEST, SIS_TABLE_DIGEST,
-};
+use super::generated_sis_table::{sis_max_widths as generated_sis_max_widths, SIS_TABLE_DIGEST};
 use crate::descriptor_bytes::{push_u128, push_usize, sis_modulus_profile_tag};
 
 /// Digest of the generated scalar table and its coverage certificate.
@@ -33,11 +31,6 @@ impl SisTableDigest {
 
     /// Digest committed by the current generated artifact.
     pub const CURRENT: Self = Self(SIS_TABLE_DIGEST);
-
-    /// Additive q128 Inner/512 coverage generated directly for `D = 512`.
-    ///
-    /// Existing schedules intentionally remain on [`Self::CURRENT`].
-    pub const Q128_INNER_D512: Self = Self(Q128_INNER_D512_DIGEST);
 }
 
 /// Matrix role whose coefficient and ring geometry is being priced.
@@ -310,10 +303,7 @@ fn sis_max_widths(
     if policy != DEFAULT_SIS_SECURITY_POLICY {
         return None;
     }
-    if table_digest == SisTableDigest::CURRENT && d == 512 {
-        return None;
-    }
-    if table_digest != SisTableDigest::CURRENT && table_digest != SisTableDigest::Q128_INNER_D512 {
+    if table_digest != SisTableDigest::CURRENT {
         return None;
     }
     generated_sis_max_widths(policy, modulus_profile, d, coeff_linf_bound)
@@ -749,16 +739,7 @@ mod tests {
     }
 
     #[test]
-    fn d512_coverage_is_q128_inner_only() {
-        let inner = sis_role_cell(
-            SisMatrixRole::Inner,
-            SisModulusProfileId::Q128OffsetA7F7,
-            512,
-            2,
-        )
-        .expect("q128 Inner/512 cell");
-        assert_eq!(inner.max_module_rank, 20);
-
+    fn d512_coverage_is_complete_for_small_fields_and_q128_inner_only() {
         for role in [SisMatrixRole::Outer, SisMatrixRole::Open] {
             assert!(sis_role_cell(role, SisModulusProfileId::Q128OffsetA7F7, 512, 3).is_none());
         }
@@ -766,45 +747,30 @@ mod tests {
             SisModulusProfileId::Q32Offset99,
             SisModulusProfileId::Q64Offset59,
         ] {
-            assert!(sis_role_cell(SisMatrixRole::Inner, profile, 512, 2).is_none());
+            assert!(sis_role_cell(SisMatrixRole::Inner, profile, 512, 2).is_some());
+            for role in [SisMatrixRole::Outer, SisMatrixRole::Open] {
+                assert!(sis_role_cell(role, profile, 512, 3).is_some());
+            }
         }
+        assert!(sis_role_cell(
+            SisMatrixRole::Inner,
+            SisModulusProfileId::Q128OffsetA7F7,
+            512,
+            2,
+        )
+        .is_some());
     }
 
     #[test]
-    fn d512_digest_has_direct_full_rank_rows() {
-        for &bound in COEFF_LINF_BUCKETS {
-            let d512 = sis_max_widths(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::Q128_INNER_D512,
-                SisModulusProfileId::Q128OffsetA7F7,
-                512,
-                bound,
-            )
-            .expect("direct D512 rows");
-            assert_eq!(d512.len(), 20);
-            assert!(d512.windows(2).all(|pair| pair[0] <= pair[1]));
-        }
-    }
-
-    #[test]
-    fn d512_requires_expanded_digest_and_rejects_unknown_digest() {
-        let old = key(
+    fn d512_uses_current_digest_and_rejects_unknown_digest() {
+        let current = key(
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,
             SisMatrixRole::Inner,
             512,
             2,
         );
-        assert_eq!(min_secure_rank(old, 1), None);
-
-        let expanded = key(
-            SisTableDigest::Q128_INNER_D512,
-            SisModulusProfileId::Q128OffsetA7F7,
-            SisMatrixRole::Inner,
-            512,
-            2,
-        );
-        assert!(min_secure_rank(expanded, 1).is_some());
+        assert!(min_secure_rank(current, 1).is_some());
 
         let unknown = key(
             SisTableDigest([0xFF; 32]),
@@ -840,7 +806,7 @@ mod tests {
             SisMatrixRole::Inner,
             SisMatrixRole::Open,
         ];
-        let dimensions = [32, 64, 128, 256, 512];
+        let dimensions = [32, 64, 128, 256, 512, 1024];
 
         for profile in profiles {
             for role in roles {
@@ -849,14 +815,9 @@ mod tests {
                         let Some(cell) = sis_role_cell(role, profile, dimension, bound) else {
                             continue;
                         };
-                        let digest = if dimension == 512 {
-                            SisTableDigest::Q128_INNER_D512
-                        } else {
-                            SisTableDigest::CURRENT
-                        };
                         let widths = sis_max_widths(
                             DEFAULT_SIS_SECURITY_POLICY,
-                            digest,
+                            SisTableDigest::CURRENT,
                             profile,
                             dimension,
                             bound,
@@ -876,7 +837,13 @@ mod tests {
                                 .map(|index| index + 1);
                             assert_eq!(
                                 min_secure_rank(
-                                    key(digest, profile, role, dimension, bound),
+                                    key(
+                                        SisTableDigest::CURRENT,
+                                        profile,
+                                        role,
+                                        dimension,
+                                        bound,
+                                    ),
                                     width,
                                 ),
                                 expected,
@@ -886,28 +853,6 @@ mod tests {
                     }
                 }
             }
-        }
-    }
-
-    #[test]
-    fn expanded_digest_preserves_existing_rows() {
-        for &bound in COEFF_LINF_BUCKETS {
-            assert_eq!(
-                sis_max_widths(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::Q128_INNER_D512,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    256,
-                    bound,
-                ),
-                sis_max_widths(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    256,
-                    bound,
-                ),
-            );
         }
     }
 }

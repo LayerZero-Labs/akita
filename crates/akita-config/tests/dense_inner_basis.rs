@@ -57,19 +57,19 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
         Snapshot {
             inner_basis: 8,
             opening_basis: 3,
-            positions: 1024,
-            blocks: 256,
+            positions: 512,
+            blocks: 128,
             inner_digits: 4,
-            n_a: 6,
+            n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_048_576,
-            a_output_raw: 1_536,
-            b_input_raw: 4_325_376,
+            a_input_raw: 2_097_152,
+            a_output_raw: 2_048,
+            b_input_raw: 2_883_584,
             b_output_raw: 256,
-            d_input_raw: 720_896,
+            d_input_raw: 1_441_792,
             d_output_raw: 256,
-            next_witness: 11_385_856,
+            next_witness: 16_970_496,
         }
     );
 
@@ -78,21 +78,21 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     assert_eq!(
         fp64,
         Snapshot {
-            inner_basis: 10,
+            inner_basis: 6,
             opening_basis: 3,
-            positions: 1024,
+            positions: 512,
             blocks: 256,
-            inner_digits: 7,
-            n_a: 4,
+            inner_digits: 11,
+            n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_835_008,
+            a_input_raw: 2_883_584,
             a_output_raw: 1_024,
             b_input_raw: 5_767_168,
             b_output_raw: 256,
-            d_input_raw: 1_441_792,
+            d_input_raw: 2_883_584,
             d_output_raw: 256,
-            next_witness: 18_297_600,
+            next_witness: 23_152_896,
         }
     );
 

@@ -22,14 +22,8 @@ pub struct SisRoleCell {
 /// Exact gadget anchors used by B and D.
 pub const GADGET_COEFF_LINF_ANCHORS: &[u128] = &[3, 7, 15, 31, 63, 127, 255];
 
-/// Ring dimensions supported by A for every SIS modulus profile.
-///
-/// Q128 has the additional profile-specific `D = 512` cell enforced by
-/// [`sis_role_cell`].
-pub const A_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
-
-/// Admitted B/D commitment-matrix dimensions.
-pub const BD_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
+/// Ring dimensions present in at least one production matrix-role cell.
+pub const SIS_ROLE_RING_DIMS: &[u32] = &[64, 128, 256, 512, 1024];
 
 /// Production matrix roles with checked-in coverage.
 pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[
@@ -45,12 +39,15 @@ pub fn sis_role_dimension_supported(
     modulus_profile: SisModulusProfileId,
     ring_dimension: u32,
 ) -> bool {
-    match role {
-        SisMatrixRole::Inner => {
-            A_ROLE_RING_DIMS.contains(&ring_dimension)
-                || (modulus_profile == SisModulusProfileId::Q128OffsetA7F7 && ring_dimension == 512)
+    if !SIS_ROLE_RING_DIMS.contains(&ring_dimension) {
+        return false;
+    }
+    match modulus_profile {
+        SisModulusProfileId::Q32Offset99 => true,
+        SisModulusProfileId::Q64Offset59 => ring_dimension <= 512,
+        SisModulusProfileId::Q128OffsetA7F7 => {
+            ring_dimension <= 256 || (role == SisMatrixRole::Inner && ring_dimension == 512)
         }
-        SisMatrixRole::Outer | SisMatrixRole::Open => BD_ROLE_RING_DIMS.contains(&ring_dimension),
     }
 }
 
@@ -96,14 +93,7 @@ pub fn sis_role_cells() -> Vec<SisRoleCell> {
     let mut cells = Vec::new();
     for role in SIS_MATRIX_ROLES.iter().copied() {
         for profile in profiles {
-            let dimensions = match role {
-                SisMatrixRole::Inner => A_ROLE_RING_DIMS,
-                SisMatrixRole::Outer | SisMatrixRole::Open => BD_ROLE_RING_DIMS,
-            };
-            for dimension in dimensions.iter().copied().chain(
-                (role == SisMatrixRole::Inner && profile == SisModulusProfileId::Q128OffsetA7F7)
-                    .then_some(512),
-            ) {
+            for &dimension in SIS_ROLE_RING_DIMS {
                 let bounds = match role {
                     SisMatrixRole::Inner => COEFF_LINF_BUCKETS,
                     SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS,

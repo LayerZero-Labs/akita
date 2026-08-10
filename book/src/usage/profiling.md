@@ -27,7 +27,7 @@ normal release link look like a verifier regression.
 ## Presets and ring degrees
 
 The default direct **fp128** one-hot preset is adaptive: generated tables choose
-the first two fold levels and use D64 for the uniform suffix. Direct dense uses
+the first two fold levels and use the D64 suffix domain. Direct dense uses
 the same adaptive policy. At dense `nv=26`, the root roles are A/B/D =
 256/64/64, and every recursive fold and the terminal use D64. The preset's
 `Cfg::D = 256` records how the flat dense input was first viewed. The stored
@@ -36,9 +36,14 @@ dimension in the generated schedule. Recursive and multi-chunk companion
 presets remain D64. Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
-**fp32/fp64** D32/D64 are not securable. D128 is the smallest secure choice
-for the shipped dense and one-hot families. CI runs the one-hot cases at
-`nv=28` and the dense cases at `nv=26`.
+The small-field presets use larger A dimensions where they reduce setup, while
+keeping B and D at dimensions that remained competitive in the measured
+search. fp32 searches A at D64 through D1024, B/D at D64 through D256, and a
+monotone D64/D128 suffix domain. fp64 searches A at D64 through D512, B/D at
+D64 through D256, and a D64 suffix domain. The larger B/D candidates were
+certified but removed from production search after an exhaustive comparison
+showed that they never won. CI runs the one-hot cases at `nv=30` and the dense
+cases at `nv=26`.
 
 The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
 `akita_config::proof_optimized::fp128::Dense`.
@@ -97,8 +102,8 @@ Committed-fold A-role pricing (every cell folds securely):
 | `dense_fp32` | 26 | 1 | `direct` |
 | `dense_fp64` | 26 | 1 | `direct` |
 | `dense_fp128` | 26 | 1 | `direct` |
-| `onehot_fp32` | 28 | 1 | `direct` |
-| `onehot_fp64` | 28 | 1 | `direct` |
+| `onehot_fp32` | 30 | 1 | `direct` |
+| `onehot_fp64` | 30 | 1 | `direct` |
 | `onehot_fp128` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
 | `onehot_fp128_multi_group_recursive` | 32 | 4 | `recursive` |
@@ -107,9 +112,9 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp128_multi_chunk_w4r2` | 32 | 1 | `direct` |
 | `onehot_fp128_multi_chunk_w8r2` | 32 | 1 | `direct` |
 
-The fp32 and fp64 one-hot cases use `nv=28` because the extension degree 4
-challenge schedule exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget
-at higher `num_vars`.
+The fp32 and fp64 one-hot cases use generated `nv=30` schedules. The profile
+keeps the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` guard active, so any future
+schedule that crosses the allocation boundary fails before allocation.
 The three dense rows run together in the dedicated `Bench (1-dense-suite)`
 check. The long multi-group recursive rows run in separate parallel CI groups.
 Each such task keeps one benchmark case. The distributed rows also run in their

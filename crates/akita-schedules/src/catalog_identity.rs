@@ -430,16 +430,17 @@ fn validate_entry_dimensions(
             previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;
-        let expected_terminal = match mode {
-            RingDimensionScheduleMode::UniformDimension { ring_dimension } => ring_dimension,
+        let terminal_is_admitted = match mode {
+            RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+                terminal_d == ring_dimension
+            }
             RingDimensionScheduleMode::AdaptiveDimension {
-                uniform_suffix_dimension,
-                ..
-            } => uniform_suffix_dimension,
+                suffix_dimensions, ..
+            } => suffix_dimensions.contains(&terminal_d),
         };
-        if terminal_d != expected_terminal {
+        if !terminal_is_admitted {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal D{terminal_d} is not policy suffix D{expected_terminal} for key {:?}",
+                "generated terminal D{terminal_d} is outside the policy suffix domain for key {:?}",
                 entry.root.final_group.layout
             )));
         }
@@ -460,7 +461,7 @@ fn validate_level_dimensions(
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
@@ -475,7 +476,14 @@ fn validate_level_dimensions(
                             && dimensions.d_d() <= ceiling.d_d()
                     })
             } else {
-                dimensions == CommitmentRingDims::uniform(uniform_suffix_dimension)
+                dimensions.d_a() == dimensions.d_b()
+                    && dimensions.d_b() == dimensions.d_d()
+                    && suffix_dimensions.contains(&dimensions.d_a())
+                    && previous.is_none_or(|ceiling| {
+                        dimensions.d_a() <= ceiling.d_a()
+                            && dimensions.d_b() <= ceiling.d_b()
+                            && dimensions.d_d() <= ceiling.d_d()
+                    })
             }
         }
     };
@@ -605,14 +613,17 @@ fn write_ring_dimension_schedule_mode(h: &mut Fnv64, mode: RingDimensionSchedule
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
         } => {
             h.write_u64(1);
             h.write_u64(num_search_levels as u64);
-            h.write_u64(uniform_suffix_dimension as u64);
+            h.write_u64(suffix_dimensions.len() as u64);
+            for &dimension in suffix_dimensions {
+                h.write_u64(dimension as u64);
+            }
             for dimensions in [
                 potential_a_dimensions,
                 potential_b_dimensions,

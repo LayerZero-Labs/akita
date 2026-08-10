@@ -539,50 +539,43 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn dense_small_field_nv26_cache_plan_matches_adaptive_geometry() {
-        let fp32_schedule = fp32::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(26),
-        ))
-        .expect("generated fp32 dense schedule");
-        let fp32_requirements =
-            NttExecutionRequirements::from_commit_and_prove_schedule(&fp32_schedule)
-                .expect("compile complete fp32 NTT requirements");
-        assert!(fp32_requirements.entries().iter().all(|entry| matches!(
-            entry.key.domain,
-            NttTransformDomain::Negacyclic | NttTransformDomain::Cyclic
-        )));
+        for (schedule, expected_root_d, expected_root_basis, expected_root_cache_len) in [
+            (
+                fp32::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(26),
+                ))
+                .expect("generated fp32 dense schedule"),
+                1024,
+                8,
+                4096,
+            ),
+            (
+                fp64::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                    PolynomialGroupLayout::singleton(26),
+                ))
+                .expect("generated fp64 dense schedule"),
+                512,
+                6,
+                11_264,
+            ),
+        ] {
+            let root = &schedule.root.params.final_group.commitment;
+            assert_eq!(root.role_dims().d_a(), expected_root_d);
+            assert_eq!(root.log_basis_inner, expected_root_basis);
 
-        let fp64_schedule = fp64::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(26),
-        ))
-        .expect("generated fp64 dense schedule");
-        let fp64_requirements =
-            NttExecutionRequirements::from_commit_and_prove_schedule(&fp64_schedule)
-                .expect("compile complete fp64 NTT requirements");
-        let exact_i16 = fp64_requirements
-            .entries()
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry.key.domain,
-                    NttTransformDomain::ExactNegacyclicI16 { .. }
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(exact_i16.len(), 1);
-        assert_eq!(exact_i16[0].fold_level, 0);
-        assert_eq!(exact_i16[0].cluster, NttOperationCluster::Commit);
-        assert_eq!(exact_i16[0].key.ring_d, 256);
-        assert_eq!(exact_i16[0].key.num_ring_elements, 28_672);
-        assert_eq!(
-            exact_i16[0].key.domain,
-            NttTransformDomain::ExactNegacyclicI16 {
-                width: 7_168,
-                rhs_abs_bound: 512,
-            }
-        );
-        assert!(!fp64_requirements
-            .entries()
-            .iter()
-            .any(|entry| { entry.key.domain == NttTransformDomain::I16TailBothTransforms }));
+            let requirements = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule)
+                .expect("compile complete small-field NTT requirements");
+            assert!(requirements.entries().iter().all(|entry| matches!(
+                entry.key.domain,
+                NttTransformDomain::Negacyclic | NttTransformDomain::Cyclic
+            )));
+            assert!(requirements.entries().iter().any(|entry| {
+                entry.fold_level == 0
+                    && entry.cluster == NttOperationCluster::Commit
+                    && entry.key.ring_d == expected_root_d
+                    && entry.key.num_ring_elements == expected_root_cache_len
+                    && entry.key.domain == NttTransformDomain::Negacyclic
+            }));
+        }
     }
 }

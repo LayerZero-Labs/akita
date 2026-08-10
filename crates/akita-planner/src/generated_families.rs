@@ -96,6 +96,7 @@ const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::new(16, 2),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
 ];
 
 const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
@@ -104,7 +105,10 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(26),
 ];
 
-const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[PolynomialGroupLayout::singleton(28)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
+];
 
 /// One generated schedule-table family.
 ///

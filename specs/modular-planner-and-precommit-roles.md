@@ -53,9 +53,9 @@ path.
 
 The shipped root `log_basis` is 3 for all field widths. Recursive levels remain
 planner-selected. Root precommit generation directly selects a local recipe
-under singleton basis range `(3, 3)`. Adaptive final-group policies use their
-uniform suffix dimension for both precommit A and B, so a hypothetical suffix
-cannot influence the frozen precommit geometry.
+under singleton basis range `(3, 3)`. Adaptive final-group policies use the
+largest admitted suffix dimension for both precommit A and B. This keeps the
+frozen precommit geometry independent of the final group's root choice.
 
 The stacked planner unification PR will make the modules in this specification
 the only search path. It must preserve the strict selection policies documented

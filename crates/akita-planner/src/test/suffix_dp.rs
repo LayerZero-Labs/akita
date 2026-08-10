@@ -84,6 +84,36 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
 }
 
 #[test]
+fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp32::OneHot>();
+    let crate::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels, ..
+    } = policy.ring_dimension_schedule_mode
+    else {
+        panic!("test preset must be adaptive");
+    };
+    let state = |dimension_ceiling| super::SuffixState {
+        level: num_search_levels,
+        current_witness_len: 1024,
+        current_lb: 3,
+        incoming_setup_prefix: None,
+        dimension_ceiling,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+    };
+
+    assert_eq!(
+        state(akita_types::CommitmentRingDims::uniform(128)).memo_key(&policy),
+        state(akita_types::CommitmentRingDims::uniform(256)).memo_key(&policy),
+        "D128 and larger ceilings admit the same fp32 suffix domain"
+    );
+    assert_ne!(
+        state(akita_types::CommitmentRingDims::uniform(64)).memo_key(&policy),
+        state(akita_types::CommitmentRingDims::uniform(128)).memo_key(&policy),
+        "a D64 transition must prevent suffix states from rising back to D128"
+    );
+}
+
+#[test]
 fn mixed_frontier_keeps_lower_payload_child_until_parent_masks_setup() {
     let lower_setup = MixedScore {
         setup_field_elements: 10,

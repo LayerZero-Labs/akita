@@ -283,30 +283,32 @@ The canonical `find_schedule` entry point reads
 
 Implemented:
 
-- `AdaptiveDimension` carries strictly sorted, unique A/B/D capability lists.
-  Policy validation requires every role dimension to divide
-  `PlannerPolicy::ring_dimension`, the setup generation dimension, and to
-  support the configured uniform suffix.
-- `find_schedule` branches only over A. `UniformDimension` retains the
+- `AdaptiveDimension` carries strictly sorted, unique A/B/D capability lists
+  and a sorted suffix domain. Policy validation requires every scheduled tuple
+  to have role-specific dispatch and SIS coverage.
+- `find_schedule` enumerates exact A/B/D tuples. `UniformDimension` retains the
   historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
   dimensions. B and D physical widths include `d_a / d_role` projection
   subcolumns; candidates are built directly rather than retargeted afterward.
-- The adaptive search enumerates every admitted A and valid block split only at
-  L0 and L1. A is non-increasing, B/D are derived by minimum secure rank, and
-  L2 through the terminal are uniform D64.
+- The adaptive search enumerates every admitted tuple and every split in the
+  catalog-bound split domain at L0 and L1. A/B/D are independently selected
+  and component-wise non-increasing. L2 through the terminal use the
+  catalog-bound uniform-tuple suffix domain.
 - Mixed-boundary suffix states retain the required `(setup, proof)`
   alternatives per exact first `CommittedGroupParams`, because the parent
-  proof formula sees that first step. Once dimensions freeze at L2, candidate
-  split derivation reuses the existing uniform-D64 planner path.
+  proof formula sees that first step. Once the suffix domain starts at L2,
+  candidate split derivation uses the same catalog-bound split policy.
 - Setup scoring uses exact physical base-field elements and converts once to
   ring elements at the setup-generation dimension. A canonical
   `akita-types` schedule helper now exposes the physical envelope.
-- Recursive setup planning is rejected by the mixed entry point. Grouped,
-  setup-offloaded, and existing multi-chunk catalog generation continue
-  through the unchanged singleton-D planner.
-- Regenerating all shipped schedule tables after these changes produces no
-  generated-file diff.
+- Grouped, setup-offloaded, and multi-chunk catalog generation use the same
+  exact tuple planner and replay the generated schedule without a runtime
+  planner fallback.
+- fp32 certifies A-role search through D1024 and fp64 through D512. Production
+  B/D search stops at D256 because larger B/D candidates did not win the
+  exhaustive comparison. fp32 uses a D64/D128 suffix domain; fp64 and fp128
+  use D64.
 
 Still pending:
 
