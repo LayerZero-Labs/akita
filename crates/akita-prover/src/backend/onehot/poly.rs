@@ -1,18 +1,11 @@
 use super::*;
 
-type LayoutCacheKey = (usize, usize);
-type OneHotBlockCache = Arc<Mutex<HashMap<LayoutCacheKey, Arc<OneHotBlocks>>>>;
-type TensorRootCache<F> = Arc<Mutex<HashMap<LayoutCacheKey, Arc<SparseRingPoly<F>>>>>;
-
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
 /// The polynomial is stored layout-agnostically as the flat list of hot
-/// indices supplied at construction. Each op takes `num_positions_per_block` at call time
-/// and the per-block bucketing is materialized lazily per `(ring_d, num_positions_per_block)`.
-/// That mirrors how [`DensePoly`](crate::DensePoly) accepts `num_positions_per_block` per op
-/// and keeps `OneHotPoly` free of the commit-layout parameters it used to bake
-/// in at construction.
+/// indices supplied at construction. Each operation takes its layout at call
+/// time and derives only the range it consumes.
 ///
 /// Storage is D-free: the per-chunk hot indices are flat logical data, and
 /// the ring dimension is a view selected at kernel entry (each ring-shaped
@@ -29,11 +22,7 @@ pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     /// Ring-element count at the CONSTRUCTION dimension; metadata, not
     /// authority — kernels validate at their own dimension.
     pub(crate) total_ring_elems: usize,
-    /// Cached per-block layouts keyed by `(ring_d, num_positions_per_block)`.
-    pub(crate) block_cache: OneHotBlockCache,
-    /// Cached tensor-projected sparse root polynomials keyed by `(ring_d, width)`.
-    pub(crate) tensor_root_cache: TensorRootCache<F>,
-    pub(crate) _marker: PhantomData<(F, I)>,
+    pub(crate) _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
@@ -104,8 +93,6 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             onehot_k,
             indices,
             total_ring_elems,
-            block_cache: Arc::new(Mutex::new(HashMap::new())),
-            tensor_root_cache: Arc::new(Mutex::new(HashMap::new())),
             _marker: PhantomData,
         })
     }
@@ -157,60 +144,100 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         Ok(evals)
     }
 
-    /// Return cached per-block storage, building it on first call for the
-    /// requested `(ring_d, num_positions_per_block)` view.
-    pub(super) fn blocks_for(
+    pub(super) fn materialize_block_range(
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
-    ) -> Result<Arc<OneHotBlocks>, AkitaError> {
-        let key = (ring_d, num_positions_per_block);
-        if let Some(blocks) = self
-            .block_cache
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?
-            .get(&key)
-        {
-            return Ok(Arc::clone(blocks));
-        }
-        // Slow path: build blocks and install them. Validate `ring_d` and
-        // `num_positions_per_block` *before* building so the error path is cheap.
-        if num_positions_per_block == 0 || !num_positions_per_block.is_power_of_two() {
+        block_range: std::ops::Range<usize>,
+    ) -> Result<FlatBlocks<SparseRingBlockEntry>, AkitaError> {
+        let (ring_elems_at_d, num_live_blocks) =
+            self.view_layout(ring_d, num_positions_per_block)?;
+        if block_range.start > block_range.end || block_range.end > num_live_blocks {
             return Err(AkitaError::InvalidInput(format!(
-                "num_positions_per_block={num_positions_per_block} must be a nonzero power of two"
+                "one hot block range {:?} exceeds {num_live_blocks} blocks",
+                block_range
             )));
         }
-        let field_len = 1usize
-            .checked_shl(self.num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?;
+        let ring_start = block_range
+            .start
+            .checked_mul(num_positions_per_block)
+            .ok_or_else(|| AkitaError::InvalidInput("one hot block range overflow".into()))?;
+        let ring_end = block_range
+            .end
+            .checked_mul(num_positions_per_block)
+            .ok_or_else(|| AkitaError::InvalidInput("one hot block range overflow".into()))?
+            .min(ring_elems_at_d);
+        FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
+            self.onehot_k,
+            &self.indices,
+            num_positions_per_block,
+            ring_d,
+            ring_start..ring_end,
+            block_range.start,
+        )
+    }
+
+    /// Validate one runtime ring view and return its ring-element count.
+    pub(super) fn validate_ring_dimension(&self, ring_d: usize) -> Result<usize, AkitaError> {
         if ring_d == 0 {
             return Err(AkitaError::InvalidInput(
                 "ring_d must be nonzero".to_string(),
             ));
         }
-        let ring_elems_at_d = field_len.div_ceil(ring_d);
-        // Kernel-entry view validation: the layout invariants `OneHotPoly::new`
-        // pinned at the construction dimension must also hold at the view
-        // dimension the blocks are built for.
+        if ring_d > usize::from(u16::MAX) + 1 {
+            return Err(AkitaError::InvalidInput(format!(
+                "D={ring_d} exceeds 65536 and cannot be packed into entry coefficient fields"
+            )));
+        }
         if !(self.onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(self.onehot_k)) {
             return Err(AkitaError::InvalidInput(format!(
                 "onehot_k={} and D={ring_d} must be nicely matched (one divides the other)",
                 self.onehot_k
             )));
         }
-        let built = {
-            let _span =
-                tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
-                    .entered();
-            self.build_blocks_inner(ring_d, num_positions_per_block, ring_elems_at_d)?
-        };
-        let mut cache = self
-            .block_cache
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("onehot block cache lock poisoned".into()))?;
-        Ok(Arc::clone(
-            cache.entry(key).or_insert_with(|| Arc::new(built)),
+        let field_len = 1usize
+            .checked_shl(self.num_vars as u32)
+            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?;
+        if !field_len.is_multiple_of(ring_d) {
+            return Err(AkitaError::InvalidInput(format!(
+                "onehot field length {field_len} is not divisible by D={ring_d}"
+            )));
+        }
+        Ok(field_len / ring_d)
+    }
+
+    /// Validate a `(ring_d, num_positions_per_block)` view and return
+    /// `(ring_elems_at_d, num_live_blocks)`.
+    pub(super) fn view_layout(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+    ) -> Result<(usize, usize), AkitaError> {
+        if num_positions_per_block == 0 || !num_positions_per_block.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(format!(
+                "num_positions_per_block={num_positions_per_block} must be a nonzero power of two"
+            )));
+        }
+        if u32::try_from(num_positions_per_block).is_err() {
+            return Err(AkitaError::InvalidInput(format!(
+                "num_positions_per_block={num_positions_per_block} exceeds u32::MAX and cannot be packed into an entry"
+            )));
+        }
+        let ring_elems_at_d = self.validate_ring_dimension(ring_d)?;
+        Ok((
+            ring_elems_at_d,
+            ring_elems_at_d.div_ceil(num_positions_per_block),
         ))
+    }
+
+    /// Number of live blocks at a `(ring_d, num_positions_per_block)` view,
+    /// computed from the layout without building anything.
+    pub(crate) fn num_live_blocks_for(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+    ) -> Result<usize, AkitaError> {
+        Ok(self.view_layout(ring_d, num_positions_per_block)?.1)
     }
 
     /// Sparse fast path for `tensor_extension_column_partials_batch`.
@@ -354,19 +381,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
 
     pub(super) fn tensor_packed_sparse_ring_poly<E, const D: usize>(
         &self,
-    ) -> Result<Arc<SparseRingPoly<F>>, AkitaError>
+    ) -> Result<SparseRingPoly<F>, AkitaError>
     where
         F: FromPrimitiveInt,
         E: FpExtEncoding<F>,
     {
+        let total_ring_elems = self.validate_ring_dimension(D)?;
         let (width, total_evals) = self.tensor_packing_shape::<E>()?;
-        let _span = tracing::info_span!(
-            "OneHotPoly::tensor_packed_sparse_ring_poly",
-            width,
-            total_evals,
-            chunks = self.indices.len()
-        )
-        .entered();
         if !D.is_multiple_of(width) {
             return Err(AkitaError::InvalidInput(
                 "tensor width must divide root ring dimension".to_string(),
@@ -382,19 +403,22 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 "root ring dimension must be at least twice the tensor width".to_string(),
             ));
         }
+        let _span = tracing::info_span!(
+            "OneHotPoly::tensor_packed_sparse_ring_poly",
+            ring_d = D,
+            width,
+            total_evals,
+            chunks = self.indices.len()
+        )
+        .entered();
+        let double_width = width.checked_mul(2).ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "tensor width is too large for root ring projection".to_string(),
+            )
+        })?;
         let packed_len = D / width;
         let half = D / double_width;
         let step = D / double_width;
-        let total_ring_elems = total_evals / D;
-        let key = (D, width);
-        if let Some(poly) = self
-            .tensor_root_cache
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?
-            .get(&key)
-        {
-            return Ok(Arc::clone(poly));
-        }
         let mut coeffs = Vec::with_capacity(self.indices.len() * width.min(2));
 
         for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
@@ -447,7 +471,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             }
         }
 
-        let poly = if self.onehot_k >= D {
+        if self.onehot_k >= D {
             SparseRingPoly::<F>::from_sorted_packed_coeffs(
                 self.num_vars,
                 D,
@@ -456,13 +480,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             )
         } else {
             SparseRingPoly::<F>::from_packed_coeffs(self.num_vars, D, total_ring_elems, coeffs)
-        }?;
-        let poly = Arc::new(poly);
-        let mut cache = self
-            .tensor_root_cache
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("onehot tensor cache lock poisoned".into()))?;
-        Ok(Arc::clone(cache.entry(key).or_insert(poly)))
+        }
     }
 
     pub(super) fn tensor_packing_shape<E>(&self) -> Result<(usize, usize), AkitaError>
@@ -509,59 +527,5 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             return Ok(Some((field_pos / width, field_pos % width)));
         }
         Ok(None)
-    }
-
-    pub(super) fn build_blocks_inner(
-        &self,
-        ring_d: usize,
-        num_positions_per_block: usize,
-        ring_elems_at_d: usize,
-    ) -> Result<OneHotBlocks, AkitaError> {
-        // `blocks_for` has already validated that `num_positions_per_block` is a nonzero
-        // power of two and that
-        // K and `ring_d` are nicely matched; `OneHotPoly::new` has validated
-        // that every per-chunk index is in range. Here we only need to
-        // compute `num_live_blocks` for the flat-layout offsets array and check
-        // that `num_positions_per_block` and `ring_d` fit in the packed entry field widths.
-        if u32::try_from(num_positions_per_block).is_err() {
-            return Err(AkitaError::InvalidInput(format!(
-                "num_positions_per_block={num_positions_per_block} exceeds u32::MAX and cannot be packed into an entry"
-            )));
-        }
-        // Coefficient indices inside a ring element are `< ring_d` and get
-        // packed as `u16` in the entry types below (see
-        // `SingleChunkEntry::coeff_idx` and `MultiChunkEntry::nonzero_coeffs`).
-        // Reject out-of-range `ring_d` here rather than silently truncating below.
-        if ring_d > usize::from(u16::MAX) + 1 {
-            return Err(AkitaError::InvalidInput(format!(
-                "D={ring_d} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
-            )));
-        }
-        let num_live_blocks = ring_elems_at_d.div_ceil(num_positions_per_block);
-
-        // The single-chunk (one-hot-chunk-per-ring-element) layout
-        // applies when K >= D && D | K; otherwise fall back to the
-        // multi-chunk layout.
-        if self.onehot_k >= ring_d && self.onehot_k.is_multiple_of(ring_d) {
-            Ok(OneHotBlocks::SingleChunk(
-                FlatBlocks::<SingleChunkEntry>::from_indices(
-                    self.onehot_k,
-                    &self.indices,
-                    num_positions_per_block,
-                    ring_d,
-                    num_live_blocks,
-                )?,
-            ))
-        } else {
-            Ok(OneHotBlocks::MultiChunk(
-                FlatBlocks::<MultiChunkEntry>::from_indices(
-                    self.onehot_k,
-                    &self.indices,
-                    num_positions_per_block,
-                    ring_d,
-                    num_live_blocks,
-                )?,
-            ))
-        }
     }
 }

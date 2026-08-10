@@ -55,6 +55,42 @@ profile-ci = [
   "akita-config/schedules-fp128-onehot-recursive-multi-chunk-w8r2",
   "akita-config/schedules-fp128-dense",
   "akita-config/schedules-fp128-onehot-multi-chunk",
+  "akita-config/schedules-fp128-onehot-multi-chunk-w2r2",
+  "akita-config/schedules-fp128-onehot-multi-chunk-w4r2",
+]
+# Each CI matrix group enables one narrow profile feature so rustc only builds
+# the concrete profile modes that the group runs. `profile-ci` remains the
+# compatibility union for local use and older merge-base checkouts.
+profile-bench-selected = []
+profile-ci-fp32 = [
+  "profile-bench-selected",
+  "akita-config/schedules-fp32-dense",
+  "akita-config/schedules-fp32-onehot",
+]
+profile-ci-fp64 = [
+  "profile-bench-selected",
+  "akita-config/schedules-fp64-dense",
+  "akita-config/schedules-fp64-onehot",
+]
+profile-ci-fp128-base = [
+  "profile-bench-selected",
+  "akita-config/schedules-fp128-dense",
+  "akita-config/schedules-fp128-onehot",
+]
+profile-ci-multi-group-direct = [
+  "profile-bench-selected",
+  "akita-config/schedules-fp128-onehot",
+]
+profile-ci-multi-group-recursive = [
+  "profile-bench-selected",
+  "akita-config/schedules-fp128-onehot-recursive",
+]
+profile-ci-multi-group-recursive-w8r2 = [
+  "profile-bench-selected",
+  "akita-config/schedules-fp128-onehot-recursive-multi-chunk-w8r2",
+]
+profile-ci-distributed = [
+  "profile-bench-selected",
   "akita-config/schedules-fp128-onehot-multi-chunk",
   "akita-config/schedules-fp128-onehot-multi-chunk-w2r2",
   "akita-config/schedules-fp128-onehot-multi-chunk-w4r2",

@@ -9,7 +9,8 @@ use akita_types::{
     layout::proof_size::field_bytes,
     sis::num_digits_for_bound,
     AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, NttTransformDomain,
-    SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
+    OpenCommitMatrixParams, PrecommittedLevelParams, SetupSumcheckProof, TerminalLevelProof,
+    ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -334,6 +335,147 @@ pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
     );
 }
 
+struct PlannedGroupReport {
+    group: String,
+    group_role: &'static str,
+    consumer_level: usize,
+    witness_field_elements: usize,
+    d_a: usize,
+    d_b: usize,
+    d_d: usize,
+    n_a: usize,
+    n_b: usize,
+    n_d: usize,
+    log_basis_inner: u32,
+    log_basis_outer: u32,
+    log_basis_open: u32,
+    num_digits_inner: usize,
+    num_digits_outer: usize,
+    num_digits_open: usize,
+    num_digits_fold: usize,
+    challenge_l1_mass: usize,
+    num_live_ring_elements_per_claim: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
+    block_index_domain_size: usize,
+    setup_prefix_natural_field_elements: usize,
+    setup_prefix_padded_field_elements: usize,
+}
+
+impl PlannedGroupReport {
+    fn committed(
+        group: String,
+        group_role: &'static str,
+        level: usize,
+        witness_field_elements: usize,
+        params: &CommittedGroupParams,
+    ) -> Self {
+        let role_dims = params.role_dims();
+        Self {
+            group,
+            group_role,
+            consumer_level: level,
+            witness_field_elements,
+            d_a: role_dims.d_a(),
+            d_b: role_dims.d_b(),
+            d_d: role_dims.d_d(),
+            n_a: params.inner_commit_matrix.output_rank(),
+            n_b: params.outer_commit_matrix.output_rank(),
+            n_d: params.open_commit_matrix.output_rank(),
+            log_basis_inner: params.log_basis_inner,
+            log_basis_outer: params.log_basis_outer,
+            log_basis_open: params.log_basis_open,
+            num_digits_inner: params.num_digits_inner,
+            num_digits_outer: params.num_digits_outer,
+            num_digits_open: params.num_digits_open,
+            num_digits_fold: params.num_digits_fold(),
+            challenge_l1_mass: params.challenge_l1_mass(),
+            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+            num_live_blocks: params.num_live_blocks,
+            num_positions_per_block: params.num_positions_per_block,
+            block_index_domain_size: params.block_index_domain_size().unwrap_or(0),
+            setup_prefix_natural_field_elements: 0,
+            setup_prefix_padded_field_elements: 0,
+        }
+    }
+
+    fn precommitted(
+        group: String,
+        group_role: &'static str,
+        consumer_level: usize,
+        witness_field_elements: usize,
+        params: &PrecommittedLevelParams,
+        shared_open: &OpenCommitMatrixParams,
+        setup_prefix_lengths: Option<(usize, usize)>,
+    ) -> Self {
+        let layout = params.layout;
+        let role_dims = params.role_dims(shared_open.ring_dimension());
+        let (setup_prefix_natural_field_elements, setup_prefix_padded_field_elements) =
+            setup_prefix_lengths.unwrap_or((0, 0));
+        Self {
+            group,
+            group_role,
+            consumer_level,
+            witness_field_elements,
+            d_a: role_dims.d_a(),
+            d_b: role_dims.d_b(),
+            d_d: role_dims.d_d(),
+            n_a: layout.inner_commit_matrix.output_rank(),
+            n_b: layout.outer_commit_matrix.output_rank(),
+            n_d: shared_open.output_rank(),
+            log_basis_inner: layout.log_basis_inner,
+            log_basis_outer: layout.log_basis_outer,
+            log_basis_open: params.log_basis_open,
+            num_digits_inner: layout.num_digits_inner,
+            num_digits_outer: layout.num_digits_outer,
+            num_digits_open: params.num_digits_open,
+            num_digits_fold: params.num_digits_fold,
+            challenge_l1_mass: params.challenge_l1_mass(),
+            num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
+            num_live_blocks: layout.num_live_blocks,
+            num_positions_per_block: layout.num_positions_per_block,
+            block_index_domain_size: layout
+                .num_live_blocks
+                .checked_next_power_of_two()
+                .unwrap_or(0),
+            setup_prefix_natural_field_elements,
+            setup_prefix_padded_field_elements,
+        }
+    }
+
+    fn emit(&self, label: &str, level: usize) {
+        tracing::info!(
+            label,
+            level,
+            group = self.group.as_str(),
+            group_role = self.group_role,
+            consumer_level = self.consumer_level,
+            witness_field_elements = self.witness_field_elements,
+            d_a = self.d_a,
+            d_b = self.d_b,
+            d_d = self.d_d,
+            n_a = self.n_a,
+            n_b = self.n_b,
+            n_d = self.n_d,
+            log_basis_inner = self.log_basis_inner,
+            log_basis_outer = self.log_basis_outer,
+            log_basis_open = self.log_basis_open,
+            num_digits_inner = self.num_digits_inner,
+            num_digits_outer = self.num_digits_outer,
+            num_digits_open = self.num_digits_open,
+            num_digits_fold = self.num_digits_fold,
+            challenge_l1_mass = self.challenge_l1_mass,
+            num_live_ring_elements_per_claim = self.num_live_ring_elements_per_claim,
+            num_live_blocks = self.num_live_blocks,
+            num_positions_per_block = self.num_positions_per_block,
+            block_index_domain_size = self.block_index_domain_size,
+            setup_prefix_natural_field_elements = self.setup_prefix_natural_field_elements,
+            setup_prefix_padded_field_elements = self.setup_prefix_padded_field_elements,
+            "planned fold group"
+        );
+    }
+}
+
 pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
@@ -359,6 +501,65 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
 
     let root_current_w_groups = root_current_w_groups(schedule, root_num_claims);
+    let root_open = &schedule.root.params.open_commit_matrix;
+    let precommitted_polys = schedule
+        .root
+        .params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.descriptor.group.num_polynomials())
+        .sum::<usize>();
+    for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+        let layout = group.descriptor.group;
+        let witness_field_elements =
+            group_field_elements(layout.num_vars(), layout.num_polynomials());
+        PlannedGroupReport::precommitted(
+            format!("pre{index}"),
+            "precommitted",
+            0,
+            witness_field_elements,
+            &group.commitment,
+            root_open,
+            None,
+        )
+        .emit(label, 0);
+    }
+    PlannedGroupReport::committed(
+        "final".to_string(),
+        "final",
+        0,
+        root_final_group_field_elements(
+            schedule.root.input_witness_len,
+            root_num_claims,
+            precommitted_polys,
+        ),
+        &schedule.root.params.final_group.commitment,
+    )
+    .emit(label, 0);
+    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
+        PlannedGroupReport::committed(
+            "folded".to_string(),
+            "folded",
+            index + 1,
+            fold.input_witness_len,
+            &fold.params.witness,
+        )
+        .emit(label, index + 1);
+    }
+    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
+        if let Some(prefix) = &fold.params.incoming_setup_prefix {
+            PlannedGroupReport::precommitted(
+                format!("setup_to_L{}", index + 1),
+                "setup_offload",
+                index + 1,
+                prefix.natural_len,
+                &prefix.commitment_params,
+                &fold.params.open_commit_matrix,
+                Some((prefix.natural_len, prefix.n_prefix().unwrap_or(0))),
+            )
+            .emit(label, index);
+        }
+    }
     let nonterminal = std::iter::once((
         0usize,
         &schedule.root.params.final_group.commitment,
@@ -496,6 +697,14 @@ fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
         .unwrap_or(0)
 }
 
+fn root_final_group_field_elements(
+    one_polynomial_field_elements: usize,
+    root_num_claims: usize,
+    precommitted_polys: usize,
+) -> usize {
+    one_polynomial_field_elements.saturating_mul(root_num_claims.saturating_sub(precommitted_polys))
+}
+
 fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> String {
     let mut groups = schedule
         .root
@@ -518,12 +727,30 @@ fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> Str
         .iter()
         .map(|group| group.descriptor.group.num_polynomials())
         .sum::<usize>();
-    let final_polys = root_num_claims.saturating_sub(precommitted_polys);
     groups.push(format!(
         "final={}",
-        schedule.root.input_witness_len.saturating_mul(final_polys)
+        root_final_group_field_elements(
+            schedule.root.input_witness_len,
+            root_num_claims,
+            precommitted_polys,
+        )
     ));
     groups.join(";")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::root_final_group_field_elements;
+
+    #[test]
+    fn root_final_group_count_scales_the_per_polynomial_schedule_length() {
+        let one_final_polynomial = 1usize << 32;
+
+        assert_eq!(
+            root_final_group_field_elements(one_final_polynomial, 4, 2),
+            2 * one_final_polynomial
+        );
+    }
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {

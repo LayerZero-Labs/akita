@@ -1,12 +1,30 @@
 #![allow(missing_docs)]
 
+#[cfg(all(
+    feature = "profile-bench-selected",
+    not(any(
+        feature = "profile-ci-fp32",
+        feature = "profile-ci-fp64",
+        feature = "profile-ci-fp128-base",
+        feature = "profile-ci-multi-group-direct",
+        feature = "profile-ci-multi-group-recursive",
+        feature = "profile-ci-multi-group-recursive-w8r2",
+        feature = "profile-ci-distributed",
+    ))
+))]
+compile_error!("profile-bench-selected is internal; enable one profile-ci-* group instead");
+
 mod modes;
 mod ntt_prewarm;
 mod parallel;
 mod report;
-#[cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
+#[cfg_attr(
+    any(feature = "profile-onehot-fp128", feature = "profile-bench-selected"),
+    allow(dead_code)
+)]
 mod workload;
 
+use akita_prover::CpuBackend;
 use std::env;
 use std::fs;
 use std::io::BufWriter;
@@ -97,6 +115,17 @@ fn main() {
         None
     };
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
+    let cpu = CpuBackend::DEFAULT;
+    tracing::info!(
+        max_cached_ring_switch_elements = cpu.max_cached_ring_switch_elements(),
+        onehot_scratch_bytes_per_worker = cpu.onehot_scratch_bytes_per_worker(),
+        "CPU resource policy"
+    );
+    eprintln!(
+        "[profile] cpu_policy: max_cached_ring_switch_elements={}, onehot_scratch_bytes_per_worker={}",
+        cpu.max_cached_ring_switch_elements(),
+        cpu.onehot_scratch_bytes_per_worker(),
+    );
     modes::log_active_fp128_prime_probe();
 
     #[cfg(not(feature = "profile-onehot-fp128"))]

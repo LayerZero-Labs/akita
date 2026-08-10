@@ -14,18 +14,17 @@ use akita_types::{embed_ring_subfield_vector, RingMatrixView};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::backend::flat_blocks::FlatBlocks;
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::compute::{
-    CommitInnerPlan, CommitmentComputeBackend, FlatBlockTable, SparseRingCommitRowsPlan,
-};
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 
 mod ops;
 
 pub use ops::{SparseRingBatchView, SparseRingView};
 
 type SparseLayoutCacheKey = (usize, usize);
-type SparseBlockCache = Arc<Mutex<HashMap<SparseLayoutCacheKey, Arc<SparseRingBlocks>>>>;
+type SparseBlockCache =
+    Arc<Mutex<HashMap<SparseLayoutCacheKey, Arc<FlatBlocks<SparseRingBlockEntry>>>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SparseRingCoeff {
@@ -95,6 +94,15 @@ pub struct SparseRingBlockEntry {
 
 impl SparseRingBlockEntry {
     #[inline]
+    pub(crate) fn new(pos_in_block: u32, coeff_idx: u16, value: i8) -> Self {
+        Self {
+            pos_in_block,
+            coeff_idx,
+            value,
+        }
+    }
+
+    #[inline]
     pub fn pos_in_block(self) -> usize {
         self.pos_in_block as usize
     }
@@ -110,13 +118,7 @@ impl SparseRingBlockEntry {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct SparseRingBlocks {
-    entries: Vec<SparseRingBlockEntry>,
-    offsets: Vec<u32>,
-}
-
-impl SparseRingBlocks {
+impl FlatBlocks<SparseRingBlockEntry> {
     fn from_coeffs(
         coeffs: &[SparseRingCoeff],
         ring_d: usize,
@@ -139,9 +141,7 @@ impl SparseRingBlocks {
             )));
         }
         let num_live_blocks = total_ring_elems.div_ceil(num_positions_per_block);
-        let mut offsets = Vec::with_capacity(num_live_blocks + 1);
-        let mut entries = Vec::with_capacity(coeffs.len());
-        offsets.push(0);
+        let mut blocks = Self::with_capacity(num_live_blocks, coeffs.len());
         let mut current_block = 0usize;
         for coeff in coeffs {
             let ring_idx = coeff.ring_idx(ring_d);
@@ -159,38 +159,17 @@ impl SparseRingBlocks {
                 )
             })?;
             let block_idx = ring_idx / num_positions_per_block;
-            while current_block < block_idx {
-                offsets.push(entries.len() as u32);
-                current_block += 1;
-            }
-            entries.push(SparseRingBlockEntry {
-                pos_in_block: (ring_idx % num_positions_per_block) as u32,
-                coeff_idx,
-                value: coeff.value,
-            });
+            let pos_in_block = u32::try_from(ring_idx % num_positions_per_block).map_err(|_| {
+                AkitaError::InvalidInput("sparse ring block position exceeds u32".to_string())
+            })?;
+            blocks.push_entry(
+                &mut current_block,
+                block_idx,
+                num_live_blocks,
+                SparseRingBlockEntry::new(pos_in_block, coeff_idx, coeff.value),
+            )?;
         }
-        while current_block < num_live_blocks {
-            offsets.push(entries.len() as u32);
-            current_block += 1;
-        }
-        Ok(Self { entries, offsets })
-    }
-
-    #[inline]
-    pub(crate) fn num_live_blocks(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    #[inline]
-    pub(crate) fn block(&self, idx: usize) -> &[SparseRingBlockEntry] {
-        let lo = self.offsets[idx] as usize;
-        let hi = self.offsets[idx + 1] as usize;
-        &self.entries[lo..hi]
-    }
-
-    #[inline]
-    fn table(&self) -> FlatBlockTable<'_, SparseRingBlockEntry> {
-        FlatBlockTable::new(&self.entries, &self.offsets)
+        blocks.finish_build(current_block, num_live_blocks)
     }
 }
 
@@ -359,7 +338,7 @@ impl<F: FieldCore> SparseRingPoly<F> {
         &self,
         ring_d: usize,
         num_positions_per_block: usize,
-    ) -> Result<Arc<SparseRingBlocks>, AkitaError> {
+    ) -> Result<Arc<FlatBlocks<SparseRingBlockEntry>>, AkitaError> {
         let key = (ring_d, num_positions_per_block);
         if let Some(blocks) = self
             .block_cache
@@ -378,7 +357,7 @@ impl<F: FieldCore> SparseRingPoly<F> {
             ));
         }
         let ring_elems_at_d = field_len.div_ceil(ring_d);
-        let built = SparseRingBlocks::from_coeffs(
+        let built = FlatBlocks::<SparseRingBlockEntry>::from_coeffs(
             &self.coeffs,
             ring_d,
             ring_elems_at_d,
@@ -522,26 +501,6 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
     }
 
-    #[tracing::instrument(skip_all, name = "SparseRingPoly::commit_inner")]
-    pub(crate) fn commit_inner<B, const D: usize>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_inner_rows::<B, D>(
-            backend,
-            prepared,
-            plan.n_a,
-            plan.num_positions_per_block,
-            plan.num_digits_inner,
-        )?;
-        Ok(CommitInnerWitness::from_rows(t))
-    }
-
     pub(crate) fn tensor_extension_column_partials<E>(
         &self,
         logical_point: &[E],
@@ -615,29 +574,6 @@ where
             rings,
         ))
     }
-
-    fn commit_inner_rows<B, const D: usize>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        n_a: usize,
-        num_positions_per_block: usize,
-        num_digits_inner: usize,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let blocks = self.blocks_for(D, num_positions_per_block)?;
-        backend.sparse_ring_commit_rows(
-            prepared,
-            SparseRingCommitRowsPlan {
-                n_a,
-                num_positions_per_block,
-                num_digits_inner,
-                blocks: blocks.table(),
-            },
-        )
-    }
 }
 
 fn fold_sparse_block<F, const D: usize>(
@@ -685,7 +621,7 @@ where
 }
 
 fn sparse_accumulate<const D: usize>(
-    blocks: &SparseRingBlocks,
+    blocks: &FlatBlocks<SparseRingBlockEntry>,
     challenges: &[SparseChallenge],
     num_live_blocks: usize,
     inner_width: usize,

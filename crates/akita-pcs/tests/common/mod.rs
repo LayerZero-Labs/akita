@@ -347,7 +347,7 @@ where
     .expect("opening point shape should match layout");
 
     let opening = OpeningFoldKernel::<P::OpeningView<'a>, F, D>::evaluate_and_fold(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
@@ -478,9 +478,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute setup-prefix slots for the generated profile"
         );
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        let prepared = CpuBackend::DEFAULT
+            .prepare_setup(&setup)
+            .expect("prepared setup");
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )

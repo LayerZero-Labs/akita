@@ -8,10 +8,15 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
     const FINAL_NV: usize = 16;
 
     let setup = OneHotScheme::setup_prover(FINAL_NV, 4).expect("heterogeneous setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("heterogeneous stack");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("heterogeneous stack");
 
     let onehot_pre = OneHotPoly::<OneHotF, u8>::new(
         16,

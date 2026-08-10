@@ -1,4 +1,7 @@
-#![cfg_attr(feature = "profile-onehot-fp128", allow(dead_code))]
+#![cfg_attr(
+    any(feature = "profile-onehot-fp128", feature = "profile-bench-selected"),
+    allow(dead_code)
+)]
 
 use crate::report::print_layout;
 use crate::workload::{
@@ -7,8 +10,7 @@ use crate::workload::{
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::HasWide;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::TranscriptChallenge;
 use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -59,6 +61,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -96,6 +99,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -172,59 +176,80 @@ struct ProfileMode {
     run: ProfileModeRunner,
 }
 
-#[cfg(all(not(feature = "profile-onehot-fp128"), feature = "profile-ci"))]
-const PROFILE_CI_MODES: &[ProfileMode] = &[
+#[cfg(all(
+    not(feature = "profile-onehot-fp128"),
+    any(feature = "profile-ci", feature = "profile-bench-selected")
+))]
+const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
     ProfileMode {
         name: "dense_fp128",
         run: run_profile_dense_fp128,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
     ProfileMode {
         name: "onehot_fp128",
         run: run_profile_onehot_fp128,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-multi-group-direct"))]
     ProfileMode {
         name: "onehot_fp128_multi_group",
         run: run_profile_onehot_fp128_multi_group,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-multi-group-recursive"))]
     ProfileMode {
         name: "onehot_fp128_multi_group_recursive",
         run: run_profile_onehot_fp128_multi_group_recursive,
     },
+    #[cfg(any(
+        feature = "profile-ci",
+        feature = "profile-ci-multi-group-recursive-w8r2"
+    ))]
     ProfileMode {
         name: "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w2r2",
         run: run_profile_onehot_fp128_multi_chunk_w2r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w4r2",
         run: run_profile_onehot_fp128_multi_chunk_w4r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-distributed"))]
     ProfileMode {
         name: "onehot_fp128_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_multi_chunk_w8r2,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp32"))]
     ProfileMode {
         name: "dense_fp32",
         run: run_profile_dense_fp32,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp32"))]
     ProfileMode {
         name: "onehot_fp32",
         run: run_profile_onehot_fp32,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp64"))]
     ProfileMode {
         name: "dense_fp64",
         run: run_profile_dense_fp64,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp64"))]
     ProfileMode {
         name: "onehot_fp64",
         run: run_profile_onehot_fp64,
     },
 ];
 
-#[cfg(all(not(feature = "profile-onehot-fp128"), not(feature = "profile-ci")))]
+#[cfg(all(
+    not(feature = "profile-onehot-fp128"),
+    not(any(feature = "profile-ci", feature = "profile-bench-selected"))
+))]
 const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "dense_fp128",
@@ -278,11 +303,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
 #[cfg(not(feature = "profile-onehot-fp128"))]
 fn profile_modes() -> &'static [ProfileMode] {
-    #[cfg(feature = "profile-ci")]
+    #[cfg(any(feature = "profile-ci", feature = "profile-bench-selected"))]
     {
-        PROFILE_CI_MODES
+        PROFILE_SELECTED_MODES
     }
-    #[cfg(not(feature = "profile-ci"))]
+    #[cfg(not(any(feature = "profile-ci", feature = "profile-bench-selected")))]
     {
         PROFILE_ALL_MODES
     }
