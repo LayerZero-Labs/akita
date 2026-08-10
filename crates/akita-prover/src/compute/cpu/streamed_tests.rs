@@ -106,6 +106,44 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
 }
 
 #[test]
+fn streamed_relation_rejects_unsafe_crt_width_without_building_cache() {
+    type F32 = Prime32Offset99;
+    let setup = AkitaProverSetup::<F32>::generate_with_capacity(
+        8,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 64 * D,
+        },
+    )
+    .unwrap();
+    let backend =
+        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_ONEHOT_SCRATCH_BYTES_PER_WORKER)
+            .unwrap();
+    let prepared = backend.prepare_setup(&setup).unwrap();
+    let z_segment = vec![[1i32; D]; 64];
+    let error = backend
+        .relation_rows(
+            &prepared,
+            RingSwitchRelationView {
+                e_hat: &[],
+                t_hat: &[],
+                z_segment: &z_segment,
+                z_folded_centered_inf_norm: u32::MAX,
+            },
+            RingSwitchRelationPlan {
+                n_d: 0,
+                n_b: 0,
+                n_a: 1,
+                log_basis_open: 1,
+                log_basis_outer: 1,
+            },
+        )
+        .expect_err("unsafe streamed CRT width must fail closed");
+    assert!(error.to_string().contains("streamed centered term"));
+    assert!(prepared.shared_ntt_cache_metrics().unwrap().is_empty());
+}
+
+#[test]
 fn streamed_relation_rows_match_cached_kernel() {
     let prepared = prepared();
     let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
@@ -132,8 +170,7 @@ fn streamed_relation_rows_match_cached_kernel() {
         2,
         3,
     )
-    .expect("streamed rows")
-    .expect("shape is one-shot safe");
+    .expect("streamed rows");
     let cached = prepared
         .with_shared_ntt::<D, _>(cyclic_key(extent), |cyclic_ntt| {
             prepared.with_shared_ntt::<D, _>(negacyclic_key(extent), |negacyclic_ntt| {
@@ -185,8 +222,7 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
         2,
         3,
     )
-    .expect("streamed rows")
-    .expect("shape is one-shot safe");
+    .expect("streamed rows");
     let cached = prepared
         .with_shared_ntt::<D, _>(cyclic_key(extent), |cyclic_ntt| {
             prepared.with_shared_ntt::<D, _>(negacyclic_key(extent), |negacyclic_ntt| {
@@ -278,8 +314,7 @@ fn streamed_chunked_z_quotient_matches_cached_kernel() {
         1,
         1,
     )
-    .expect("streamed rows")
-    .expect("chunked z path streams");
+    .expect("streamed rows");
     let cached = prepared
         .with_shared_ntt::<D, _>(cyclic_key(extent), |cyclic_ntt| {
             prepared.with_shared_ntt::<D, _>(negacyclic_key(extent), |negacyclic_ntt| {
@@ -335,8 +370,7 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
         2,
         8,
     )
-    .expect("streamed rows")
-    .expect("chunked t path streams");
+    .expect("streamed rows");
     let cached = prepared
         .with_shared_ntt::<D128, _>(
             NttCacheKey::from_matrix_shape(D128, 1, T_LEN, NttTransformDomain::Cyclic).unwrap(),
