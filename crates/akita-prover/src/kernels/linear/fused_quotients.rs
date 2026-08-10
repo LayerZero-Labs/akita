@@ -442,9 +442,8 @@ fn fused_split_eq_quotients_one_shot<
 ///
 /// Entries stream from `flat`, A's field-form prefix covering every product's
 /// `rows x width` extent. Roles that exceed one CRT accumulator are reduced in
-/// capacity-safe chunks. Returns `Ok(None)` only when the selected protocol CRT
-/// profile cannot represent one term, in which case the caller takes the
-/// cached path.
+/// capacity-safe chunks. If the selected protocol CRT profile cannot represent
+/// one term, this rejects without allocating a retained NTT cache.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
@@ -461,11 +460,11 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     log_basis_open: u32,
     log_basis_outer: u32,
 ) -> Result<
-    Option<(
+    (
         Vec<CyclotomicRing<F, D>>,
         Vec<CyclotomicRing<F, D>>,
         Vec<CyclotomicRing<F, D>>,
-    )>,
+    ),
     AkitaError,
 > {
     let (w_digit_abs_bound, t_digit_abs_bound) =
@@ -487,25 +486,31 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
             )?;
             plan.validate_streamed(source)?;
             if plan.is_one_shot() {
-                return Ok(Some(fused_split_eq_quotients_one_shot_streamed(
+                return Ok(fused_split_eq_quotients_one_shot_streamed(
                     source,
                     e_hat,
                     t_hat,
                     z_folded_rings,
                     plan,
                     &params,
-                )));
+                ));
             }
 
-            let Some(w_chunk_width) = plan.w_chunk_width else {
-                return Ok(None);
-            };
-            let Some(t_chunk_width) = plan.t_chunk_width else {
-                return Ok(None);
-            };
-            let Some(z_chunk_width) = plan.z_chunk_width else {
-                return Ok(None);
-            };
+            let w_chunk_width = plan.w_chunk_width.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "CRT parameters cannot represent one streamed e_hat term".to_string(),
+                )
+            })?;
+            let t_chunk_width = plan.t_chunk_width.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "CRT parameters cannot represent one streamed t_hat term".to_string(),
+                )
+            })?;
+            let z_chunk_width = plan.z_chunk_width.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "CRT parameters cannot represent one streamed centered term".to_string(),
+                )
+            })?;
             tracing::info!(
                 witness_len = plan.witness_len,
                 w_chunk_width,
@@ -538,7 +543,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                 z_chunk_width,
                 &params,
             );
-            Ok(Some((d_rows, b_rows, a_rows)))
+            Ok((d_rows, b_rows, a_rows))
         }};
     }
     match select_crt_ntt_params::<F, D>()? {
