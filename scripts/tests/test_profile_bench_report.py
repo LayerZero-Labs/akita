@@ -704,14 +704,16 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(report.count("+100.0%"), 9)
         self.assertNotIn("vs base</sub>", report)
+        self.assertNotIn("vs merge base</sub>", report)
         self.assertIn("### Phase time", report)
         self.assertIn("### Memory and setup size", report)
-        self.assertIn("### Proof size", report)
+        self.assertIn("### Proof size and protocol shape", report)
+        self.assertNotIn("### Protocol shape", report)
+        self.assertNotIn("| Status |", report)
         self.assertIn("Setup vector", report)
         self.assertIn("Prepared NTT cache", report)
         self.assertIn("Verify, multi-threaded", report)
         self.assertIn("Verify, single-threaded", report)
-        self.assertIn("Status", report)
         self.assertIn("Fold A/B/D schedule", report)
         self.assertIn("64/64/64", report)
         self.assertIn("4.0 MiB", report)
@@ -937,6 +939,52 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("comparisons are available for `0` of `1` profiles", report)
         self.assertIn("no matching merge-base case", report)
         self.assertNotIn("Each delta below compares", report)
+
+    def test_incomplete_public_opening_groups_fall_back(self) -> None:
+        from scripts.profile_bench_report import (
+            normalize_case_summary,
+            public_opening_groups,
+            public_opening_statement,
+        )
+
+        summary = normalize_case_summary(
+            {
+                "mode": "onehot_fp128_multi_group_recursive",
+                "num_vars": 32,
+                "num_polys": 4,
+                "exit_code": 0,
+                "planned_levels": [
+                    {
+                        "level": 0,
+                        "groups": [
+                            {
+                                "group_role": "precommitted",
+                                "public_num_vars": 16,
+                                "public_num_polynomials": 1,
+                            },
+                            {
+                                "group_role": "final",
+                                "public_num_vars": 32,
+                                "public_num_polynomials": 1,
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(public_opening_groups(summary), [])
+        self.assertEqual(
+            summary["warnings"],
+            [
+                "public opening groups describe 2 of 4 polynomials; "
+                "using the generic opening statement"
+            ],
+        )
+        self.assertEqual(
+            public_opening_statement(summary),
+            "Over Fp128, 4 polynomials are split across independent opening groups.",
+        )
 
     def test_full_report_renders_overhauled_tables(self) -> None:
         from scripts.profile_bench_report import render_report
