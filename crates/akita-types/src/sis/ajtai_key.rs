@@ -739,26 +739,17 @@ mod tests {
     }
 
     #[test]
-    fn d512_coverage_is_complete_for_small_fields_and_q128_inner_only() {
-        for role in [SisMatrixRole::Outer, SisMatrixRole::Open] {
-            assert!(sis_role_cell(role, SisModulusProfileId::Q128OffsetA7F7, 512, 3).is_none());
-        }
+    fn d512_coverage_is_inner_only_for_every_field_tier() {
         for profile in [
             SisModulusProfileId::Q32Offset99,
             SisModulusProfileId::Q64Offset59,
+            SisModulusProfileId::Q128OffsetA7F7,
         ] {
             assert!(sis_role_cell(SisMatrixRole::Inner, profile, 512, 2).is_some());
             for role in [SisMatrixRole::Outer, SisMatrixRole::Open] {
-                assert!(sis_role_cell(role, profile, 512, 3).is_some());
+                assert!(sis_role_cell(role, profile, 512, 3).is_none());
             }
         }
-        assert!(sis_role_cell(
-            SisMatrixRole::Inner,
-            SisModulusProfileId::Q128OffsetA7F7,
-            512,
-            2,
-        )
-        .is_some());
     }
 
     #[test]
