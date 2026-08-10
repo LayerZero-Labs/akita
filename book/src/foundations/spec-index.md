@@ -23,7 +23,9 @@ quantum LGSA policy at a 128-bit target.
 Recent archived records include
 [`group-local-opening-points`](../../../specs/archive/2026-Q3/group-local-opening-points.md),
 whose durable claim ownership and protocol dataflow now live in the architecture,
-verification, commitment API, and extension-opening chapters.
+verification, commitment API, and extension-opening chapters, and
+[`profile-bench-coverage-matrix`](../../../specs/archive/2026-Q3/profile-bench-coverage-matrix.md),
+whose current benchmark contract now lives in the profiling chapter.
 
 ## Sources to fold in
 

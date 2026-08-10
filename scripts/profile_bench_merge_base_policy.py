@@ -27,6 +27,7 @@ from pathlib import Path
 MODES_RS = "crates/akita-pcs/examples/profile/modes.rs"
 PCS_TOML = "crates/akita-pcs/Cargo.toml"
 PROFILE_CI_MARKER = "const PROFILE_CI_MODES"
+PROFILE_SELECTED_MARKER = "const PROFILE_SELECTED_MODES"
 PROFILE_ALL_MARKER = "const PROFILE_ALL_MODES"
 PROFILE_MODES_MARKER = "const PROFILE_MODES"
 NAME_RE = re.compile(r'name:\s*"([^"]+)"')
@@ -151,9 +152,19 @@ def modes_from_block(text: str, marker: str) -> set[str] | None:
 
 def profile_modes_from_modes_rs(text: str, *, profile_ci: bool) -> set[str]:
     markers = (
-        (PROFILE_CI_MARKER, PROFILE_MODES_MARKER, PROFILE_ALL_MARKER)
+        (
+            PROFILE_SELECTED_MARKER,
+            PROFILE_CI_MARKER,
+            PROFILE_MODES_MARKER,
+            PROFILE_ALL_MARKER,
+        )
         if profile_ci
-        else (PROFILE_ALL_MARKER, PROFILE_MODES_MARKER, PROFILE_CI_MARKER)
+        else (
+            PROFILE_ALL_MARKER,
+            PROFILE_MODES_MARKER,
+            PROFILE_SELECTED_MARKER,
+            PROFILE_CI_MARKER,
+        )
     )
     for marker in markers:
         modes = modes_from_block(text, marker)

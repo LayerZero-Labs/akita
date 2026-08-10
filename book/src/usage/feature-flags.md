@@ -19,7 +19,9 @@ Disable parallel locally: `cargo build --no-default-features` (or add only the f
 |---------|---------|
 | `disk-persistence` | Disk-backed setup cache paths (`akita-setup/disk-persistence`) |
 | `logging-transcript` | `LoggingTranscript` schedule events and wire-before-squeeze smell checks in transcript tests |
-| `profile-ci` | Schedule features needed for the CI profile-bench matrix (see [Profiling](./profiling.md)) |
+| `profile-ci` | Compatibility union of schedule features needed by the CI profile benchmark matrix |
+| `profile-ci-*` | Narrow schedule and mode groups used by individual CI profile benchmark jobs (see [Profiling](./profiling.md)) |
+| `profile-bench-selected` | Internal mode-registry marker enabled by each narrow profile benchmark group; do not enable it alone |
 
 Per-crate feature tables live in each `crates/*/Cargo.toml`.
 Schedule catalog features (`schedules-fp128-onehot`, etc.) are documented in

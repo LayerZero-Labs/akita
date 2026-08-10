@@ -24,7 +24,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 5
+CASE_SCHEMA_VERSION = 7
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -81,6 +81,7 @@ class CaseMetadata:
     workload: str
     workload_label: str
     config: str
+    opening_topology: str = "single_group"
 
 
 # Securable families under honest committed-fold A-role pricing, i.e. the ones
@@ -94,13 +95,21 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     ),
     "dense_fp128": CaseMetadata("fp128", "dense", "dense", "mixed D256 to D64"),
     "onehot_fp128_multi_group": CaseMetadata(
-        "fp128", "onehot", "multi-group one-hot", "multi-group"
+        "fp128", "onehot", "multi-group one-hot", "multi-group", "multi_group"
     ),
     "onehot_fp128_multi_group_recursive": CaseMetadata(
-        "fp128", "onehot", "multi-group one-hot", "adaptive recursive multi-group"
+        "fp128",
+        "onehot",
+        "multi-group one-hot",
+        "adaptive recursive multi-group",
+        "multi_group",
     ),
     "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": CaseMetadata(
-        "fp128", "onehot", "multi-group one-hot", "adaptive recursive multi-group W8R2"
+        "fp128",
+        "onehot",
+        "multi-group one-hot",
+        "adaptive recursive multi-group W8R2",
+        "multi_group",
     ),
     "onehot_fp128_multi_chunk_w8r2": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W8R2"
@@ -163,7 +172,7 @@ def parse_args() -> argparse.Namespace:
         "--num-polys",
         type=int,
         default=1,
-        help="Number of same-point polynomials in the benchmark case.",
+        help="Total number of polynomials in the mode-specific benchmark case.",
     )
     run_parser.add_argument(
         "--setup-mode",
@@ -252,7 +261,7 @@ def parse_args() -> argparse.Namespace:
         "--num-polys",
         type=int,
         default=1,
-        help="Number of same-point polynomials in the benchmark case.",
+        help="Total number of polynomials in the mode-specific benchmark case.",
     )
     failure_parser.add_argument(
         "--setup-mode",
@@ -535,7 +544,9 @@ def render_tail_encoding(current: dict[str, object]) -> None:
         )
 
 
-def render_terminal_response_components(cases: list[dict[str, object]]) -> None:
+def render_terminal_response_components(
+    cases: list[dict[str, object]], include_heading: bool = True
+) -> None:
     rows = [
         case
         for case in cases
@@ -549,8 +560,9 @@ def render_terminal_response_components(cases: list[dict[str, object]]) -> None:
     if not rows:
         return
 
-    print("### Terminal response component breakdown")
-    print()
+    if include_heading:
+        print("### Terminal response component breakdown")
+        print()
     print(
         "| Workload | Folded response (`z`) | Opening values (`e`) | "
         "Inner-commitment values (`t`) | Total terminal response |"
@@ -598,6 +610,11 @@ def require_int(summary: dict[str, object], key: str) -> int:
 
 def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
     missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
+    if (
+        summary.get("verification_modes") == "multi_and_single"
+        and summary.get("verify_single_total_s") is None
+    ):
+        missing.append("verify_single_total_s")
     for key in REQUIRED_RUN_SEQUENCES:
         value = summary.get(key)
         if not isinstance(value, list) or not value:
@@ -628,8 +645,10 @@ TIMING_SAMPLE_METRICS = (
     "commit_s",
     "prove_total_s",
     "verify_total_s",
+    "verify_single_total_s",
     "prove_akita_s",
     "verify_akita_s",
+    "verify_single_akita_s",
 )
 GRIND_SAMPLE_METRICS = (
     "grind_levels",
@@ -676,6 +695,8 @@ def benchmark_name(
     setup_suffix = ""
     if setup_mode != "direct":
         setup_suffix = f" ({setup_mode} setup contribution)"
+    if metadata.opening_topology == "multi_group":
+        return f"{metadata.field_family} multi-group opening with {num_polys} polynomials{setup_suffix}"
     if metadata.workload == "onehot":
         if num_polys > 1:
             return (
@@ -763,13 +784,24 @@ def extract_summary(
         "case_id": case_id(mode, num_vars, num_polys, setup_mode),
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
-    planned_levels: dict[int, dict[str, int]] = {}
-    proof_levels: dict[int, dict[str, int]] = {}
+    planned_levels: dict[int, dict[str, object]] = {}
+    planned_groups: dict[int, list[dict[str, object]]] = {}
+    proof_levels: dict[int, dict[str, object]] = {}
+    active_verify_mode = "multi threaded"
 
     for line in log_text.splitlines():
         line = ANSI_RE.sub("", line)
         kvs = parse_kvs(line)
-        if " INFO setup sizes" in line and kvs.get("label") == mode:
+        if "profile thread pools" in line:
+            summary["prove_threads"] = int(kvs["prove_threads"])
+            summary["verify_multi_threads"] = int(
+                kvs.get("verify_multi_threads", kvs.get("verify_threads", "1"))
+            )
+            summary["verify_single_threads"] = int(kvs.get("verify_single_threads", "1"))
+        elif "profile verification start" in line and kvs.get("label") == mode:
+            active_verify_mode = kvs["verify_mode"].replace("_", " ")
+            summary["verification_modes"] = "multi_and_single"
+        elif " INFO setup sizes" in line and kvs.get("label") == mode:
             setup_vector_bytes = int(kvs["setup_vector_bytes"])
             summary["setup_vector_bytes"] = setup_vector_bytes
             if "num_setup_field_elements" in kvs:
@@ -815,8 +847,17 @@ def extract_summary(
         elif " INFO prove" in line and kvs.get("label") == mode:
             summary["prove_total_s"] = float(kvs["elapsed_s"])
         elif "akita verify complete" in line or "akita batched verify complete" in line:
-            summary["verify_akita_s"] = float(kvs["elapsed_s"])
-        elif "verify OK" in line and kvs.get("label") == mode:
+            key = (
+                "verify_single_akita_s"
+                if active_verify_mode == "single threaded"
+                else "verify_akita_s"
+            )
+            summary[key] = float(kvs["elapsed_s"])
+        elif "verify single threaded OK" in line and kvs.get("label") == mode:
+            summary["verify_single_total_s"] = float(kvs["elapsed_s"])
+        elif (
+            "verify multi threaded OK" in line or "verify OK" in line
+        ) and kvs.get("label") == mode:
             summary["verify_total_s"] = float(kvs["elapsed_s"])
         elif "proof summary" in line and kvs.get("label") == mode:
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
@@ -834,6 +875,46 @@ def extract_summary(
                 )
         elif "extension opening used root-direct fallback" in line and kvs.get("label") == mode:
             summary["extension_root_direct_fallback"] = True
+        elif "planned fold group" in line and kvs.get("label") == mode:
+            level = int(kvs["level"])
+            planned_groups.setdefault(level, []).append(
+                {
+                    "group": kvs["group"],
+                    "group_role": kvs["group_role"],
+                    "consumer_level": int(kvs["consumer_level"]),
+                    "witness_field_elements": int(kvs["witness_field_elements"]),
+                    "public_num_vars": int(kvs.get("public_num_vars", "0")),
+                    "public_num_polynomials": int(
+                        kvs.get("public_num_polynomials", "0")
+                    ),
+                    "d_a": int(kvs["d_a"]),
+                    "d_b": int(kvs["d_b"]),
+                    "d_d": int(kvs["d_d"]),
+                    "n_a": int(kvs["n_a"]),
+                    "n_b": int(kvs["n_b"]),
+                    "n_d": int(kvs["n_d"]),
+                    "log_basis_inner": int(kvs["log_basis_inner"]),
+                    "log_basis_outer": int(kvs["log_basis_outer"]),
+                    "log_basis_open": int(kvs["log_basis_open"]),
+                    "num_digits_inner": int(kvs["num_digits_inner"]),
+                    "num_digits_outer": int(kvs["num_digits_outer"]),
+                    "num_digits_open": int(kvs["num_digits_open"]),
+                    "num_digits_fold": int(kvs["num_digits_fold"]),
+                    "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
+                    "num_live_ring_elements_per_claim": int(
+                        kvs["num_live_ring_elements_per_claim"]
+                    ),
+                    "num_live_blocks": int(kvs["num_live_blocks"]),
+                    "num_positions_per_block": int(kvs["num_positions_per_block"]),
+                    "block_index_domain_size": int(kvs["block_index_domain_size"]),
+                    "setup_prefix_natural_field_elements": int(
+                        kvs["setup_prefix_natural_field_elements"]
+                    ),
+                    "setup_prefix_padded_field_elements": int(
+                        kvs["setup_prefix_padded_field_elements"]
+                    ),
+                }
+            )
         elif "planned fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             # Benchmark runs parse both the PR binary and its merge-base binary.
@@ -907,6 +988,7 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
+                "input_witness_len": input_witness_len,
                 "current_w_len": planned_current_w_len(kvs),
                 "next_w_len": output_witness_len,
                 "setup_prefix_natural_field_elements": int(
@@ -982,6 +1064,13 @@ def extract_summary(
             summary["max_rss_kib"] = rss_value
             break
 
+    for level, groups in planned_groups.items():
+        if level in planned_levels:
+            planned_levels[level]["groups"] = groups
+        else:
+            summary.setdefault("warnings", []).append(
+                f"planned fold groups for L{level} have no matching planned fold level"
+            )
     if planned_levels:
         summary["planned_levels"] = [planned_levels[level] for level in sorted(planned_levels)]
     if proof_levels:
@@ -1059,6 +1148,7 @@ def infer_failure_phase(summary: dict[str, object], first_missing: str | None = 
         "commit_s": "commit",
         "prove_total_s": "prove",
         "verify_total_s": "verify",
+        "verify_single_total_s": "single-threaded verify",
         "proof_size_bytes": "proof summary",
         "accounted_bytes": "proof accounting",
         "consistent_proof_accounting": "proof accounting",
@@ -1126,6 +1216,10 @@ SUMMARY_CSV_COLUMNS = (
     "commit_s",
     "prove_total_s",
     "verify_total_s",
+    "verify_single_total_s",
+    "prove_threads",
+    "verify_multi_threads",
+    "verify_single_threads",
     "max_rss_kib",
     "proof_size_bytes",
     "accounted_bytes",
@@ -1542,11 +1636,7 @@ def case_status(summary: dict[str, object]) -> str:
 
 
 def section_title(summary: dict[str, object]) -> str:
-    title = human_case_label(summary)
-    setup_mode = str(summary.get("setup_contribution_mode", "direct"))
-    if setup_mode != "direct":
-        title = f"{title} ({setup_mode} setup)"
-    return title
+    return human_case_label(summary)
 
 
 @dataclass(frozen=True)
@@ -1557,13 +1647,21 @@ class Metric:
     value_formatter: callable
 
 
-REPORT_METRICS = [
+MEASURED_METRICS = [
     Metric("setup_s", "Setup and preparation", "s", fmt_seconds),
     Metric("setup_expand_s", "Setup expansion", "s", fmt_seconds),
     Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
-    Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
+    Metric("verify_total_s", "Verify, multi-threaded", "ms", fmt_milliseconds),
+    Metric("verify_single_total_s", "Verify, single-threaded", "ms", fmt_milliseconds),
+    Metric("verify_akita_s", "Verifier core, multi-threaded", "ms", fmt_milliseconds),
+    Metric(
+        "verify_single_akita_s",
+        "Verifier core, single-threaded",
+        "ms",
+        fmt_milliseconds,
+    ),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric(
         "num_setup_field_elements",
@@ -1577,23 +1675,6 @@ REPORT_METRICS = [
     Metric("proof_size_bytes", "Proof size", "bytes", fmt_bytes),
     Metric("akita_fold_bytes", "Recursive fold payload", "bytes", fmt_bytes),
     Metric("tail_bytes", "Final-witness tail", "bytes", fmt_bytes),
-    Metric("akita_levels", "Fold levels", "levels", fmt_count),
-    Metric("crt_num_primes", "CRT prime count", "primes", fmt_count),
-    Metric("crt_prime_modulus_bits", "CRT prime modulus width", "bits", fmt_count),
-    Metric("crt_limb_bits", "CRT signed storage width", "bits", fmt_count),
-    Metric(
-        "balanced_digit_safe_width",
-        "Maximum safe balanced-digit accumulation width",
-        "terms",
-        fmt_count,
-    ),
-    Metric(
-        "raw_i8_safe_width",
-        "Maximum safe signed-i8 accumulation width",
-        "terms",
-        fmt_count,
-    ),
-    Metric("ext_degree", "Claim extension degree", "degree", fmt_count),
 ]
 
 
@@ -1607,16 +1688,93 @@ def render_metric_row(
     if current_value is None:
         return ""
 
-    columns: list[str] = []
+    columns = [metric.value_formatter(float(current_value))]
     for _, summary in baselines:
         if summary is None or summary.get(metric.key) is None:
             columns.append("n/a")
         else:
             columns.append(metric.value_formatter(float(summary[metric.key])))
 
-    columns.append(metric.value_formatter(float(current_value)))
     columns.append(numeric_delta(current, main_baseline, metric.key))
     return f"| {metric.name} | " + " | ".join(columns) + f" | {metric.unit} |"
+
+
+def parameter_value(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+    keys: tuple[str, ...],
+    render: callable,
+) -> str | None:
+    if any(current.get(key) is None for key in keys):
+        return None
+    current_values = tuple(current[key] for key in keys)
+    rendered = render(*current_values)
+    if baseline is None or any(baseline.get(key) is None for key in keys):
+        return rendered
+    baseline_values = tuple(baseline[key] for key in keys)
+    if current_values == baseline_values:
+        return rendered
+    return f"{rendered} Merge base: {render(*baseline_values)}"
+
+
+def render_execution_parameters(
+    current: dict[str, object], baseline: dict[str, object] | None
+) -> None:
+    rows = [("Internal mode", code_text(current["mode"]))]
+
+    if current.get("crt_profile") is not None:
+        rows.append(("CRT profile", code_text(current["crt_profile"])))
+
+    crt = parameter_value(
+        current,
+        baseline,
+        ("crt_num_primes", "crt_prime_modulus_bits", "crt_limb_bits"),
+        lambda primes, modulus_bits, limb_bits: (
+            f"{code_text(fmt_count(float(primes)))} prime moduli of "
+            f"{code_text(fmt_count(float(modulus_bits)))} bits in signed "
+            f"{code_text(f'i{int(limb_bits)}')} lanes."
+        ),
+    )
+    if crt is not None:
+        rows.append(("CRT arithmetic", crt))
+
+    safe_width = parameter_value(
+        current,
+        baseline,
+        ("balanced_digit_safe_width", "raw_i8_safe_width"),
+        lambda balanced, raw_i8: (
+            f"{code_text(fmt_count(float(balanced)))} balanced digit terms and "
+            f"{code_text(fmt_count(float(raw_i8)))} signed i8 terms."
+        ),
+    )
+    if safe_width is not None:
+        rows.append(("Safe accumulation limit", safe_width))
+
+    extension_degree = parameter_value(
+        current,
+        baseline,
+        ("ext_degree",),
+        lambda degree: code_text(fmt_count(float(degree))),
+    )
+    if extension_degree is not None:
+        rows.append(("Claim extension degree", extension_degree))
+
+    verifier_threads = parameter_value(
+        current,
+        baseline,
+        ("verify_multi_threads", "verify_single_threads"),
+        lambda multi, single: (
+            f"{code_text(fmt_count(float(multi)))} for the multi-threaded timing and "
+            f"{code_text(fmt_count(float(single)))} for the single-threaded timing."
+        ),
+    )
+    if verifier_threads is not None:
+        rows.append(("Verifier threads", verifier_threads))
+
+    print("#### Execution parameters")
+    print()
+    for label, value in rows:
+        print(f"- {label}: {value}")
 
 
 def numeric_delta(
@@ -1628,7 +1786,7 @@ def numeric_delta(
 
     Returns `"n/a"` when either side is missing. A zero baseline is reported as
     unchanged when both values are zero, or explicitly as a new nonzero value;
-    other comparisons render as e.g. `"+5.20%"` or `"-1.23%"`. All report
+    other comparisons render as e.g. `"+5.2%"` or `"-1.2%"`. All report
     comparisons use this formatter so proof size, prover wall-time, and other
     numeric metrics have consistent deltas.
     """
@@ -1639,56 +1797,50 @@ def numeric_delta(
     if current_value is None or baseline_value is None:
         return "n/a"
     if float(baseline_value) == 0.0:
-        return "unchanged" if float(current_value) == 0.0 else "new; main is zero"
+        return "unchanged" if float(current_value) == 0.0 else "new; merge base is zero"
     delta = (float(current_value) / float(baseline_value) - 1.0) * 100.0
     sign = "+" if delta >= 0.0 else ""
-    return f"{sign}{delta:.2f}%"
+    return f"{sign}{delta:.1f}%"
 
 
-def value_with_main_delta(
+def value_with_baseline_delta(
     current_value: object,
     baseline_value: object | None,
     formatter: callable,
     unit: str = "",
-    compare_to_main: bool = False,
+    compare_to_baseline: bool = False,
+    comparison_label: str = " vs merge base",
 ) -> str:
     value = f"{formatter(float(current_value))}{unit}"
     if baseline_value is None:
-        if compare_to_main:
-            return f"{value}<br><sub>n/a vs main</sub>"
+        if compare_to_baseline:
+            return f"{value}<br><sub>n/a{comparison_label}</sub>"
         return value
     delta = numeric_delta({"value": current_value}, {"value": baseline_value}, "value")
-    return f"{value}<br><sub>{delta} vs main</sub>"
+    return f"{value}<br><sub>{delta}{comparison_label}</sub>"
 
 
-def optional_value_with_main_delta(
+def optional_value_with_baseline_delta(
     current: dict[str, object],
     baseline: dict[str, object] | None,
     key: str,
     formatter: callable,
     unit: str = "",
-    compare_to_main: bool = False,
+    compare_to_baseline: bool = False,
+    comparison_label: str = " vs base",
 ) -> str:
     value = current.get(key)
     if value is None:
         return "n/a"
     baseline_value = baseline.get(key) if baseline is not None else None
-    return value_with_main_delta(value, baseline_value, formatter, unit, compare_to_main)
-
-
-def format_witness_groups(groups: object) -> str:
-    if not isinstance(groups, list) or not groups:
-        return "n/a"
-    parts = []
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        name = group.get("group")
-        field_elements = group.get("field_elements")
-        if name is None or field_elements is None:
-            continue
-        parts.append(f"{name}: {fmt_count(float(field_elements))}")
-    return "<br>".join(parts) if parts else "n/a"
+    return value_with_baseline_delta(
+        value,
+        baseline_value,
+        formatter,
+        unit,
+        compare_to_baseline,
+        comparison_label,
+    )
 
 
 def field_family_bits(field_family: object) -> int | None:
@@ -1704,129 +1856,255 @@ def field_family_sort_key(case: dict[str, object]) -> int:
     return bits if bits is not None else 1 << 30
 
 
-def config_variant_token(config: object) -> str:
-    """Render non-dimension topology tags while hiding dimension policy names."""
-    remainder = re.sub(r"^\s*D\d+\s*", "", str(config), flags=re.IGNORECASE)
-    if re.fullmatch(r"mixed\s+D\d+\s+to\s+D\d+", remainder, flags=re.IGNORECASE):
-        return ""
-    tokens: list[str] = []
-    for word in remainder.split():
-        if word.lower() == "recursive":
-            continue
-        if any(char.isdigit() for char in word):
-            tokens.append(word.upper())
-        else:
-            tokens.append("".join(part.capitalize() for part in word.split("-")))
-    return "".join(tokens)
-
-
 def human_case_label(summary: dict[str, object]) -> str:
-    """Render a stable workload label without planner-selected dimensions."""
+    """Render a short workload label without planner-selected dimensions."""
     field_family = str(summary.get("field_family", "field"))
     bits = field_family_bits(field_family)
     field_segment = f"Fp{bits}" if bits is not None else field_family
     workload = str(summary.get("workload", "dense"))
-    workload_token = f"Onehot{ONEHOT_ARITY}" if workload == "onehot" else "Dense"
-    segments = [field_segment, f"nv{int(summary['num_vars'])}{workload_token}"]
+    metadata = case_metadata(str(summary.get("mode", "")))
+    setup_mode = str(summary.get("setup_contribution_mode", "direct"))
+    config = str(summary.get("config", ""))
+    chunk_variant = re.search(r"W\d+R\d+", config, flags=re.IGNORECASE)
+
+    if metadata.opening_topology == "multi_group":
+        label = f"{field_segment} multi-group"
+        if chunk_variant:
+            label += f" {chunk_variant.group(0).upper()}"
+        return f"{label}, {setup_mode} setup check"
+
+    workload_token = "one-hot" if workload == "onehot" else "dense"
+    label = f"{field_segment} {workload_token} nv{int(summary['num_vars'])}"
+    if chunk_variant:
+        label += f" {chunk_variant.group(0).upper()}"
     num_polys = int(summary.get("num_polys", 1))
     if num_polys > 1:
-        segments.append(f"Batched{num_polys}")
-    variant = config_variant_token(summary.get("config", ""))
-    if variant:
-        segments.append(variant)
-    return " - ".join(segments)
+        label += f", {num_polys} polynomials"
+    return f"{label}, {setup_mode} setup check"
+
+
+def public_opening_groups(summary: dict[str, object]) -> list[dict[str, object]]:
+    levels = summary.get("planned_levels")
+    if not isinstance(levels, list):
+        return []
+    root = next(
+        (
+            level
+            for level in levels
+            if isinstance(level, dict) and int(level.get("level", -1)) == 0
+        ),
+        None,
+    )
+    if root is None or not isinstance(root.get("groups"), list):
+        return []
+    return [
+        group
+        for group in root["groups"]
+        if isinstance(group, dict)
+        and group.get("group_role") in ("precommitted", "final")
+        and int(group.get("public_num_polynomials", 0)) > 0
+    ]
+
+
+def join_phrases(phrases: list[str]) -> str:
+    if len(phrases) < 2:
+        return "".join(phrases)
+    return ", ".join(phrases[:-1]) + f", and {phrases[-1]}"
+
+
+def public_opening_statement(summary: dict[str, object]) -> str:
+    """Describe the PCS statement independently of benchmark witness generation."""
+    metadata = case_metadata(str(summary.get("mode", "")))
+    bits = field_family_bits(metadata.field_family)
+    field = f"Fp{bits}" if bits is not None else metadata.field_family
+    if metadata.opening_topology == "multi_group":
+        groups = public_opening_groups(summary)
+        if groups:
+            descriptions = []
+            for group in groups:
+                num_vars = int(group["public_num_vars"])
+                num_polynomials = int(group["public_num_polynomials"])
+                if num_polynomials == 1:
+                    descriptions.append(
+                        f"one {num_vars} variable polynomial at its own point"
+                    )
+                else:
+                    descriptions.append(
+                        f"{num_polynomials} {num_vars} variable polynomials at one shared point"
+                    )
+            total_polynomials = sum(
+                int(group["public_num_polynomials"]) for group in groups
+            )
+            return (
+                f"Over {field}, {total_polynomials} polynomials in {len(groups)} groups: "
+                f"{join_phrases(descriptions)}."
+            )
+        return (
+            f"Over {field}, {int(summary.get('num_polys', 1))} polynomials are split "
+            "across independent opening groups."
+        )
+
+    num_vars = int(summary["num_vars"])
+    num_polys = int(summary.get("num_polys", 1))
+    if num_polys == 1:
+        return (
+            f"Over {field}, one committed {num_vars} variable multilinear polynomial "
+            f"with 2^{num_vars} coefficients is opened at one {num_vars} coordinate point."
+        )
+    return (
+        f"Over {field}, {num_polys} committed {num_vars} variable multilinear "
+        f"polynomials are opened at one shared {num_vars} coordinate point."
+    )
+
+
+def render_profile_definitions(cases: list[dict[str, object]]) -> None:
+    grouped: dict[str, list[str]] = {}
+    for case in cases:
+        statement = public_opening_statement(case)
+        label = human_case_label(case)
+        labels = grouped.setdefault(statement, [])
+        if label not in labels:
+            labels.append(label)
+
+    print("### Profiles measured")
+    print()
+    print("| Profiles | Public opening statement |")
+    print("| --- | --- |")
+    for statement, labels in grouped.items():
+        rendered_labels = "<br>".join(md_text(label) for label in labels)
+        print(f"| {rendered_labels} | {md_text(statement)} |")
+
+    if any(case.get("workload") == "onehot" for case in cases):
+        print()
+        print(
+            "One-hot profiles generate deterministic witnesses with one `1` in every "
+            f"consecutive chunk of `{ONEHOT_ARITY}` coefficients. This witness shape is not "
+            "a separate public claim."
+        )
+    if any(
+        case_metadata(str(case.get("mode", ""))).opening_topology == "multi_group"
+        for case in cases
+    ):
+        print()
+        print(
+            "Direct evaluates the public setup contribution during Stage 2. Recursive "
+            "carries the same check through a Stage 3 setup-product sumcheck. Both modes "
+            "execute the complete fold schedule and terminal verification."
+        )
+    chunk_variants = sorted(
+        {
+            match.group(0).upper()
+            for case in cases
+            if (match := re.search(r"W\d+R\d+", str(case.get("config", ""))))
+        }
+    )
+    if chunk_variants:
+        variants = ", ".join(f"`{variant}`" for variant in chunk_variants)
+        print()
+        print(
+            f"The chunked profiles {variants} divide the witness relation into the stated "
+            "number of exact chunks for the first two fold levels."
+        )
+    if any(
+        "mixed" in str(case.get("config", "")).lower()
+        or "adaptive" in str(case.get("config", "")).lower()
+        for case in cases
+    ):
+        print()
+        print(
+            "Generated profiles may select different A, B, and D ring dimensions at "
+            "different fold levels. The short profile names omit those dimensions."
+        )
 
 
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     main_baseline: dict[str, dict[str, object]] | None,
 ) -> None:
-    headers = [
-        "Status",
-        "Workload",
-        "Setup contribution",
-        "Setup and preparation",
-        "Setup vector size",
-        "Prepared NTT cache size",
-        "Verifier NTT cache size",
-        "Commit",
-        "Prove",
-        "Verify",
-        "Peak process RSS",
-        "Proof size",
+    tables = [
+        (
+            "Phase time",
+            [
+                Metric("setup_s", "Setup", " s", fmt_seconds),
+                Metric("commit_s", "Commit", " s", fmt_seconds),
+                Metric("prove_total_s", "Prove", " s", fmt_seconds),
+                Metric(
+                    "verify_total_s",
+                    "Verify, multi-threaded",
+                    " ms",
+                    fmt_milliseconds,
+                ),
+                Metric(
+                    "verify_single_total_s",
+                    "Verify, single-threaded",
+                    " ms",
+                    fmt_milliseconds,
+                ),
+            ],
+        ),
+        (
+            "Memory and setup size",
+            [
+                Metric("setup_vector_bytes", "Setup vector", " MiB", fmt_mib_from_bytes),
+                Metric(
+                    "setup_ntt_cache_bytes",
+                    "Prepared NTT cache",
+                    " MiB",
+                    fmt_mib_from_bytes,
+                ),
+                Metric(
+                    "verifier_ntt_cache_bytes",
+                    "Verifier NTT cache",
+                    " MiB",
+                    fmt_mib_from_bytes,
+                ),
+                Metric("max_rss_kib", "Peak RSS", " MiB", fmt_mib),
+            ],
+        ),
+        (
+            "Proof size",
+            [
+                Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
+                Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
+                Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
+            ],
+        ),
+        ("Protocol shape", [Metric("akita_levels", "Fold levels", "", fmt_count)]),
     ]
-    print("| " + " | ".join(headers) + " |")
-    print("| " + " | ".join(["---"] * len(headers)) + " |")
 
-    for current in current_cases:
-        baseline = main_baseline.get(str(current["case_id"])) if main_baseline else None
-        row = [
-            case_status(current),
-            md_text(human_case_label(current)),
-            code_text(current.get("setup_contribution_mode", "direct")),
-            optional_value_with_main_delta(
-                current, baseline, "setup_s", fmt_seconds, " s", main_baseline is not None
-            ),
-            optional_value_with_main_delta(
-                current,
-                baseline,
-                "setup_vector_bytes",
-                fmt_mib_from_bytes,
-                " MiB",
-                main_baseline is not None,
-            ),
-            optional_value_with_main_delta(
-                current,
-                baseline,
-                "setup_ntt_cache_bytes",
-                fmt_mib_from_bytes,
-                " MiB",
-                main_baseline is not None,
-            ),
-            optional_value_with_main_delta(
-                current,
-                baseline,
-                "verifier_ntt_cache_bytes",
-                fmt_mib_from_bytes,
-                " MiB",
-                main_baseline is not None,
-            ),
-            optional_value_with_main_delta(
-                current, baseline, "commit_s", fmt_seconds, " s", main_baseline is not None
-            ),
-            optional_value_with_main_delta(
-                current, baseline, "prove_total_s", fmt_seconds, " s", main_baseline is not None
-            ),
-            optional_value_with_main_delta(
-                current,
-                baseline,
-                "verify_total_s",
-                fmt_milliseconds,
-                " ms",
-                main_baseline is not None,
-            ),
-            optional_value_with_main_delta(
-                current,
-                baseline,
-                "max_rss_kib",
-                fmt_mib,
-                " MiB",
-                main_baseline is not None,
-            ),
-            optional_value_with_main_delta(
-                current,
-                baseline,
-                "proof_size_bytes",
-                fmt_bytes,
-                " bytes",
-                main_baseline is not None,
-            ),
-        ]
-        print("| " + " | ".join(row) + " |")
+    for table_index, (title, metrics) in enumerate(tables):
+        if table_index:
+            print()
+        print(f"### {title}")
+        print()
+        headers = ["Profile", "Status", *(metric.name for metric in metrics)]
+        print("| " + " | ".join(headers) + " |")
+        print(
+            "| "
+            + " | ".join(["---", "---", *("---:" for _ in metrics)])
+            + " |"
+        )
+
+        for current in current_cases:
+            baseline = main_baseline.get(str(current["case_id"])) if main_baseline else None
+            row = [md_text(human_case_label(current)), code_text(case_status(current))]
+            for metric in metrics:
+                row.append(
+                    optional_value_with_baseline_delta(
+                        current,
+                        baseline,
+                        metric.key,
+                        metric.value_formatter,
+                        metric.unit,
+                        main_baseline is not None,
+                        " vs merge base",
+                    )
+                )
+            print("| " + " | ".join(row) + " |")
 
     if main_baseline is not None:
         print()
-        print("Negative deltas are improvements for time, memory, and proof size.")
+        print("Each delta compares the head with the merge base. Negative is smaller or faster.")
 
     failing_cases = [case for case in current_cases if case_status(case) != "ok"]
     if failing_cases:
@@ -1839,6 +2117,18 @@ def render_matrix_summary(
                 f"{md_text(case.get('error', 'profile run failed'))}."
             )
 
+    warnings = [
+        (case, warning)
+        for case in current_cases
+        for warning in case.get("warnings", [])
+        if isinstance(warning, str)
+    ]
+    if warnings:
+        print()
+        print("Report warnings:")
+        for case, warning in warnings:
+            print(f"- {code_text(case['case_id'])}: {md_text(warning)}.")
+
 
 def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | None:
     samples = summary.get("samples")
@@ -1850,96 +2140,6 @@ def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | 
     return min(values), max(values)
 
 
-def level_by_index(
-    levels: list[dict[str, object]] | None, level_index: object
-) -> dict[str, object] | None:
-    if levels is None:
-        return None
-    return next((level for level in levels if level.get("level") == level_index), {})
-
-
-def level_value(
-    level: dict[str, object],
-    baseline: dict[str, object] | None,
-    key: str,
-    formatter: callable = fmt_count,
-    unit: str = "",
-    compare_to_main: bool = False,
-) -> str:
-    baseline_value = baseline.get(key) if baseline is not None else None
-    return value_with_main_delta(
-        level[key], baseline_value, formatter, unit, compare_to_main or baseline is not None
-    )
-
-
-def render_planned_levels(
-    levels: list[dict[str, object]], baseline_levels: list[dict[str, object]] | None
-) -> None:
-    print("<details>")
-    print("<summary>Fold schedule geometry and security sizing</summary>")
-    print()
-    print("#### Schedule geometry")
-    print()
-    print(
-        "| Fold level | A ring dimension | B ring dimension | D ring dimension | "
-        "Number of live source A-ring elements in each claim | "
-        "Number of positions in each block | Number of live blocks | "
-        "Block-domain slots |"
-    )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for level in levels:
-        baseline = level_by_index(baseline_levels, level["level"])
-        print(
-            f"| L{level['level']} | {level_value(level, baseline, 'd_a')} | "
-            f"{level_value(level, baseline, 'd_b')} | {level_value(level, baseline, 'd_d')} | "
-            f"{level_value(level, baseline, 'num_live_ring_elements_per_claim')} | "
-            f"{level_value(level, baseline, 'num_positions_per_block')} | "
-            f"{level_value(level, baseline, 'num_live_blocks')} | "
-            f"{level_value(level, baseline, 'block_index_domain_size')} |"
-        )
-    print()
-    print("#### Security and proof sizing")
-    print()
-    print(
-        "| Fold level | A rows | B rows | D rows | Inner/A basis bits | Outer/B basis bits | Open/D basis bits | "
-        "Fold-challenge L1 bound | Inner/A digits | Outer/B digits | Open/D digits | Folded-witness digits | "
-        "Current witness field elements | Next witness field elements | "
-        "Setup prefix field elements | Setup prefix padded field elements | "
-        "Planned fold-level proof bytes |"
-    )
-    print(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-        "--- | ---: | ---: | ---: | ---: |"
-    )
-    for level in levels:
-        baseline = level_by_index(baseline_levels, level["level"])
-        print(
-            f"| L{level['level']} | {level_value(level, baseline, 'n_a')} | "
-            f"{level_value(level, baseline, 'n_b')} | {level_value(level, baseline, 'n_d')} | "
-            f"{level_value(level, baseline, 'log_basis_inner')} | "
-            f"{level_value(level, baseline, 'log_basis_outer')} | "
-            f"{level_value(level, baseline, 'log_basis_open')} | "
-            f"{level_value(level, baseline, 'challenge_l1_mass')} | "
-            f"{level_value(level, baseline, 'num_digits_inner')} | "
-            f"{level_value(level, baseline, 'num_digits_outer')} | "
-            f"{level_value(level, baseline, 'num_digits_open')} | "
-            f"{level_value(level, baseline, 'delta_fold')} | "
-            f"{format_witness_groups(level.get('current_w_len'))} | "
-            f"{level_value(level, baseline, 'next_w_len')} | "
-            f"{level_value(level, baseline, 'setup_prefix_natural_field_elements')} | "
-            f"{level_value(level, baseline, 'setup_prefix_padded_field_elements')} | "
-            f"{optional_value_with_main_delta(level, baseline, 'level_bytes', fmt_bytes, ' bytes', baseline is not None)} |"
-        )
-    if baseline_levels is not None:
-        print()
-        print(
-            "Each numeric value includes its percentage delta versus the matching "
-            "main-branch fold level."
-        )
-    print()
-    print("</details>")
-
-
 def proof_level_component_bytes(level: dict[str, object]) -> int:
     return sum(int(level.get(field, 0)) for field in PROOF_LEVEL_BYTE_FIELDS)
 
@@ -1949,19 +2149,6 @@ def proof_field_present(level: dict[str, object], field: str) -> bool:
     if isinstance(present, list):
         return field in present
     return level.get("root_variant") != "direct"
-
-
-def proof_component_value(
-    level: dict[str, object], baseline: dict[str, object] | None, field: str
-) -> str:
-    if not proof_field_present(level, field):
-        return "—"
-    baseline_value = None
-    if baseline is not None and proof_field_present(baseline, field):
-        baseline_value = baseline.get(field)
-    return value_with_main_delta(
-        level[field], baseline_value, fmt_bytes, " bytes", baseline is not None
-    )
 
 
 def proof_step_label(level: dict[str, object]) -> str:
@@ -1976,77 +2163,382 @@ def proof_step_label(level: dict[str, object]) -> str:
     return "intermediate fold"
 
 
-def render_proof_levels(
-    levels: list[dict[str, object]], baseline_levels: list[dict[str, object]] | None
+def exact_choice(current: str, baseline: str | None) -> str:
+    if baseline is None or current == baseline:
+        return current
+    return f"{current}<br><sub>Merge base</sub><br>{baseline}"
+
+
+def detail_block(title: str, rows: list[str]) -> str:
+    return f"<strong>{title}</strong><br>" + "<br>".join(rows)
+
+
+def format_witness_groups_inline(groups: object) -> str:
+    if not isinstance(groups, list) or not groups:
+        return "n/a"
+    values = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        name = group.get("group")
+        field_elements = group.get("field_elements")
+        if name is None or field_elements is None:
+            continue
+        values.append(f"{name} {fmt_count(float(field_elements))}")
+    return "; ".join(values) if values else "n/a"
+
+
+def planned_group_label(group: dict[str, object]) -> str:
+    role = str(group["group_role"])
+    name = str(group["group"])
+    if role == "final":
+        return "Final group"
+    if role == "folded":
+        return "Folded witness"
+    if role == "precommitted" and name.startswith("pre"):
+        index = name.removeprefix("pre")
+        return f"Precommit {int(index) + 1}" if index.isdigit() else name
+    if role == "setup_offload":
+        return f"Setup offload → L{int(group['consumer_level'])}"
+    return name
+
+
+def planned_groups_for_render(level: dict[str, object]) -> list[dict[str, object]]:
+    groups = level.get("groups")
+    typed_groups = (
+        [group for group in groups if isinstance(group, dict)]
+        if isinstance(groups, list)
+        else []
+    )
+    if typed_groups:
+        return typed_groups
+
+    level_index = int(level["level"])
+    role = "final" if level_index == 0 else "folded"
+    witness_groups = level.get("current_w_len")
+    witness_field_elements = (
+        sum(
+            int(group.get("field_elements", 0))
+            for group in witness_groups
+            if isinstance(group, dict)
+        )
+        if isinstance(witness_groups, list)
+        else 0
+    )
+    return [
+        {
+            **level,
+            "group": role,
+            "group_role": role,
+            "consumer_level": level_index,
+            "witness_field_elements": witness_field_elements
+            or int(level.get("input_witness_len", 0)),
+            "num_digits_fold": int(level["delta_fold"]),
+            "legacy_level": True,
+        }
+    ]
+
+
+def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
+    return (
+        str(group["group_role"]),
+        str(group["group"]),
+        int(group["consumer_level"]),
+    )
+
+
+def planned_group_planner_value(group: dict[str, object]) -> str:
+    matrix = (
+        f"Rings A/B/D: {fmt_count(float(group['d_a']))} / "
+        f"{fmt_count(float(group['d_b']))} / {fmt_count(float(group['d_d']))}<br>"
+        f"Rows A/B/D: {fmt_count(float(group['n_a']))} / "
+        f"{fmt_count(float(group['n_b']))} / {fmt_count(float(group['n_d']))}"
+    )
+    decomposition = (
+        f"Basis bits A/B/D: {fmt_count(float(group['log_basis_inner']))} / "
+        f"{fmt_count(float(group['log_basis_outer']))} / "
+        f"{fmt_count(float(group['log_basis_open']))}<br>"
+        f"Digits A/B/D/W: {fmt_count(float(group['num_digits_inner']))} / "
+        f"{fmt_count(float(group['num_digits_outer']))} / "
+        f"{fmt_count(float(group['num_digits_open']))} / "
+        f"{fmt_count(float(group['num_digits_fold']))}"
+    )
+    return detail_block(
+        planned_group_label(group),
+        [
+            f"<em>Matrix geometry</em><br>{matrix}",
+            f"<br><em>Decomposition</em><br>{decomposition}",
+            f"<br><em>Challenge</em><br>L1 mass: {fmt_count(float(group['challenge_l1_mass']))}",
+        ],
+    )
+
+
+def planned_group_work_value(group: dict[str, object]) -> str:
+    role = str(group["group_role"])
+    label = planned_group_label(group)
+    relation = (
+        f"Live per claim: {fmt_count(float(group['num_live_ring_elements_per_claim']))}<br>"
+        f"Blocks × positions: {fmt_count(float(group['num_live_blocks']))} × "
+        f"{fmt_count(float(group['num_positions_per_block']))}<br>"
+        f"Domain slots: {fmt_count(float(group['block_index_domain_size']))}"
+    )
+    if group.get("legacy_level"):
+        source = (
+            f"Input → output: {format_witness_groups_inline(group.get('current_w_len'))} → "
+            f"{fmt_count(float(group['next_w_len']))}"
+        )
+    elif role == "setup_offload":
+        source = (
+            f"Natural → padded: "
+            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
+            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
+        )
+    else:
+        source = f"Field elements: {fmt_count(float(group['witness_field_elements']))}"
+    parts = [
+        f"<em>{'Setup prefix' if role == 'setup_offload' else 'Witness'}</em><br>{source}",
+        f"<br><em>Relation geometry</em><br>{relation}",
+    ]
+    if group.get("legacy_level") and (
+        int(group.get("setup_prefix_natural_field_elements", 0)) != 0
+        or int(group.get("setup_prefix_padded_field_elements", 0)) != 0
+    ):
+        parts.append(
+            "<br><em>Setup prefix</em><br>Natural → padded: "
+            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
+            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
+        )
+    return detail_block(
+        label,
+        parts,
+    )
+
+
+def render_group_choices(
+    groups: list[dict[str, object]],
+    baseline_groups: list[dict[str, object]],
+    value: callable,
+) -> str:
+    current = {planned_group_key(group): group for group in groups}
+    baseline = {planned_group_key(group): group for group in baseline_groups}
+    keys = [*current, *(key for key in baseline if key not in current)]
+    rows = []
+    for key in keys:
+        current_group = current.get(key)
+        baseline_group = baseline.get(key)
+        label_source = current_group or baseline_group
+        if label_source is None:
+            continue
+        current_text = (
+            value(current_group)
+            if current_group is not None
+            else detail_block(planned_group_label(label_source), ["absent"])
+        )
+        baseline_text = (
+            value(baseline_group)
+            if baseline_group is not None
+            else (
+                detail_block(planned_group_label(label_source), ["absent"])
+                if baseline_groups
+                else None
+            )
+        )
+        rows.append(exact_choice(current_text, baseline_text))
+    return "<br><br>".join(rows)
+
+
+def proof_component_group(
+    level: dict[str, object],
+    baseline: dict[str, object] | None,
+    group_label: str,
+    components: tuple[tuple[str, str], ...],
+) -> str | None:
+    def group_value(source: dict[str, object] | None) -> tuple[int, list[str]]:
+        if source is None:
+            return 0, []
+        values = []
+        total = 0
+        for field, label in components:
+            if not proof_field_present(source, field):
+                continue
+            value = int(source.get(field, 0))
+            total += value
+            if value != 0:
+                values.append(f"{label} {fmt_bytes(float(value))}")
+        return total, values
+
+    def render_value(total: int, values: list[str]) -> str:
+        detail = (
+            f"<br><sub>{' · '.join(values)}</sub>"
+            if len(components) > 1 and values
+            else ""
+        )
+        return f"<strong>{group_label}</strong><br>{fmt_bytes(float(total))} bytes{detail}"
+
+    current_total, current_values = group_value(level)
+    baseline_total, baseline_values = group_value(baseline)
+    if current_total == 0 and (baseline is None or baseline_total == 0):
+        return None
+    baseline_text = (
+        render_value(baseline_total, baseline_values) if baseline is not None else None
+    )
+    return exact_choice(render_value(current_total, current_values), baseline_text)
+
+
+def proof_cost_summary(
+    level: dict[str, object], baseline: dict[str, object] | None
+) -> str:
+    total = value_with_baseline_delta(
+        level["total_bytes"],
+        baseline.get("total_bytes") if baseline else None,
+        fmt_bytes,
+        " bytes",
+        baseline is not None,
+    )
+    rows = [f"<strong>Total</strong><br>{total}"]
+    groups = (
+        (
+            "Opening",
+            (
+                ("extension_opening_partials_bytes", "partials"),
+                ("extension_opening_sumcheck_bytes", "sumcheck"),
+                ("opening_payload_bytes", "p_H"),
+            ),
+        ),
+        (
+            "Stage 1",
+            (
+                ("stage1_sumcheck_bytes", "sumcheck"),
+                ("stage1_interstage_claims_bytes", "claims"),
+                ("stage1_range_image_evaluation_bytes", "range image"),
+            ),
+        ),
+        ("Stage 2", (("stage2_sumcheck_bytes", "sumcheck"),)),
+        ("Stage 3", (("stage3_sumcheck_bytes", "sumcheck"),)),
+        (
+            "Next witness",
+            (
+                ("next_w_payload_bytes", "payload"),
+                ("next_w_eval_bytes", "evaluation"),
+            ),
+        ),
+        ("Grinding nonce", (("fold_grind_nonce_bytes", "nonce"),)),
+    )
+    for group_label, components in groups:
+        rendered = proof_component_group(
+            level, baseline, group_label, components
+        )
+        if rendered is not None:
+            rows.append(rendered)
+    return "<br><br>".join(rows)
+
+
+def render_fold_details(
+    planned_levels: list[dict[str, object]],
+    proof_levels: list[dict[str, object]],
+    baseline_planned_levels: list[dict[str, object]] | None,
+    baseline_proof_levels: list[dict[str, object]] | None,
 ) -> None:
+    planned = {int(level["level"]): level for level in planned_levels}
+    proof = {int(level["level"]): level for level in proof_levels}
+    baseline_planned = {
+        int(level["level"]): level for level in (baseline_planned_levels or [])
+    }
+    baseline_proof = {
+        int(level["level"]): level for level in (baseline_proof_levels or [])
+    }
+    level_indices = sorted(set(planned) | set(proof))
     print("<details>")
-    print("<summary>Proof size by fold level</summary>")
+    print("<summary>Fold schedule and proof cost</summary>")
+    print()
+    print("#### Fold by fold")
+    print()
+    headers = ["Fold", "Step", "Planner choice", "Work at this fold", "Proof bytes"]
+    print("| " + " | ".join(headers) + " |")
+    print("| --- | --- | --- | --- | --- |")
+
+    for level_index in level_indices:
+        schedule = planned.get(level_index)
+        proof_level = proof.get(level_index)
+        baseline_schedule = baseline_planned.get(level_index)
+        baseline_proof_level = baseline_proof.get(level_index)
+        step = proof_step_label(proof_level) if proof_level is not None else "scheduled fold"
+        if schedule is None:
+            schedule_choice = "—"
+            work = "—"
+        else:
+            current_groups = planned_groups_for_render(schedule)
+            baseline_groups = (
+                planned_groups_for_render(baseline_schedule)
+                if baseline_schedule is not None
+                else []
+            )
+            schedule_choice = render_group_choices(
+                current_groups, baseline_groups, planned_group_planner_value
+            )
+            work = render_group_choices(
+                current_groups, baseline_groups, planned_group_work_value
+            )
+            next_w = f"Field elements: {fmt_count(float(schedule['next_w_len']))}"
+            baseline_next_w = None
+            if (
+                baseline_schedule is not None
+                and baseline_schedule.get("next_w_len") is not None
+            ):
+                baseline_next_w = (
+                    f"Field elements: "
+                    f"{fmt_count(float(baseline_schedule['next_w_len']))}"
+                )
+            work = (
+                f"{work}<br><br>"
+                f"{detail_block('Folded output', [exact_choice(next_w, baseline_next_w)])}"
+            )
+
+        proof_bytes = "n/a"
+        if proof_level is not None:
+            proof_bytes = proof_cost_summary(proof_level, baseline_proof_level)
+        row = [f"L{level_index}", step, schedule_choice, work, proof_bytes]
+        print("| " + " | ".join(row) + " |")
+
     print()
     print(
-        "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
-        "Extension-opening sumcheck | Grinding nonce | Opening payload (`p_H`) | "
-        "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
-        "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness payload | "
-        "Next-witness evaluation |"
+        "Role tuples use A / B / D order. The digit tuple adds folded witness W as "
+        "its fourth value. Proof groups with zero bytes are omitted. Component details "
+        "appear below the group total when a group contains multiple fields. "
+        "Unchanged choices omit merge base text. Exact proof component comparisons "
+        "show merge base bytes without a percentage. The terminal response is "
+        "reported separately and is not part of the terminal fold byte total."
     )
-    print(
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-        "---: | ---: | ---: |"
-    )
-    for level in levels:
-        baseline = level_by_index(baseline_levels, level["level"])
-        total_bytes = value_with_main_delta(
-            level["total_bytes"],
-            baseline.get("total_bytes") if baseline else None,
-            fmt_bytes,
-            " bytes",
-            baseline is not None,
-        )
-        print(
-            f"| L{level['level']} | {proof_step_label(level)} | {total_bytes} | "
-            f"{proof_component_value(level, baseline, 'extension_opening_partials_bytes')} | "
-            f"{proof_component_value(level, baseline, 'extension_opening_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'fold_grind_nonce_bytes')} | "
-            f"{proof_component_value(level, baseline, 'opening_payload_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_range_image_evaluation_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage2_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage3_sumcheck_bytes')} | "
-            f"{proof_component_value(level, baseline, 'next_w_payload_bytes')} | "
-            f"{proof_component_value(level, baseline, 'next_w_eval_bytes')} |"
-        )
-    print()
-    print(
-        "The terminal final witness is reported separately as the final-witness tail and is "
-        "excluded from the terminal fold-level byte total. An em dash means that the proof "
-        "variant does not contain that component."
-    )
-    grind_rows = [level for level in levels if level.get("grind_nonce_val") is not None]
+    grind_rows = [
+        level
+        for level in proof_levels
+        if int(level.get("grind_nonce_val", 0)) != 0
+        or int(level.get("grind_attempts", 0)) != 0
+    ]
     if grind_rows:
         print()
-        print("#### Grinding diagnostics")
+        print("#### Grinding retries")
         print()
-        print("| Fold level | Accepted nonce | Grinding attempts |")
+        print("| Fold | Accepted nonce | Attempts |")
         print("| --- | ---: | ---: |")
         for level in grind_rows:
-            baseline = level_by_index(baseline_levels, level["level"])
-            nonce = value_with_main_delta(
-                level["grind_nonce_val"],
-                baseline.get("grind_nonce_val") if baseline else None,
-                fmt_count,
-                compare_to_main=baseline is not None,
+            baseline = baseline_proof.get(int(level["level"]))
+            nonce = exact_choice(
+                fmt_count(float(level.get("grind_nonce_val", 0))),
+                fmt_count(float(baseline.get("grind_nonce_val", 0))) if baseline else None,
             )
-            attempts = value_with_main_delta(
-                level.get("grind_attempts", 0),
-                baseline.get("grind_attempts") if baseline else None,
-                fmt_count,
-                compare_to_main=baseline is not None,
+            attempts = exact_choice(
+                fmt_count(float(level.get("grind_attempts", 0))),
+                fmt_count(float(baseline.get("grind_attempts", 0))) if baseline else None,
             )
-            print(
-                f"| L{level['level']} | {nonce} | {attempts} |"
-            )
+            print(f"| L{level['level']} | {nonce} | {attempts} |")
+    elif proof_levels:
         print()
+        print("No fold needed a grinding retry.")
+    else:
+        print()
+        print("Grinding was not measured because no proof fold data was emitted.")
+    print()
     print("</details>")
 
 
@@ -2128,8 +2620,8 @@ def render_report(args: argparse.Namespace) -> int:
     warmups = int(raw_summary.get("warmups", 0) or 0)
 
     baselines: list[tuple[str, dict[str, dict[str, object]] | None]] = [
-        ("Main baseline", load_optional_case_summaries(args.main_baseline_dir)),
-        ("Previous run", load_optional_case_summaries(args.previous_baseline_dir)),
+        ("Merge base", load_optional_case_summaries(args.main_baseline_dir)),
+        ("Prior PR run", load_optional_case_summaries(args.previous_baseline_dir)),
     ]
     visible_baselines = [(label, summary) for label, summary in baselines if summary is not None]
 
@@ -2144,54 +2636,92 @@ def render_report(args: argparse.Namespace) -> int:
 
     if len(current_cases) == 1:
         only_case = current_cases[0]
-        print("## " f"{md_text(human_case_label(only_case))} " "Benchmark Report")
+        print("## " f"{md_text(human_case_label(only_case))} " "Profile Benchmark")
     else:
-        print("## Benchmark Report")
+        print("## PCS Profile Benchmark")
     print()
     ref = commit_ref(source_sha)
     if ref:
-        print(f"- Latest run: {ref}")
-    if source_subject:
+        print(f"- Head: {ref}")
+    if source_subject and not args.compact:
         print(f"- Message: {md_text(source_subject)}")
-    if source_branch:
+    if source_branch and not args.compact:
         print(f"- Ref: {code_text(source_branch)}")
     run_ref = workflow_run_ref()
     if run_ref:
         print(f"- Workflow run: {run_ref}")
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    print(f"- Report generated: `{generated_at}`.")
+    if not args.compact:
+        print(f"- Report generated: `{generated_at}`.")
     if visible_baselines:
         main_ref = commit_ref(main_baseline_sha)
         if baselines[0][1] is not None:
             if main_ref and main_baseline_label:
-                print(f"- Main baseline: {main_ref} from {md_text(main_baseline_label)}.")
+                print(f"- Merge base: {main_ref} from {md_text(main_baseline_label)}.")
             elif main_ref:
-                print(f"- Main baseline: {main_ref}.")
+                print(f"- Merge base: {main_ref}.")
             elif main_baseline_label:
-                print(f"- Main baseline: {md_text(main_baseline_label)}.")
+                print(f"- Merge base: {md_text(main_baseline_label)}.")
 
         previous_ref = commit_ref(previous_baseline_sha)
-        if baselines[1][1] is not None:
+        if baselines[1][1] is not None and not args.compact:
             if previous_ref and previous_baseline_label:
-                print(f"- Previous run: {previous_ref} from {md_text(previous_baseline_label)}.")
+                print(f"- Prior PR run: {previous_ref} from {md_text(previous_baseline_label)}.")
             elif previous_ref:
-                print(f"- Previous run: {previous_ref}.")
+                print(f"- Prior PR run: {previous_ref}.")
             elif previous_baseline_label:
-                print(f"- Previous run: {md_text(previous_baseline_label)}.")
+                print(f"- Prior PR run: {md_text(previous_baseline_label)}.")
     if base_ref and baselines[0][1] is None:
-        print(f"- Main baseline: no reusable benchmark artifact found for `{base_ref}`.")
-    print("- Binary: `target/release/examples/profile`.")
-    print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
+        print(f"- Merge base: no reusable benchmark artifact found for `{base_ref}`.")
+    if not args.compact:
+        print("- Binary: `target/release/examples/profile`.")
+        print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()
 
     for current in current_cases:
         if case_status(current) == "ok":
             validate_case_consistency(current)
 
+    passed = sum(case_status(case) == "ok" for case in current_cases)
+    print(f"{passed} of {len(current_cases)} profiles passed.")
+    print()
+    run_counts = sorted({int(case.get("runs", 1)) for case in current_cases})
+    if passed > 0 and len(run_counts) == 1:
+        warmup_label = "run" if warmups == 1 else "runs"
+        print(
+            f"Times are medians of `{run_counts[0]}` measured runs after `{warmups}` "
+            f"discarded warmup {warmup_label}. Peak RSS is the largest measured value."
+        )
+        print()
+        if any(case.get("verify_single_total_s") is not None for case in current_cases):
+            print(
+                "Each sample verifies the same proof first with the configured multi-threaded "
+                "pool and then with one thread. Both timings reuse the same verifier setup."
+            )
+            print()
+    if baselines[0][1] is not None:
+        print(
+            "Head and merge base binaries ran interleaved on the same runner. Each delta "
+            "below compares the head with that merge base."
+        )
+        print()
+    render_profile_definitions(current_cases)
+    print()
+    print(
+        "Each sample generates deterministic witnesses and opening points, prepares setup, "
+        "commits, proves, serializes the proof, checks its size, prepares verifier setup, "
+        "and verifies the claimed openings. It does not test malformed proofs."
+    )
+    print()
     render_matrix_summary(current_cases, baselines[0][1])
     if args.compact:
         print()
-        render_terminal_response_components(current_cases)
+        print("<details>")
+        print("<summary>Terminal response components</summary>")
+        print()
+        render_terminal_response_components(current_cases, include_heading=False)
+        print()
+        print("</details>")
         print()
         print(
             "Detailed schedule and proof-size breakdowns by fold level are available in "
@@ -2206,23 +2736,20 @@ def render_report(args: argparse.Namespace) -> int:
             print("<details>")
             print(f"<summary>{html.escape(section_title(current), quote=False)} details</summary>")
             print()
-        print(f"- Workload: {md_text(human_case_label(current))}")
+        print(f"- Profile: {md_text(human_case_label(current))}")
+        print(f"- Public statement: {md_text(public_opening_statement(current))}")
         print(f"- Status: `{case_status(current)}`.")
         if current.get("error"):
             print(
                 f"- Failure: phase `{current.get('failure_phase', 'unknown')}`; "
                 f"{md_text(current['error'])}."
             )
+        for warning in current.get("warnings", []):
+            print(f"- Report warning: {md_text(warning)}.")
         if current.get("workload") == "onehot":
-            num_polys = int(current.get("num_polys", 1))
-            if num_polys > 1:
-                print(
-                    f"- Batch: same-point opening of `{num_polys}` polynomials, "
-                    f"each with `{current['num_vars']}` variables."
-                )
             print(
-                f"- Sparsity: each polynomial is `1-of-{ONEHOT_ARITY}` one-hot "
-                f"(equivalently, `1`-sparse over `{ONEHOT_ARITY}` slots, density `{100.0 / ONEHOT_ARITY:.2f}%`)."
+                f"- Benchmark witness: one `1` in every consecutive chunk of "
+                f"`{ONEHOT_ARITY}` coefficients in each generated polynomial."
             )
         env = current.get("env", {})
         command_env = [
@@ -2240,13 +2767,16 @@ def render_report(args: argparse.Namespace) -> int:
             "`AKITA_PROFILE_TRACE=0` `AKITA_PROFILE_SPAN_CLOSES=0` "
             "`AKITA_PROFILE_LOG=info` `AKITA_PROFILE_ANSI=0`."
         )
-        runs = int(current.get("runs", 1))
-        if runs > 1 or warmups > 0:
+        case_runs = int(current.get("runs", 1))
+        if case_runs > 1 or warmups > 0:
             warmup_clause = (
-                f" after `{warmups}` discarded warm-up run(s)" if warmups > 0 else ""
+                f" after `{warmups}` discarded warmup "
+                f"{'run' if warmups == 1 else 'runs'}"
+                if warmups > 0
+                else ""
             )
             print(
-                f"- Samples: metrics are the median of `{runs}` runs{warmup_clause}; "
+                f"- Samples: metrics are the median of `{case_runs}` runs{warmup_clause}; "
                 "Peak process RSS is the maximum sample."
             )
         print()
@@ -2260,31 +2790,35 @@ def render_report(args: argparse.Namespace) -> int:
             if baselines[0][1] is not None
             else None
         )
-        column_labels = [md_text(label) for label, _ in case_baselines] + ["Latest run"]
-        print("| Metric | " + " | ".join(column_labels) + " | Delta versus main | Unit |")
+        print("#### Measured result")
+        print()
+        column_labels = ["Head"] + [md_text(label) for label, _ in case_baselines]
+        print("| Metric | " + " | ".join(column_labels) + " | Delta versus merge base | Unit |")
         print(
             "| --- | "
             + " | ".join("---:" for _ in column_labels)
             + " | ---: | --- |"
         )
 
-        for metric in REPORT_METRICS:
+        for metric in MEASURED_METRICS:
             row = render_metric_row(metric, current, case_baselines, main_case)
             if row:
                 print(row)
 
-        if runs > 1:
+        if case_runs > 1:
             ranges = []
             for key, label in [
                 ("setup_s", "setup"),
                 ("commit_s", "commit"),
                 ("prove_total_s", "prove"),
-                ("verify_total_s", "verify"),
+                ("verify_total_s", "multi-threaded verify"),
+                ("verify_single_total_s", "single-threaded verify"),
             ]:
                 observed_range = sample_range(current, key)
                 if observed_range is not None:
-                    formatter = fmt_milliseconds if key == "verify_total_s" else fmt_seconds
-                    unit = "ms" if key == "verify_total_s" else "s"
+                    is_verify = key in ("verify_total_s", "verify_single_total_s")
+                    formatter = fmt_milliseconds if is_verify else fmt_seconds
+                    unit = "ms" if is_verify else "s"
                     ranges.append(
                         f"{label} `{formatter(observed_range[0])}-{formatter(observed_range[1])}{unit}`"
                     )
@@ -2293,19 +2827,16 @@ def render_report(args: argparse.Namespace) -> int:
                 print(f"- Sample ranges: {', '.join(ranges)}.")
 
         print()
-        print(f"- Internal benchmark mode: {code_text(current['mode'])}")
-        if current.get("crt_profile") is not None:
-            print(
-                f"- CRT profile: `{current['crt_profile']}` uses "
-                f"`{current.get('crt_num_primes', 'n/a')}` prime moduli of "
-                f"`{current.get('crt_prime_modulus_bits', 'n/a')}` bits each, stored in signed "
-                f"`i{current.get('crt_limb_bits', 'n/a')}` lanes."
-            )
+        render_execution_parameters(current, main_case)
         if current.get("extension_root_direct_fallback"):
+            print()
             print(
                 "- Extension opening fallback: root-direct proof; folded planner byte estimates "
                 "do not apply until the Frobenius optimization is wired."
             )
+        print()
+        print("#### Terminal response")
+        print()
         render_tail_encoding(current)
         if (
             current.get("terminal_w_len") is not None
@@ -2328,19 +2859,22 @@ def render_report(args: argparse.Namespace) -> int:
                 "field-element encoding"
             )
 
-        planned_levels = current.get("planned_levels")
-        if isinstance(planned_levels, list) and planned_levels:
+        planned_levels_value = current.get("planned_levels")
+        proof_levels_value = current.get("proof_levels")
+        planned_levels = planned_levels_value if isinstance(planned_levels_value, list) else []
+        proof_levels = proof_levels_value if isinstance(proof_levels_value, list) else []
+        if planned_levels or proof_levels:
             print()
             baseline_planned_levels = (
                 main_case.get("planned_levels") if main_case is not None else None
             )
-            render_planned_levels(planned_levels, baseline_planned_levels)
-
-        proof_levels = current.get("proof_levels")
-        if isinstance(proof_levels, list) and proof_levels:
-            print()
             baseline_proof_levels = main_case.get("proof_levels") if main_case is not None else None
-            render_proof_levels(proof_levels, baseline_proof_levels)
+            render_fold_details(
+                planned_levels,
+                proof_levels,
+                baseline_planned_levels,
+                baseline_proof_levels,
+            )
         if len(current_cases) > 1:
             print()
             print("</details>")
