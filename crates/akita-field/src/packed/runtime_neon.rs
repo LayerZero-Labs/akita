@@ -10,9 +10,13 @@ use super::runtime_common::{
     fold_and_compute_sparse_affine_polynomial_round_packed,
     fold_and_compute_stage2_coefficient_round_packed,
     fold_class_coded_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
-    fold_fp_ext4_fp32_packed, materialize_tensor_factor_and_compute_product_round_packed,
+    fold_fp_ext4_fp32_packed,
 };
-use super::Fp32TensorFactorRoundOutput;
+use super::runtime_tensor::{
+    materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_packed,
+    materialize_tensor_factor_and_compute_product_round_packed,
+};
+use super::{Fp32TensorFactorRoundOutput, Fp64TensorFactorRoundOutput};
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
 
 /// Fold one binding-order Stage 2 coefficient coordinate with NEON.
@@ -105,6 +109,41 @@ pub unsafe fn materialize_tensor_factor_and_compute_product_round_fp_ext4_fp32_n
 ) -> Fp32TensorFactorRoundOutput<P> {
     unsafe {
         materialize_tensor_factor_and_compute_product_round_packed::<P, PackedFp32Neon<P>>(
+            witness,
+            equality_inner,
+            equality_outer,
+            zero_weights,
+            one_weights,
+        )
+    }
+}
+
+/// Materialize an fp64 quadratic tensor factor and compute its first product
+/// round two rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that NEON is available on the current CPU.
+#[target_feature(enable = "neon")]
+pub unsafe fn materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_neon<
+    const P: u64,
+    C,
+>(
+    witness: [&[Fp64<P>]; 2],
+    equality_inner: [&[Fp64<P>]; 2],
+    equality_outer: &[FpExt2<Fp64<P>, C>],
+    zero_weights: [FpExt2<Fp64<P>, C>; 2],
+    one_weights: [FpExt2<Fp64<P>, C>; 2],
+) -> Fp64TensorFactorRoundOutput<P, C>
+where
+    C: FpExt2Config<Fp64<P>> + 'static,
+{
+    unsafe {
+        materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_packed::<
+            P,
+            C,
+            PackedFp64Neon<P>,
+        >(
             witness,
             equality_inner,
             equality_outer,

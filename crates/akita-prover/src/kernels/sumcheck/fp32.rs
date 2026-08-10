@@ -1,13 +1,13 @@
 //! Runtime-selected operations for quartic extensions of 32-bit fields.
 
-#[cfg(feature = "parallel")]
-use super::multiple_workers_available;
 use super::{
     compute_weighted_affine_polynomial_round_scalar, compute_weighted_affine_product_round_scalar,
     fold_and_compute_stage2_coefficient_round_portable,
     materialize_tensor_factor_and_compute_product_round_scalar, Fp32Kernel, SumcheckKernelPlan,
     SumcheckTableOperations, TensorFactorRoundOutput,
 };
+#[cfg(feature = "parallel")]
+use super::{materialize_tensor_factor, multiple_workers_available, parallel_simd_rows};
 use akita_algebra::SplitEqEvals;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
@@ -219,12 +219,22 @@ impl SumcheckKernelPlan {
         tail_point: &[FpExt4<Fp32<P>>],
         projection: &TensorFactorProjection<Fp32<P>, FpExt4<Fp32<P>>>,
     ) -> Result<TensorFactorRoundOutput<Fp32<P>, FpExt4<Fp32<P>>>, AkitaError> {
-        if tail_point.is_empty() || self.fp32_tensor_factor_round == Fp32Kernel::Scalar {
+        if tail_point.is_empty() {
             return materialize_tensor_factor_and_compute_product_round_scalar(
                 witness, tail_point, projection,
             );
         }
-
+        #[cfg(feature = "parallel")]
+        if multiple_workers_available() {
+            let factor = materialize_tensor_factor(witness, tail_point, projection)?;
+            let round = self.compute_product_round_fp32(witness, &factor);
+            return Ok((factor, Some(round)));
+        }
+        if self.fp32_tensor_factor_round == Fp32Kernel::Scalar {
+            return materialize_tensor_factor_and_compute_product_round_scalar(
+                witness, tail_point, projection,
+            );
+        }
         let reversed_suffix = tail_point[1..].iter().rev().copied().collect::<Vec<_>>();
         let equality = SplitEqEvals::new(&reversed_suffix)?;
         let minimum_width = match self.fp32_tensor_factor_round {
@@ -403,6 +413,15 @@ impl SumcheckKernelPlan {
                 if table.len() / 2 < 4 {
                     fold_first_variable_scalar(table, challenge);
                 } else {
+                    #[cfg(feature = "parallel")]
+                    if multiple_workers_available() {
+                        fold_fp32_in_parallel(table, 4, |left, right| unsafe {
+                            akita_field::packed::runtime_neon::fold_fp_ext4_fp32_neon(
+                                left, right, challenge,
+                            )
+                        });
+                        return;
+                    }
                     // SAFETY: only `detect` constructs production plans, and
                     // it selects this variant after checking NEON support.
                     unsafe { fold_fp32_neon(table, challenge) };
@@ -413,6 +432,15 @@ impl SumcheckKernelPlan {
                 if table.len() / 2 < 8 {
                     fold_first_variable_scalar(table, challenge);
                 } else {
+                    #[cfg(feature = "parallel")]
+                    if multiple_workers_available() {
+                        fold_fp32_in_parallel(table, 8, |left, right| unsafe {
+                            akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx2(
+                                left, right, challenge,
+                            )
+                        });
+                        return;
+                    }
                     // SAFETY: only `detect` constructs production plans, and
                     // it selects this variant after checking AVX2 support.
                     unsafe { fold_fp32_avx2(table, challenge) };
@@ -423,6 +451,15 @@ impl SumcheckKernelPlan {
                 if table.len() / 2 < 16 {
                     fold_first_variable_scalar(table, challenge);
                 } else {
+                    #[cfg(feature = "parallel")]
+                    if multiple_workers_available() {
+                        fold_fp32_in_parallel(table, 16, |left, right| unsafe {
+                            akita_field::packed::runtime_x86::fold_fp_ext4_fp32_avx512_ifma(
+                                left, right, challenge,
+                            )
+                        });
+                        return;
+                    }
                     // SAFETY: only `detect` constructs production plans, and
                     // it selects this variant after checking AVX-512F, DQ,
                     // and IFMA.
@@ -461,6 +498,21 @@ impl SumcheckKernelPlan {
                 } else {
                     let (witness_0, witness_1) = coefficient_halves(witness);
                     let (factor_0, factor_1) = coefficient_halves(factor);
+                    #[cfg(feature = "parallel")]
+                    if multiple_workers_available() {
+                        return compute_product_round_fp32_in_parallel(
+                            witness_0,
+                            witness_1,
+                            factor_0,
+                            factor_1,
+                            4,
+                            |witness_0, witness_1, factor_0, factor_1| unsafe {
+                                akita_field::packed::runtime_neon::compute_product_round_fp_ext4_fp32_neon(
+                                    witness_0, witness_1, factor_0, factor_1,
+                                )
+                            },
+                        );
+                    }
                     // SAFETY: only `detect` constructs production plans, and
                     // it selects this variant after checking NEON support.
                     unsafe {
@@ -477,6 +529,21 @@ impl SumcheckKernelPlan {
                 } else {
                     let (witness_0, witness_1) = coefficient_halves(witness);
                     let (factor_0, factor_1) = coefficient_halves(factor);
+                    #[cfg(feature = "parallel")]
+                    if multiple_workers_available() {
+                        return compute_product_round_fp32_in_parallel(
+                            witness_0,
+                            witness_1,
+                            factor_0,
+                            factor_1,
+                            8,
+                            |witness_0, witness_1, factor_0, factor_1| unsafe {
+                                akita_field::packed::runtime_x86::compute_product_round_fp_ext4_fp32_avx2(
+                                    witness_0, witness_1, factor_0, factor_1,
+                                )
+                            },
+                        );
+                    }
                     // SAFETY: only `detect` constructs production plans, and
                     // it selects this variant after checking AVX2 support.
                     unsafe {
@@ -493,6 +560,21 @@ impl SumcheckKernelPlan {
                 } else {
                     let (witness_0, witness_1) = coefficient_halves(witness);
                     let (factor_0, factor_1) = coefficient_halves(factor);
+                    #[cfg(feature = "parallel")]
+                    if multiple_workers_available() {
+                        return compute_product_round_fp32_in_parallel(
+                            witness_0,
+                            witness_1,
+                            factor_0,
+                            factor_1,
+                            16,
+                            |witness_0, witness_1, factor_0, factor_1| unsafe {
+                                akita_field::packed::runtime_x86::compute_product_round_fp_ext4_fp32_avx512_ifma(
+                                    witness_0, witness_1, factor_0, factor_1,
+                                )
+                            },
+                        );
+                    }
                     // SAFETY: only `detect` constructs production plans, and
                     // it selects this variant after checking AVX-512F, DQ,
                     // and IFMA.
@@ -526,6 +608,13 @@ impl SumcheckKernelPlan {
             witness.len() >= 4,
             "fused product round tables must have at least four rows"
         );
+
+        #[cfg(feature = "parallel")]
+        if multiple_workers_available() && self.fp32_fold_and_product_round != Fp32Kernel::Scalar {
+            self.fold_first_variable_fp32(witness, challenge);
+            self.fold_first_variable_fp32(factor, challenge);
+            return self.compute_product_round_fp32(witness, factor);
+        }
 
         match self.fp32_fold_and_product_round {
             Fp32Kernel::Scalar => fold_and_compute_product_round_scalar(witness, factor, challenge),
@@ -893,17 +982,88 @@ fn coefficient_halves<const P: u32>(
 }
 
 #[cfg(feature = "parallel")]
+fn fold_fp32_in_parallel<const P: u32>(
+    table: &mut EvaluationTable<Fp32<P>, FpExt4<Fp32<P>>>,
+    simd_width: usize,
+    fold_range: impl Fn([&mut [Fp32<P>]; 4], [&[Fp32<P>]; 4]) + Sync,
+) {
+    let half = table.len() / 2;
+    let rows_per_task = parallel_simd_rows(half, simd_width);
+    let (left, right) = coefficient_halves_mut(table);
+    let [left_0, left_1, left_2, left_3] = left;
+    let [right_0, right_1, right_2, right_3] = right;
+    left_0
+        .par_chunks_mut(rows_per_task)
+        .zip(left_1.par_chunks_mut(rows_per_task))
+        .zip(left_2.par_chunks_mut(rows_per_task))
+        .zip(left_3.par_chunks_mut(rows_per_task))
+        .zip(
+            right_0
+                .par_chunks(rows_per_task)
+                .zip(right_1.par_chunks(rows_per_task))
+                .zip(right_2.par_chunks(rows_per_task))
+                .zip(right_3.par_chunks(rows_per_task)),
+        )
+        .for_each(
+            |((((left_0, left_1), left_2), left_3), (((right_0, right_1), right_2), right_3))| {
+                fold_range(
+                    [left_0, left_1, left_2, left_3],
+                    [right_0, right_1, right_2, right_3],
+                );
+            },
+        );
+    table.truncate(half);
+}
+
+#[cfg(feature = "parallel")]
+fn compute_product_round_fp32_in_parallel<const P: u32>(
+    witness_0: Fp32CoefficientSlices<'_, P>,
+    witness_1: Fp32CoefficientSlices<'_, P>,
+    factor_0: Fp32CoefficientSlices<'_, P>,
+    factor_1: Fp32CoefficientSlices<'_, P>,
+    simd_width: usize,
+    compute_range: impl Fn(
+            Fp32CoefficientSlices<'_, P>,
+            Fp32CoefficientSlices<'_, P>,
+            Fp32CoefficientSlices<'_, P>,
+            Fp32CoefficientSlices<'_, P>,
+        ) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>)
+        + Sync,
+) -> (FpExt4<Fp32<P>>, FpExt4<Fp32<P>>) {
+    let len = witness_0[0].len();
+    let rows_per_task = parallel_simd_rows(len, simd_width);
+    let task_count = len.div_ceil(rows_per_task);
+    (0..task_count)
+        .into_par_iter()
+        .map(|task| {
+            let start = task * rows_per_task;
+            let end = (start + rows_per_task).min(len);
+            compute_range(
+                coefficient_range(witness_0, start, end),
+                coefficient_range(witness_1, start, end),
+                coefficient_range(factor_0, start, end),
+                coefficient_range(factor_1, start, end),
+            )
+        })
+        .reduce(
+            || (FpExt4::zero(), FpExt4::zero()),
+            |(left_constant, left_quadratic), (right_constant, right_quadratic)| {
+                (
+                    left_constant + right_constant,
+                    left_quadratic + right_quadratic,
+                )
+            },
+        )
+}
+
+#[cfg(feature = "parallel")]
 fn sum_affine_round_ranges<const P: u32>(
     len: usize,
     simd_width: usize,
     compute_range: impl Fn(usize, usize) -> [FpExt4<Fp32<P>>; 5] + Sync,
 ) -> [FpExt4<Fp32<P>>; 5] {
     debug_assert!(len.is_multiple_of(simd_width));
-    let target_tasks = rayon::current_num_threads().saturating_mul(4).max(1);
-    let rows_per_task = len
-        .div_ceil(target_tasks)
-        .max(1_024)
-        .next_multiple_of(simd_width);
+    let rows_per_task = parallel_simd_rows(len, simd_width);
     let task_count = len.div_ceil(rows_per_task);
     (0..task_count)
         .into_par_iter()

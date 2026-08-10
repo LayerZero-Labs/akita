@@ -11,9 +11,12 @@ use super::runtime_common::{
     fold_and_compute_sparse_affine_polynomial_round_packed,
     fold_and_compute_stage2_coefficient_round_packed,
     fold_class_coded_and_compute_sparse_affine_polynomial_round_packed, fold_fp_ext2_fp64_packed,
+};
+use super::runtime_tensor::{
+    materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_packed,
     materialize_tensor_factor_and_compute_product_round_packed,
 };
-use super::{Fp32TensorFactorRoundOutput, PackedField, PackedFpExt4};
+use super::{Fp32TensorFactorRoundOutput, Fp64TensorFactorRoundOutput, PackedField, PackedFpExt4};
 use crate::{Fp32, Fp64, FpExt2, FpExt2Config, FpExt4};
 
 type CoefficientSlices<'a, const P: u32> = [&'a [Fp32<P>]; 4];
@@ -743,6 +746,76 @@ pub unsafe fn fold_fp_ext2_fp64_avx512<const P: u64, C>(
     // SAFETY: this target function enables the features required by the packed
     // backend; the shared traversal validates every slice before access.
     unsafe { fold_fp_ext2_fp64_packed::<P, C, PackedFp64Avx512<P>>(left, right, challenge) };
+}
+
+/// Materialize an fp64 quadratic tensor factor and compute its first product
+/// round four rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that AVX2 is available on the current CPU.
+#[target_feature(enable = "avx2")]
+pub unsafe fn materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_avx2<
+    const P: u64,
+    C,
+>(
+    witness: [&[Fp64<P>]; 2],
+    equality_inner: [&[Fp64<P>]; 2],
+    equality_outer: &[FpExt2<Fp64<P>, C>],
+    zero_weights: [FpExt2<Fp64<P>, C>; 2],
+    one_weights: [FpExt2<Fp64<P>, C>; 2],
+) -> Fp64TensorFactorRoundOutput<P, C>
+where
+    C: FpExt2Config<Fp64<P>> + 'static,
+{
+    unsafe {
+        materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_packed::<
+            P,
+            C,
+            PackedFp64Avx2<P>,
+        >(
+            witness,
+            equality_inner,
+            equality_outer,
+            zero_weights,
+            one_weights,
+        )
+    }
+}
+
+/// Materialize an fp64 quadratic tensor factor and compute its first product
+/// round eight rows at a time.
+///
+/// # Safety
+///
+/// The caller must establish that AVX-512F and AVX-512DQ are available.
+#[target_feature(enable = "avx512f,avx512dq")]
+pub unsafe fn materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_avx512<
+    const P: u64,
+    C,
+>(
+    witness: [&[Fp64<P>]; 2],
+    equality_inner: [&[Fp64<P>]; 2],
+    equality_outer: &[FpExt2<Fp64<P>, C>],
+    zero_weights: [FpExt2<Fp64<P>, C>; 2],
+    one_weights: [FpExt2<Fp64<P>, C>; 2],
+) -> Fp64TensorFactorRoundOutput<P, C>
+where
+    C: FpExt2Config<Fp64<P>> + 'static,
+{
+    unsafe {
+        materialize_tensor_factor_and_compute_product_round_fp_ext2_fp64_packed::<
+            P,
+            C,
+            PackedFp64Avx512<P>,
+        >(
+            witness,
+            equality_inner,
+            equality_outer,
+            zero_weights,
+            one_weights,
+        )
+    }
 }
 
 /// Compute an fp64 quadratic-extension product round four rows at a time.

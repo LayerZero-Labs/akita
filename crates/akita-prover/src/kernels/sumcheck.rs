@@ -31,6 +31,16 @@ fn multiple_workers_available() -> bool {
     }
 }
 
+#[cfg(feature = "parallel")]
+#[inline]
+fn parallel_simd_rows(len: usize, simd_width: usize) -> usize {
+    debug_assert!(len.is_multiple_of(simd_width));
+    let target_tasks = rayon::current_num_threads().saturating_mul(4).max(1);
+    len.div_ceil(target_tasks)
+        .max(1_024)
+        .next_multiple_of(simd_width)
+}
+
 /// Host-detected operation choices for sumcheck tables.
 ///
 /// The fields and operation enums stay private so safe callers cannot select a
@@ -45,6 +55,7 @@ pub struct SumcheckKernelPlan {
     pub(super) fp64_fold: Fp64Kernel,
     pub(super) fp64_product_round: Fp64Kernel,
     pub(super) fp64_fold_and_product_round: Fp64Kernel,
+    pub(super) fp64_tensor_factor_round: Fp64Kernel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,6 +281,20 @@ where
     F: FieldCore,
     E: ExtField<F> + HasUnreducedOps + MulBaseUnreduced<F>,
 {
+    let factor = materialize_tensor_factor(witness, tail_point, projection)?;
+    let round = (witness.len() >= 2).then(|| compute_product_round_scalar(witness, &factor));
+    Ok((factor, round))
+}
+
+pub(super) fn materialize_tensor_factor<F, E>(
+    witness: &EvaluationTable<F, E>,
+    tail_point: &[E],
+    projection: &TensorFactorProjection<F, E>,
+) -> Result<EvaluationTable<F, E>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
     let shift = u32::try_from(tail_point.len()).map_err(|_| AkitaError::InvalidSize {
         expected: usize::BITS as usize,
         actual: tail_point.len(),
@@ -291,22 +316,23 @@ where
         .collect::<Vec<_>>();
     let equality = SplitEqEvals::new(&reversed_suffix)?;
     let suffix_len = equality.len();
-    let factor = EvaluationTable::from_evaluation_fn(expected, |stored_row| {
-        if tail_point.is_empty() {
-            return projection.project(E::one());
-        }
-        let suffix_row = stored_row % suffix_len;
-        let suffix = equality.e_out[suffix_row / equality.in_len()]
-            * equality.e_in[suffix_row % equality.in_len()];
-        let branch = if stored_row < suffix_len {
-            E::one() - tail_point[0]
-        } else {
-            tail_point[0]
-        };
-        projection.project(branch * suffix)
-    });
-    let round = (expected >= 2).then(|| compute_product_round_scalar(witness, &factor));
-    Ok((factor, round))
+    Ok(EvaluationTable::from_evaluation_fn(
+        expected,
+        |stored_row| {
+            if tail_point.is_empty() {
+                return projection.project(E::one());
+            }
+            let suffix_row = stored_row % suffix_len;
+            let suffix = equality.e_out[suffix_row / equality.in_len()]
+                * equality.e_in[suffix_row % equality.in_len()];
+            let branch = if stored_row < suffix_len {
+                E::one() - tail_point[0]
+            } else {
+                tail_point[0]
+            };
+            projection.project(branch * suffix)
+        },
+    ))
 }
 
 /// Return one contiguous block that shares a value from the outer split
@@ -608,6 +634,7 @@ impl SumcheckKernelPlan {
             fp64_fold: fp64,
             fp64_product_round: Fp64Kernel::Scalar,
             fp64_fold_and_product_round: fp64,
+            fp64_tensor_factor_round: fp64,
         }
     }
 
@@ -621,6 +648,7 @@ impl SumcheckKernelPlan {
         fp64_fold: Fp64Kernel::Scalar,
         fp64_product_round: Fp64Kernel::Scalar,
         fp64_fold_and_product_round: Fp64Kernel::Scalar,
+        fp64_tensor_factor_round: Fp64Kernel::Scalar,
     };
 
     #[cfg(all(test, target_arch = "aarch64"))]
@@ -633,6 +661,7 @@ impl SumcheckKernelPlan {
         fp64_fold: Fp64Kernel::Neon,
         fp64_product_round: Fp64Kernel::Neon,
         fp64_fold_and_product_round: Fp64Kernel::Neon,
+        fp64_tensor_factor_round: Fp64Kernel::Neon,
     };
 
     #[cfg(all(test, target_arch = "x86_64"))]
@@ -645,6 +674,7 @@ impl SumcheckKernelPlan {
         fp64_fold: Fp64Kernel::Avx2,
         fp64_product_round: Fp64Kernel::Avx2,
         fp64_fold_and_product_round: Fp64Kernel::Avx2,
+        fp64_tensor_factor_round: Fp64Kernel::Avx2,
     };
 
     #[cfg(all(test, target_arch = "x86_64"))]
@@ -657,6 +687,7 @@ impl SumcheckKernelPlan {
         fp64_fold: Fp64Kernel::Avx512,
         fp64_product_round: Fp64Kernel::Avx512,
         fp64_fold_and_product_round: Fp64Kernel::Avx512,
+        fp64_tensor_factor_round: Fp64Kernel::Avx512,
     };
 }
 

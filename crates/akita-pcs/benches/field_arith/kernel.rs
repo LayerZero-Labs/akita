@@ -33,8 +33,14 @@ fn bench_fp32_ext4_tensor_factor_materialization(c: &mut Criterion) {
     let outer_len = 1usize << 6;
     let table_len = 2 * inner_len * outer_len;
     let mut rng = StdRng::seed_from_u64(0xf032_fac7_5120);
-    let witness = EvaluationTable::from_evaluation_fn(table_len, |_| E::random(&mut rng));
-    let equality_inner = EvaluationTable::from_evaluation_fn(inner_len, |_| E::random(&mut rng));
+    let witness_values = (0..table_len)
+        .map(|_| E::random(&mut rng))
+        .collect::<Vec<_>>();
+    let witness = EvaluationTable::from_evaluations(&witness_values);
+    let equality_inner_values = (0..inner_len)
+        .map(|_| E::random(&mut rng))
+        .collect::<Vec<_>>();
+    let equality_inner = EvaluationTable::from_evaluations(&equality_inner_values);
     let equality_outer = (0..outer_len)
         .map(|_| E::random(&mut rng))
         .collect::<Vec<_>>();
@@ -255,7 +261,10 @@ fn bench_fp32_ext4_sumcheck_fold(c: &mut Criterion) {
             right[row - half]
         }
     });
-    let product_factor = EvaluationTable::from_evaluation_fn(2 * half, |_| E::random(&mut rng));
+    let product_factor_values = (0..2 * half)
+        .map(|_| E::random(&mut rng))
+        .collect::<Vec<_>>();
+    let product_factor = EvaluationTable::from_evaluations(&product_factor_values);
 
     let mut scalar_out = vec![E::zero(); half];
     let mut packed_out = vec![PE::broadcast(E::zero()); packed_left.len()];

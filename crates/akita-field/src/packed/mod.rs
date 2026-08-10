@@ -14,6 +14,11 @@ pub(crate) mod neon;
 mod runtime_common;
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub mod runtime_neon;
+#[cfg(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_feature = "neon")
+))]
+mod runtime_tensor;
 #[cfg(target_arch = "x86_64")]
 pub mod runtime_x86;
 
@@ -24,6 +29,13 @@ pub use ext::{PackedFpExt2, PackedFpExt4, PackedFpExt8};
 pub type Fp32TensorFactorRoundOutput<const P: u32> = (
     Box<[Fp32<P>]>,
     (crate::FpExt4<Fp32<P>>, crate::FpExt4<Fp32<P>>),
+);
+
+/// Coefficient storage and first-round coefficients produced while
+/// materializing an fp64 quadratic tensor factor.
+pub type Fp64TensorFactorRoundOutput<const P: u64, C> = (
+    Box<[Fp64<P>]>,
+    (crate::FpExt2<Fp64<P>, C>, crate::FpExt2<Fp64<P>, C>),
 );
 
 use crate::ext::{fp_ext8_mul_schedule, fp_ext8_square_schedule, FpExt2Config};

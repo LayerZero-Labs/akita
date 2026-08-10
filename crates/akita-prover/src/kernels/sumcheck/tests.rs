@@ -19,7 +19,7 @@ fn value64(row: usize) -> E64 {
 }
 
 fn compare_plan(plan: SumcheckKernelPlan) {
-    for len in [2, 4, 8, 16, 32, 64, 256] {
+    for len in [2, 4, 8, 16, 32, 64, 256, 8192] {
         let source: Vec<_> = (0..len).map(value).collect();
         let challenge = value(len + 17);
         let mut expected = EvaluationTable::<F, E>::from_multilinear_evaluations(&source)
@@ -32,7 +32,7 @@ fn compare_plan(plan: SumcheckKernelPlan) {
 }
 
 fn compare_product_round_plan(plan: SumcheckKernelPlan) {
-    for len in [2, 4, 8, 16, 32, 64, 256] {
+    for len in [2, 4, 8, 16, 32, 64, 256, 8192] {
         let witness = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, value)
             .expect("valid witness table");
         let factor = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, |row| {
@@ -46,7 +46,7 @@ fn compare_product_round_plan(plan: SumcheckKernelPlan) {
 }
 
 fn compare_fused_product_round_plan(plan: SumcheckKernelPlan) {
-    for len in [4, 8, 16, 32, 64, 256] {
+    for len in [4, 8, 16, 32, 64, 256, 8192] {
         let witness = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, value)
             .expect("valid witness table");
         let factor = EvaluationTable::<F, E>::from_multilinear_evaluation_fn(len, |row| {
@@ -404,7 +404,7 @@ fn compare_stage2_coefficient_round_plan(plan: SumcheckKernelPlan) {
 }
 
 fn compare_fp64_plan(plan: SumcheckKernelPlan) {
-    for len in [2, 4, 8, 16, 32, 64, 256] {
+    for len in [2, 4, 8, 16, 32, 64, 256, 8192] {
         let source: Vec<_> = (0..len).map(value64).collect();
         let challenge = value64(len + 17);
         let mut expected = EvaluationTable::<F64, E64>::from_multilinear_evaluations(&source)
@@ -453,6 +453,36 @@ fn compare_fp64_plan(plan: SumcheckKernelPlan) {
     }
 }
 
+fn compare_fp64_tensor_factor_round_plan(plan: SumcheckKernelPlan) {
+    let projection = TensorFactorProjection::<F64, E64>::new(&[value64(701)])
+        .expect("valid quadratic projection");
+    for num_vars in [1usize, 3, 6, 9, 12] {
+        let len = 1usize << num_vars;
+        let witness = EvaluationTable::<F64, E64>::from_multilinear_evaluation_fn(len, |row| {
+            value64(row + 811)
+        })
+        .expect("valid witness table");
+        let tail_point = (0..num_vars)
+            .map(|coordinate| value64(coordinate + 907))
+            .collect::<Vec<_>>();
+        let expected = SumcheckKernelPlan::SCALAR
+            .materialize_tensor_factor_and_compute_product_round_fp64(
+                &witness,
+                &tail_point,
+                &projection,
+            )
+            .expect("valid scalar tensor factor");
+        let actual = plan
+            .materialize_tensor_factor_and_compute_product_round_fp64(
+                &witness,
+                &tail_point,
+                &projection,
+            )
+            .expect("valid packed tensor factor");
+        assert_eq!(actual, expected, "fp64 tensor factor mismatch at len={len}");
+    }
+}
+
 #[test]
 fn detected_fp32_fold_matches_scalar() {
     compare_plan(SumcheckKernelPlan::detect());
@@ -470,6 +500,7 @@ fn detected_fp32_fold_matches_scalar() {
     compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::detect());
     compare_stage2_coefficient_round_plan(SumcheckKernelPlan::detect());
     compare_fp64_plan(SumcheckKernelPlan::detect());
+    compare_fp64_tensor_factor_round_plan(SumcheckKernelPlan::detect());
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -491,8 +522,12 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::AVX2);
         compare_stage2_coefficient_round_plan(SumcheckKernelPlan::AVX2);
         compare_fp64_plan(SumcheckKernelPlan::AVX2);
+        compare_fp64_tensor_factor_round_plan(SumcheckKernelPlan::AVX2);
     }
-    if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512ifma") {
+    if std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512dq")
+        && std::is_x86_feature_detected!("avx512ifma")
+    {
         compare_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_fused_product_round_plan(SumcheckKernelPlan::AVX512_IFMA);
@@ -508,6 +543,7 @@ fn supported_x86_fp32_folds_match_scalar() {
         compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_stage2_coefficient_round_plan(SumcheckKernelPlan::AVX512_IFMA);
         compare_fp64_plan(SumcheckKernelPlan::AVX512_IFMA);
+        compare_fp64_tensor_factor_round_plan(SumcheckKernelPlan::AVX512_IFMA);
     }
 }
 
@@ -530,5 +566,6 @@ fn supported_neon_fp32_folds_match_scalar() {
         compare_sparse_affine_polynomial_fold_plan(SumcheckKernelPlan::NEON);
         compare_stage2_coefficient_round_plan(SumcheckKernelPlan::NEON);
         compare_fp64_plan(SumcheckKernelPlan::NEON);
+        compare_fp64_tensor_factor_round_plan(SumcheckKernelPlan::NEON);
     }
 }
