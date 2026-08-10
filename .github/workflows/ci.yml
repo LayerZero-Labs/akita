@@ -153,7 +153,7 @@ jobs:
           # --lib --bins --tests matches the default test target set but skips
           # compiling examples (clippy's --all-targets already compile-checks them).
           cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,schedules-default \
-            --partition "count:${SHARD_INDEX}/${SHARD_TOTAL}"
+            --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
           if [ -f target/nextest/ci/junit.xml ]; then
