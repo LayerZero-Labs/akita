@@ -60,7 +60,7 @@ MODE_NUM_VARS = {
     "dense_fp32": {26},
     "onehot_fp64": {30},
     "dense_fp64": {26},
-    "dense_fp128": {26},
+    "dense_fp128": {28},
     "onehot_fp128": {36},
     "onehot_fp128_recursive": {36},
     "onehot_fp128_multi_group": {32},

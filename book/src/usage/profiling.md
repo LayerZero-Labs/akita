@@ -95,7 +95,7 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp32` | 30 | 1 | `direct` |
 | `dense_fp64` | 26 | 1 | `direct` |
 | `onehot_fp64` | 30 | 1 | `direct` |
-| `dense_fp128` | 26 | 1 | `direct` |
+| `dense_fp128` | 28 | 1 | `direct` |
 | `onehot_fp128` | 36 | 1 | `direct` |
 | `onehot_fp128_recursive` | 36 | 1 | `recursive` |
 | `onehot_fp128_multi_group` | 32 | 4 | `direct` |
@@ -124,7 +124,8 @@ Every row measures a complete PCS opening proof.
 
 | Profile family | Public opening statement |
 |----------------|--------------------------|
-| Dense `nv26` | One committed 26 variable multilinear polynomial with `2^26` coefficients, opened at one 26 coordinate point. |
+| Dense `nv26` | One committed 26 variable multilinear polynomial with `2^26` coefficients, opened at one 26 coordinate point for fp32 and fp64. |
+| Dense Fp128 `nv28` | One committed 28 variable multilinear polynomial with `2^28` coefficients, opened at one 28 coordinate point. |
 | One hot `nv30` | One committed 30 variable multilinear polynomial with `2^30` coefficients, opened at one 30 coordinate point. |
 | One hot `nv36` | One committed 36 variable multilinear polynomial with `2^36` coefficients, opened at one 36 coordinate point. The direct and recursive rows prove this same statement. |
 | One hot distributed `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point with W2R2, W4R2, or W8R2 witness partitioning. |

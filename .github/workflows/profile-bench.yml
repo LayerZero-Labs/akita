@@ -73,7 +73,7 @@ jobs:
           - name: 3-fp128-base
             profile_feature: profile-ci-fp128-base
             cases: |
-              dense_fp128:26:1
+              dense_fp128:28:1
               onehot_fp128:36:1:direct
               onehot_fp128_recursive:36:1:recursive
           - name: 4-multi-group-direct
