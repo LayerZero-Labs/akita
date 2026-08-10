@@ -109,45 +109,84 @@ impl<Envelope, Final> Clone for EnvelopeFinalGroupConfig<Envelope, Final> {
     }
 }
 
-/// Test-only config that replaces the exact L3 scalar fold with a Q32
-/// multi-block physical-L2 route of the same A rank.
+trait ForcedL2Fixture {
+    const CAPS: &'static [akita_schedules::SelectiveL2FoldCap];
+    const STEP_INDEX: usize;
+    const DESCRIPTION: &'static str;
+}
+
+#[derive(Debug)]
+pub(crate) struct SmallFieldL2Fixture;
+
+impl ForcedL2Fixture for SmallFieldL2Fixture {
+    const CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
+        &[akita_schedules::SelectiveL2FoldCap {
+            fold_level: 3,
+            input_witness_len: 140_800,
+            physical_response_len: 16_384,
+            fold_basis: 64,
+            fold_digit_count: 2,
+            response_l2_sq_cap: 1u128 << 35,
+        }];
+    const STEP_INDEX: usize = 2;
+    const DESCRIPTION: &'static str = "small-field L2 fixture";
+}
+
+#[derive(Debug)]
+pub(crate) struct LargeFieldL2Fixture;
+
+impl ForcedL2Fixture for LargeFieldL2Fixture {
+    const CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
+        &[akita_schedules::SelectiveL2FoldCap {
+            fold_level: 5,
+            input_witness_len: 144_384,
+            physical_response_len: 16_384,
+            fold_basis: 64,
+            fold_digit_count: 2,
+            response_l2_sq_cap: 1u128 << 32,
+        }];
+    const STEP_INDEX: usize = 4;
+    const DESCRIPTION: &'static str = "large-field L2 fixture";
+}
+
+/// Test-only config that replaces one exact recursive fold with a measured
+/// physical-L2 route of the same A rank.
 ///
 /// Keeping the rank unchanged preserves the base catalog's successor geometry;
-/// the synthetic row still passes the ordinary schedule audit against this
-/// config's exact measured cap.
+/// the synthetic row still passes the ordinary schedule audit against the
+/// fixture's exact measured cap.
 #[derive(Debug)]
-pub(crate) struct ForcedSmallFieldL2Config<Base>(PhantomData<Base>);
+pub(crate) struct ForcedL2Config<Base, Fixture>(PhantomData<fn() -> (Base, Fixture)>);
 
-impl<Base> Clone for ForcedSmallFieldL2Config<Base> {
+pub(crate) type ForcedSmallFieldL2Config<Base> = ForcedL2Config<Base, SmallFieldL2Fixture>;
+pub(crate) type ForcedLargeFieldL2Config<Base> = ForcedL2Config<Base, LargeFieldL2Fixture>;
+
+impl<Base, Fixture> Clone for ForcedL2Config<Base, Fixture> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<Base> Copy for ForcedSmallFieldL2Config<Base> {}
+impl<Base, Fixture> Copy for ForcedL2Config<Base, Fixture> {}
 
-impl<Base> Default for ForcedSmallFieldL2Config<Base> {
+impl<Base, Fixture> Default for ForcedL2Config<Base, Fixture> {
     fn default() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<Base: CommitmentConfig> CommitmentConfig for ForcedSmallFieldL2Config<Base> {
+impl<Base, Fixture> CommitmentConfig for ForcedL2Config<Base, Fixture>
+where
+    Base: CommitmentConfig,
+    Fixture: ForcedL2Fixture + 'static,
+{
     type Field = Base::Field;
     type ExtField = Base::ExtField;
 
     const D: usize = Base::D;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Base::RING_DIMENSION_SCHEDULE_MODE;
-    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
-        &[akita_schedules::SelectiveL2FoldCap {
-            fold_level: 3,
-            input_witness_len: 130_816,
-            physical_response_len: 16_384,
-            fold_basis: 64,
-            fold_digit_count: 2,
-            response_l2_sq_cap: 1u128 << 35,
-        }];
+    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] = Fixture::CAPS;
 
     fn decomposition() -> DecompositionParams {
         Base::decomposition()
@@ -172,8 +211,12 @@ impl<Base: CommitmentConfig> CommitmentConfig for ForcedSmallFieldL2Config<Base>
         Base::setup_prefix_inner_ring_dimension()
     }
 
-    fn basis_range() -> (u32, u32) {
-        Base::basis_range()
+    fn inner_basis_range() -> (u32, u32) {
+        Base::inner_basis_range()
+    }
+
+    fn opening_basis_range() -> (u32, u32) {
+        Base::opening_basis_range()
     }
 
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
@@ -194,17 +237,24 @@ impl<Base: CommitmentConfig> CommitmentConfig for ForcedSmallFieldL2Config<Base>
 
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
         let mut schedule = Base::runtime_schedule(key)?;
-        let step = schedule.recursive_folds.get_mut(2).ok_or_else(|| {
-            AkitaError::UnsupportedSchedule("small-field L2 fixture requires an L3 fold".into())
-        })?;
+        let step = schedule
+            .recursive_folds
+            .get_mut(Fixture::STEP_INDEX)
+            .ok_or_else(|| {
+                AkitaError::UnsupportedSchedule(format!(
+                    "{} requires an L{} fold",
+                    Fixture::DESCRIPTION,
+                    Fixture::STEP_INDEX + 1
+                ))
+            })?;
         let params = &mut step.params.witness;
-        let fold_basis = 1usize
-            .checked_shl(params.log_basis_open)
-            .ok_or_else(|| AkitaError::InvalidSetup("small-field L2 basis overflow".into()))?;
+        let fold_basis = 1usize.checked_shl(params.log_basis_open).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!("{} basis overflow", Fixture::DESCRIPTION))
+        })?;
         let matrix = akita_schedules::planner_support::selective_l2_inner_matrix(
             &policy_of::<Self>(),
             akita_schedules::planner_support::SelectiveL2CandidateGeometry {
-                fold_level: 3,
+                fold_level: Fixture::STEP_INDEX + 1,
                 input_witness_len: step.input_witness_len,
                 num_claims: 1,
                 num_chunks: params.witness_chunk.num_chunks,
@@ -216,12 +266,16 @@ impl<Base: CommitmentConfig> CommitmentConfig for ForcedSmallFieldL2Config<Base>
             },
         )?
         .ok_or_else(|| {
-            AkitaError::InvalidSetup("small-field L2 fixture geometry lost its exact cap".into())
+            AkitaError::InvalidSetup(format!(
+                "{} geometry lost its exact cap",
+                Fixture::DESCRIPTION
+            ))
         })?;
         if matrix.output_rank() != params.inner_commit_matrix.output_rank() {
-            return Err(AkitaError::InvalidSetup(
-                "small-field L2 fixture must preserve the catalog A rank".into(),
-            ));
+            return Err(AkitaError::InvalidSetup(format!(
+                "{} must preserve the catalog A rank",
+                Fixture::DESCRIPTION
+            )));
         }
         params.inner_commit_matrix = matrix;
         schedule.validate_structure()?;
@@ -319,8 +373,12 @@ where
         Ok(SetupMatrixCapacity { num_field_elements })
     }
 
-    fn basis_range() -> (u32, u32) {
-        Envelope::basis_range()
+    fn opening_basis_range() -> (u32, u32) {
+        Envelope::opening_basis_range()
+    }
+
+    fn inner_basis_range() -> (u32, u32) {
+        Envelope::inner_basis_range()
     }
 
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {

@@ -91,6 +91,12 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
             .expect("valid ring matrix view"),
     )
     .expect("Q128 dispatch should support this field and ring dimension");
+    let tail = prepare_ntt_cache(
+        flat.ring_view::<D>(1, cols)
+            .expect("valid tail matrix view"),
+        NttCacheMode::I16TailBothTransforms,
+    )
+    .expect("Q128 quotient tail");
     let z_pre = vec![[32_768i32; D]; cols];
 
     let (_d_rows, _b_rows, a_rows) =
@@ -101,6 +107,10 @@ fn fused_split_eq_q128_quotient_falls_back_when_one_term_exceeds_crt() {
     let expected = quotient_from_cyclic_and_negacyclic(&cyclic_product(&row, &z), &(row * z));
 
     assert_eq!(a_rows, vec![expected]);
+    let tail_rows =
+        centered_quotient_rows_with_i16_tail::<F, D>(&slot, &slot, &tail, 1, &z_pre, 32_768)
+            .expect("base-plus-tail quotient");
+    assert_eq!(tail_rows, vec![expected]);
 }
 
 #[test]

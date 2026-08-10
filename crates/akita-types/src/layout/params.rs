@@ -14,7 +14,6 @@ use crate::proof::{
     CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
     SetupPrefixSlotId,
 };
-use crate::CompressionChainPlan;
 
 pub use crate::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,
@@ -61,7 +60,9 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
 mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
-pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
+pub use precommitted::{
+    LevelParamsLike, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+};
 
 /// Gadget basis used by opening-digit segments in the shared D product.
 ///
@@ -133,6 +134,16 @@ pub struct CommittedGroupParams {
 }
 
 impl CommittedGroupParams {
+    /// Canonical byte encoding used to order semantically distinct level candidates.
+    ///
+    /// This is an ordering descriptor, not a wire encoding or transcript commitment.
+    #[must_use]
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     /// Checked wire geometry for this level's final-group B image.
     pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
         crate::CommitmentPayloadGeometry::for_mode(
@@ -163,7 +174,7 @@ impl CommittedGroupParams {
             .output_rank()
             .checked_mul(self.role_dims().d_b())
             .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
-        if CompressionChainPlan::try_for_complete_source(
+        if crate::CompressionChainPlan::try_for_complete_source(
             self.outer_commit_matrix.sis_modulus_profile(),
             final_outer,
         )?
@@ -180,7 +191,7 @@ impl CommittedGroupParams {
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("precommitted B compression shape overflow".into())
                 })?;
-            if CompressionChainPlan::try_for_complete_source(
+            if crate::CompressionChainPlan::try_for_complete_source(
                 group.layout.outer_commit_matrix.sis_modulus_profile(),
                 source,
             )?
@@ -194,7 +205,7 @@ impl CommittedGroupParams {
             .output_rank()
             .checked_mul(self.role_dims().d_d())
             .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
-        Ok(CompressionChainPlan::try_for_complete_source(
+        Ok(crate::CompressionChainPlan::try_for_complete_source(
             self.open_commit_matrix.sis_modulus_profile(),
             opening,
         )?
@@ -630,10 +641,9 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
-        if self.log_basis_open < self.log_basis_inner || self.log_basis_open < self.log_basis_outer
-        {
+        if self.log_basis_open < self.log_basis_outer {
             return Err(AkitaError::InvalidSetup(
-                "certified opening basis must dominate level inner/outer bases".to_string(),
+                "certified opening basis must dominate the level outer basis".to_string(),
             ));
         }
         if opening_batch.num_groups() != self.group_count() {
@@ -921,6 +931,18 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
+        self.output_witness_len_for_field_bits(F::modulus_bits(), opening_batch)
+    }
+
+    /// Exact live next-witness length using an explicit base-field bit width.
+    ///
+    /// Generated schedule replay uses the catalog-bound field width without
+    /// monomorphizing on a concrete field type.
+    pub fn output_witness_len_for_field_bits(
+        &self,
+        field_bits: u32,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
         self.validate_opening_batch(opening_batch)?;
@@ -928,7 +950,7 @@ impl CommittedGroupParams {
             self,
             opening_batch,
             self.witness_chunk.num_chunks,
-            crate::r_decomp_levels::<F>(self.log_basis_open),
+            crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_open),
         )?;
         Ok(witness_layout.live_coeff_len())
     }

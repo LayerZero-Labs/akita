@@ -151,7 +151,6 @@ for a stacked follow-up.
 | `crt-ntt-accumulation-safety.md` | `how/optimizations.md` |
 | `avx-simd-port.md`, `fp31-field-optimization-retrospective.md` | `how/optimizations.md` |
 | `akita-zk-commitment-hiding.md`, `akita-zk-v-hiding.md`, `akita-zk-sumcheck-hiding-plain.md` | `foundations/zero-knowledge.md` |
-| `profile-bench-coverage-matrix.md` (Active Matrix) | `usage/profiling.md` |
 | `ci-test-timing.md` | `usage/profiling.md` |
 | `w-to-e-notation.md` | `foundations/glossary.md` |
 | `setup-product-sumcheck.md` | `how/proving/sumcheck-stages.md` |

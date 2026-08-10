@@ -4,13 +4,11 @@ use crate::runtime::PlannerPolicy;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    min_secure_l2_rank, min_secure_rank, projected_role_ring_count,
-    role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
-    sis_l2_table_key_for_collision_sq, FoldChallengeNorms, SisTableKey,
+    min_secure_l2_rank, projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
+    rounded_up_collision_inf_norm, sis_l2_table_key_for_collision_sq, FoldChallengeNorms,
+    SisTableKey,
 };
-use akita_types::{
-    CommitmentRingDims, InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRole,
-};
+use akita_types::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRole};
 
 /// Exact public geometry that may admit one selective physical-L2 A matrix.
 #[derive(Clone, Copy, Debug)]
@@ -27,10 +25,6 @@ pub struct SelectiveL2CandidateGeometry<'a> {
 }
 
 /// Derive the one canonical L2 A-matrix candidate for an exact fold geometry.
-///
-/// `Ok(None)` means the route is ineligible, has no measured cap, or has no
-/// generated secure table row. Once a cap is present, malformed arithmetic or
-/// proof geometry is a policy error rather than a silently different route.
 pub fn selective_l2_inner_matrix(
     policy: &PlannerPolicy,
     geometry: SelectiveL2CandidateGeometry<'_>,
@@ -82,108 +76,6 @@ pub fn selective_l2_inner_matrix(
         norm_proof_shape,
     )
     .map(Some)
-}
-
-/// Exact or adaptively derived dimensions for one planner candidate.
-#[derive(Clone, Copy, Debug)]
-pub enum RingDimensionCandidate<'a> {
-    Fixed(CommitmentRingDims),
-    Adaptive {
-        inner: usize,
-        outer_dimensions: &'a [usize],
-        opening_dimensions: &'a [usize],
-        ceiling: CommitmentRingDims,
-    },
-}
-
-impl RingDimensionCandidate<'_> {
-    pub fn inner(self) -> usize {
-        match self {
-            Self::Fixed(dimensions) => dimensions.d_a(),
-            Self::Adaptive { inner, .. } => inner,
-        }
-    }
-
-    pub fn validate(self) -> Result<(), AkitaError> {
-        match self {
-            Self::Fixed(dimensions) => dimensions.validate_role_projection(),
-            Self::Adaptive { inner, ceiling, .. } => {
-                ceiling.validate_role_projection()?;
-                if inner == 0 || !inner.is_power_of_two() || inner > ceiling.d_a() {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "adaptive A dimension D{inner} is invalid under D{} ceiling",
-                        ceiling.d_a()
-                    )));
-                }
-                Ok(())
-            }
-        }
-    }
-
-    pub fn collision_role_price(
-        self,
-        policy: &PlannerPolicy,
-        role: SisMatrixRole,
-        native_width: usize,
-        log_basis: u32,
-    ) -> Option<(SisTableKey, usize)> {
-        let source_dimension = self.inner();
-        match self {
-            Self::Fixed(dimensions) => {
-                let role_dimension = match role {
-                    SisMatrixRole::Outer => dimensions.d_b(),
-                    SisMatrixRole::Open => dimensions.d_d(),
-                    SisMatrixRole::Inner => return None,
-                };
-                projected_collision_role_price(
-                    policy,
-                    role,
-                    source_dimension,
-                    role_dimension,
-                    native_width,
-                    log_basis,
-                )
-            }
-            Self::Adaptive {
-                outer_dimensions,
-                opening_dimensions,
-                ceiling,
-                ..
-            } => {
-                let (dimensions, role_ceiling) = match role {
-                    SisMatrixRole::Outer => (outer_dimensions, ceiling.d_b()),
-                    SisMatrixRole::Open => (opening_dimensions, ceiling.d_d()),
-                    SisMatrixRole::Inner => return None,
-                };
-                let mut best = None;
-                for &role_dimension in dimensions {
-                    if role_dimension > source_dimension || role_dimension > role_ceiling {
-                        continue;
-                    }
-                    let Some((key, width)) = projected_collision_role_price(
-                        policy,
-                        role,
-                        source_dimension,
-                        role_dimension,
-                        native_width,
-                        log_basis,
-                    ) else {
-                        continue;
-                    };
-                    let rank = min_secure_rank(key, u64::try_from(width).ok()?)?;
-                    if best.as_ref().is_none_or(|(best_rank, best_d, _, _)| {
-                        (rank, role_dimension) < (*best_rank, *best_d)
-                    }) {
-                        best = Some((rank, role_dimension, key, width));
-                    }
-                    if rank == 1 {
-                        break;
-                    }
-                }
-                best.map(|(_, _, key, width)| (key, width))
-            }
-        }
-    }
 }
 
 /// Construct the canonical SIS-table key for one role and ring dimension.
@@ -257,6 +149,7 @@ mod tests {
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 1,
             uniform_ring_dimension: RING_DIMENSION,
@@ -276,7 +169,8 @@ mod tests {
             selective_l2_fold_caps: &CAPS,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
-            basis_range: (1, 1),
+            inner_basis_range: (1, 1),
+            opening_basis_range: (1, 1),
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         };

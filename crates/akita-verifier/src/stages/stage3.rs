@@ -268,7 +268,9 @@ where
             actual: eq_y.len(),
         });
     }
-    let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
+    // Read only the rows the scan actually uses: `setup_eval_len` is the
+    // padded evaluation-domain length and is explicit zero beyond `required`.
+    let setup_view = setup.shared_matrix().ring_view::<D>(1, required)?;
     let setup_entries = setup_view.as_slice();
 
     // Scan the selected setup prefix once. Each entry contracts the ring with
@@ -309,13 +311,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{committed_group_params, proof_optimized::fp128::Dense};
+    use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
     use akita_field::Prime128OffsetA7F7;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, setup_prefix_precommitted_params,
-        setup_prefix_slot_id, AkitaSetupDescriptor, CommittedGroupParams, PolynomialGroupLayout,
-        RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+        setup_prefix_slot_id, AkitaScheduleLookupKey, AkitaSetupDescriptor, CommittedGroupParams,
+        PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,
+        SetupPrefixVerifierSlot,
     };
     use std::sync::Arc;
 
@@ -364,8 +367,14 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = committed_group_params::<Dense>(&PolynomialGroupLayout::singleton(16))
-            .expect("level parameters");
+        let level_params = Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(16),
+        ))
+        .expect("scalar schedule")
+        .root
+        .params
+        .final_group
+        .commitment;
         let natural_field_len = level_params
             .inner_commit_matrix
             .ring_dimension()

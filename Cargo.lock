@@ -196,6 +196,7 @@ dependencies = [
  "num-traits",
  "rayon",
  "sha2",
+ "sha3 0.10.9",
  "thiserror",
 ]
 

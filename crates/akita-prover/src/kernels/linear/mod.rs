@@ -4,16 +4,15 @@ use akita_algebra::ntt::MontCoeff;
 use akita_algebra::ntt::PrimeWidth;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{
-    CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
+    cyclic_ntt_with_i16_tail_to_ring, ntt_with_i16_tail_to_ring, CenteredMontLut, CrtNttParamSet,
+    CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 
-use akita_types::PreparedNttCache;
-#[cfg(test)]
-use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
+use akita_types::{select_crt_ntt_params, PreparedNttCache, ProtocolCrtNttParams};
 
 mod block_parallel;
 mod capacity;
@@ -46,9 +45,13 @@ pub use decompose::{
     decompose_commit_rows_i8_into, decompose_rows_i8, decompose_rows_i8_into, try_centered_i8,
 };
 use digits::*;
+pub(crate) use fused_quotients::centered_quotient_rows_with_i16_tail;
 #[cfg(test)]
 pub(crate) use fused_quotients::fused_split_eq_quotients;
-pub(crate) use fused_quotients::fused_split_eq_quotients_prover_bounds;
+pub(crate) use fused_quotients::{
+    fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
+    fused_split_eq_quotients_streamed_prover_bounds,
+};
 use i8_matvec::*;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;
 pub use ntt_matvec::{

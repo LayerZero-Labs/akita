@@ -140,6 +140,15 @@ fn fold_nonce_accepts_only_the_global_attempt_range() {
 }
 
 #[test]
+fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
+    let (params, _) = sample_multi_group_root_params();
+    let precommitted = &params.precommitted_groups[0];
+
+    assert_eq!(precommitted.fold_challenge_config.weight(), 41);
+    assert_eq!(precommitted.challenge_l1_mass(), 51);
+}
+
+#[test]
 fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
     grouped.log_basis_open = 3;

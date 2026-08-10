@@ -135,6 +135,7 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub protocol_epoch: u32,
     pub cost_model: crate::PlannerCostModelId,
     pub selection_policy: crate::SelectionPolicyId,
+    pub recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
     pub sis_modulus_profile: SisModulusProfileId,
@@ -147,7 +148,8 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub decomposition: akita_types::DecompositionParams,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
-    pub basis_range: (u32, u32),
+    pub inner_basis_range: (u32, u32),
+    pub opening_basis_range: (u32, u32),
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
@@ -174,7 +176,8 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap, SisSecurityPolicyId,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap,
+    SisSecurityPolicyId,
 };
 pub use akita_types::{
     CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
@@ -336,79 +339,6 @@ fn precommitted_group_key_eq(
     generated == layout
 }
 
-#[cfg(test)]
-mod mixed_dimension_key_tests {
-    use super::{precommitted_group_key_eq, precommitted_group_sort_key};
-    use akita_types::{
-        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
-        PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
-    };
-
-    fn descriptor() -> CommittedGroupProfile {
-        CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
-            group: PolynomialGroupLayout::new(12, 1),
-            num_live_ring_elements_per_claim: 32,
-            num_positions_per_block: 8,
-            num_live_blocks: 4,
-            log_basis_inner: 4,
-            num_digits_inner: 2,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                3,
-                16,
-                7,
-                128,
-            ),
-            log_basis_outer: 5,
-            num_digits_outer: 2,
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                2,
-                48,
-                11,
-                64,
-            ),
-        }
-    }
-
-    #[test]
-    fn precommitted_key_identity_includes_both_native_ring_dimensions() {
-        let base = descriptor();
-        let mut changed_inner = base;
-        changed_inner.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            3,
-            16,
-            7,
-            64,
-        );
-        let mut changed_outer = base;
-        changed_outer.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            2,
-            48,
-            11,
-            32,
-        );
-        for changed in [changed_inner, changed_outer] {
-            assert!(!precommitted_group_key_eq(&base, &changed));
-            assert_ne!(
-                precommitted_group_sort_key(&base),
-                precommitted_group_sort_key(&changed)
-            );
-        }
-    }
-}
-
 /// Returns an error when the generated key does not match the runtime key.
 pub(crate) fn validate_entry_key(
     generated: &GeneratedFoldScheduleEntry,
@@ -430,21 +360,23 @@ pub(crate) fn validate_certified_bases(
     policy: &crate::PlannerPolicy,
     context: &str,
 ) -> Result<(), akita_field::AkitaError> {
-    let (min, max) = policy.basis_range;
-    for (role, basis) in [
-        ("inner", log_basis_inner),
-        ("outer", log_basis_outer),
-        ("open", log_basis_open),
-    ] {
+    let (inner_min, inner_max) = policy.inner_basis_range;
+    if log_basis_inner < inner_min || log_basis_inner > inner_max {
+        return Err(akita_field::AkitaError::InvalidSetup(format!(
+            "{context} inner basis {log_basis_inner} outside policy range [{inner_min}, {inner_max}]"
+        )));
+    }
+    let (min, max) = policy.opening_basis_range;
+    for (role, basis) in [("outer", log_basis_outer), ("open", log_basis_open)] {
         if basis < min || basis > max {
             return Err(akita_field::AkitaError::InvalidSetup(format!(
                 "{context} {role} basis {basis} outside policy range [{min}, {max}]"
             )));
         }
     }
-    if log_basis_open < log_basis_inner || log_basis_open < log_basis_outer {
+    if log_basis_open < log_basis_outer {
         return Err(akita_field::AkitaError::InvalidSetup(format!(
-            "{context} certified open basis must dominate inner and outer bases"
+            "{context} certified open basis must dominate the outer basis"
         )));
     }
     Ok(())
@@ -483,26 +415,22 @@ pub mod fp128_onehot_recursive_multi_chunk_w8r2;
 pub mod fp128_onehot_recursive_multi_chunk_w8r2_precommitted;
 #[cfg(feature = "fp128-onehot-recursive")]
 pub mod fp128_onehot_recursive_precommitted;
-#[cfg(feature = "fp32-d128-onehot")]
-pub mod fp32_d128_onehot;
-#[cfg(feature = "fp32-d128-onehot")]
-pub mod fp32_d128_onehot_precommitted;
-#[cfg(feature = "fp32-d256-onehot")]
-pub mod fp32_d256_onehot;
-#[cfg(feature = "fp32-d256-onehot")]
-pub mod fp32_d256_onehot_precommitted;
-#[cfg(feature = "fp64-d128-dense")]
-pub mod fp64_d128_dense;
-#[cfg(feature = "fp64-d128-dense")]
-pub mod fp64_d128_dense_precommitted;
-#[cfg(feature = "fp64-d128-onehot")]
-pub mod fp64_d128_onehot;
-#[cfg(feature = "fp64-d128-onehot")]
-pub mod fp64_d128_onehot_precommitted;
-#[cfg(feature = "fp64-d256-onehot")]
-pub mod fp64_d256_onehot;
-#[cfg(feature = "fp64-d256-onehot")]
-pub mod fp64_d256_onehot_precommitted;
+#[cfg(feature = "fp32-dense")]
+pub mod fp32_dense;
+#[cfg(feature = "fp32-dense")]
+pub mod fp32_dense_precommitted;
+#[cfg(feature = "fp32-onehot")]
+pub mod fp32_onehot;
+#[cfg(feature = "fp32-onehot")]
+pub mod fp32_onehot_precommitted;
+#[cfg(feature = "fp64-dense")]
+pub mod fp64_dense;
+#[cfg(feature = "fp64-dense")]
+pub mod fp64_dense_precommitted;
+#[cfg(feature = "fp64-onehot")]
+pub mod fp64_onehot;
+#[cfg(feature = "fp64-onehot")]
+pub mod fp64_onehot_precommitted;
 
 #[cfg(feature = "fp128-dense")]
 pub fn fp128_dense_table() -> GeneratedScheduleTable {
@@ -578,53 +506,114 @@ pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable
     }
 }
 
-#[cfg(feature = "fp32-d128-onehot")]
-pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp32-dense")]
+pub fn fp32_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp32_d128_onehot::FP32_D128_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp32_d128_onehot_precommitted::FP32_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp32_d128_onehot::CATALOG_IDENTITY,
+        entries: fp32_dense::FP32_DENSE_SCHEDULES,
+        precommitted_profiles: fp32_dense_precommitted::FP32_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp32_dense::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp32-d256-onehot")]
-pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp32-onehot")]
+pub fn fp32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp32_d256_onehot::FP32_D256_ONEHOT_SCHEDULES,
+        entries: fp32_onehot::FP32_ONEHOT_SCHEDULES,
         precommitted_profiles:
-            fp32_d256_onehot_precommitted::FP32_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp32_d256_onehot::CATALOG_IDENTITY,
+            fp32_onehot_precommitted::FP32_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp32_onehot::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp64-d128-dense")]
-pub fn fp64_d128_dense_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp64-dense")]
+pub fn fp64_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp64_d128_dense::FP64_D128_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp64_d128_dense_precommitted::FP64_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d128_dense::CATALOG_IDENTITY,
+        entries: fp64_dense::FP64_DENSE_SCHEDULES,
+        precommitted_profiles: fp64_dense_precommitted::FP64_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp64_dense::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp64-d128-onehot")]
-pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp64-onehot")]
+pub fn fp64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp64_d128_onehot::FP64_D128_ONEHOT_SCHEDULES,
+        entries: fp64_onehot::FP64_ONEHOT_SCHEDULES,
         precommitted_profiles:
-            fp64_d128_onehot_precommitted::FP64_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d128_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp64-d256-onehot")]
-pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp64_d256_onehot::FP64_D256_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp64_d256_onehot_precommitted::FP64_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d256_onehot::CATALOG_IDENTITY,
+            fp64_onehot_precommitted::FP64_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
+        identity: fp64_onehot::CATALOG_IDENTITY,
     }
 }
 // @generated schedule module wiring end
+
+#[cfg(test)]
+mod mixed_dimension_key_tests {
+    use super::{precommitted_group_key_eq, precommitted_group_sort_key};
+    use akita_types::{
+        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
+    };
+
+    fn descriptor() -> CommittedGroupProfile {
+        CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group: PolynomialGroupLayout::new(12, 1),
+            num_live_ring_elements_per_claim: 32,
+            num_positions_per_block: 8,
+            num_live_blocks: 4,
+            log_basis_inner: 4,
+            num_digits_inner: 2,
+            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
+                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                3,
+                16,
+                7,
+                128,
+            ),
+            log_basis_outer: 5,
+            num_digits_outer: 2,
+            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
+                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                SisModulusProfileId::Q128OffsetA7F7,
+                2,
+                48,
+                11,
+                64,
+            ),
+        }
+    }
+
+    #[test]
+    fn precommitted_key_identity_includes_both_native_ring_dimensions() {
+        let base = descriptor();
+        let mut changed_inner = base;
+        changed_inner.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            3,
+            16,
+            7,
+            64,
+        );
+        let mut changed_outer = base;
+        changed_outer.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            2,
+            48,
+            11,
+            32,
+        );
+        for changed in [changed_inner, changed_outer] {
+            assert!(!precommitted_group_key_eq(&base, &changed));
+            assert_ne!(
+                precommitted_group_sort_key(&base),
+                precommitted_group_sort_key(&changed)
+            );
+        }
+    }
+}

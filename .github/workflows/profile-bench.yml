@@ -21,16 +21,15 @@ env:
   # Every cell folds securely under honest committed-fold A-role pricing.
   #
   # Ring-degree choice differs by field:
-  # - Small prime fields (fp32/fp64): their D32/D64 schedules are non-securable
-  #   under the reprice (they degrade to a cleartext root-direct proof), so the
-  #   smallest secure ring degree is D128. Those cells use D128 one-hot.
+  # - Small prime fields use generated adaptive catalogs. fp32 admits A through
+  #   D1024 with a D64/D128 suffix; fp64 admits A through D512 with a D64 suffix.
   # - fp128: `onehot_fp128` is the canonical direct one-hot profile. Recursive
   #   and distributed profiles use the corresponding adaptive catalogs.
   AKITA_BENCH_MODE: onehot_fp128
   AKITA_BENCH_RUNS: "3"
-  # One warm-up run per case is discarded before the measured runs to
-  # prime caches and lazily-initialized statics; cache misses on the
-  # first run otherwise distort the median across only 3 samples.
+  # One warmup process per case is discarded before the measured processes.
+  # This lets the runner reach a steady state and warms operating system file
+  # caches. Each measured process constructs fresh setup and local state.
   AKITA_BENCH_WARMUPS: "1"
   # The profile example emits the per-fold wire grind_nonce in its proof-size
   # breakdown; scripts/profile_bench_report.py surfaces it per level.
@@ -53,33 +52,41 @@ jobs:
         # deterministically, fixing case order in the comment. `cases` is a
         # newline-separated list of MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE] specs.
         #
-        # The small-field (fp32/fp64) D128 one-hot cells run at nv=28, not nv=32.
-        # Their ext-degree-4 challenge schedule keeps a much larger un-folded witness
-        # than the fp128 cells (the fp32 nv=32 setup vector is ~2.6 GiB vs ~270 MiB
-        # for fp128), so at nv>=30 the prover's eq-evaluation table exceeds the
-        # 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling and the run aborts. nv=28
-        # is the largest validated size that both fits that budget and still folds
-        # through multiple recursive levels. The fp128 cells fold aggressively enough
-        # to stay at nv=32.
+        # The adaptive small-field (fp32/fp64) one-hot cells run at nv=30. This
+        # exercises two more variables than the previous nv=28 fixture while
+        # retaining generated schedules and the equality-table allocation guard.
+        # Each base field has its own feature graph so unrelated catalogs and
+        # monomorphizations do not inflate every runner. fp128 remains at nv=32.
         group:
-          - name: 1-fp128-dense
+          - name: 1-fp32-base
+            profile_feature: profile-ci-fp32
             cases: |
-              dense_fp128:24:1
-          - name: 3-flat-onehot-suite
+              dense_fp32:26:1
+              onehot_fp32:30:1
+          - name: 2-fp64-base
+            profile_feature: profile-ci-fp64
             cases: |
-              onehot_fp32_d128:28:1
-              onehot_fp64_d128:28:1
+              dense_fp64:26:1
+              onehot_fp64:30:1
+          - name: 3-fp128-base
+            profile_feature: profile-ci-fp128-base
+            cases: |
+              dense_fp128:26:1
               onehot_fp128:32:1
           - name: 4-multi-group-direct
+            profile_feature: profile-ci-multi-group-direct
             cases: |
               onehot_fp128_multi_group:32:4:direct
           - name: 5-multi-group-recursive
+            profile_feature: profile-ci-multi-group-recursive
             cases: |
               onehot_fp128_multi_group_recursive:32:4:recursive
           - name: 6-multi-group-recursive-w8r2
+            profile_feature: profile-ci-multi-group-recursive-w8r2
             cases: |
               onehot_fp128_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
           - name: 7-distributed
+            profile_feature: profile-ci-distributed
             cases: |
               onehot_fp128_multi_chunk_w2r2:32:1
               onehot_fp128_multi_chunk_w4r2:32:1
@@ -92,8 +99,12 @@ jobs:
       - name: Initialize benchmark paths
         run: |
           group_dir="$RUNNER_TEMP/bench/${{ matrix.group.name }}"
+          profile_threads="$(nproc)"
+          if [ "$profile_threads" -lt 2 ]; then
+            echo "Profile CI requires at least two CPUs for the multi threaded verifier timing" >&2
+            exit 1
+          fi
           echo "AKITA_BENCH_GROUP_DIR=$group_dir" >> "$GITHUB_ENV"
-          echo "LOCALAPPDATA=$group_dir/setup-cache" >> "$GITHUB_ENV"
           # pr/ holds the PR-side summary, base/ the merge-base side; both go
           # into one per-group handoff artifact for the report job.
           echo "AKITA_BENCH_ARTIFACT_DIR=$group_dir/pr" >> "$GITHUB_ENV"
@@ -102,6 +113,8 @@ jobs:
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
+          echo "AKITA_PROFILE_PROVE_THREADS=$profile_threads" >> "$GITHUB_ENV"
+          echo "AKITA_PROFILE_VERIFY_THREADS=$profile_threads" >> "$GITHUB_ENV"
 
       - name: Determine PR benchmark merge base
         if: github.event_name == 'pull_request'
@@ -167,35 +180,29 @@ jobs:
           lscpu || head -n 40 /proc/cpuinfo
           echo "::endgroup::"
 
-      # PR deltas must compare binaries measured on this runner: ubuntu-latest
-      # is a heterogeneous fleet, and baselines measured on different silicon
-      # produced phantom double-digit deltas.
-      - name: Verify profile-ci feature coverage
+      # PR deltas compare binaries measured on the same custom runner so
+      # hardware differences cannot create false changes.
+      - name: Verify profile benchmark feature coverage
         run: ./scripts/check_profile_ci_features.sh
-
-      - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
 
       - name: Build merge-base profile binary
         if: github.event_name == 'pull_request' && env.AKITA_BENCH_BASELINE_MODES_OK == '1'
         env:
-          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
+          AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
           mkdir -p "$RUNNER_TEMP/bench-bins"
-          features="parallel,profile-ci"
-          if grep -q ':recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
-            features="$features,disk-persistence"
-          fi
+          features="parallel,$AKITA_BENCH_PROFILE_FEATURE"
           (
             cd "$RUNNER_TEMP/bench-base" &&
-            if [ -x ./scripts/generate-schedule-tables.sh ]; then
-              ./scripts/generate-schedule-tables.sh
-            fi
-            if python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
+            if python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROFILE_FEATURE"; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
                   --no-default-features --features "$features"
+            elif python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
+              CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
+                cargo build --release --quiet --example profile \
+                  --no-default-features --features "parallel,profile-ci"
             else
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile
@@ -224,17 +231,17 @@ jobs:
 
       - name: Build profile binary
         env:
-          AKITA_BENCH_GROUP_CASES: ${{ matrix.group.cases }}
+          AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
-          features="parallel,profile-ci"
-          if grep -q ':recursive' <<< "$AKITA_BENCH_GROUP_CASES"; then
-            features="$features,disk-persistence"
-          fi
+          features="parallel,$AKITA_BENCH_PROFILE_FEATURE"
           cargo build --release --quiet --example profile \
             --no-default-features --features "$features"
 
-      - name: Verify profile-ci linkage isolation
-        run: ./scripts/check_profile_ci_linkage.sh target/release/examples/profile
+      - name: Verify profile linkage isolation
+        run: >-
+          ./scripts/check_profile_ci_linkage.sh
+          target/release/examples/profile
+          ${{ matrix.group.profile_feature }}
 
       # On PRs the head and merge-base binaries run interleaved (PR, base,
       # PR, base, ...) so machine-state drift on shared runners lands on both
@@ -275,6 +282,7 @@ jobs:
           python3 scripts/profile_bench_report.py run \
             --binary ./target/release/examples/profile \
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
+            --benchmark-shard "${{ matrix.group.name }}" \
             --mode "$AKITA_BENCH_MODE" \
             --runs "$AKITA_BENCH_RUNS" \
             --warmups "$AKITA_BENCH_WARMUPS" \

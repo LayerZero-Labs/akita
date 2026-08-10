@@ -82,6 +82,64 @@ pub fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
     }
 }
 
+/// Signed-i16 counterpart of [`decompose_ring_interleaved`] for bases above 8.
+#[inline(never)]
+pub fn decompose_ring_interleaved_i16<F: CanonicalField, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    digit_buf: &mut [[i16; D]],
+    num_digits: usize,
+    p: &DecomposeParams,
+) {
+    let bulk_end = D - (D % 3);
+    for base in (0..bulk_end).step_by(3) {
+        let canonical = [
+            ring.coeffs[base].to_canonical_u128(),
+            ring.coeffs[base + 1].to_canonical_u128(),
+            ring.coeffs[base + 2].to_canonical_u128(),
+        ];
+        let (mut carries, first_digits) = if p.overflow_possible {
+            let (c0, d0) = peel_first_balanced_digit_i32(canonical[0], p);
+            let (c1, d1) = peel_first_balanced_digit_i32(canonical[1], p);
+            let (c2, d2) = peel_first_balanced_digit_i32(canonical[2], p);
+            ([c0, c1, c2], Some([d0, d1, d2]))
+        } else {
+            (canonical.map(|coefficient| to_signed(coefficient, p)), None)
+        };
+        for (digit_index, plane) in digit_buf.iter_mut().take(num_digits).enumerate() {
+            let digits = if digit_index == 0 {
+                first_digits.unwrap_or_else(|| {
+                    carries
+                        .each_mut()
+                        .map(|carry| extract_balanced_digit(carry, p))
+                })
+            } else {
+                carries
+                    .each_mut()
+                    .map(|carry| extract_balanced_digit(carry, p))
+            };
+            plane[base] = digits[0] as i16;
+            plane[base + 1] = digits[1] as i16;
+            plane[base + 2] = digits[2] as i16;
+        }
+    }
+    for idx in bulk_end..D {
+        let canonical = ring.coeffs[idx].to_canonical_u128();
+        let (mut carry, first_digit) = if p.overflow_possible {
+            let (carry, digit) = peel_first_balanced_digit_i32(canonical, p);
+            (carry, Some(digit))
+        } else {
+            (to_signed(canonical, p), None)
+        };
+        for (digit_index, plane) in digit_buf.iter_mut().take(num_digits).enumerate() {
+            plane[idx] = if digit_index == 0 {
+                first_digit.unwrap_or_else(|| extract_balanced_digit(&mut carry, p))
+            } else {
+                extract_balanced_digit(&mut carry, p)
+            } as i16;
+        }
+    }
+}
+
 fn decompose_ring_interleaved_fast<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_buf: &mut [[i8; D]],
@@ -279,8 +337,8 @@ fn sparse_mul_acc_sub_scalar<const D: usize>(digit_plane: &[i8], acc: &mut [i32;
     }
 }
 
-pub fn sparse_mul_acc_scalar<const D: usize>(
-    digit_plane: &[i8],
+pub(crate) fn sparse_mul_acc_scalar<const D: usize>(
+    digit_plane: &[i8; D],
     challenge: &SparseChallenge,
     acc: &mut [i32; D],
 ) {
@@ -311,13 +369,36 @@ pub fn sparse_mul_acc_scalar<const D: usize>(
     }
 }
 
-/// Dispatch to NEON / AVX2 / scalar sparse-multiply-accumulate.
-#[inline(always)]
-pub fn sparse_mul_acc<const D: usize>(
-    digit_plane: &[i8],
+pub(crate) fn sparse_mul_acc_i16_scalar<const D: usize>(
+    digit_plane: &[i16; D],
     challenge: &SparseChallenge,
     acc: &mut [i32; D],
 ) {
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let p = pos as usize;
+        let split = D - p;
+        let scale = i32::from(coeff);
+        for i in 0..split {
+            acc[i + p] += scale * i32::from(digit_plane[i]);
+        }
+        for i in split..D {
+            acc[i - split] -= scale * i32::from(digit_plane[i]);
+        }
+    }
+}
+
+/// Dispatch to NEON / AVX2 / scalar sparse-multiply-accumulate.
+#[inline(always)]
+pub(crate) fn sparse_mul_acc<const D: usize>(
+    digit_plane: &[i8; D],
+    challenge: &SparseChallenge,
+    acc: &mut [i32; D],
+) {
+    assert_eq!(challenge.positions.len(), challenge.coeffs.len());
+    assert!(challenge
+        .positions
+        .iter()
+        .all(|&position| position < D as u32));
     #[cfg(any(
         target_arch = "aarch64",
         all(target_arch = "x86_64", target_feature = "avx2")
@@ -355,6 +436,55 @@ pub fn sparse_mul_acc<const D: usize>(
     sparse_mul_acc_scalar::<D>(digit_plane, challenge, acc);
 }
 
+/// Signed-i16 sparse multiply-accumulate for large inner bases.
+#[inline(always)]
+pub(crate) fn sparse_mul_acc_i16<const D: usize>(
+    digit_plane: &[i16; D],
+    challenge: &SparseChallenge,
+    acc: &mut [i32; D],
+) {
+    assert_eq!(challenge.positions.len(), challenge.coeffs.len());
+    assert!(challenge
+        .positions
+        .iter()
+        .all(|&position| position < D as u32));
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
+    {
+        if use_simd_decompose_fold()
+            && challenge
+                .coeffs
+                .iter()
+                .all(|&coeff| coeff.unsigned_abs() <= 2)
+        {
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                decompose_fold_neon::sparse_mul_acc_i16_neon(
+                    digit_plane.as_ptr(),
+                    acc.as_mut_ptr(),
+                    D,
+                    &challenge.positions,
+                    &challenge.coeffs,
+                );
+            }
+            #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+            unsafe {
+                decompose_fold_avx::sparse_mul_acc_i16_avx(
+                    digit_plane.as_ptr(),
+                    acc.as_mut_ptr(),
+                    D,
+                    &challenge.positions,
+                    &challenge.coeffs,
+                );
+            }
+            return;
+        }
+    }
+    sparse_mul_acc_i16_scalar::<D>(digit_plane, challenge, acc);
+}
+
 /// Precompute dense rotation table for a sparse challenge.
 ///
 /// `table[c]` holds the small signed coefficients of `challenge * X^c` in the ring
@@ -385,15 +515,21 @@ pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     coeff_accum: [i32; D],
     modulus: u128,
 ) -> CyclotomicRing<F, D> {
-    let coeffs = from_fn(|k| {
+    CyclotomicRing::from_coefficients(signed_accum_to_coefficients(coeff_accum, modulus))
+}
+
+fn signed_accum_to_coefficients<F: CanonicalField, const D: usize>(
+    coeff_accum: [i32; D],
+    modulus: u128,
+) -> [F; D] {
+    from_fn(|k| {
         let v = coeff_accum[k];
         if v >= 0 {
             F::from_canonical_u128_reduced(v as u128)
         } else {
             F::from_canonical_u128_reduced(modulus - ((-v) as u128))
         }
-    });
-    CyclotomicRing::from_coefficients(coeffs)
+    })
 }
 
 pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
@@ -406,10 +542,14 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
         .map(|coeff| coeff.unsigned_abs())
         .max()
         .unwrap_or(0);
-    let z_folded_rings = cfg_iter!(centered_coeffs)
-        .map(|coeff_accum| signed_accum_to_ring::<F, D>(*coeff_accum, modulus))
+    let z_folded_coeffs = cfg_iter!(centered_coeffs)
+        .map(|coeff_accum| signed_accum_to_coefficients::<F, D>(*coeff_accum, modulus))
         .collect();
-    DecomposeFoldWitness::from_parts(z_folded_rings, centered_coeffs, centered_inf_norm)
+    DecomposeFoldWitness::from_coefficient_parts(
+        z_folded_coeffs,
+        centered_coeffs,
+        centered_inf_norm,
+    )
 }
 
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.
@@ -447,438 +587,5 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::rotated_accum::{
-        decompose_ring_full_challenge_accumulate, should_use_rotated_challenge,
-    };
-    use super::{
-        balanced_ring_decompose_fold_partitioned, decompose_ring_interleaved,
-        fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_scalar, DecomposeParams,
-    };
-    use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallenge;
-    use akita_field::CanonicalField;
-    use akita_field::{Fp64, Prime128Offset275};
-    use akita_types::sis::compute_num_digits_field_width;
-
-    /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
-    /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /
-    /// AVX-512). Restricted to `|coeff| <= 2` so the SIMD fast path fires.
-    /// `D = 128` matches typical small-field schedules and gives both kernels
-    /// multiple full-width iterations to chew through.
-    #[test]
-    fn sparse_mul_acc_simd_matches_scalar_small_coeffs() {
-        const D: usize = 128;
-
-        // Construct a small-coefficient challenge that hits both positive and
-        // negative paths for both magnitudes 1 and 2. Positions cover both the
-        // pure-prefix (split == D, no wrap) and the wrap-around case.
-        let positions: Vec<u32> = (0..32u32).map(|k| k * 4).collect();
-        let coeffs: Vec<i8> = (0..32)
-            .map(|k| match k % 4 {
-                0 => 1,
-                1 => -1,
-                2 => 2,
-                _ => -2,
-            })
-            .collect();
-        let challenge = SparseChallenge {
-            positions: positions.into(),
-            coeffs: coeffs.into(),
-        };
-
-        let digit_plane: [i8; D] = std::array::from_fn(|k| (((7 * k as i64) % 13) - 6) as i8);
-
-        let mut simd_acc = [0i32; D];
-        let mut scalar_acc = [0i32; D];
-
-        sparse_mul_acc::<D>(&digit_plane, &challenge, &mut simd_acc);
-        sparse_mul_acc_scalar::<D>(&digit_plane, &challenge, &mut scalar_acc);
-
-        assert_eq!(
-            simd_acc, scalar_acc,
-            "SIMD sparse_mul_acc disagreed with scalar reference"
-        );
-    }
-
-    /// Edge case: challenge with `pos == 0` so `split == D` and the second
-    /// (wrap) segment is empty.
-    #[test]
-    fn sparse_mul_acc_simd_zero_position() {
-        const D: usize = 64;
-        let challenge = SparseChallenge {
-            positions: vec![0].into(),
-            coeffs: vec![1].into(),
-        };
-        let digit_plane: [i8; D] = std::array::from_fn(|k| (k as i8) - 32);
-
-        let mut simd_acc = [0i32; D];
-        let mut scalar_acc = [0i32; D];
-        sparse_mul_acc::<D>(&digit_plane, &challenge, &mut simd_acc);
-        sparse_mul_acc_scalar::<D>(&digit_plane, &challenge, &mut scalar_acc);
-
-        assert_eq!(simd_acc, scalar_acc);
-    }
-
-    /// Edge case: challenge with `pos == D - 1` so `split == 1` and the
-    /// post-split (wrap) segment is the bulk of the work.
-    #[test]
-    fn sparse_mul_acc_simd_max_position() {
-        const D: usize = 64;
-        let challenge = SparseChallenge {
-            positions: vec![(D - 1) as u32].into(),
-            coeffs: vec![-2].into(),
-        };
-        let digit_plane: [i8; D] = std::array::from_fn(|k| ((k as i8) - 32).wrapping_mul(3));
-
-        let mut simd_acc = [0i32; D];
-        let mut scalar_acc = [0i32; D];
-        sparse_mul_acc::<D>(&digit_plane, &challenge, &mut simd_acc);
-        sparse_mul_acc_scalar::<D>(&digit_plane, &challenge, &mut scalar_acc);
-
-        assert_eq!(simd_acc, scalar_acc);
-    }
-
-    #[test]
-    fn fused_full_challenge_accumulate_matches_generic_sparse_path() {
-        type F = Fp64<4294967197>;
-        const D: usize = 32;
-        let num_digits = 4;
-        let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-            let v = ((7 * k as i64) % 17) - 8;
-            F::from_i64(v)
-        }));
-        let challenge = SparseChallenge {
-            positions: (0..D as u32).collect(),
-            coeffs: (0..D)
-                .map(|k| match k % 5 {
-                    0 => -3,
-                    1 => -1,
-                    2 => 1,
-                    3 => 2,
-                    _ => 4,
-                })
-                .collect(),
-        };
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let log_basis = 3u32;
-        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
-            num_digits, log_basis, q,
-        );
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-        };
-
-        let mut generic_digits = vec![[0i8; D]; num_digits];
-        decompose_ring_interleaved::<F, D>(&ring, &mut generic_digits, num_digits, &params);
-        let mut generic_acc = vec![[0i32; D]; num_digits];
-        for digit in 0..num_digits {
-            sparse_mul_acc::<D>(&generic_digits[digit], &challenge, &mut generic_acc[digit]);
-        }
-
-        let mut rotated = vec![[0i16; D]; D];
-        fill_rotated_challenge::<D>(&mut rotated, &challenge);
-        let mut fused_acc = vec![[0i32; D]; num_digits];
-        decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
-
-        assert_eq!(fused_acc, generic_acc);
-    }
-
-    #[test]
-    fn partitioned_full_challenge_accumulate_matches_generic_sparse_path() {
-        type F = Fp64<4294967197>;
-        const D: usize = 32;
-        let num_positions_per_block = 3;
-        let num_digits = 4;
-        let coeffs: Vec<_> = (0..6)
-            .map(|idx| {
-                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-                    let v = (((idx * 11 + k * 7) as i64) % 19) - 9;
-                    F::from_i64(v)
-                }))
-            })
-            .collect();
-        let challenges = vec![
-            SparseChallenge {
-                positions: (0..D as u32).collect(),
-                coeffs: (0..D)
-                    .map(|k| match k % 4 {
-                        0 => -2,
-                        1 => -1,
-                        2 => 1,
-                        _ => 3,
-                    })
-                    .collect(),
-            },
-            SparseChallenge {
-                positions: (0..D as u32).collect(),
-                coeffs: (0..D)
-                    .map(|k| match k % 5 {
-                        0 => -3,
-                        1 => -1,
-                        2 => 1,
-                        3 => 2,
-                        _ => 4,
-                    })
-                    .collect(),
-            },
-        ];
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let log_basis = 3u32;
-        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
-            num_digits, log_basis, q,
-        );
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-        };
-
-        let fused = balanced_ring_decompose_fold_partitioned::<F, D>(
-            &coeffs,
-            &challenges,
-            num_positions_per_block,
-            num_digits,
-            &params,
-        );
-
-        let mut generic = vec![[0i32; D]; num_positions_per_block * num_digits];
-        let mut digit_buf = vec![[0i8; D]; num_digits];
-        for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * num_positions_per_block;
-            for local_idx in 0..num_positions_per_block {
-                let ring = &coeffs[block_start + local_idx];
-                decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
-                let base = local_idx * num_digits;
-                for digit in 0..num_digits {
-                    sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut generic[base + digit]);
-                }
-            }
-        }
-
-        assert_eq!(fused, generic);
-    }
-
-    #[test]
-    fn partitioned_high_density_d32_challenge_uses_rotated_path() {
-        type F = Fp64<4294967197>;
-        const D: usize = 32;
-        let num_positions_per_block = 3;
-        let num_digits = 4;
-        let coeffs: Vec<_> = (0..6)
-            .map(|idx| {
-                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-                    let v = (((idx * 13 + k * 5) as i64) % 23) - 11;
-                    F::from_i64(v)
-                }))
-            })
-            .collect();
-        let high_density = SparseChallenge {
-            positions: vec![
-                0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-                25, 26, 27, 28, 29, 30, 31,
-            ]
-            .into(),
-            coeffs: vec![
-                2, 2, -1, 4, 1, -1, 5, 4, -3, -4, -3, -6, 2, -8, -4, -3, -7, -3, 4, -1, 4, -4, 5,
-                -2, -4, 6, 6, -3, 4, 4,
-            ]
-            .into(),
-        };
-        let sparse = SparseChallenge {
-            positions: vec![1, 7, 19].into(),
-            coeffs: vec![2, -1, 3].into(),
-        };
-        assert!(should_use_rotated_challenge::<D>(&high_density));
-        assert!(!should_use_rotated_challenge::<D>(&sparse));
-        let challenges = vec![high_density, sparse];
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let log_basis = 3u32;
-        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
-            num_digits, log_basis, q,
-        );
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-        };
-
-        let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
-            &coeffs,
-            &challenges,
-            num_positions_per_block,
-            num_digits,
-            &params,
-        );
-
-        let mut generic = vec![[0i32; D]; num_positions_per_block * num_digits];
-        let mut digit_buf = vec![[0i8; D]; num_digits];
-        for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * num_positions_per_block;
-            for local_idx in 0..num_positions_per_block {
-                let ring = &coeffs[block_start + local_idx];
-                decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
-                let base = local_idx * num_digits;
-                for digit in 0..num_digits {
-                    sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut generic[base + digit]);
-                }
-            }
-        }
-
-        assert_eq!(mixed, generic);
-    }
-
-    #[test]
-    fn partitioned_high_density_d64_challenge_uses_rotated_path() {
-        type F = Fp64<4294967197>;
-        const D: usize = 64;
-        let num_positions_per_block = 2;
-        let num_digits = 3;
-        let coeffs: Vec<_> = (0..4)
-            .map(|idx| {
-                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-                    let v = (((idx * 17 + k * 7) as i64) % 31) - 15;
-                    F::from_i64(v)
-                }))
-            })
-            .collect();
-        let high_density = SparseChallenge {
-            positions: (0..42u32).collect(),
-            coeffs: (0..42)
-                .map(|k| match k % 4 {
-                    0 => -2,
-                    1 => -1,
-                    2 => 1,
-                    _ => 2,
-                })
-                .collect(),
-        };
-        let sparse = SparseChallenge {
-            positions: vec![1, 17, 33, 49].into(),
-            coeffs: vec![2, -1, 1, -2].into(),
-        };
-        assert!(should_use_rotated_challenge::<D>(&high_density));
-        assert!(!should_use_rotated_challenge::<D>(&sparse));
-        let challenges = vec![high_density, sparse];
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let log_basis = 4u32;
-        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
-            num_digits, log_basis, q,
-        );
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-        };
-
-        let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
-            &coeffs,
-            &challenges,
-            num_positions_per_block,
-            num_digits,
-            &params,
-        );
-
-        let mut generic = vec![[0i32; D]; num_positions_per_block * num_digits];
-        let mut digit_buf = vec![[0i8; D]; num_digits];
-        for (block_idx, challenge) in challenges.iter().enumerate() {
-            let block_start = block_idx * num_positions_per_block;
-            for local_idx in 0..num_positions_per_block {
-                let ring = &coeffs[block_start + local_idx];
-                decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
-                let base = local_idx * num_digits;
-                for digit in 0..num_digits {
-                    sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut generic[base + digit]);
-                }
-            }
-        }
-
-        assert_eq!(mixed, generic);
-    }
-
-    #[test]
-    fn fp128_overflow_paths_match_direct_and_fused_sparse_path() {
-        type F = Prime128Offset275;
-        const D: usize = 32;
-
-        let log_basis = 4u32;
-        let num_digits = compute_num_digits_field_width(128, log_basis);
-        let q = (-F::one()).to_canonical_u128() + 1;
-        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
-            num_digits, log_basis, q,
-        );
-        let i128_max = i128::MAX as u128;
-        let boundary_values = [
-            0,
-            threshold,
-            threshold + 1,
-            q - i128_max - 1,
-            q - i128_max,
-            q - 1,
-        ];
-        let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-            F::from_canonical_u128_reduced(boundary_values[k % boundary_values.len()])
-        }));
-        let challenge = SparseChallenge {
-            positions: (0..D as u32).collect(),
-            coeffs: (0..D)
-                .map(|k| match k % 5 {
-                    0 => -3,
-                    1 => -1,
-                    2 => 1,
-                    3 => 2,
-                    _ => 4,
-                })
-                .collect(),
-        };
-        let params = DecomposeParams {
-            threshold,
-            q,
-            mask: (1i128 << log_basis) - 1,
-            half_b: 1i128 << (log_basis - 1),
-            b_val: 1i128 << log_basis,
-            log_basis,
-            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
-        };
-
-        assert!(
-            params.overflow_possible,
-            "test must exercise the overflow path"
-        );
-
-        let mut actual_digits = vec![[0i8; D]; num_digits];
-        decompose_ring_interleaved::<F, D>(&ring, &mut actual_digits, num_digits, &params);
-        let mut expected_digits = vec![[0i8; D]; num_digits];
-        ring.balanced_decompose_pow2_i8_into(&mut expected_digits, log_basis);
-        assert_eq!(actual_digits, expected_digits);
-
-        let mut generic_acc = vec![[0i32; D]; num_digits];
-        for digit in 0..num_digits {
-            sparse_mul_acc::<D>(&actual_digits[digit], &challenge, &mut generic_acc[digit]);
-        }
-
-        let mut rotated = vec![[0i16; D]; D];
-        fill_rotated_challenge::<D>(&mut rotated, &challenge);
-        let mut fused_acc = vec![[0i32; D]; num_digits];
-        decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
-        assert_eq!(fused_acc, generic_acc);
-    }
-}
+#[path = "tests.rs"]
+mod tests;

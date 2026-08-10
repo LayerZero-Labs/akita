@@ -127,6 +127,31 @@ because the matrices overlap. An initialized larger prefix covers a smaller
 request with the same field profile, ring dimension, and transform domain.
 Concurrent construction of the same key is single-flight.
 
+The execution plan describes every matrix operation. The selected backend then
+decides which operations retain NTT slots. CPU ring switch operations above the
+streaming threshold compute transform chunks from the public matrix and do not
+prewarm a complete slot. Memory reporting uses the same decision, so its total
+matches the slots that prewarming can leave resident.
+
+Prepared state stays warm across proofs by default. A caller may use
+`ReleaseRootNttAfterFold` when it owns an isolated root cache and wants to free
+it before the recursive suffix. Release removes built shared matrix keys and
+deduplicates clusters that share one physical cache owner. Small compression
+NTT entries stay resident. Existing readers remain valid through their `Arc`.
+Release does not cancel construction already in progress, so a caller that
+needs an empty shared matrix cache must prevent new construction during the
+release boundary.
+
+A normal lifecycle is:
+
+```text
+prepare empty backend state
+prewarm retained requirements and skip streamed requirements
+run the proof and retain built slots for reuse
+optionally release shared matrix state at an exclusive root boundary
+reuse the prepared setup; released shared slots rebuild at the next exact extent
+```
+
 The terminal verifier keeps its separate exact-negacyclic cache and adds the
 i16 tail only when the checked CRT bound requires it. Compression execution
 uses its compression-aware cache path and dimension policy. Neither namespace

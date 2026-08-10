@@ -1,7 +1,7 @@
 use akita_config::{
     policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
-use akita_planner::{derive_standalone_precommit_profile, find_schedule};
+use akita_planner::{find_schedule, plan_standalone_precommit};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
@@ -104,12 +104,14 @@ fn main() -> Result<(), akita_field::AkitaError> {
     println!("scalar recursive request rejected as expected: {scalar_recursive_error}");
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let descriptor = derive_standalone_precommit_profile(
+    let descriptor = plan_standalone_precommit(
         precommit_layout,
         &direct_policy,
         OneHot::root_honest_fold_policy(),
         OneHot::ring_challenge_config,
-    )?;
+    )?
+    .selected
+    .profile;
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],

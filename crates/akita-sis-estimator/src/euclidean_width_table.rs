@@ -6,7 +6,7 @@ use crate::{
     cost::{CostValue, EstimateTag, LatticeCost, LogCost},
     error::{EstimatorError, Result},
     estimate,
-    width_table::{D128_SEARCH_CAP, DEFAULT_MAX_RANK, DEFAULT_SEARCH_CAP, RING_DIMS},
+    width_table::{D128_SEARCH_CAP, DEFAULT_MAX_RANK, DEFAULT_SEARCH_CAP},
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -14,17 +14,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Current shipped L2 table target security level.
 pub const DEFAULT_EUCLIDEAN_TARGET_BITS: f64 = 128.0;
-/// Smallest squared-collision power-of-two bucket in the shipped L2 table.
-pub const MIN_LOG_BUCKET: u32 = 1;
-/// Largest squared-collision power-of-two bucket in the shipped L2 table.
-pub const MAX_LOG_BUCKET: u32 = 84;
-/// Modulus families covered by Akita SIS table generation.
-pub const FAMILIES: &[AkitaModulusProfileId] = &[
+/// Exact modulus domain owned by the independent Euclidean table.
+pub const EUCLIDEAN_FAMILIES: &[AkitaModulusProfileId] = &[
     AkitaModulusProfileId::Q32Offset99,
     AkitaModulusProfileId::Q64Offset59,
     AkitaModulusProfileId::Q128OffsetA7F7,
 ];
-
+/// Exact ring-dimension domain owned by the independent Euclidean table.
+pub const EUCLIDEAN_RING_DIMS: &[u32] = &[32, 64, 128, 256, 512];
+/// Smallest squared-collision power-of-two bucket in the shipped L2 table.
+pub const MIN_LOG_BUCKET: u32 = 1;
+/// Largest squared-collision power-of-two bucket in the shipped L2 table.
+pub const MAX_LOG_BUCKET: u32 = 84;
 /// One Euclidean max-width generation request.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EuclideanWidthTableConfig {
@@ -45,8 +46,8 @@ pub struct EuclideanWidthTableConfig {
 impl Default for EuclideanWidthTableConfig {
     fn default() -> Self {
         Self {
-            families: FAMILIES.to_vec(),
-            ring_dims: RING_DIMS.to_vec(),
+            families: EUCLIDEAN_FAMILIES.to_vec(),
+            ring_dims: EUCLIDEAN_RING_DIMS.to_vec(),
             collision_l2_sq: l2_table_collision_keys(),
             max_rank: DEFAULT_MAX_RANK,
             target_bits: DEFAULT_EUCLIDEAN_TARGET_BITS,
@@ -58,8 +59,8 @@ impl Default for EuclideanWidthTableConfig {
 /// Return whether `config` is the complete production L2 SIS width-table job.
 #[must_use]
 pub fn is_full_euclidean_width_table_config(config: &EuclideanWidthTableConfig) -> bool {
-    same_set(&config.families, FAMILIES)
-        && same_set(&config.ring_dims, RING_DIMS)
+    same_set(&config.families, EUCLIDEAN_FAMILIES)
+        && same_set(&config.ring_dims, EUCLIDEAN_RING_DIMS)
         && same_set(&config.collision_l2_sq, &l2_table_collision_keys())
         && config.max_rank == DEFAULT_MAX_RANK
         && config.target_bits == DEFAULT_EUCLIDEAN_TARGET_BITS
@@ -473,10 +474,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn collision_keys_match_power_of_two_contract() {
-        assert!(l2_table_collision_keys().contains(&2));
-        assert!(l2_table_collision_keys().contains(&(1u128 << 84)));
-        assert_eq!(l2_table_collision_keys().len(), 84);
+    fn production_collision_keys_are_exact_power_of_two_buckets() {
+        assert_eq!(l2_table_collision_keys(), power_of_two_collision_keys());
+        assert_eq!(l2_table_collision_keys().first(), Some(&(1u128 << 1)));
+        assert_eq!(l2_table_collision_keys().last(), Some(&(1u128 << 84)));
     }
 
     #[test]

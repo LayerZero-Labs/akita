@@ -24,6 +24,7 @@
 
 pub mod ajtai_key;
 pub mod compression;
+mod coverage;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
 mod generated_l2_sis_table;
@@ -35,17 +36,20 @@ mod physical_l2;
 
 pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
-    sis_role_dimension_supported, sis_table_key_for_linf_bound, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole,
-    SisModulusProfileId, SisRoleCell, SisSecurityPolicyId, SisTableDigest, SisTableKey,
-    A_ROLE_RING_DIMS, BD_ROLE_RING_DIMS, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY,
-    GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES, SUPPORTED_SIS_SECURITY_POLICIES,
+    sis_table_key_for_linf_bound, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
+    SisTableDigest, SisTableKey, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY,
+    SUPPORTED_SIS_SECURITY_POLICIES,
+};
+pub use coverage::{
+    sis_role_cell, sis_role_cells, sis_role_dimension_supported, SisRoleCell,
+    GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES, SIS_MAX_MODULE_RANK, SIS_REQUIRED_MAX_WIDTH,
 };
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_field_width, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
-    num_digits_for_bound, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    projected_role_ring_count,
+    num_digits_for_bound, num_digits_inner, num_digits_inner_for_bound, num_digits_open,
+    num_digits_setup_prefix_commit, projected_role_ring_count,
 };
 pub use honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, DigitSnapCalibration, HonestFoldPolicy, HonestFoldPolicySpec,

@@ -53,7 +53,10 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: profile/akita-recursion
-          shared-key: ci-jolt-verifier-profile-smoke
+          # The recursion workspace depends on Akita crates outside its own
+          # workspace root. Never restore their target artifacts across source
+          # revisions, or Cargo can combine stale types with current schedules.
+          shared-key: ci-jolt-verifier-profile-smoke-${{ github.sha }}
           cache-on-failure: true
       - name: Test AkitaJoltInputs blob encode/decode (akita-recursion-glue)
         run: cargo test --release -p akita-recursion-glue

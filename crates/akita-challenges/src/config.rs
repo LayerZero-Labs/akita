@@ -35,13 +35,17 @@ macro_rules! production_fold_challenge_ring_dims {
 
 production_fold_challenge_ring_dims!(64, 128, 256, 512, 1024, 2048);
 
-const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize)] = &[
-    (64, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT),
-    (128, 31, 0),
-    (256, 23, 0),
-    (512, 19, 0),
-    (1024, 16, 0),
-    (2048, 14, 0),
+// The last coordinate is floor(log2(support)). It lets the verifier and the
+// offline planner validate the fixed production families without repeatedly
+// evaluating dozens of floating-point logarithms. The tests below recompute
+// every value from the canonical support formula.
+const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize, u32)] = &[
+    (64, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT, 128),
+    (128, 31, 0, 129),
+    (256, 23, 0, 131),
+    (512, 19, 0, 132),
+    (1024, 16, 0, 131),
+    (2048, 14, 0, 131),
 ];
 
 /// Fixed-weight sparse ring fold challenge family.
@@ -70,8 +74,8 @@ impl SparseChallengeConfig {
     pub fn production_for_ring_dim(ring_d: usize) -> Option<Self> {
         PRODUCTION_FOLD_CHALLENGE_LADDER
             .iter()
-            .find(|(d, _, _)| *d == ring_d)
-            .map(|(_, pm1, pm2)| Self {
+            .find(|(d, _, _, _)| *d == ring_d)
+            .map(|(_, pm1, pm2, _)| Self {
                 count_pm1: *pm1,
                 count_pm2: *pm2,
             })
@@ -160,6 +164,19 @@ impl SparseChallengeConfig {
         ring_dim: usize,
         required_bits: u32,
     ) -> Result<(), &'static str> {
+        if let Some((_, _, _, support_floor_bits)) =
+            PRODUCTION_FOLD_CHALLENGE_LADDER
+                .iter()
+                .find(|(d, pm1, pm2, _)| {
+                    *d == ring_dim && *pm1 == self.count_pm1 && *pm2 == self.count_pm2
+                })
+        {
+            return if required_bits <= *support_floor_bits {
+                Ok(())
+            } else {
+                Err("sparse challenge family has insufficient min-entropy for security floor")
+            };
+        }
         __dispatch_fold_challenge_ring_dim!(self, ring_dim, required_bits)
     }
 
@@ -203,9 +220,43 @@ mod entropy_tests {
 
     #[test]
     fn production_ladder_matches_proof_optimized_dims() {
-        for &d in PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
+        assert_eq!(
+            PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len(),
+            PRODUCTION_FOLD_CHALLENGE_LADDER.len(),
+            "the production dimension and challenge ladders must have identical coverage"
+        );
+        for (&d, &(_, _, _, support_floor_bits)) in PRODUCTION_FOLD_CHALLENGE_RING_DIMS
+            .iter()
+            .zip(PRODUCTION_FOLD_CHALLENGE_LADDER)
+        {
             let cfg = SparseChallengeConfig::production_for_ring_dim(d).expect("ladder entry");
             assert!(cfg.validate_for_ring_dim(d).is_ok(), "d={d}");
+            let computed_floor = match d {
+                64 => cfg.log2_support_bits::<64>().floor() as u32,
+                128 => cfg.log2_support_bits::<128>().floor() as u32,
+                256 => cfg.log2_support_bits::<256>().floor() as u32,
+                512 => cfg.log2_support_bits::<512>().floor() as u32,
+                1024 => cfg.log2_support_bits::<1024>().floor() as u32,
+                2048 => cfg.log2_support_bits::<2048>().floor() as u32,
+                _ => unreachable!("production dimension list is exhaustive"),
+            };
+            assert_eq!(computed_floor, support_floor_bits, "d={d}");
+            for required_bits in 0..=support_floor_bits + 2 {
+                let generic = match d {
+                    64 => cfg.validate_min_entropy::<64>(required_bits),
+                    128 => cfg.validate_min_entropy::<128>(required_bits),
+                    256 => cfg.validate_min_entropy::<256>(required_bits),
+                    512 => cfg.validate_min_entropy::<512>(required_bits),
+                    1024 => cfg.validate_min_entropy::<1024>(required_bits),
+                    2048 => cfg.validate_min_entropy::<2048>(required_bits),
+                    _ => unreachable!("production dimension list is exhaustive"),
+                };
+                assert_eq!(
+                    cfg.validate_min_entropy_for_ring_dim(d, required_bits),
+                    generic,
+                    "fast and generic entropy checks disagree for d={d}, required={required_bits}"
+                );
+            }
         }
     }
 
@@ -260,7 +311,7 @@ mod entropy_tests {
         assert_eq!(uni256.challenge_l2_sq_max(), 23);
         assert_eq!(uni256.nonzero_count_max(), 23);
 
-        for (d, pm1, pm2) in PRODUCTION_FOLD_CHALLENGE_LADDER {
+        for (d, pm1, pm2, _) in PRODUCTION_FOLD_CHALLENGE_LADDER {
             if *d >= 512 {
                 let cfg = SparseChallengeConfig {
                     count_pm1: *pm1,

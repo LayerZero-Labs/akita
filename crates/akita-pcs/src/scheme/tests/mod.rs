@@ -3,7 +3,7 @@
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
-use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_prover::{
@@ -35,12 +35,10 @@ type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::OneHot;
-type PrecommittedOneHotCfg = PrecommittedCommitmentConfig<OneHotCfg>;
 const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
-type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
 type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
@@ -299,10 +297,13 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
@@ -355,16 +356,12 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
         .collect()
 }
 
-fn debug_make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<OneHotF, u8> {
-    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-    let ring_dimension = layout.d_a();
-    let num_vars = layout.position_index_bits()
-        + layout.block_index_bits()
-        + ring_dimension.trailing_zeros() as usize;
-    // `total_ring` ring elements of degree D cover `2^num_vars` field elements,
-    // grouped into `2^num_vars / K` one-hot chunks.
-    let total_field = total_ring * ring_dimension;
-    assert_eq!(total_field, 1usize << num_vars);
+fn debug_make_onehot_poly(
+    num_vars: usize,
+    ring_dimension: usize,
+    seed: u64,
+) -> OneHotPoly<OneHotF, u8> {
+    let total_field = 1usize << num_vars;
     let total_chunks = total_field / BENCH_ONEHOT_K;
 
     let mut rng = StdRng::seed_from_u64(seed);
@@ -379,32 +376,29 @@ fn debug_make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPol
 fn opening_from_poly_at<const D_OPEN: usize>(
     poly: &OneHotPoly<OneHotF, u8>,
     point: &[OneHotF],
-    layout: &CommittedGroupParams,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
 ) -> OneHotF {
     let alpha_bits = D_OPEN.trailing_zeros() as usize;
-    assert_eq!(
-        point.len(),
-        alpha_bits + layout.position_index_bits() + layout.block_index_bits()
-    );
 
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.num_positions_per_block,
-        layout.num_live_blocks,
+        num_positions_per_block,
+        num_live_blocks,
         BasisMode::Lagrange,
     )
     .expect("opening point shape should match layout");
 
     let opening = OpeningFoldKernel::<_, OneHotF, D_OPEN>::evaluate_and_fold(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.num_positions_per_block,
+            num_positions_per_block,
         },
     )
     .expect("evaluate_and_fold");
@@ -418,13 +412,20 @@ fn opening_from_poly_at<const D_OPEN: usize>(
 fn opening_from_poly(
     poly: &OneHotPoly<OneHotF, u8>,
     point: &[OneHotF],
-    layout: &CommittedGroupParams,
+    ring_dimension: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
 ) -> OneHotF {
     akita_types::dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         OneHotF,
-        layout.d_a(),
-        |D_OPEN| Ok(opening_from_poly_at::<D_OPEN>(poly, point, layout))
+        ring_dimension,
+        |D_OPEN| Ok(opening_from_poly_at::<D_OPEN>(
+            poly,
+            point,
+            num_positions_per_block,
+            num_live_blocks,
+        ))
     )
     .expect("supported one-hot opening ring dimension")
 }

@@ -63,8 +63,11 @@ macro_rules! impl_multi_chunk_companion {
                     max_num_batched_polys,
                 )
             }
-            fn basis_range() -> (u32, u32) {
-                <$base as $crate::CommitmentConfig>::basis_range()
+            fn opening_basis_range() -> (u32, u32) {
+                <$base as $crate::CommitmentConfig>::opening_basis_range()
+            }
+            fn inner_basis_range() -> (u32, u32) {
+                <$base as $crate::CommitmentConfig>::inner_basis_range()
             }
             fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
                 <$base as $crate::CommitmentConfig>::root_honest_fold_policy()
@@ -103,9 +106,7 @@ pub mod setup_prefix_slots;
 pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use precommitted_commitment::{
-    committed_group_params, committed_group_profile, PrecommittedCommitmentConfig,
-};
+pub use precommitted_commitment::committed_group_profile;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
@@ -125,6 +126,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: Cfg::selection_policy(),
+        recursive_split_search_policy:
+            akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
@@ -138,7 +141,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         selective_l2_fold_caps: Cfg::SELECTIVE_L2_FOLD_CAPS,
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
-        basis_range: Cfg::basis_range(),
+        inner_basis_range: Cfg::inner_basis_range(),
+        opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
@@ -264,9 +268,15 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::D
     }
 
-    /// Inclusive `(min, max)` log-basis search range.
+    /// Inclusive `(min, max)` B/D opening and folded-response basis range.
     #[doc(hidden)]
-    fn basis_range() -> (u32, u32);
+    fn opening_basis_range() -> (u32, u32);
+
+    /// Inclusive `(min, max)` A/source decomposition basis range.
+    #[doc(hidden)]
+    fn inner_basis_range() -> (u32, u32) {
+        Self::opening_basis_range()
+    }
 
     /// Group-owned honest sizing rule used only during offline planning.
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec;
@@ -311,14 +321,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// schedule resolution rejects catalog-backed requests.
     fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
         None
-    }
-
-    /// Whether multi-group `commit_final_group` may run under this config adapter.
-    ///
-    /// Precommit adapters return `false`; multi-group final commits
-    /// require the regular preset config.
-    fn supports_multi_group_final_commit() -> bool {
-        true
     }
 
     /// Build the runtime [`FoldSchedule`] for `key`.
@@ -459,7 +461,7 @@ mod tests {
             Ok(SetupMatrixCapacity::minimum())
         }
 
-        fn basis_range() -> (u32, u32) {
+        fn opening_basis_range() -> (u32, u32) {
             (3, 3)
         }
 
@@ -635,7 +637,7 @@ mod fp128_policy_tests {
             <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 ..
             }
         ));
@@ -649,7 +651,7 @@ mod fp128_policy_tests {
             <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 ..
             }
         ));
@@ -704,14 +706,8 @@ mod precommit_tests {
     fn exact_precommit_params_freeze_standalone_metadata() {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let singleton =
-            OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials()).expect("singleton");
-        let params =
-            <PrecommittedCommitmentConfig<fp128::OneHot> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )
-            .expect("precommitted group params");
-        let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
+        let precommitted =
+            committed_group_profile::<fp128::OneHot>(&group).expect("precommitted group profile");
         assert_eq!(
             precommitted.inner_commit_matrix.ring_dimension(),
             64,
@@ -722,21 +718,10 @@ mod precommit_tests {
             64,
             "adaptive precommits use the uniform suffix dimension for B"
         );
-        let root_basis = fp128::OneHot::basis_range().0;
+        let root_basis = fp128::OneHot::opening_basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);
         assert_eq!(precommitted.log_basis_outer, root_basis);
         assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
         assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
-    }
-
-    #[test]
-    fn precommit_config_rejects_prove_schedule() {
-        let layout = OpeningClaimsLayout::new(2, 1).expect("opening layout");
-        let err =
-            <PrecommittedCommitmentConfig<fp128::OneHot> as CommitmentConfig>::get_params_for_prove(
-                &layout,
-            )
-            .expect_err("precommit config must not prove");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

@@ -7,8 +7,9 @@ use akita_types::{
     RecursiveFoldStep, RingRole, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
-    DEFAULT_SIS_SECURITY_POLICY,
+    DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
+use std::sync::Arc;
 
 /// One empirically checked squared-norm cap for an exact later nonterminal
 /// fold candidate.
@@ -95,15 +96,42 @@ impl SelectionPolicyId {
     }
 }
 
+/// Catalog-bound recursive split traversal policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecursiveSplitSearchPolicy {
+    /// Traverse every feasible recursive witness split.
+    Exhaustive,
+    /// Search the two extremes and a fixed radius-two balance window for
+    /// states above twelve reduced variables.
+    BoundedBalancedExtremesV1,
+}
+
+impl RecursiveSplitSearchPolicy {
+    pub const fn tag(self) -> u32 {
+        match self {
+            Self::Exhaustive => 1,
+            Self::BoundedBalancedExtremesV1 => 2,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Exhaustive => "Exhaustive",
+            Self::BoundedBalancedExtremesV1 => "BoundedBalancedExtremesV1",
+        }
+    }
+}
+
 /// Catalog-bound ring-dimension schedule policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RingDimensionScheduleMode {
     /// Use one uniform A/B/D dimension from root through terminal.
     UniformDimension { ring_dimension: usize },
-    /// Search A over a bounded prefix, derive B/D by minimum rank, then use a uniform suffix.
+    /// Search exact A/B/D tuples over a bounded prefix, then use a monotone
+    /// sequence of uniform dimensions from the catalog-bound suffix domain.
     AdaptiveDimension {
         num_search_levels: usize,
-        uniform_suffix_dimension: usize,
+        suffix_dimensions: &'static [usize],
         potential_a_dimensions: &'static [usize],
         potential_b_dimensions: &'static [usize],
         potential_d_dimensions: &'static [usize],
@@ -145,6 +173,7 @@ impl RingDimensionScheduleMode {
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
     pub selection_policy: SelectionPolicyId,
+    pub recursive_split_search_policy: RecursiveSplitSearchPolicy,
     /// Optional host admission budget for materialized setup field elements.
     /// `None` leaves the deterministic public stream uncapped by protocol policy.
     pub setup_field_budget: Option<usize>,
@@ -166,7 +195,10 @@ pub struct PlannerPolicy {
     pub selective_l2_fold_caps: &'static [SelectiveL2FoldCap],
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
-    pub basis_range: (u32, u32),
+    /// Inclusive A/source decomposition basis domain at every level.
+    pub inner_basis_range: (u32, u32),
+    /// Inclusive B/D opening and folded-response basis domain.
+    pub opening_basis_range: (u32, u32),
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
@@ -175,6 +207,17 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
+    /// Number of physical witness chunks active at one fold level.
+    pub const fn chunks_at_level(&self, fold_level: usize) -> usize {
+        if self.witness_chunk.uses_multi_chunk()
+            && fold_level < self.witness_chunk.num_activated_levels
+        {
+            self.witness_chunk.num_chunks
+        } else {
+            1
+        }
+    }
+
     /// Return the measured L2 cap for this exact candidate geometry.
     pub fn selective_l2_cap_for_candidate(
         &self,
@@ -203,6 +246,7 @@ impl PlannerPolicy {
             })
             .map(|entry| entry.response_l2_sq_cap)
     }
+
     /// Whether a candidate fits the optional host setup budget.
     pub fn admits_setup_field_elements(&self, num_field_elements: usize) -> bool {
         self.setup_field_budget
@@ -236,59 +280,6 @@ impl PlannerPolicy {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
             })
-    }
-
-    /// Direct-only counterpart used when scalar schedules are cataloged under
-    /// the non-recursive family identity. It deliberately restores the
-    /// proof-payload objective: callers crossing from a grouped/recursive
-    /// adapter into the uniform scalar planner must not reuse a mixed-domain
-    /// setup-first policy.
-    pub fn direct_only(self) -> Self {
-        Self {
-            recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::for_policy(
-                false,
-                self.ring_dimension_schedule_mode,
-            ),
-            ..self
-        }
-    }
-
-    /// Number of chunks emitted by fold level `fold_level`.
-    pub fn chunks_at_level(&self, fold_level: usize) -> usize {
-        let mc = self.witness_chunk;
-        if mc.uses_multi_chunk() && fold_level < mc.num_activated_levels {
-            mc.num_chunks
-        } else {
-            1
-        }
-    }
-
-    /// Per-level witness chunk metadata.
-    pub fn witness_chunk_for_level(&self, fold_level: usize) -> ChunkedWitnessCfg {
-        let num_chunks = self.chunks_at_level(fold_level);
-        if num_chunks > 1 {
-            ChunkedWitnessCfg {
-                num_chunks,
-                num_activated_levels: self.witness_chunk.num_activated_levels,
-            }
-        } else {
-            ChunkedWitnessCfg::default()
-        }
-    }
-
-    /// Inclusive `(min, max)` `log_basis` values to evaluate at an absolute fold
-    /// level.
-    ///
-    /// The root fold is fixed to the configured minimum basis. Deeper folds can
-    /// search the full configured range, while the suffix DP separately enforces
-    /// non-decreasing bases across adjacent folds.
-    pub fn log_basis_search_range_at_level(&self, level: usize) -> (u32, u32) {
-        let (configured_min, max) = self.basis_range;
-        if level == 0 {
-            return (configured_min, configured_min);
-        }
-        (configured_min, max)
     }
 }
 
@@ -360,6 +351,16 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         ));
     }
     validate_selective_l2_caps(policy.selective_l2_fold_caps)?;
+    for (label, (min, max), supported_max) in [
+        ("opening", policy.opening_basis_range, MAX_I8_LOG_BASIS),
+        ("inner", policy.inner_basis_range, MAX_I16_LOG_BASIS),
+    ] {
+        if min == 0 || min > max || max > supported_max {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{label} basis range [{min}, {max}] is outside 1..={supported_max}"
+            )));
+        }
+    }
     policy.witness_chunk.validate()?;
     if policy.witness_chunk.num_activated_levels > MAX_RECURSION_DEPTH {
         return Err(AkitaError::InvalidSetup(format!(
@@ -385,7 +386,7 @@ fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), A
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
@@ -395,21 +396,25 @@ fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), A
                     "adaptive search currently requires exactly {ADAPTIVE_SEARCH_LEVELS} levels, got {num_search_levels}"
                 )));
             }
+            validate_dimension_list(policy, RingRole::Inner, suffix_dimensions)?;
             for (role, dimensions) in [
                 (RingRole::Inner, potential_a_dimensions),
                 (RingRole::Outer, potential_b_dimensions),
                 (RingRole::Opening, potential_d_dimensions),
             ] {
                 validate_dimension_list(policy, role, dimensions)?;
-                if !dimensions.contains(&uniform_suffix_dimension) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "adaptive {} domain must contain suffix D{uniform_suffix_dimension}",
-                        role_name(role)
-                    )));
+                for &suffix_dimension in suffix_dimensions {
+                    if !dimensions.contains(&suffix_dimension) {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "adaptive {} domain must contain suffix D{suffix_dimension}",
+                            role_name(role)
+                        )));
+                    }
                 }
-                if dimensions.iter().any(|&d| d < uniform_suffix_dimension) {
+                let minimum_suffix_dimension = suffix_dimensions[0];
+                if dimensions.iter().any(|&d| d < minimum_suffix_dimension) {
                     return Err(AkitaError::InvalidSetup(format!(
-                        "adaptive {} dimensions must be at least suffix D{uniform_suffix_dimension}",
+                        "adaptive {} dimensions must be at least minimum suffix D{minimum_suffix_dimension}",
                         role_name(role)
                     )));
                 }
@@ -499,7 +504,7 @@ fn validate_dimension_list(
 #[derive(Clone, Debug)]
 /// One fully priced non-terminal fold awaiting schedule materialization.
 pub struct CandidateFoldStep {
-    pub params: CommittedGroupParams,
+    pub params: Arc<CommittedGroupParams>,
     pub input_witness_len: usize,
     pub output_witness_len: usize,
     pub estimated_direct_payload_bytes: usize,
@@ -581,14 +586,14 @@ pub fn materialize_candidate_schedule(
             "cached schedule cost {cached_total} disagrees with materialized estimate {recomputed}"
         )));
     }
+    let root_params = Arc::unwrap_or_clone(root.params);
     let schedule = FoldSchedule {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    commitment: root.params.clone(),
+                    commitment: root_params.clone(),
                 },
-                precommitted_groups: root
-                    .params
+                precommitted_groups: root_params
                     .precommitted_groups
                     .iter()
                     .cloned()
@@ -597,25 +602,28 @@ pub fn materialize_candidate_schedule(
                         commitment,
                     })
                     .collect(),
-                open_commit_matrix: root.params.open_commit_matrix,
-                sparse_challenge_config: root.params.fold_challenge_config,
-                witness_partition: witness_partition(root.params.witness_chunk.num_chunks),
+                open_commit_matrix: root_params.open_commit_matrix,
+                sparse_challenge_config: root_params.fold_challenge_config,
+                witness_partition: witness_partition(root_params.witness_chunk.num_chunks),
             },
             input_witness_len: root.input_witness_len,
             output_witness_len: root.output_witness_len,
         },
         recursive_folds: folds
             .into_iter()
-            .map(|fold| RecursiveFoldStep {
-                params: RecursiveFoldParams {
-                    open_commit_matrix: fold.params.open_commit_matrix,
-                    sparse_challenge_config: fold.params.fold_challenge_config,
-                    incoming_setup_prefix: fold.params.setup_prefix.clone(),
-                    witness_partition: witness_partition(fold.params.witness_chunk.num_chunks),
-                    witness: fold.params,
-                },
-                input_witness_len: fold.input_witness_len,
-                output_witness_len: fold.output_witness_len,
+            .map(|fold| {
+                let params = Arc::unwrap_or_clone(fold.params);
+                RecursiveFoldStep {
+                    params: RecursiveFoldParams {
+                        open_commit_matrix: params.open_commit_matrix,
+                        sparse_challenge_config: params.fold_challenge_config,
+                        incoming_setup_prefix: params.setup_prefix.clone(),
+                        witness_partition: witness_partition(params.witness_chunk.num_chunks),
+                        witness: params,
+                    },
+                    input_witness_len: fold.input_witness_len,
+                    output_witness_len: fold.output_witness_len,
+                }
             })
             .collect(),
         terminal: TerminalFoldStep {
@@ -698,18 +706,24 @@ pub fn planned_next_witness_len(
                 .to_string(),
         ));
     }
+    let opening_batch =
+        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
+    let quotient_depth =
+        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open);
+    if params.setup_prefix.is_none() {
+        return WitnessLayout::try_scalar_live_coeff_len(
+            params,
+            &opening_batch,
+            num_chunks,
+            quotient_depth,
+        );
+    }
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
-    let opening_batch =
-        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let layout = WitnessLayout::new(
-        params,
-        &opening_batch,
-        num_chunks,
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
-    )?;
-    Ok(Some(layout.live_coeff_len()))
+    Ok(Some(
+        WitnessLayout::new(params, &opening_batch, num_chunks, quotient_depth)?.live_coeff_len(),
+    ))
 }
 
 /// Convenience policy used by config adapters.
@@ -739,6 +753,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy: SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
+            recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
             // This remains the uniform preset candidate. It is deliberately
@@ -747,7 +762,7 @@ mod tests {
             setup_prefix_inner_ring_dimension: 64,
             ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
                 potential_b_dimensions: SUFFIX_DIMENSIONS,
                 potential_d_dimensions: SUFFIX_DIMENSIONS,
@@ -764,7 +779,8 @@ mod tests {
             selective_l2_fold_caps: &[],
             claim_ext_degree: 1,
             chal_ext_degree: 1,
-            basis_range: (3, 6),
+            inner_basis_range: (3, 16),
+            opening_basis_range: (3, 6),
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         }
@@ -791,7 +807,7 @@ mod tests {
         let mut policy = adaptive_policy();
         policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels: 2,
-            uniform_suffix_dimension: 64,
+            suffix_dimensions: &[64],
             potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
             potential_b_dimensions: UNSUPPORTED_B_DIMENSIONS,
             potential_d_dimensions: SUFFIX_DIMENSIONS,
@@ -807,7 +823,7 @@ mod tests {
             let mut policy = adaptive_policy();
             policy.ring_dimension_schedule_mode = RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels,
-                uniform_suffix_dimension: 64,
+                suffix_dimensions: &[64],
                 potential_a_dimensions: A_DIMENSIONS_WITHOUT_GLOBAL_CARRIER,
                 potential_b_dimensions: SUFFIX_DIMENSIONS,
                 potential_d_dimensions: SUFFIX_DIMENSIONS,

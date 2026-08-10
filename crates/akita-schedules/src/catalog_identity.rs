@@ -54,13 +54,16 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     write_decomposition(&mut h, policy.decomposition);
     h.write_u64(policy.claim_ext_degree as u64);
     h.write_u64(policy.chal_ext_degree as u64);
-    h.write_u64(u64::from(policy.basis_range.0));
-    h.write_u64(u64::from(policy.basis_range.1));
+    h.write_u64(u64::from(policy.inner_basis_range.0));
+    h.write_u64(u64::from(policy.inner_basis_range.1));
+    h.write_u64(u64::from(policy.opening_basis_range.0));
+    h.write_u64(u64::from(policy.opening_basis_range.1));
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
+    h.write_u64(u64::from(policy.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, policy.setup_field_budget);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
@@ -84,13 +87,16 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     write_decomposition(&mut h, identity.decomposition);
     h.write_u64(identity.claim_ext_degree as u64);
     h.write_u64(identity.chal_ext_degree as u64);
-    h.write_u64(u64::from(identity.basis_range.0));
-    h.write_u64(u64::from(identity.basis_range.1));
+    h.write_u64(u64::from(identity.inner_basis_range.0));
+    h.write_u64(u64::from(identity.inner_basis_range.1));
+    h.write_u64(u64::from(identity.opening_basis_range.0));
+    h.write_u64(u64::from(identity.opening_basis_range.1));
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
+    h.write_u64(u64::from(identity.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, identity.setup_field_budget);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
@@ -127,6 +133,7 @@ struct CatalogIdentityExpectation {
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
     selection_policy: crate::SelectionPolicyId,
+    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     setup_field_budget: Option<usize>,
     min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
@@ -139,7 +146,8 @@ struct CatalogIdentityExpectation {
     decomposition: akita_types::DecompositionParams,
     claim_ext_degree: usize,
     chal_ext_degree: usize,
-    basis_range: (u32, u32),
+    inner_basis_range: (u32, u32),
+    opening_basis_range: (u32, u32),
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
@@ -158,6 +166,7 @@ impl CatalogIdentityExpectation {
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
             selection_policy: identity.selection_policy,
+            recursive_split_search_policy: identity.recursive_split_search_policy,
             setup_field_budget: identity.setup_field_budget,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
@@ -170,7 +179,8 @@ impl CatalogIdentityExpectation {
             decomposition: identity.decomposition,
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
-            basis_range: identity.basis_range,
+            inner_basis_range: identity.inner_basis_range,
+            opening_basis_range: identity.opening_basis_range,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
@@ -203,6 +213,7 @@ fn catalog_identity_expectation(
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
         selection_policy: policy.selection_policy,
+        recursive_split_search_policy: policy.recursive_split_search_policy,
         setup_field_budget: policy.setup_field_budget,
         min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
@@ -215,7 +226,8 @@ fn catalog_identity_expectation(
         decomposition: policy.decomposition,
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
-        basis_range: policy.basis_range,
+        inner_basis_range: policy.inner_basis_range,
+        opening_basis_range: policy.opening_basis_range,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
@@ -242,6 +254,7 @@ pub fn expected_catalog_identity(
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
         selection_policy: expected.selection_policy,
+        recursive_split_search_policy: expected.recursive_split_search_policy,
         setup_field_budget: expected.setup_field_budget,
         min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,
@@ -254,7 +267,8 @@ pub fn expected_catalog_identity(
         decomposition: expected.decomposition,
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
-        basis_range: expected.basis_range,
+        inner_basis_range: expected.inner_basis_range,
+        opening_basis_range: expected.opening_basis_range,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
@@ -422,16 +436,26 @@ fn validate_entry_dimensions(
             previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;
-        let expected_terminal = match mode {
-            RingDimensionScheduleMode::UniformDimension { ring_dimension } => ring_dimension,
+        let terminal_is_admitted = match mode {
+            RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+                terminal_d == ring_dimension
+            }
             RingDimensionScheduleMode::AdaptiveDimension {
-                uniform_suffix_dimension,
-                ..
-            } => uniform_suffix_dimension,
+                suffix_dimensions, ..
+            } => suffix_dimensions.contains(&terminal_d),
         };
-        if terminal_d != expected_terminal {
+        if !terminal_is_admitted {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal D{terminal_d} is not policy suffix D{expected_terminal} for key {:?}",
+                "generated terminal D{terminal_d} is outside the policy suffix domain for key {:?}",
+                entry.root.final_group.layout
+            )));
+        }
+        if matches!(mode, RingDimensionScheduleMode::AdaptiveDimension { .. })
+            && terminal_d > previous.d_a()
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated terminal D{terminal_d} exceeds predecessor A dimension D{} for key {:?}",
+                previous.d_a(),
                 entry.root.final_group.layout
             )));
         }
@@ -452,7 +476,7 @@ fn validate_level_dimensions(
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
@@ -467,7 +491,14 @@ fn validate_level_dimensions(
                             && dimensions.d_d() <= ceiling.d_d()
                     })
             } else {
-                dimensions == CommitmentRingDims::uniform(uniform_suffix_dimension)
+                dimensions.d_a() == dimensions.d_b()
+                    && dimensions.d_b() == dimensions.d_d()
+                    && suffix_dimensions.contains(&dimensions.d_a())
+                    && previous.is_none_or(|ceiling| {
+                        dimensions.d_a() <= ceiling.d_a()
+                            && dimensions.d_b() <= ceiling.d_b()
+                            && dimensions.d_d() <= ceiling.d_d()
+                    })
             }
         }
     };
@@ -597,14 +628,17 @@ fn write_ring_dimension_schedule_mode(h: &mut Fnv64, mode: RingDimensionSchedule
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
         } => {
             h.write_u64(1);
             h.write_u64(num_search_levels as u64);
-            h.write_u64(uniform_suffix_dimension as u64);
+            h.write_u64(suffix_dimensions.len() as u64);
+            for &dimension in suffix_dimensions {
+                h.write_u64(dimension as u64);
+            }
             for dimensions in [
                 potential_a_dimensions,
                 potential_b_dimensions,

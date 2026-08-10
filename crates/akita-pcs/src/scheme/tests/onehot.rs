@@ -1,45 +1,50 @@
 use super::*;
 
-type PrecommitCommitter = PrecommittedOneHotScheme;
-
 #[test]
-fn precommit_config_commit_returns_exact_frozen_layout() {
+fn profile_native_commit_group_returns_exact_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
-    let opening_batch = OpeningClaimsLayout::new(NV, GROUP_SIZE).expect("opening batch");
-    let layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&opening_batch)
-        .expect("precommit layout");
-    let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
+    let profile =
+        akita_config::committed_group_profile::<OneHotCfg>(&key).expect("precommit profile");
+    let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
-    let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
+    let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = PrecommitCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let (commitment, _hint) =
-        PrecommitCommitter::commit(&setup, &polys, &stack).expect("precommit");
-    let frozen_layout = akita_types::CommittedGroupProfile::from_params(key, &layout);
+        OneHotScheme::commit_group(&setup, &polys, &stack).expect("precommit");
+    let frozen_layout = commitment.profile;
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
         frozen_layout.num_positions_per_block,
-        layout.num_positions_per_block
+        profile.num_positions_per_block
     );
-    assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
-    assert_eq!(frozen_layout.log_basis_outer, OneHotCfg::basis_range().0);
+    assert_eq!(frozen_layout.num_live_blocks, profile.num_live_blocks);
+    assert_eq!(
+        frozen_layout.log_basis_outer,
+        OneHotCfg::opening_basis_range().0
+    );
     assert_eq!(
         frozen_layout.inner_commit_matrix.output_rank(),
-        layout.inner_commit_matrix.output_rank()
+        profile.inner_commit_matrix.output_rank()
     );
     assert_eq!(
         frozen_layout.outer_commit_matrix.output_rank(),
-        layout.outer_commit_matrix.output_rank()
+        profile.outer_commit_matrix.output_rank()
     );
     assert_eq!(
         commitment.rows().count(),
@@ -59,16 +64,21 @@ fn with_precommit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend>,
     ) -> R,
 ) -> R {
-    let setup = PrecommitCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let setup = OneHotScheme::setup_prover(max_num_vars, max_num_polys).expect("setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     run(&setup, &stack)
 }
 
 #[test]
-fn precommit_config_allows_independent_precommitted_groups() {
+fn profile_native_commit_group_allows_independent_groups() {
     const NV: usize = 16;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 2;
@@ -78,29 +88,23 @@ fn precommit_config_allows_independent_precommitted_groups() {
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
-    let pre_a_opening_batch = OpeningClaimsLayout::new(NV, PRE_A_SIZE).expect("precommit A batch");
-    let pre_b_opening_batch = OpeningClaimsLayout::new(NV, PRE_B_SIZE).expect("precommit B batch");
-    let pre_a_layout =
-        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
-            .expect("precommit A layout");
-    let pre_b_layout =
-        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
-            .expect("precommit B layout");
-    let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_1001)];
+    let pre_a_profile = akita_config::committed_group_profile::<OneHotCfg>(&pre_a_key)
+        .expect("precommit A profile");
+    let pre_b_profile = akita_config::committed_group_profile::<OneHotCfg>(&pre_b_key)
+        .expect("precommit B profile");
+    let pre_a_polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_1001)];
     let pre_b_polys = [
-        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2001),
-        debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2002),
+        debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_2001),
+        debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_2002),
     ];
 
     with_precommit_stack(NV, SETUP_CAPACITY_SIZE, |setup, stack| {
         let (pre_a_commitment, _pre_a_hint) =
-            PrecommitCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
+            OneHotScheme::commit_group(setup, &pre_a_polys, stack).expect("precommit A");
         let (pre_b_commitment, _pre_b_hint) =
-            PrecommitCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
-        let pre_a_frozen =
-            akita_types::CommittedGroupProfile::from_params(pre_a_key, &pre_a_layout);
-        let pre_b_frozen =
-            akita_types::CommittedGroupProfile::from_params(pre_b_key, &pre_b_layout);
+            OneHotScheme::commit_group(setup, &pre_b_polys, stack).expect("precommit B");
+        let pre_a_frozen = pre_a_commitment.profile;
+        let pre_b_frozen = pre_b_commitment.profile;
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
@@ -113,6 +117,8 @@ fn precommit_config_allows_independent_precommitted_groups() {
             pre_b_frozen.outer_commit_matrix.output_rank()
         );
         assert_ne!(pre_a_frozen.group, pre_b_frozen.group);
+        assert_eq!(pre_a_frozen, pre_a_profile);
+        assert_eq!(pre_b_frozen, pre_b_profile);
     });
 }
 
@@ -128,24 +134,12 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
     let pre_c_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
-    let pre_a_opening_batch =
-        OpeningClaimsLayout::new(PRE_NV, PRE_A_SIZE).expect("precommit A batch");
-    let pre_b_opening_batch =
-        OpeningClaimsLayout::new(PRE_NV, PRE_B_SIZE).expect("precommit B batch");
-    let pre_c_opening_batch =
-        OpeningClaimsLayout::new(PRE_NV, PRE_C_SIZE).expect("precommit C batch");
-    let pre_a_layout =
-        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
-            .expect("precommit A layout");
-    let pre_b_layout =
-        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
-            .expect("precommit B layout");
-    let pre_c_layout =
-        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_c_opening_batch)
-            .expect("precommit C layout");
-    let pre_a_frozen = akita_types::CommittedGroupProfile::from_params(pre_a_key, &pre_a_layout);
-    let pre_b_frozen = akita_types::CommittedGroupProfile::from_params(pre_b_key, &pre_b_layout);
-    let pre_c_frozen = akita_types::CommittedGroupProfile::from_params(pre_c_key, &pre_c_layout);
+    let pre_a_frozen = akita_config::committed_group_profile::<OneHotCfg>(&pre_a_key)
+        .expect("precommit A profile");
+    let pre_b_frozen = akita_config::committed_group_profile::<OneHotCfg>(&pre_b_key)
+        .expect("precommit B profile");
+    let pre_c_frozen = akita_config::committed_group_profile::<OneHotCfg>(&pre_c_key)
+        .expect("precommit C profile");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
@@ -189,27 +183,35 @@ fn group_batch_commits_independent_arity_precommitteds() {
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
-    let pre_opening_batch = OpeningClaimsLayout::new(PRE_NV, GROUP_SIZE).expect("precommit batch");
-    let pre_a_layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
-        .expect("precommit A layout");
-    let pre_b_layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
-        .expect("precommit B layout");
-    let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_5001)];
-    let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
+    let pre_a_frozen = akita_config::committed_group_profile::<OneHotCfg>(&pre_a_key)
+        .expect("precommit A profile");
+    let pre_b_frozen = akita_config::committed_group_profile::<OneHotCfg>(&pre_b_key)
+        .expect("precommit B profile");
+    let pre_a_polys = [debug_make_onehot_poly(
+        PRE_NV,
+        ONEHOT_D,
+        0x0bee_fcaf_9a77_5001,
+    )];
+    let pre_b_polys = [debug_make_onehot_poly(
+        PRE_NV,
+        ONEHOT_D,
+        0x0bee_fcaf_9a77_6001,
+    )];
 
     let setup = OneHotScheme::setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE).expect("protocol setup");
-    let prepared = CpuBackend
+    let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared protocol setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("protocol stack");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("protocol stack");
     let (pre_a_commitment, _pre_a_hint) =
-        PrecommitCommitter::commit::<_, _>(&setup, &pre_a_polys, &stack).expect("precommit A");
+        OneHotScheme::commit_group::<_, _>(&setup, &pre_a_polys, &stack).expect("precommit A");
     let (pre_b_commitment, _pre_b_hint) =
-        PrecommitCommitter::commit::<_, _>(&setup, &pre_b_polys, &stack).expect("precommit B");
-    let pre_a_frozen = akita_types::CommittedGroupProfile::from_params(pre_a_key, &pre_a_layout);
-    let pre_b_frozen = akita_types::CommittedGroupProfile::from_params(pre_b_key, &pre_b_layout);
+        OneHotScheme::commit_group::<_, _>(&setup, &pre_b_polys, &stack).expect("precommit B");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
@@ -222,10 +224,10 @@ fn group_batch_commits_independent_arity_precommitteds() {
         OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let main_params = multi_group_root_params(&multi_group_schedule);
     let final_polys = [
-        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7001),
-        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7002),
-        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7003),
-        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7004),
+        debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7001),
+        debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7002),
+        debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7003),
+        debug_make_onehot_poly(FINAL_NV, main_params.d_a(), 0x0bee_fcaf_9a77_7004),
     ];
     let (final_commitment, final_hint, _selection) = OneHotScheme::commit_final_group(
         &setup,
@@ -273,24 +275,24 @@ fn commit_group_returns_frozen_exact_layout() {
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
-    let opening_batch =
-        akita_types::OpeningClaimsLayout::new(NV, GROUP_SIZE).expect("opening batch");
-    // `commit_group` freezes the standalone precommit layout (root basis pinned),
-    // so size the setup and expected layout with the precommit config, not the
-    // main runtime config (which resolves a different, single-group root split).
-    let layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&opening_batch)
-        .expect("group commit layout");
-    let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
+    let profile =
+        akita_config::committed_group_profile::<OneHotCfg>(&key).expect("group commit profile");
+    let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
-    let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
+    let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = PrecommitCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let (commitment, _hint) =
         OneHotScheme::commit_group(&setup, &polys, &stack).expect("commit group");
     let frozen_layout = commitment.profile;
@@ -298,17 +300,17 @@ fn commit_group_returns_frozen_exact_layout() {
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
         frozen_layout.num_positions_per_block,
-        layout.num_positions_per_block
+        profile.num_positions_per_block
     );
-    assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
-    assert_eq!(frozen_layout.log_basis_outer, layout.log_basis_outer);
+    assert_eq!(frozen_layout.num_live_blocks, profile.num_live_blocks);
+    assert_eq!(frozen_layout.log_basis_outer, profile.log_basis_outer);
     assert_eq!(
         frozen_layout.inner_commit_matrix.output_rank(),
-        layout.inner_commit_matrix.output_rank()
+        profile.inner_commit_matrix.output_rank()
     );
     assert_eq!(
         frozen_layout.outer_commit_matrix.output_rank(),
-        layout.outer_commit_matrix.output_rank()
+        profile.outer_commit_matrix.output_rank()
     );
     assert_eq!(
         commitment.rows().count(),
@@ -318,7 +320,7 @@ fn commit_group_returns_frozen_exact_layout() {
 
 /// Produce and verify a folded multi-group-root one-hot same-point proof for the
 /// given precommitted group sizes plus a final group size, exercising unequal
-/// `K_g`. Precommitted groups use the exact fixed-root precommit config; the
+/// `K_g`. Precommitted groups use exact generated standalone profiles; the
 /// final group is committed with `commit_final_group`; the multi-group root folds
 /// into a singleton recursive suffix.
 fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
@@ -336,11 +338,16 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
     let setup =
         AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(opening_num_vars, total).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-    // Commit every precommitted group under the exact precommit config; keep the
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
+    // Commit every precommitted group from its exact generated profile; keep the
     // polynomials alive so the prover/verifier can borrow references.
     let mut pre_keys = Vec::new();
     let mut pre_frozen = Vec::new();
@@ -350,12 +357,13 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
     for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
         let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
-        let layout =
-            akita_config::committed_group_params::<ProtocolCfg>(&key).expect("precommit params");
+        let profile =
+            akita_config::committed_group_profile::<ProtocolCfg>(&key).expect("precommit profile");
         let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..num_polynomials)
             .map(|poly_idx| {
                 debug_make_onehot_poly(
-                    &layout,
+                    pre_num_vars,
+                    profile.inner_commit_matrix.ring_dimension(),
                     0x0bee_fcaf_1a00_0000 + ((group_idx as u64) << 8) + poly_idx as u64,
                 )
             })
@@ -367,7 +375,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         pre_keys.push(key);
         pre_commitments.push(commitment);
         pre_hints.push(hint);
-        pre_layouts.push(layout);
+        pre_layouts.push(profile);
         pre_polys_by_group.push(polys);
     }
 
@@ -381,15 +389,16 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let multi_group_schedule =
         ProtocolCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let main_params = multi_group_root_params(&multi_group_schedule);
-    assert!(
+    assert_eq!(
         multi_group_schedule
             .root
             .params
             .precommitted_groups
             .iter()
-            .zip(&pre_commitments)
-            .all(|(group, commitment)| group.descriptor == commitment.profile),
-        "precommitted groups must retain their exact native profiles"
+            .map(|group| group.descriptor)
+            .collect::<Vec<_>>(),
+        pre_layouts,
+        "precommitted groups must retain their native descriptors"
     );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
@@ -414,7 +423,11 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     }
     let final_polys: Vec<OneHotPoly<OneHotF, u8>> = (0..final_size)
         .map(|poly_idx| {
-            debug_make_onehot_poly(main_params, 0x0bee_fcaf_f100_0000 + poly_idx as u64)
+            debug_make_onehot_poly(
+                final_num_vars,
+                main_params.d_a(),
+                0x0bee_fcaf_f100_0000 + poly_idx as u64,
+            )
         })
         .collect();
     let (final_commitment, final_hint, _selection) =
@@ -435,13 +448,29 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         .map(|(polys, layout)| {
             polys
                 .iter()
-                .map(|poly| opening_from_poly(poly, &pre_point, layout))
+                .map(|poly| {
+                    opening_from_poly(
+                        poly,
+                        &pre_point,
+                        layout.inner_commit_matrix.ring_dimension(),
+                        layout.num_positions_per_block,
+                        layout.num_live_blocks,
+                    )
+                })
                 .collect()
         })
         .collect();
     let final_openings: Vec<OneHotF> = final_polys
         .iter()
-        .map(|poly| opening_from_poly(poly, &final_point, main_params))
+        .map(|poly| {
+            opening_from_poly(
+                poly,
+                &final_point,
+                main_params.d_a(),
+                main_params.num_positions_per_block,
+                main_params.num_live_blocks,
+            )
+        })
         .collect();
 
     let pre_refs_by_group: Vec<Vec<&OneHotPoly<OneHotF, u8>>> = pre_polys_by_group
@@ -658,20 +687,33 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert_eq!(total_chunks * BENCH_ONEHOT_K, total_field);
 
     let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
-        .map(|poly_idx| debug_make_onehot_poly(&layout, 0x0bee_fcaf_e000_1500 + poly_idx as u64))
+        .map(|poly_idx| {
+            debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_e000_1500 + poly_idx as u64)
+        })
         .collect();
     let poly_refs: Vec<&OneHotPoly<OneHotF, u8>> = polys.iter().collect();
     let point = debug_random_point(NV);
     let openings: Vec<OneHotF> = polys
         .iter()
-        .map(|poly| opening_from_poly(poly, &point, &layout))
+        .map(|poly| {
+            opening_from_poly(
+                poly,
+                &point,
+                layout.d_a(),
+                layout.num_positions_per_block,
+                layout.num_live_blocks,
+            )
+        })
         .collect();
 
     let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = OneHotScheme::setup_verifier(&setup).expect("verifier setup");
     let (commitment, hint) =
         OneHotScheme::commit::<_, _>(&setup, &polys, &stack).expect("batched onehot commit");
@@ -763,26 +805,41 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     const NV: usize = 30;
     const BATCH_SIZE: usize = 4;
     const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
+    type L2Cfg = crate::test_support::ForcedLargeFieldL2Config<OneHotCfg>;
+    type L2Scheme = AkitaCommitmentScheme<L2Cfg>;
 
-    let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("L2 root layout");
+    let layout = akita_batched_root_layout::<L2Cfg>(NV, BATCH_SIZE).expect("L2 root layout");
     let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
-        .map(|index| debug_make_onehot_poly(&layout, 0x0bee_fcaf_1200_0000 + index as u64))
+        .map(|index| debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_1200_0000 + index as u64))
         .collect();
     let poly_refs: Vec<&OneHotPoly<OneHotF, u8>> = polys.iter().collect();
     let point = debug_random_point(NV);
     let openings: Vec<OneHotF> = polys
         .iter()
-        .map(|poly| opening_from_poly(poly, &point, &layout))
+        .map(|poly| {
+            opening_from_poly(
+                poly,
+                &point,
+                layout.d_a(),
+                layout.num_positions_per_block,
+                layout.num_live_blocks,
+            )
+        })
         .collect();
 
-    let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).expect("L2 setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared L2 setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("L2 stack");
-    let verifier_setup = OneHotScheme::setup_verifier(&setup).expect("L2 verifier setup");
+    let setup = L2Scheme::setup_prover(NV, BATCH_SIZE).expect("L2 setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared L2 setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("L2 stack");
+    let verifier_setup = L2Scheme::setup_verifier(&setup).expect("L2 verifier setup");
     let (commitment, hint) =
-        OneHotScheme::commit::<_, _>(&setup, &polys, &stack).expect("L2 commitment");
+        L2Scheme::commit::<_, _>(&setup, &polys, &stack).expect("L2 commitment");
     let commitments = [commitment];
     let prover_group = PolynomialGroupClaims::new(
         point.clone(),
@@ -791,9 +848,9 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     )
     .expect("L2 prover group");
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-    let proof = OneHotScheme::batched_prove::<_, _, _>(
+    let proof = L2Scheme::batched_prove::<_, _, _>(
         &setup,
-        selected_prover_data::<OneHotCfg, _>(
+        selected_prover_data::<L2Cfg, _>(
             OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
             vec![hint],
             vec![&poly_refs],
@@ -814,11 +871,11 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
         let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-        OneHotScheme::batched_verify(
+        L2Scheme::batched_verify(
             candidate,
             &verifier_setup,
             &mut transcript,
-            selected_statement::<OneHotCfg>(claims).expect("L2 verifier statement"),
+            selected_statement::<L2Cfg>(claims).expect("L2 verifier statement"),
             BasisMode::Lagrange,
         )
     };

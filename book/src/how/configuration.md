@@ -54,7 +54,7 @@ owns shipped table data. The verifier-reachable proof-size formula.
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-schedules/src/generated/`, and
   `crates/akita-config/src/lib.rs` (`resolve_schedule`).
-- `book/src/usage/profiling.md`, `specs/profile-bench-coverage-matrix.md`, `.github/workflows/profile-bench.yml`.
+- `book/src/usage/profiling.md` and `.github/workflows/profile-bench.yml`.
 
 ### Selective physical L2 candidates
 

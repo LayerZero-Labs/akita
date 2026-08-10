@@ -1107,6 +1107,24 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
 }
 
 #[test]
+fn validate_frozen_precommit_rejects_unsupported_inner_decomposition() {
+    let mut unsupported_basis = precommitted_descriptor(20);
+    unsupported_basis.log_basis_inner = crate::MAX_I16_LOG_BASIS + 1;
+    assert!(matches!(
+        unsupported_basis.validate_frozen_precommit(128),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+
+    let mut excessive_depth = precommitted_descriptor(20);
+    excessive_depth.num_digits_inner =
+        crate::sis::compute_num_digits_field_width(128, excessive_depth.log_basis_inner) + 1;
+    assert!(matches!(
+        excessive_depth.validate_frozen_precommit(128),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
 fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
     let schedule = recursive_schedule(64, 64, false);
     let profiles = CommittedGroupBatchProfile {

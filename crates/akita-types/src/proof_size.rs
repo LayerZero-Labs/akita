@@ -507,7 +507,7 @@ mod tests {
                 physical_response_len: 512,
             },
             PhysicalL2NormProofShape::LimbGram {
-                physical_response_len: 65,
+                physical_response_len: 512,
                 block_len: 32,
                 limb_count: 3,
             },
@@ -527,7 +527,7 @@ mod tests {
             .unwrap();
             lp.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
                 table_key,
-                lp.inner_commit_matrix.input_width(),
+                shape.physical_response_len() / D,
                 1u128 << 30,
                 shape,
             )
