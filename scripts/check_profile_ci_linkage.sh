@@ -61,10 +61,12 @@ case "$profile_feature" in
     allowed=(FP128_ONEHOT_SCHEDULES)
     ;;
   profile-ci-multi-group-recursive)
-    allowed=(FP128_ONEHOT_RECURSIVE_SCHEDULES)
+    # Recursive adapters delegate scalar keys to their direct base catalog.
+    allowed=(FP128_ONEHOT_SCHEDULES FP128_ONEHOT_RECURSIVE_SCHEDULES)
     ;;
   profile-ci-multi-group-recursive-w8r2)
-    allowed=(FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES)
+    # Recursive adapters delegate scalar keys to their direct base catalog.
+    allowed=(FP128_ONEHOT_MULTI_CHUNK_SCHEDULES FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES)
     ;;
   profile-ci-distributed)
     allowed=(FP128_ONEHOT_MULTI_CHUNK_SCHEDULES FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES)
