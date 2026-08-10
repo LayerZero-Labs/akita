@@ -38,7 +38,7 @@ class ProfileBenchWorkflowTests(unittest.TestCase):
         self.assertIn(
             "git diff --exit-code -- crates/akita-schedules/src/generated", ci
         )
-        self.assertIn('--partition "count:${SHARD_INDEX}/${SHARD_TOTAL}"', ci)
+        self.assertIn('--partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"', ci)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,8 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout, SetupContributionMode,
+    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, PolynomialGroupLayout,
+    SetupContributionMode,
 };
 use common::*;
 
@@ -46,6 +47,7 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let key = w8r2_profiling_key();
     let root_layout = key.opening_layout().expect("root layout");
     let schedule = W8R2Cfg::runtime_schedule(key).expect("W8R2 schedule");
+    assert_w8r2_profile_shape(&schedule);
     let prover = setup_matrix_capacity_for_schedule(&schedule).expect("prover capacity");
     let verifier = verifier_setup_matrix_capacity_for_schedule(&schedule, &root_layout)
         .expect("verifier capacity");
@@ -69,15 +71,12 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         verifier.num_field_elements,
         incoming_prefixes
     );
-    assert_eq!(
-        &incoming_prefixes[..2],
-        &[Some(28_180_480), Some(20_447_232)]
-    );
+    assert_eq!(&incoming_prefixes[..2], &[Some(11_316_224), None]);
     assert!(incoming_prefixes[2..].iter().all(Option::is_none));
-    assert_eq!(prover.num_field_elements, 28_180_480);
-    assert_eq!(verifier.num_field_elements, 10_223_616);
-    assert_eq!(setup_for_two.num_field_elements, 112_721_920);
-    assert_eq!(setup_for_four.num_field_elements, 225_443_840);
+    assert_eq!(prover.num_field_elements, 11_316_224);
+    assert_eq!(verifier.num_field_elements, 8_388_608);
+    assert_eq!(setup_for_two.num_field_elements, 8_388_608);
+    assert_eq!(setup_for_four.num_field_elements, 11_316_224);
 }
 
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".
@@ -93,9 +92,32 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "W8R2 profile must have at least three fold levels, got {}",
         1 + schedule.recursive_folds.len()
     );
+    assert_eq!(
+        schedule.root.params.final_group.commitment.role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 64,
+        },
+        "level 0 must retain the shipped adaptive A/B/D role dimensions"
+    );
+    assert_eq!(
+        schedule.recursive_folds[0].params.witness.role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 64,
+        },
+        "level 1 must retain the shipped adaptive A/B/D role dimensions"
+    );
+    assert_eq!(
+        schedule.recursive_folds[1].params.witness.role_dims(),
+        CommitmentRingDims::uniform(64),
+        "level 2 must retain the shipped uniform D64 suffix dimensions"
+    );
 
-    // Levels 0 and 1: both chunked W8R2 (8 chunks over 2 leading levels) AND both
-    // running the Stage-3 setup-product sum-check (`Recursive`).
+    // Levels 0 and 1 both use the W8R2 witness partition: 8 chunks over the two
+    // leading levels.
     for (level, params) in [
         &schedule.root.params.final_group.commitment,
         &schedule.recursive_folds[0].params.witness,
@@ -113,16 +135,15 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         );
     }
 
-    for (producer_level, consumer) in schedule.recursive_folds[..2].iter().enumerate() {
-        assert_eq!(
-            consumer.params.predecessor_setup_contribution_mode(),
-            SetupContributionMode::Recursive,
-            "level {producer_level} must run the recursive setup-offload path"
-        );
-    }
+    assert_eq!(
+        schedule.recursive_folds[0]
+            .params
+            .predecessor_setup_contribution_mode(),
+        SetupContributionMode::Recursive,
+        "level 0 must run the planner-selected recursive setup-offload path"
+    );
 
-    // Level 0 produces the first setup prefix (no incoming prefix); level 1
-    // consumes it and produces its own.
+    // Level 0 produces the selected setup prefix and level 1 consumes it.
     assert!(
         schedule.recursive_folds[0]
             .params
@@ -131,7 +152,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "level 1 must consume the level-0 setup prefix"
     );
 
-    // Level 2 is the single-chunk `Direct` fold that consumes the level-1 prefix.
+    // Level 2 is the single-chunk direct fold after the selected offload edge.
     let level2 = &schedule.recursive_folds[1].params;
     assert_eq!(
         level2.witness.witness_chunk.num_chunks, 1,
@@ -149,8 +170,8 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "level 2 must be Direct (no Stage-3 sum-check after the activated window)"
     );
     assert!(
-        level2.incoming_setup_prefix.is_some(),
-        "level 2 must consume the level-1 setup prefix"
+        level2.incoming_setup_prefix.is_none(),
+        "level 2 must not carry an unselected setup prefix"
     );
 }
 
