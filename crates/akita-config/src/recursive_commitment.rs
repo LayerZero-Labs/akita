@@ -93,9 +93,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     fn runtime_schedule(
         key: akita_types::AkitaScheduleLookupKey,
     ) -> Result<akita_types::FoldSchedule, AkitaError> {
-        if key.precommitteds.is_empty() {
-            return Cfg::runtime_schedule(key);
-        }
         akita_schedules::resolve_group_batch_schedule(
             &key,
             &crate::policy_of::<Self>(),
@@ -170,5 +167,20 @@ mod tests {
             .precommitted_groups
             .iter()
             .all(|group| group.descriptor == expected));
+    }
+
+    #[test]
+    fn scalar_recursive_profile_uses_offloaded_catalog_row() {
+        type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(36),
+        ))
+        .expect("scalar recursive schedule");
+
+        assert!(schedule.root.params.precommitted_groups.is_empty());
+        assert!(schedule
+            .recursive_folds
+            .iter()
+            .any(|fold| fold.params.incoming_setup_prefix.is_some()));
     }
 }
