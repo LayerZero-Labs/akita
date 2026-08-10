@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-08-10 |
 | Status | active |
-| PR | |
+| PR | [#383](https://github.com/LayerZero-Labs/akita/pull/383) |
 | Supersedes | The inactive commitment matrix slice fields in generated schedules |
 | Superseded-by | |
 | Book-chapter | book/src/how/commitment.md |
