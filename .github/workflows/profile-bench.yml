@@ -283,6 +283,7 @@ jobs:
           python3 scripts/profile_bench_report.py run \
             --binary ./target/release/examples/profile \
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
+            --benchmark-shard "${{ matrix.group.name }}" \
             --mode "$AKITA_BENCH_MODE" \
             --runs "$AKITA_BENCH_RUNS" \
             --warmups "$AKITA_BENCH_WARMUPS" \
