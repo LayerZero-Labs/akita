@@ -3,8 +3,8 @@ use super::rotated_accum::{
 };
 use super::{
     balanced_ring_decompose_fold_partitioned, decompose_ring_interleaved, fill_rotated_challenge,
-    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_scalar, sparse_mul_acc_scalar,
-    DecomposeParams,
+    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar,
+    sparse_mul_acc_pm1, sparse_mul_acc_scalar, DecomposeParams,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
@@ -72,6 +72,33 @@ fn sparse_mul_acc_i16_simd_matches_scalar() {
     sparse_mul_acc_i16::<D>(&digit_plane, &challenge, &mut simd_acc);
     sparse_mul_acc_i16_scalar::<D>(&digit_plane, &challenge, &mut scalar_acc);
     assert_eq!(simd_acc, scalar_acc);
+}
+
+#[test]
+fn prepared_pm1_kernels_match_generic_sparse_accumulation() {
+    const D: usize = 256;
+    let positive = vec![0, 17, 61, 128, 251];
+    let negative = vec![3, 29, 97, 191, 255];
+    let challenge = SparseChallenge {
+        positions: positive.iter().chain(&negative).copied().collect(),
+        coeffs: std::iter::repeat_n(1, positive.len())
+            .chain(std::iter::repeat_n(-1, negative.len()))
+            .collect(),
+    };
+
+    let i8_plane = std::array::from_fn(|index| ((index * 17) % 127) as i8 - 63);
+    let mut expected_i8 = [0i32; D];
+    sparse_mul_acc(&i8_plane, &challenge, &mut expected_i8);
+    let mut actual_i8 = [0i32; D];
+    sparse_mul_acc_pm1(&i8_plane, &positive, &negative, &mut actual_i8);
+    assert_eq!(actual_i8, expected_i8);
+
+    let i16_plane = std::array::from_fn(|index| ((index * 509) % 1024) as i16 - 512);
+    let mut expected_i16 = [0i32; D];
+    sparse_mul_acc_i16(&i16_plane, &challenge, &mut expected_i16);
+    let mut actual_i16 = [0i32; D];
+    sparse_mul_acc_i16_pm1(&i16_plane, &positive, &negative, &mut actual_i16);
+    assert_eq!(actual_i16, expected_i16);
 }
 
 #[test]

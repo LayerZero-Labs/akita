@@ -348,12 +348,22 @@ pub(crate) fn sparse_mul_acc_scalar<const D: usize>(
             1 => sparse_mul_acc_add_scalar::<D>(digit_plane, acc, p),
             -1 => sparse_mul_acc_sub_scalar::<D>(digit_plane, acc, p),
             2 => {
-                sparse_mul_acc_add_scalar::<D>(digit_plane, acc, p);
-                sparse_mul_acc_add_scalar::<D>(digit_plane, acc, p);
+                let split = D - p;
+                for i in 0..split {
+                    acc[i + p] += 2 * i32::from(digit_plane[i]);
+                }
+                for i in split..D {
+                    acc[i - split] -= 2 * i32::from(digit_plane[i]);
+                }
             }
             -2 => {
-                sparse_mul_acc_sub_scalar::<D>(digit_plane, acc, p);
-                sparse_mul_acc_sub_scalar::<D>(digit_plane, acc, p);
+                let split = D - p;
+                for i in 0..split {
+                    acc[i + p] -= 2 * i32::from(digit_plane[i]);
+                }
+                for i in split..D {
+                    acc[i - split] += 2 * i32::from(digit_plane[i]);
+                }
             }
             _ => {
                 let split = D - p;
@@ -436,6 +446,51 @@ pub(crate) fn sparse_mul_acc<const D: usize>(
     sparse_mul_acc_scalar::<D>(digit_plane, challenge, acc);
 }
 
+pub(crate) fn sparse_mul_acc_pm1<const D: usize>(
+    digit_plane: &[i8; D],
+    positive: &[u32],
+    negative: &[u32],
+    acc: &mut [i32; D],
+) {
+    debug_assert!(positive
+        .iter()
+        .chain(negative)
+        .all(|&position| position < D as u32));
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
+    if use_simd_decompose_fold() {
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            decompose_fold_neon::sparse_mul_acc_pm1_neon(
+                digit_plane.as_ptr(),
+                acc.as_mut_ptr(),
+                D,
+                positive,
+                negative,
+            );
+        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+        unsafe {
+            decompose_fold_avx::sparse_mul_acc_pm1_avx(
+                digit_plane.as_ptr(),
+                acc.as_mut_ptr(),
+                D,
+                positive,
+                negative,
+            );
+        }
+        return;
+    }
+    for &position in positive {
+        sparse_mul_acc_add_scalar(digit_plane, acc, position as usize);
+    }
+    for &position in negative {
+        sparse_mul_acc_sub_scalar(digit_plane, acc, position as usize);
+    }
+}
+
 /// Signed-i16 sparse multiply-accumulate for large inner bases.
 #[inline(always)]
 pub(crate) fn sparse_mul_acc_i16<const D: usize>(
@@ -483,6 +538,59 @@ pub(crate) fn sparse_mul_acc_i16<const D: usize>(
         }
     }
     sparse_mul_acc_i16_scalar::<D>(digit_plane, challenge, acc);
+}
+
+pub(crate) fn sparse_mul_acc_i16_pm1<const D: usize>(
+    digit_plane: &[i16; D],
+    positive: &[u32],
+    negative: &[u32],
+    acc: &mut [i32; D],
+) {
+    debug_assert!(positive
+        .iter()
+        .chain(negative)
+        .all(|&position| position < D as u32));
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "avx2")
+    ))]
+    if use_simd_decompose_fold() {
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            decompose_fold_neon::sparse_mul_acc_i16_pm1_neon(
+                digit_plane.as_ptr(),
+                acc.as_mut_ptr(),
+                D,
+                positive,
+                negative,
+            );
+        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+        unsafe {
+            decompose_fold_avx::sparse_mul_acc_i16_pm1_avx(
+                digit_plane.as_ptr(),
+                acc.as_mut_ptr(),
+                D,
+                positive,
+                negative,
+            );
+        }
+        return;
+    }
+    for (&position, scale) in positive
+        .iter()
+        .map(|position| (position, 1))
+        .chain(negative.iter().map(|position| (position, -1)))
+    {
+        let position = position as usize;
+        let split = D - position;
+        for i in 0..split {
+            acc[i + position] += scale * i32::from(digit_plane[i]);
+        }
+        for i in split..D {
+            acc[i - split] -= scale * i32::from(digit_plane[i]);
+        }
+    }
 }
 
 /// Precompute dense rotation table for a sparse challenge.
