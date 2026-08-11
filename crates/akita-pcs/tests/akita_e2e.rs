@@ -69,7 +69,7 @@
 
 mod common;
 
-use akita_config::proof_optimized::{fp32, fp64, fp128};
+use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
 use akita_pcs::AkitaCommitmentScheme;
@@ -949,8 +949,9 @@ fn fp128_onehot_batched() {
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+        let stack =
+            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+                .expect("stack");
         let verifier_setup =
             AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
 
@@ -972,9 +973,11 @@ fn fp128_onehot_batched() {
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut std::io::Cursor::new(bytes), &shape)
-                .expect("deserialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
@@ -1010,8 +1013,9 @@ fn fp128_dense_batched() {
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+        let stack =
+            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+                .expect("stack");
         let verifier_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
@@ -1033,11 +1037,14 @@ fn fp128_dense_batched() {
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut std::io::Cursor::new(bytes), &shape)
-                .expect("deserialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
 
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
+        let mut verifier_transcript =
+            AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
         AkitaCommitmentScheme::<DenseCfg>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -1069,8 +1076,9 @@ fn fp128_mixed_batched() {
         let num_chunks = total_field / onehot_k;
         let make_mixed_onehot = |seed: u64| {
             let mut r = StdRng::seed_from_u64(seed);
-            let indices: Vec<Option<u8>> =
-                (0..num_chunks).map(|_| Some(r.gen_range(0..onehot_k) as u8)).collect();
+            let indices: Vec<Option<u8>> = (0..num_chunks)
+                .map(|_| Some(r.gen_range(0..onehot_k) as u8))
+                .collect();
             akita_prover::OneHotPoly::<F, u8>::new(onehot_k, root_d, indices)
                 .expect("mixed onehot poly")
         };
@@ -1105,8 +1113,7 @@ fn fp128_mixed_batched() {
                 .expect("mixed commit");
         let poly_refs: Vec<_> = polys.iter().collect();
 
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_mixed_batched");
+        let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_mixed_batched");
         let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
             &setup,
             prove_input::<DenseCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
@@ -1119,9 +1126,11 @@ fn fp128_mixed_batched() {
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut std::io::Cursor::new(bytes), &shape)
-                .expect("deserialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_mixed_batched");
@@ -1147,8 +1156,7 @@ fn fp128_mixed_batched() {
 #[test]
 fn fp128_onehot_oversized_setup() {
     fn run(setup_nv: usize, poly_nv: usize) {
-        let opening_batch =
-            OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
         let layout = OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let d = layout.d_a();
         let total_field = layout.num_live_blocks * layout.num_positions_per_block * d;
@@ -1158,8 +1166,8 @@ fn fp128_onehot_oversized_setup() {
         let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly = akita_prover::OneHotPoly::<F, u8>::new(ONEHOT_K, d, indices)
-            .expect("onehot poly");
+        let poly =
+            akita_prover::OneHotPoly::<F, u8>::new(ONEHOT_K, d, indices).expect("onehot poly");
 
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
@@ -1172,9 +1180,12 @@ fn fp128_onehot_oversized_setup() {
         let verifier_setup =
             AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commit");
+        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commit");
         let poly_refs = [&poly];
 
         let mut prover_transcript =
@@ -1191,9 +1202,11 @@ fn fp128_onehot_oversized_setup() {
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut std::io::Cursor::new(bytes), &shape)
-                .expect("deserialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
 
         let openings = [expected_opening];
         let mut verifier_transcript =
@@ -1226,12 +1239,8 @@ fn fp128_dense_monomial_basis() {
         let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let poly = make_dense_poly(NV, 0xb0b0_0000);
         let pt = random_point(NV, 0xc0de_0000);
-        let expected_opening = opening_from_poly_with_basis::<64, _>(
-            &poly,
-            &pt,
-            &layout,
-            BasisMode::Monomial,
-        );
+        let expected_opening =
+            opening_from_poly_with_basis::<64, _>(&poly, &pt, &layout, BasisMode::Monomial);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -1241,9 +1250,12 @@ fn fp128_dense_monomial_basis() {
         let verifier_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
-                .expect("commit");
+        let (commitment, hint) = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+        )
+        .expect("commit");
         let poly_refs = [&poly];
 
         let mut prover_transcript =
@@ -1260,9 +1272,11 @@ fn fp128_dense_monomial_basis() {
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut std::io::Cursor::new(bytes), &shape)
-                .expect("deserialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
 
         let openings = [expected_opening];
         let mut verifier_transcript =
@@ -1336,7 +1350,9 @@ fn fp32_onehot_multi_group() {
         let pre_poly = grouped_poly(pre_params, 1);
 
         let pre_setup = SmallScheme::setup_prover(PRE_NV, 1).expect("pre setup");
-        let pre_prepared = CpuBackend::DEFAULT.prepare_setup(&pre_setup).expect("prepared");
+        let pre_prepared = CpuBackend::DEFAULT
+            .prepare_setup(&pre_setup)
+            .expect("prepared");
         let pre_stack = UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
             &pre_prepared,
@@ -1454,22 +1470,18 @@ fn heterogeneous_group_types() {
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 4).expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack = UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
+        let stack =
+            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+                .expect("stack");
 
-        let onehot_pre_params: CommittedGroupParams =
-            OneHotCfg::runtime_schedule(AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
-            ))
-            .expect("onehot pre schedule")
-            .root
-            .params
-            .final_group
-            .commitment;
+        let onehot_pre_params: CommittedGroupParams = OneHotCfg::runtime_schedule(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1)),
+        )
+        .expect("onehot pre schedule")
+        .root
+        .params
+        .final_group
+        .commitment;
         let pre_d = onehot_pre_params.d_a();
         let onehot_k_pre = 16usize;
         let pre_chunks = (1usize << ONEHOT_PRE_NV) / onehot_k_pre;
@@ -1488,10 +1500,12 @@ fn heterogeneous_group_types() {
         let dense_evals_b = (0..(1usize << DENSE_PRE_NV))
             .map(|i| F::from_u64((i % 509) as u64))
             .collect::<Vec<_>>();
-        let dense_a = akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_a)
-            .expect("dense a");
-        let dense_b = akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_b)
-            .expect("dense b");
+        let dense_a =
+            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_a)
+                .expect("dense a");
+        let dense_b =
+            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_b)
+                .expect("dense b");
 
         let final_onehot = make_onehot_poly(FINAL_NV, 0x1701_0000);
 
@@ -1522,15 +1536,14 @@ fn heterogeneous_group_types() {
             .schedule()
             .clone();
         let final_params = &schedule.root.params.final_group.commitment;
-        let dense_pre_params: CommittedGroupParams =
-            OneHotCfg::runtime_schedule(AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::new(DENSE_PRE_NV, 2),
-            ))
-            .expect("dense pre schedule")
-            .root
-            .params
-            .final_group
-            .commitment;
+        let dense_pre_params: CommittedGroupParams = OneHotCfg::runtime_schedule(
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(DENSE_PRE_NV, 2)),
+        )
+        .expect("dense pre schedule")
+        .root
+        .params
+        .final_group
+        .commitment;
 
         let onehot_pre_point: Vec<F> = (0..ONEHOT_PRE_NV)
             .map(|i| F::from_u64((i + 2) as u64))
@@ -1544,8 +1557,10 @@ fn heterogeneous_group_types() {
 
         let onehot_pre_opening =
             opening_from_poly_for_layout(&onehot_pre, &onehot_pre_point, &onehot_pre_params);
-        let dense_opening_a = opening_from_poly_for_layout(&dense_a, &dense_point, &dense_pre_params);
-        let dense_opening_b = opening_from_poly_for_layout(&dense_b, &dense_point, &dense_pre_params);
+        let dense_opening_a =
+            opening_from_poly_for_layout(&dense_a, &dense_point, &dense_pre_params);
+        let dense_opening_b =
+            opening_from_poly_for_layout(&dense_b, &dense_point, &dense_pre_params);
         let final_opening = opening_from_poly_for_layout(&final_onehot, &final_point, final_params);
 
         let onehot_pre_refs = [&MultilinearPolynomial::onehot(onehot_pre.clone())];
@@ -1599,9 +1614,11 @@ fn heterogeneous_group_types() {
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut std::io::Cursor::new(bytes), &shape)
-                .expect("deserialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
 
         let verifier_setup =
             AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
@@ -1712,9 +1729,11 @@ fn heterogeneous_compute_backends() {
         let shape = proof.shape();
         let mut bytes = Vec::new();
         proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut std::io::Cursor::new(bytes), &shape)
-                .expect("deserialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");

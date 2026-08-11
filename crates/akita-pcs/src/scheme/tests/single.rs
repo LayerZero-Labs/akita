@@ -130,4 +130,3 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     )
     .expect_err("unchecked extension-opening payload must be rejected");
 }
-
