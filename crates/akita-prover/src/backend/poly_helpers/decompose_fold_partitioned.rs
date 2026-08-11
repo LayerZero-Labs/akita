@@ -6,7 +6,8 @@ use super::rotated_accum::{
 };
 use super::{
     decompose_ring_interleaved, decompose_ring_interleaved_i16, fill_rotated_challenge,
-    sparse_mul_acc, sparse_mul_acc_i16, DecomposeParams,
+    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_pm1,
+    DecomposeParams,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
@@ -15,6 +16,32 @@ use akita_field::CanonicalField;
 use akita_types::SignedDigitKernel;
 
 type RotatedTable<const D: usize> = Option<[[i16; D]; D]>;
+
+struct PreparedPm1Challenge {
+    positive: Vec<u32>,
+    negative: Vec<u32>,
+}
+
+fn prepare_pm1_challenge<const D: usize>(
+    challenge: &SparseChallenge,
+) -> Option<PreparedPm1Challenge> {
+    if challenge.positions.len() != challenge.coeffs.len() {
+        return None;
+    }
+    let mut positive = Vec::with_capacity(challenge.positions.len());
+    let mut negative = Vec::with_capacity(challenge.positions.len());
+    for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+        if position >= D as u32 {
+            return None;
+        }
+        match coefficient {
+            1 => positive.push(position),
+            -1 => negative.push(position),
+            _ => return None,
+        }
+    }
+    Some(PreparedPm1Challenge { positive, negative })
+}
 
 fn precompute_rotated_tables<const D: usize>(
     challenges: &[SparseChallenge],
@@ -27,6 +54,23 @@ fn precompute_rotated_tables<const D: usize>(
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
                 rotated
             })
+        })
+        .collect()
+}
+
+fn precompute_pm1_challenges<const D: usize>(
+    challenges: &[SparseChallenge],
+    rotated_tables: &[RotatedTable<D>],
+) -> Vec<Option<PreparedPm1Challenge>> {
+    challenges
+        .iter()
+        .zip(rotated_tables)
+        .map(|(challenge, rotated)| {
+            if rotated.is_none() {
+                prepare_pm1_challenge::<D>(challenge)
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -89,6 +133,7 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
         acc: &mut [[i32; D]],
         challenge: &SparseChallenge,
         rotated: Option<&[[i16; D]; D]>,
+        pm1: Option<&PreparedPm1Challenge>,
         digit_scratch: Option<&mut DigitScratch<D>>,
         num_digits: usize,
     ) {
@@ -107,11 +152,13 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
             (Self::Predecomposed { digit_planes, .. }, None) => {
                 let src_base = ring_idx * num_digits;
                 for digit_idx in 0..num_digits {
-                    sparse_mul_acc::<D>(
-                        &digit_planes[src_base + digit_idx],
-                        challenge,
-                        &mut acc[dst_base + digit_idx],
-                    );
+                    let digit_plane = &digit_planes[src_base + digit_idx];
+                    let digit_acc = &mut acc[dst_base + digit_idx];
+                    if let Some(pm1) = pm1 {
+                        sparse_mul_acc_pm1(digit_plane, &pm1.positive, &pm1.negative, digit_acc);
+                    } else {
+                        sparse_mul_acc(digit_plane, challenge, digit_acc);
+                    }
                 }
             }
             (Self::LiveRings { coeffs, params }, Some(rotated)) => {
@@ -134,11 +181,20 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                             params,
                         );
                         for digit in 0..num_digits {
-                            sparse_mul_acc::<D>(
-                                &digit_buf[digit],
-                                challenge,
-                                &mut acc[base + digit],
-                            );
+                            if let Some(pm1) = pm1 {
+                                sparse_mul_acc_pm1(
+                                    &digit_buf[digit],
+                                    &pm1.positive,
+                                    &pm1.negative,
+                                    &mut acc[base + digit],
+                                );
+                            } else {
+                                sparse_mul_acc(
+                                    &digit_buf[digit],
+                                    challenge,
+                                    &mut acc[base + digit],
+                                );
+                            }
                         }
                     }
                     DigitScratch::I16(digit_buf) => {
@@ -149,11 +205,20 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                             params,
                         );
                         for digit in 0..num_digits {
-                            sparse_mul_acc_i16::<D>(
-                                &digit_buf[digit],
-                                challenge,
-                                &mut acc[base + digit],
-                            );
+                            if let Some(pm1) = pm1 {
+                                sparse_mul_acc_i16_pm1(
+                                    &digit_buf[digit],
+                                    &pm1.positive,
+                                    &pm1.negative,
+                                    &mut acc[base + digit],
+                                );
+                            } else {
+                                sparse_mul_acc_i16(
+                                    &digit_buf[digit],
+                                    challenge,
+                                    &mut acc[base + digit],
+                                );
+                            }
                         }
                     }
                 }
@@ -176,6 +241,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
     }
 
     let rotated_tables = precompute_rotated_tables::<D>(challenges);
+    let pm1_challenges = precompute_pm1_challenges(challenges, &rotated_tables);
     let actual_threads = partition_thread_count(num_positions_per_block);
     let elem_chunk = num_positions_per_block.div_ceil(actual_threads);
     let mut out = vec![[0i32; D]; inner_width];
@@ -209,6 +275,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
                         acc,
                         challenge,
                         rotated_tables[block_idx].as_ref(),
+                        pm1_challenges[block_idx].as_ref(),
                         digit_scratch.as_mut(),
                         num_digits,
                     );
@@ -270,6 +337,10 @@ pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
 
     let actual_threads = num_threads.min(inner_width).max(1);
     let pos_chunk = inner_width.div_ceil(actual_threads);
+    let pm1_challenges = challenges
+        .iter()
+        .map(prepare_pm1_challenge::<D>)
+        .collect::<Vec<_>>();
 
     let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
@@ -292,7 +363,8 @@ pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
                     continue;
                 }
 
-                for (block, challenge) in challenges.iter().enumerate() {
+                for (block, (challenge, pm1)) in challenges.iter().zip(&pm1_challenges).enumerate()
+                {
                     let Some(index) = block
                         .checked_mul(num_positions_per_block)
                         .and_then(|base| base.checked_add(col))
@@ -302,7 +374,16 @@ pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
                     let Some(coeff) = coeffs.get(index) else {
                         break;
                     };
-                    sparse_mul_acc::<D>(coeff, challenge, &mut acc[out_pos - pos_start]);
+                    if let Some(pm1) = pm1 {
+                        sparse_mul_acc_pm1(
+                            coeff,
+                            &pm1.positive,
+                            &pm1.negative,
+                            &mut acc[out_pos - pos_start],
+                        );
+                    } else {
+                        sparse_mul_acc(coeff, challenge, &mut acc[out_pos - pos_start]);
+                    }
                 }
             }
             acc
