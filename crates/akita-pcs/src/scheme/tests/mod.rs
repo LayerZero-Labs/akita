@@ -3,12 +3,10 @@
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_prover::compute::RootOpeningSource;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_prover::{
     DensePoly, OneHotPoly, PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
 };
-use akita_serialization::AkitaSerialize;
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
 use akita_types::ExtensionOpeningReductionProof;

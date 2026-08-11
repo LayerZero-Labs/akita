@@ -202,7 +202,7 @@ jobs:
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
       - name: Dense multi-chunk PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-multi-chunk fp128_dense_mc
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-multi-chunk fp128_dense_mc
       - name: Schedule catalog wiring
         run: |
           cargo test --release -p akita-config --no-default-features --test schedule_catalog_feature_off
