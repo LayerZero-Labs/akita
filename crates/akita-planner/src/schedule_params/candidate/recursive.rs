@@ -338,6 +338,11 @@ fn prepare_recursive_level_search(
                 AkitaError::InvalidSetup("setup-prefix planning requires a search cache".into())
             })?;
             let n_prefix = padded_setup_prefix_len(natural_len);
+            // The incoming prefix was formed by the parent edge, not by this
+            // consuming fold. Slice admission follows that producer geometry.
+            let producer_fold_level = fold_level.checked_sub(1).ok_or_else(|| {
+                AkitaError::InvalidSetup("root fold cannot consume a setup prefix".to_string())
+            })?;
             let groups = derive_setup_prefix_groups(
                 cache,
                 SetupPrefixSearchRequest {
@@ -348,7 +353,7 @@ fn prepare_recursive_level_search(
                     num_chunks,
                     inner_ring_dimension: d_a,
                     outer_ring_dimension: dimensions.d_b(),
-                    fold_level,
+                    producer_fold_level,
                 },
             )?;
             if groups.is_empty() {
@@ -644,4 +649,37 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
         },
     )?;
     Ok(candidates)
+}
+
+#[cfg(all(test, feature = "catalog-gen"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_two_consumer_keeps_level_one_prefix_slices_eligible() {
+        use akita_config::{
+            policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+        };
+
+        type Recursive = RecursiveCommitmentConfig<OneHot>;
+        let policy = policy_of::<Recursive>();
+        let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
+        let mut cache = SetupPrefixSearchCache::default();
+        let search = prepare_recursive_level_search(
+            Some(&mut cache),
+            &policy,
+            &challenge,
+            CommitmentRingDims::uniform(64),
+            1 << 16,
+            3,
+            2,
+            Some(1 << 12),
+        )
+        .expect("level-two consumer search")
+        .expect("eligible recursive level");
+
+        assert!(search.setup_prefixes.iter().flatten().any(|slot| {
+            slot.commitment_params.layout.outer_slice_count > akita_types::CommitmentSliceCount::ONE
+        }));
+    }
 }
