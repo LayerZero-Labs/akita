@@ -110,46 +110,46 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 return Err(AkitaError::InvalidProof);
             }
             // E and T share the block-claim index space, so they stay one
-            // fused fold gated on their combined width. Splitting them would
-            // drop the multi-core reduce whenever each side alone sits under
-            // the threshold but the pair clears it.
+            // fused fold gated on their combined width, and Z keeps its own
+            // gate. Splitting E from T would drop the multi-core reduce
+            // whenever each side alone sits under the threshold but the pair
+            // clears it.
+            let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
+                let e_start = block_claim
+                    .checked_mul(e_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let e_eq =
+                    checked_slice(&weights.e, e_start, e_stride, "structured direct E slice")?;
+                let e = e_eq
+                    .iter()
+                    .zip(direct_opening_gadget)
+                    .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
+
+                let t_start = block_claim
+                    .checked_mul(t_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_eq =
+                    checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
+                let t = t_eq
+                    .chunks_exact(t_row_stride)
+                    .zip(group.a_row_weights.iter())
+                    .fold(E::zero(), |sum, (row, &row_weight)| {
+                        sum + row_weight
+                            * row
+                                .iter()
+                                .zip(direct_commitment_gadget)
+                                .fold(E::zero(), |inner, (&eq, &gadget)| inner + eq * gadget)
+                    });
+                let block_challenge = *block_challenges
+                    .get(block_claim)
+                    .ok_or(AkitaError::InvalidProof)?;
+                Ok(acc? + block_challenge * (group.consistency_weight * e + t))
+            };
             const PARALLEL_THRESHOLD: usize = 1 << 14;
             let et_work = e_len
                 .checked_add(t_len)
                 .ok_or_else(|| AkitaError::InvalidSetup("structured E/T width overflow".into()))?;
-
             let run_et = || -> Result<E, AkitaError> {
-                let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
-                    let e_start = block_claim
-                        .checked_mul(e_stride)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let e_eq =
-                        checked_slice(&weights.e, e_start, e_stride, "structured direct E slice")?;
-                    let e = e_eq
-                        .iter()
-                        .zip(direct_opening_gadget)
-                        .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
-
-                    let t_start = block_claim
-                        .checked_mul(t_stride)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let t_eq =
-                        checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
-                    let t = t_eq
-                        .chunks_exact(t_row_stride)
-                        .zip(group.a_row_weights.iter())
-                        .fold(E::zero(), |sum, (row, &row_weight)| {
-                            sum + row_weight
-                                * row
-                                    .iter()
-                                    .zip(direct_commitment_gadget)
-                                    .fold(E::zero(), |inner, (&eq, &gadget)| inner + eq * gadget)
-                        });
-                    let block_challenge = *block_challenges
-                        .get(block_claim)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    Ok(acc? + block_challenge * (group.consistency_weight * e + t))
-                };
                 if et_work >= PARALLEL_THRESHOLD {
                     cfg_fold_reduce!(
                         0..block_claims,
@@ -161,28 +161,27 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     (0..block_claims).fold(Ok(E::zero()), fold_et)
                 }
             };
-
+            let fold_z = |acc: Result<E, AkitaError>, position: usize| {
+                let start = position
+                    .checked_mul(group.depth_witness)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let eq = checked_slice(
+                    &weights.z,
+                    start,
+                    group.depth_witness,
+                    "structured direct Z slice",
+                )?;
+                let inner = eq
+                    .iter()
+                    .zip(&witness_gadget)
+                    .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
+                Ok(acc?
+                    + *opening_a_evals
+                        .get(position)
+                        .ok_or(AkitaError::InvalidProof)?
+                        * inner)
+            };
             let run_z = || -> Result<E, AkitaError> {
-                let fold_z = |acc: Result<E, AkitaError>, position: usize| {
-                    let start = position
-                        .checked_mul(group.depth_witness)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let eq = checked_slice(
-                        &weights.z,
-                        start,
-                        group.depth_witness,
-                        "structured direct Z slice",
-                    )?;
-                    let inner = eq
-                        .iter()
-                        .zip(&witness_gadget)
-                        .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
-                    Ok(acc?
-                        + *opening_a_evals
-                            .get(position)
-                            .ok_or(AkitaError::InvalidProof)?
-                            * inner)
-                };
                 if z_cols >= PARALLEL_THRESHOLD {
                     cfg_fold_reduce!(
                         0..group.num_positions_per_block,
@@ -194,8 +193,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
                 }
             };
-
-            let (et, z) = if et_work.max(z_cols) >= PARALLEL_THRESHOLD {
+            // Running E/T against Z costs one `rayon::join`, and that cost
+            // grows with the pool size, so it has to be repaid by both sides
+            // at once. Requiring the smaller of the two to clear the same
+            // threshold its own reduce uses keeps the fork on groups where
+            // each side is independently worth a parallel reduce; a group
+            // with one large and one small side runs them in sequence.
+            let (et, z) = if et_work.min(z_cols) >= PARALLEL_THRESHOLD {
                 let (et, z) = cfg_join!(run_et, run_z);
                 (et?, z?)
             } else {
