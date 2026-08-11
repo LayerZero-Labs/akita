@@ -31,23 +31,33 @@
 //! "Recursive" always implies precommitted groups (recursive mode operates on a
 //! multi-group setup), so the `direct × rec` column is structurally absent.
 //!
-//! Legend: ✓ enabled | ign = #[ignore] (production-sized) | cfg = feature-gated | NA = no schedule
+//! Legend:
+//!   ✓        — runs in default `cargo test`  (schedules-default feature, small nv)
+//!   cfg      — requires an extra feature flag to compile the schedule tables
+//!   ign      — skipped in default `cargo test` due to production-sized nv; needs `-- --ignored`
+//!   NA       — no production schedule exists for this combination; cell is intentionally absent
+//!
+//! cfg and ign are independent: a cell can be cfg-only (schedule tables must be opted in, but
+//! the test is fast once compiled), ign-only (default tables, but nv is too large for CI), or
+//! both (large tables AND large nv).
 //!
 //! ```text
-//! ╔══════════╦══════════╦══════════════════════════════╦══════════════════════════════╗
-//! ║          ║          ║    single-chunk (sc)         ║    multi-chunk (mc)          ║
-//! ║ poly     ║ rec?     ╠══════════╦═══════════════════╬══════════╦═══════════════════╣
-//! ║          ║          ║  direct  ║       pre         ║  direct  ║       pre         ║
-//! ╠══════════╬══════════╬══════════╬═══════════════════╬══════════╬═══════════════════╣
-//! ║ Dense    ║ nonrec   ║ ✓[14,16] ║ ✓[16]             ║ ✓cfg[16] ║ ✓cfg              ║
-//! ║ Dense    ║ rec      ║    NA    ║ NA                ║    NA    ║ NA                ║
-//! ╠══════════╬══════════╬══════════╬═══════════════════╬══════════╬═══════════════════╣
-//! ║ OneHot   ║ nonrec   ║ ✓[12,15] ║ ✓[16,20]          ║ ign cfg  ║ ign cfg           ║
-//! ║ OneHot   ║ rec      ║    NA    ║ ign cfg [pre+rec]  ║    NA    ║ NA                ║
-//! ╚══════════╩══════════╩══════════╩═══════════════════╩══════════╩═══════════════════╝
+//! ╔══════════╦══════════╦══════════════════════════════════╦══════════════════════════════════╗
+//! ║          ║          ║      single-chunk (sc)           ║      multi-chunk (mc)            ║
+//! ║ poly     ║ rec?     ╠══════════════╦═══════════════════╬══════════════╦═══════════════════╣
+//! ║          ║          ║    direct    ║        pre        ║    direct    ║        pre        ║
+//! ╠══════════╬══════════╬══════════════╬═══════════════════╬══════════════╬═══════════════════╣
+//! ║ Dense    ║ nonrec   ║  ✓ [14,16]  ║  ✓ [16]           ║  ✓cfg [16]  ║  ✓cfg             ║
+//! ║ Dense    ║ rec      ║      NA      ║  NA               ║      NA      ║  NA               ║
+//! ╠══════════╬══════════╬══════════════╬═══════════════════╬══════════════╬═══════════════════╣
+//! ║ OneHot   ║ nonrec   ║  ✓ [12,15]  ║  ✓ [16,20]        ║  cfg+ign    ║  cfg+ign          ║
+//! ║ OneHot   ║ rec      ║      NA      ║  cfg+ign          ║      NA      ║  NA               ║
+//! ╚══════════╩══════════╩══════════════╩═══════════════════╩══════════════╩═══════════════════╝
 //! ```
 //!
-//! Note: Dense + recursive has no production schedule; those cells are permanently NA.
+//! Dense + recursive: no production schedule exists; those cells are permanently NA.
+//! OneHot mc nonrec:  cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
+//! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv is production-sized (ign).
 
 #![allow(missing_docs)]
 #![cfg(feature = "schedules-default")]
