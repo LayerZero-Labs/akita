@@ -267,13 +267,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .groups
                     .get(group_index)
                     .ok_or(AkitaError::InvalidProof)?;
+                // `materialize_role_tensor_weights` already gates its own
+                // parallelism on this threshold per output length, so forking
+                // on the largest of the three keeps the outer decision on the
+                // same policy: below it every job stays sequential and
+                // `rayon::join` would only add scheduling cost.
                 const PARALLEL_THRESHOLD: usize = 1 << 14;
-                let total_output = group
-                    .d_col_range
-                    .len()
-                    .saturating_add(group.t_cols)
-                    .saturating_add(group.z_cols);
-                if total_output >= PARALLEL_THRESHOLD {
+                let largest_output = group.d_col_range.len().max(group.t_cols).max(group.z_cols);
+                if largest_output >= PARALLEL_THRESHOLD {
                     // Shared reborrow alongside group's sub-borrow; both are &T so
                     // NLL allows them to coexist for parallel closure capture.
                     let plan: &Self = self;

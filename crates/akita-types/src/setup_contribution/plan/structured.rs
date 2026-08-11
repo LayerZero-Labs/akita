@@ -109,8 +109,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             {
                 return Err(AkitaError::InvalidProof);
             }
+            // One dispatch policy governs both the inner fold-reduces and the
+            // outer three-way fork: a job is worth handing to Rayon only once
+            // it reaches PARALLEL_THRESHOLD. Forking on the largest job rather
+            // than the sum keeps those decisions from drifting, because a
+            // group whose every job stays sequential gains nothing from
+            // `rayon::join` and only pays its scheduling cost.
             const PARALLEL_THRESHOLD: usize = 1 << 14;
-            let total_work = e_len.saturating_add(t_len).saturating_add(z_cols);
+            let largest_job = e_len.max(t_len).max(z_cols);
 
             let run_e = || -> Result<E, AkitaError> {
                 let fold_e = |acc: Result<E, AkitaError>, block_claim: usize| {
@@ -126,7 +132,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let block_challenge = *block_challenges
                         .get(block_claim)
                         .ok_or(AkitaError::InvalidProof)?;
-                    Ok(acc? + block_challenge * group.consistency_weight * e)
+                    Ok(acc? + block_challenge * e)
                 };
                 if e_len >= PARALLEL_THRESHOLD {
                     cfg_fold_reduce!(
@@ -190,10 +196,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .zip(&witness_gadget)
                         .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
                     Ok(acc?
-                        + group.consistency_weight
-                            * *opening_a_evals
-                                .get(position)
-                                .ok_or(AkitaError::InvalidProof)?
+                        + *opening_a_evals
+                            .get(position)
+                            .ok_or(AkitaError::InvalidProof)?
                             * inner)
                 };
                 if z_cols >= PARALLEL_THRESHOLD {
@@ -208,11 +213,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 }
             };
 
-            if total_work >= PARALLEL_THRESHOLD {
-                let (e_result, (t_result, z_result)) = cfg_join!(run_e, || cfg_join!(run_t, run_z));
-                return Ok(e_result? + t_result? + z_result?);
-            }
-            return Ok(run_e()? + run_t()? + run_z()?);
+            let (e, t, z) = if largest_job >= PARALLEL_THRESHOLD {
+                let (e, (t, z)) = cfg_join!(run_e, || cfg_join!(run_t, run_z));
+                (e?, t?, z?)
+            } else {
+                (run_e()?, run_t()?, run_z()?)
+            };
+            // E and Z share the group's consistency weight; applying it once
+            // after reduction keeps the contracted equation auditable and
+            // drops one field multiplication per block claim and position.
+            return Ok(group.consistency_weight * (e + z) + t);
         }
 
         let point = self.relation_address.point();
