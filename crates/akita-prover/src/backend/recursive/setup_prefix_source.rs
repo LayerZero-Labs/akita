@@ -220,7 +220,7 @@ fn fold_setup_prefix_blocks_ring<F: FieldCore + CanonicalField, const D: usize>(
             let start = block_idx * num_positions_per_block;
             let end = (start + num_positions_per_block).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
-            for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
+            for (ring, scalar) in coeffs[start..end].iter().zip(scalars) {
                 ring.mul_accumulate_sparse_rhs_into(scalar, &mut acc);
             }
             acc
@@ -231,7 +231,7 @@ fn fold_setup_prefix_blocks_ring<F: FieldCore + CanonicalField, const D: usize>(
 fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     slot: &SetupPrefixSlot<F>,
-    plan: OpeningFoldPlan<'_, F, D>,
+    plan: OpeningFoldPlan<'_, F>,
 ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
     let coeffs = setup_prefix_rings::<F, D>(expanded, slot)?;
     let num_positions_per_block = plan.num_positions_per_block();
@@ -243,7 +243,7 @@ fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>
             actual: num_positions_per_block,
         });
     }
-    plan.validate(num_live_blocks)?;
+    plan.validate::<D>(num_live_blocks)?;
     match plan {
         OpeningFoldPlan::Base {
             live_block_weights,
@@ -258,16 +258,21 @@ fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>
             );
             Ok(OpeningFoldOutput { eval, folded })
         }
-        OpeningFoldPlan::Ring {
-            live_block_weights,
-            position_weights,
+        OpeningFoldPlan::Subfield {
+            multipliers,
             num_positions_per_block,
         } => {
+            let position_weights = multipliers
+                .materialize_position_rings::<D>()?
+                .ok_or(AkitaError::InvalidProof)?;
+            let live_block_weights = multipliers
+                .materialize_fold_rings::<D>()?
+                .ok_or(AkitaError::InvalidProof)?;
             let folded =
-                fold_setup_prefix_blocks_ring(&coeffs, position_weights, num_positions_per_block);
-            let (eval, folded) = crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
+                fold_setup_prefix_blocks_ring(&coeffs, &position_weights, num_positions_per_block);
+            let (eval, folded) = crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
                 folded,
-                live_block_weights,
+                &live_block_weights,
             );
             Ok(OpeningFoldOutput { eval, folded })
         }
@@ -318,19 +323,29 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         match source {
             RecursiveFoldView::SetupPrefix { expanded, slot } => {
+                let _span = tracing::info_span!(
+                    "fold_recursive_source",
+                    source_kind = "setup_prefix",
+                    ring_dimension = D
+                )
+                .entered();
                 setup_prefix_evaluate_and_fold(expanded, slot, plan)
             }
-            RecursiveFoldView::Witness(view) => <CpuBackend as OpeningFoldKernel<
-                SuffixWitnessView<'_, F, D>,
-                F,
-                D,
-            >>::evaluate_and_fold(
-                self, prepared, view, plan
-            ),
+            RecursiveFoldView::Witness(view) => {
+                let _span = tracing::info_span!(
+                    "fold_recursive_source",
+                    source_kind = "small_balanced_digits",
+                    ring_dimension = D
+                )
+                .entered();
+                <CpuBackend as OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D>>::evaluate_and_fold(
+                    self, prepared, view, plan,
+                )
+            }
         }
     }
 

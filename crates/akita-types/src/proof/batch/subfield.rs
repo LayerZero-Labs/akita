@@ -121,6 +121,38 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         )
     }
 
+    pub(super) fn accumulate_fold_product<const D: usize>(
+        &self,
+        idx: usize,
+        rhs: &CyclotomicRing<F, D>,
+        output: &mut CyclotomicRing<F, D>,
+    ) -> Result<(), AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        add_subfield_product(
+            self.fold_coordinates(idx)?,
+            self.extension_degree,
+            rhs,
+            output,
+        )
+    }
+
+    pub(super) fn accumulate_position_monomial<const D: usize>(
+        &self,
+        idx: usize,
+        shift: usize,
+        scale: F,
+        output: &mut CyclotomicRing<F, D>,
+    ) -> Result<(), AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        add_shifted_subfield_monomial(
+            self.position_coordinates(idx)?,
+            self.extension_degree,
+            shift,
+            scale,
+            output,
+        )
+    }
+
     pub(super) fn position_constant_coeff(&self, idx: usize) -> Option<F> {
         subfield_constant(self.position_coordinates(idx).ok()?)
     }
@@ -275,6 +307,43 @@ fn add_subfield_product<F: FieldCore, const D: usize>(
         if shift != 0 {
             rhs.shift_scale_accumulate_into(output, D - shift, -coordinate);
         }
+    }
+    Ok(())
+}
+
+fn add_shifted_subfield_monomial<F: FieldCore, const D: usize>(
+    coordinates: &[F],
+    extension_degree: usize,
+    shift: usize,
+    scale: F,
+    output: &mut CyclotomicRing<F, D>,
+) -> Result<(), AkitaError> {
+    if coordinates.len() != extension_degree || shift >= D {
+        return Err(AkitaError::InvalidProof);
+    }
+    if scale.is_zero() {
+        return Ok(());
+    }
+    let stride = D / (2 * extension_degree);
+    let output = output.coefficients_mut();
+    let mut accumulate = |position: usize, coefficient: F| {
+        let target = position + shift;
+        if target < D {
+            output[target] += coefficient * scale;
+        } else {
+            output[target - D] -= coefficient * scale;
+        }
+    };
+    if !coordinates[0].is_zero() {
+        accumulate(0, coordinates[0]);
+    }
+    for (index, &coordinate) in coordinates.iter().enumerate().skip(1) {
+        if coordinate.is_zero() {
+            continue;
+        }
+        let position = index * stride;
+        accumulate(position, coordinate);
+        accumulate(D - position, -coordinate);
     }
     Ok(())
 }

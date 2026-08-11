@@ -230,6 +230,50 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
+    /// Add `fold[idx] * rhs` to `output` without expanding the multiplier.
+    pub fn accumulate_fold_product<const D: usize>(
+        &self,
+        idx: usize,
+        rhs: &CyclotomicRing<F, D>,
+        output: &mut CyclotomicRing<F, D>,
+    ) -> Result<(), AkitaError> {
+        match self {
+            Self::Base(point) => {
+                let scalar = point
+                    .live_block_weights
+                    .get(idx)
+                    .ok_or(AkitaError::InvalidProof)?;
+                *output += rhs.scale(scalar);
+                Ok(())
+            }
+            Self::Subfield(point) => point.accumulate_fold_product(idx, rhs, output),
+        }
+    }
+
+    /// Add `scale * position[idx] * X^shift` without expanding the multiplier.
+    pub fn accumulate_position_monomial<const D: usize>(
+        &self,
+        idx: usize,
+        shift: usize,
+        scale: F,
+        output: &mut CyclotomicRing<F, D>,
+    ) -> Result<(), AkitaError> {
+        if shift >= D {
+            return Err(AkitaError::InvalidProof);
+        }
+        match self {
+            Self::Base(point) => {
+                let scalar = point
+                    .position_weights
+                    .get(idx)
+                    .ok_or(AkitaError::InvalidProof)?;
+                output.coefficients_mut()[shift] += *scalar * scale;
+                Ok(())
+            }
+            Self::Subfield(point) => point.accumulate_position_monomial(idx, shift, scale, output),
+        }
+    }
+
     /// Constant coefficient of `a[idx]`, if it is known to be constant.
     pub fn position_constant_coeff(&self, idx: usize) -> Option<F> {
         match self {
@@ -791,6 +835,21 @@ mod tests {
             .accumulate_position_product(0, &rhs, &mut actual)
             .expect("compact product");
         assert_eq!(actual, expected_ring * rhs);
+
+        let mut actual = CyclotomicRing::zero();
+        point
+            .accumulate_fold_product(0, &rhs, &mut actual)
+            .expect("compact fold product");
+        assert_eq!(actual, expected_ring * rhs);
+
+        let scale = F::from_u64(23);
+        for shift in [0, D / 2, D - 1] {
+            let mut actual = CyclotomicRing::zero();
+            point
+                .accumulate_position_monomial(0, shift, scale, &mut actual)
+                .expect("compact shifted monomial");
+            assert_eq!(actual, expected_ring.negacyclic_shift(shift).scale(&scale));
+        }
     }
 
     #[test]

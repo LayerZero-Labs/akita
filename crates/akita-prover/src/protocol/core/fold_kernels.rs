@@ -36,15 +36,8 @@ where
             OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
         return Ok((eval, folded));
     }
-    let live_block_weights = point
-        .materialize_fold_rings::<D>()?
-        .ok_or_else(|| AkitaError::InvalidInput("missing ring fold weights".to_string()))?;
-    let position_weights = point
-        .materialize_position_rings::<D>()?
-        .ok_or_else(|| AkitaError::InvalidInput("missing ring position weights".to_string()))?;
-    let plan = OpeningFoldPlan::Ring {
-        live_block_weights: &live_block_weights,
-        position_weights: &position_weights,
+    let plan = OpeningFoldPlan::Subfield {
+        multipliers: point,
         num_positions_per_block,
     };
     let OpeningFoldOutput { eval, folded } =
@@ -65,7 +58,16 @@ where
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
-    let _span = tracing::info_span!("fold_evaluate_claims", num_claims = polys.len()).entered();
+    let _span = tracing::info_span!(
+        "fold_evaluate_claims",
+        num_claims = polys.len(),
+        source = std::any::type_name::<Q>(),
+        ring_dimension = D,
+        positions_per_block = num_positions_per_block,
+        live_blocks = prepared_point.ring_multiplier_point.fold_len(),
+        compact_subfield = prepared_point.ring_multiplier_point.as_base().is_none(),
+    )
+    .entered();
     let mut folded_rings = Vec::with_capacity(polys.len());
     let mut folded_blocks = Vec::with_capacity(polys.len());
     for poly in polys {
