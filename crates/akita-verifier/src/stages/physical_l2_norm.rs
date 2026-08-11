@@ -73,10 +73,11 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
             }
             shape @ PhysicalL2NormProofShape::LimbGram { .. } => {
                 let layout = shape.limb_gram_layout()?.ok_or(AkitaError::InvalidProof)?;
-                let equality = EqPolynomial::evals_prefix(point, layout.physical_response_len())?;
                 let mut pair_selectors = vec![E::zero(); layout.pair_count()];
-                for (physical_index, equality_weight) in equality.into_iter().enumerate() {
-                    let block_index = physical_index / layout.block_len();
+                let mut block_start_sum = E::zero();
+                for (block_index, block_range) in layout.block_ranges().enumerate() {
+                    let block_end_sum = EqPolynomial::prefix_sum(point, block_range.end)?;
+                    let block_weight = block_end_sum - block_start_sum;
                     for ((left, right), selector) in
                         layout.limb_pairs().zip(pair_selectors.iter_mut())
                     {
@@ -91,8 +92,9 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
                             .get(index)
                             .copied()
                             .ok_or(AkitaError::InvalidProof)?;
-                        *selector += weight * equality_weight;
+                        *selector += weight * block_weight;
                     }
+                    block_start_sum = block_end_sum;
                 }
                 let mut sum = E::zero();
                 for ((left, right), selector) in layout.limb_pairs().zip(pair_selectors) {
