@@ -24,7 +24,7 @@ pub use onehot::{OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView};
 pub use recursive::{
     RecursiveFoldSource, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
 };
-pub use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
+pub use ring_switch::RingSwitchRelationView;
 pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};
 
 #[cfg(test)]

@@ -16,8 +16,8 @@ scheduling remain follow-up work.
 - `RootCommitKernel<S, F, D>` owns source-typed inner commitment. Its single
   group method is the canonical boundary for singleton and batched sources.
 - `DigitRowsComputeBackend<F>` and `CyclicRowsComputeBackend<F>` own reusable
-  row arithmetic. `RingSwitchRelationKernel<S, F, D>` and
-  `RingSwitchQuotientKernel<S, F, D>` own source-typed ring-switch operations.
+  row arithmetic. `RingSwitchRelationKernel<S, F, D>` owns the complete
+  source-typed ring-switch relation operation.
 - `CpuBackend` prepares `CpuPreparedSetup<F>` from an `AkitaProverSetup<F>` or
   an `Arc<AkitaExpandedSetup<F>>`. Per-dimension NTT caches live inside the
   prepared stack. Matrix-consuming kernels lazily acquire exact prefixes keyed
@@ -132,9 +132,9 @@ rebuild released shared matrix slots at the next exact request
   kernel for its backend instead of depending on CPU storage plans.
 - Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
   target backend context inside the matched `D` arm.
-- Cached and streamed ring switch quotient kernels consume the same validated
-  private quotient plan and source abstraction. Width dispatch selects CRT
-  arithmetic only; route selection does not change input acceptance.
+- Cached and streamed ring-switch relation routes consume the same validated
+  source abstraction. Width dispatch selects CRT arithmetic only; route
+  selection does not change input acceptance.
 
 ## Current Scope
 
@@ -149,8 +149,8 @@ Covered operation families:
 - dense cached digits remain an internal CPU optimization;
 - opening fold / decompose-fold / tensor projection (single + batch);
 - single-row cyclic and negacyclic digit rows;
-- ring-switch relation and quotient rows via `RingSwitchRelationKernel` /
-  `RingSwitchQuotientKernel`.
+- ring-switch relation rows, including the D-domain quotient inputs, via
+  `RingSwitchRelationKernel`.
 
 **Prove routing:** `batched_prove` takes `&impl LevelProveStacks`. Each fold
 selects a `ProverComputeStack<C, O, TS, R>`; commit / opening / tensor /

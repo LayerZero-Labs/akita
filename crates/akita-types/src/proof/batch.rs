@@ -230,11 +230,36 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
-    /// Constant coefficient of `a[idx]`, if it is known to be constant.
-    pub fn position_constant_coeff(&self, idx: usize) -> Option<F> {
+    /// Add the high half of the ordinary polynomial product
+    /// `position[idx] * rhs` to `output` without expanding the multiplier.
+    ///
+    /// The returned coefficients are the terms of degrees `D..2D - 2`, shifted
+    /// down by `D`. Base-field multipliers are constant polynomials and hence
+    /// have no high-half contribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `idx` is out of range, `output.len() != D`, or the
+    /// stored subfield multiplier uses a different ring dimension.
+    pub fn accumulate_position_product_high_half<const D: usize>(
+        &self,
+        idx: usize,
+        rhs: &CyclotomicRing<F, D>,
+        output: &mut [F],
+    ) -> Result<(), AkitaError> {
+        if output.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: output.len(),
+            });
+        }
         match self {
-            Self::Base(point) => point.position_weights.get(idx).copied(),
-            Self::Subfield(point) => point.position_constant_coeff(idx),
+            Self::Base(point) => point
+                .position_weights
+                .get(idx)
+                .map(|_| ())
+                .ok_or(AkitaError::InvalidProof),
+            Self::Subfield(point) => point.accumulate_position_product_high_half(idx, rhs, output),
         }
     }
 
@@ -678,6 +703,9 @@ where
 {
     root_tensor_projection_enabled_for_width(E::EXT_DEGREE, ring_d, num_vars)
 }
+
+#[cfg(test)]
+mod high_half_tests;
 
 #[cfg(test)]
 mod tests {
