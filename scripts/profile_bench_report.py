@@ -144,6 +144,11 @@ def case_metadata(mode: str) -> CaseMetadata:
     return CaseMetadata(field_family, workload, workload_label, config)
 
 
+def quotient_digit_count(metadata: CaseMetadata, log_basis: int) -> int:
+    field_bits = int(metadata.field_family.removeprefix("fp"))
+    return (field_bits + log_basis - 1) // log_basis
+
+
 def workload_slug(metadata: CaseMetadata, num_polys: int) -> str:
     if metadata.workload == "onehot" and num_polys > 1:
         return "onehot-batched"
@@ -446,8 +451,9 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     )
     if current.get("tail_num_elems") is not None and terminal_log_basis is not None:
         print(
-            f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elements, "
-            f"gadget basis width `{terminal_log_basis}` bits"
+            "  - Clear response: "
+            f"`{fmt_count(float(current['tail_num_elems']))}` coefficients across `z`, `e`, "
+            f"and `t`. The incoming witness uses a basis width of `{terminal_log_basis}` bits."
         )
 
     z_prefix = current.get("tail_z_prefix_bytes")
@@ -749,6 +755,7 @@ def extract_summary(
     }
     planned_levels: dict[int, dict[str, object]] = {}
     planned_groups: dict[int, list[dict[str, object]]] = {}
+    terminal_plan: dict[str, object] | None = None
     proof_levels: dict[int, dict[str, object]] = {}
     onehot_commit_schedules: list[dict[str, object]] = []
     active_verify_mode = "multi threaded"
@@ -872,6 +879,9 @@ def extract_summary(
                     "d_a": int(kvs["d_a"]),
                     "d_b": int(kvs["d_b"]),
                     "d_d": int(kvs["d_d"]),
+                    "a_width": int(kvs.get("a_width", "0")),
+                    "b_width": int(kvs.get("b_width", "0")),
+                    "d_width": int(kvs.get("d_width", "0")),
                     "n_a": int(kvs["n_a"]),
                     "n_b": int(kvs["n_b"]),
                     "n_d": int(kvs["n_d"]),
@@ -891,6 +901,16 @@ def extract_summary(
                     "num_digits_outer": int(kvs["num_digits_outer"]),
                     "num_digits_open": int(kvs["num_digits_open"]),
                     "num_digits_fold": int(kvs["num_digits_fold"]),
+                    "num_digits_quotient": int(
+                        kvs.get(
+                            "num_digits_quotient",
+                            str(
+                                quotient_digit_count(
+                                    metadata, int(kvs["log_basis_open"])
+                                )
+                            ),
+                        )
+                    ),
                     "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                     **{
                         key: int(kvs[key])
@@ -977,6 +997,9 @@ def extract_summary(
                 "d_a": int(kvs.get("d_a", legacy_d)),
                 "d_b": int(kvs.get("d_b", legacy_d)),
                 "d_d": int(kvs.get("d_d", legacy_d)),
+                "a_width": int(kvs.get("a_width", "0")),
+                "b_width": int(kvs.get("b_width", "0")),
+                "d_width": int(kvs.get("d_width", "0")),
                 "n_a": int(kvs["n_a"]),
                 "n_b": int(kvs["n_b"]),
                 "n_d": int(kvs["n_d"]),
@@ -1014,6 +1037,17 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
+                "num_digits_quotient": int(
+                    kvs.get(
+                        "num_digits_quotient",
+                        str(
+                            quotient_digit_count(
+                                metadata,
+                                int(kvs.get("log_basis_open") or kvs["log_basis"]),
+                            )
+                        ),
+                    )
+                ),
                 "input_witness_len": input_witness_len,
                 "current_w_len": planned_current_w_len(kvs),
                 "next_w_len": output_witness_len,
@@ -1028,6 +1062,59 @@ def extract_summary(
             # and is display-only (no correctness comparison), so keep it optional.
             if "level_bytes" in kvs:
                 planned_levels[level]["level_bytes"] = int(kvs["level_bytes"])
+        elif "planned terminal state" in line and kvs.get("label") == mode:
+            terminal_plan = {
+                "level": int(kvs["level"]) if "level" in kvs else None,
+                "input_witness_len": int(
+                    kvs.get("input_witness_len") or kvs["terminal_response_len"]
+                ),
+                "d_a": int(kvs.get("d_a") or kvs["final_inner_ring_dimension"]),
+                "n_a": int(kvs.get("n_a") or kvs["final_inner_module_rank"]),
+                "inner_width": int(kvs.get("inner_width", "0")),
+                "log_basis_inner": int(
+                    kvs.get("log_basis_inner") or kvs["final_inner_log_basis"]
+                ),
+                "num_digits_inner": int(kvs.get("num_digits_inner", "0")),
+                "fold_log_basis": int(kvs.get("fold_log_basis", "0")),
+                "fold_digit_count": int(kvs.get("fold_digit_count", "0")),
+                "security_route": (
+                    "L2"
+                    if parse_tracing_optional_int(kvs.get("response_l2_sq_cap"))
+                    is not None
+                    else "L-infinity"
+                ),
+                "response_l2_sq_cap": parse_tracing_optional_int(
+                    kvs.get("response_l2_sq_cap")
+                ),
+                **{
+                    key: int(kvs[key])
+                    for key in (
+                        "challenge_l1_mass",
+                        "challenge_count_pm1",
+                        "challenge_count_pm2",
+                        "num_live_ring_elements_per_claim",
+                        "num_positions_per_block",
+                        "num_live_blocks",
+                        "block_index_domain_size",
+                    )
+                    if key in kvs
+                },
+                **(
+                    {
+                        "challenge_operator_norm_threshold": (
+                            parse_tracing_optional_int(
+                                kvs.get("challenge_operator_norm_threshold")
+                            )
+                        )
+                    }
+                    if parse_tracing_optional_int(
+                        kvs.get("challenge_operator_norm_threshold")
+                    )
+                    is not None
+                    else {}
+                ),
+                "complete": "fold_log_basis" in kvs,
+            }
         elif "planned recursive setup edge" in line and kvs.get("label") == mode:
             producer_level = int(kvs["successor_level"]) - 1
             if producer_level in planned_levels:
@@ -1105,6 +1192,14 @@ def extract_summary(
         warning = public_opening_groups_warning(summary)
         if warning is not None:
             summary.setdefault("warnings", []).append(warning)
+    if terminal_plan is not None:
+        if terminal_plan["level"] is None:
+            terminal_plan["level"] = (
+                max(proof_levels)
+                if proof_levels
+                else max(planned_levels, default=-1) + 1
+            )
+        summary["terminal_plan"] = terminal_plan
     if proof_levels:
         summary["proof_levels"] = [proof_levels[level] for level in sorted(proof_levels)]
         grind_rows = [
@@ -2521,43 +2616,85 @@ def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
     )
 
 
-def planned_group_planner_value(group: dict[str, object]) -> str:
-    if group.get("security_route") == "L2":
-        response_bound = "Folded-response bound: sum of squared coefficients (L2)"
-    else:
-        response_bound = "Folded-response bound: maximum coefficient magnitude (Linf)"
-    challenge = f"D{fmt_count(float(group['d_a']))}"
-    count_pm1 = group.get("challenge_count_pm1")
-    count_pm2 = group.get("challenge_count_pm2")
+def matrix_line(
+    label: str,
+    ring_dimension: object,
+    input_width: object,
+    output_rank: object,
+) -> str:
+    width = int(input_width)
+    width_text = f" · input width {fmt_count(float(width))}" if width > 0 else ""
+    return (
+        f"{label}: ring D{fmt_count(float(ring_dimension))}{width_text} · "
+        f"module rank {fmt_count(float(output_rank))}"
+    )
+
+
+def challenge_line(params: dict[str, object]) -> str:
+    challenge = f"Ring D{fmt_count(float(params['d_a']))}"
+    count_pm1 = params.get("challenge_count_pm1")
+    count_pm2 = params.get("challenge_count_pm2")
     if count_pm1 is not None and count_pm2 is not None:
-        challenge += f" · {fmt_count(float(count_pm1))} coefficients at ±1"
+        challenge += f" · shell {fmt_count(float(count_pm1))} at ±1"
         if int(count_pm2) != 0:
             challenge += f" and {fmt_count(float(count_pm2))} at ±2"
-    threshold = group.get("challenge_operator_norm_threshold")
+    threshold = params.get("challenge_operator_norm_threshold")
     if threshold is not None:
-        challenge += f" · operator-norm threshold {fmt_count(float(threshold))}"
-    matrix = (
-        f"Rings A/B/D: {fmt_count(float(group['d_a']))} / "
-        f"{fmt_count(float(group['d_b']))} / {fmt_count(float(group['d_d']))}<br>"
-        f"Rows A/B/D: {fmt_count(float(group['n_a']))} / "
-        f"{fmt_count(float(group['n_b']))} / {fmt_count(float(group['n_d']))}"
-    )
-    decomposition = (
-        f"Basis bits A/B/D: {fmt_count(float(group['log_basis_inner']))} / "
-        f"{fmt_count(float(group['log_basis_outer']))} / "
-        f"{fmt_count(float(group['log_basis_open']))}<br>"
-        f"Digits A/B/D/W: {fmt_count(float(group['num_digits_inner']))} / "
-        f"{fmt_count(float(group['num_digits_outer']))} / "
-        f"{fmt_count(float(group['num_digits_open']))} / "
-        f"{fmt_count(float(group['num_digits_fold']))}"
-    )
+        challenge += f" · operator norm threshold {fmt_count(float(threshold))}"
+    return challenge
+
+
+def response_bound_lines(params: dict[str, object]) -> list[str]:
+    if params.get("security_route") == "L2":
+        rows = ["Sum of squared coefficients (L2)"]
+        cap = params.get("response_l2_sq_cap")
+        if cap is not None:
+            rows.append(f"Scheduled cap: {fmt_count(float(cap))}")
+        return rows
+    return ["Maximum coefficient magnitude (Linf)"]
+
+
+def digit_count_phrase(value: object, role: str = "") -> str:
+    count = int(value)
+    role_prefix = f"{role} " if role else ""
+    suffix = "" if count == 1 else "s"
+    return f"{fmt_count(float(count))} {role_prefix}digit{suffix}"
+
+
+def planned_group_planner_value(group: dict[str, object]) -> str:
+    matrices = [
+        matrix_line("A commitment", group["d_a"], group.get("a_width", 0), group["n_a"]),
+        matrix_line("B commitment", group["d_b"], group.get("b_width", 0), group["n_b"]),
+        matrix_line("D opening", group["d_d"], group.get("d_width", 0), group["n_d"]),
+    ]
+    segments = [
+        "z response: "
+        f"{digit_count_phrase(group['num_digits_inner'], 'input')} "
+        f"(basis bits {fmt_count(float(group['log_basis_inner']))}) × "
+        f"{digit_count_phrase(group['num_digits_fold'], 'response')} "
+        f"(basis bits {fmt_count(float(group['log_basis_open']))})",
+        "e opening: "
+        f"{digit_count_phrase(group['num_digits_open'])} "
+        f"(basis bits {fmt_count(float(group['log_basis_open']))})",
+        "t matrix image: "
+        f"{digit_count_phrase(group['num_digits_outer'])} "
+        f"(basis bits {fmt_count(float(group['log_basis_outer']))})",
+    ]
+    if str(group.get("group_role")) in ("final", "folded") and int(
+        group.get("num_digits_quotient", 0)
+    ) > 0:
+        segments.append(
+            "r shared quotient: "
+            f"{digit_count_phrase(group['num_digits_quotient'])} "
+            f"(basis bits {fmt_count(float(group['log_basis_open']))})"
+        )
     return detail_block(
         planned_group_label(group),
         [
-            f"<em>Matrix geometry</em><br>{matrix}",
-            f"<br><em>Security</em><br>{response_bound}",
-            f"<br><em>Decomposition</em><br>{decomposition}",
-            f"<br><em>Challenge</em><br>{challenge}",
+            f"<em>Commitment matrices used at this fold</em><br>{'<br>'.join(matrices)}",
+            f"<br><em>Folded response check</em><br>{'<br>'.join(response_bound_lines(group))}",
+            f"<br><em>Outgoing witness segments</em><br>{'<br>'.join(segments)}",
+            f"<br><em>Challenge used at this fold</em><br>{challenge_line(group)}",
         ],
     )
 
@@ -2566,10 +2703,11 @@ def planned_group_work_value(group: dict[str, object]) -> str:
     role = str(group["group_role"])
     label = planned_group_label(group)
     relation = (
-        f"Live per claim: {fmt_count(float(group['num_live_ring_elements_per_claim']))}<br>"
-        f"Blocks × positions: {fmt_count(float(group['num_live_blocks']))} × "
+        "Live ring elements per claim: "
+        f"{fmt_count(float(group['num_live_ring_elements_per_claim']))}<br>"
+        f"Live blocks × positions: {fmt_count(float(group['num_live_blocks']))} × "
         f"{fmt_count(float(group['num_positions_per_block']))}<br>"
-        f"Domain slots: {fmt_count(float(group['block_index_domain_size']))}"
+        f"Block domain slots: {fmt_count(float(group['block_index_domain_size']))}"
     )
     if group.get("legacy_level"):
         source = (
@@ -2584,8 +2722,13 @@ def planned_group_work_value(group: dict[str, object]) -> str:
         )
     else:
         source = f"Field elements: {fmt_count(float(group['witness_field_elements']))}"
+    input_label = (
+        "Setup prefix"
+        if role == "setup_offload"
+        else f"Input at L{int(group['consumer_level'])}"
+    )
     parts = [
-        f"<em>{'Setup prefix' if role == 'setup_offload' else 'Witness'}</em><br>{source}",
+        f"<em>{input_label}</em><br>{source}",
         f"<br><em>Relation geometry</em><br>{relation}",
     ]
     if group.get("legacy_level") and (
@@ -2608,6 +2751,12 @@ def render_group_choices(
     baseline_groups: list[dict[str, object]],
     value: callable,
 ) -> str:
+    def comparison_value(group: dict[str, object]) -> str:
+        comparable = dict(group)
+        for field in ("a_width", "b_width", "d_width", "num_digits_quotient"):
+            comparable[field] = 0
+        return value(comparable)
+
     current = {planned_group_key(group): group for group in groups}
     baseline = {planned_group_key(group): group for group in baseline_groups}
     keys = [*current, *(key for key in baseline if key not in current)]
@@ -2632,7 +2781,14 @@ def render_group_choices(
                 else None
             )
         )
-        rows.append(exact_choice(current_text, baseline_text))
+        if (
+            current_group is not None
+            and baseline_group is not None
+            and comparison_value(current_group) == comparison_value(baseline_group)
+        ):
+            rows.append(current_text)
+        else:
+            rows.append(exact_choice(current_text, baseline_text))
     return "<br><br>".join(rows)
 
 
@@ -2747,11 +2903,67 @@ def proof_cost_summary(
     return "<br><br>".join(rows)
 
 
+def planned_terminal_planner_value(terminal: dict[str, object]) -> str:
+    matrix = matrix_line(
+        "A commitment",
+        terminal["d_a"],
+        terminal.get("inner_width", 0),
+        terminal["n_a"],
+    )
+    response = (
+        "z response: "
+        f"{digit_count_phrase(terminal['num_digits_inner'], 'input')} "
+        f"(basis bits {fmt_count(float(terminal['log_basis_inner']))}) × "
+        f"{digit_count_phrase(terminal['fold_digit_count'], 'response')} "
+        f"(basis bits {fmt_count(float(terminal['fold_log_basis']))})"
+    )
+    rows = [f"<em>Commitment matrix used at this fold</em><br>{matrix}"]
+    if terminal.get("complete"):
+        rows.extend(
+            [
+                "<br><em>Folded response check</em><br>"
+                + "<br>".join(response_bound_lines(terminal)),
+                f"<br><em>Response decomposition</em><br>{response}",
+                "<br><em>Challenge used at this fold</em><br>"
+                + challenge_line(terminal),
+            ]
+        )
+    return detail_block("Terminal fold", rows)
+
+
+def planned_terminal_work_value(terminal: dict[str, object]) -> str:
+    level = int(terminal["level"])
+    input_label = "Input at terminal root" if level == 0 else f"Input from L{level - 1}"
+    rows = [
+        f"<em>{input_label}</em><br>Field elements: "
+        f"{fmt_count(float(terminal['input_witness_len']))}"
+    ]
+    if terminal.get("complete"):
+        relation = (
+            "Live ring elements per claim: "
+            f"{fmt_count(float(terminal['num_live_ring_elements_per_claim']))}<br>"
+            "Live blocks × positions: "
+            f"{fmt_count(float(terminal['num_live_blocks']))} × "
+            f"{fmt_count(float(terminal['num_positions_per_block']))}<br>"
+            "Block domain slots: "
+            f"{fmt_count(float(terminal['block_index_domain_size']))}"
+        )
+        rows.extend(
+            [
+                f"<br><em>Relation geometry</em><br>{relation}",
+                "<br><em>Output</em><br>Clear z, e, and t terminal response",
+            ]
+        )
+    return detail_block("Terminal fold", rows)
+
+
 def render_fold_details(
     planned_levels: list[dict[str, object]],
     proof_levels: list[dict[str, object]],
+    terminal_plan: dict[str, object] | None,
     baseline_planned_levels: list[dict[str, object]] | None,
     baseline_proof_levels: list[dict[str, object]] | None,
+    baseline_terminal_plan: dict[str, object] | None,
 ) -> None:
     planned = {int(level["level"]): level for level in planned_levels}
     proof = {int(level["level"]): level for level in proof_levels}
@@ -2761,13 +2973,18 @@ def render_fold_details(
     baseline_proof = {
         int(level["level"]): level for level in (baseline_proof_levels or [])
     }
-    level_indices = sorted(set(planned) | set(proof))
+    terminal_level = int(terminal_plan["level"]) if terminal_plan is not None else None
+    level_indices = sorted(
+        set(planned)
+        | set(proof)
+        | ({terminal_level} if terminal_level is not None else set())
+    )
     print("<details>")
     print("<summary>Fold schedule and proof cost</summary>")
     print()
     print("#### Fold by fold")
     print()
-    headers = ["Fold", "Step", "Planner choice", "Work at this fold", "Proof bytes"]
+    headers = ["Fold", "Step", "Fold parameters", "Input and output", "Proof bytes"]
     print("| " + " | ".join(headers) + " |")
     print("| --- | --- | --- | --- | --- |")
 
@@ -2777,7 +2994,31 @@ def render_fold_details(
         baseline_schedule = baseline_planned.get(level_index)
         baseline_proof_level = baseline_proof.get(level_index)
         step = proof_step_label(proof_level) if proof_level is not None else "scheduled fold"
-        if schedule is None:
+        is_terminal = terminal_level == level_index
+        if schedule is None and is_terminal and terminal_plan is not None:
+            baseline_terminal = (
+                baseline_terminal_plan
+                if baseline_terminal_plan is not None
+                and baseline_terminal_plan.get("complete")
+                else None
+            )
+            schedule_choice = exact_choice(
+                planned_terminal_planner_value(terminal_plan),
+                (
+                    planned_terminal_planner_value(baseline_terminal)
+                    if baseline_terminal is not None
+                    else None
+                ),
+            )
+            work = exact_choice(
+                planned_terminal_work_value(terminal_plan),
+                (
+                    planned_terminal_work_value(baseline_terminal)
+                    if baseline_terminal is not None
+                    else None
+                ),
+            )
+        elif schedule is None:
             schedule_choice = "—"
             work = "—"
         else:
@@ -2805,7 +3046,7 @@ def render_fold_details(
                 )
             work = (
                 f"{work}<br><br>"
-                f"{detail_block('Folded output', [exact_choice(next_w, baseline_next_w)])}"
+                f"{detail_block(f'Output to L{level_index + 1}', [exact_choice(next_w, baseline_next_w)])}"
             )
 
         proof_bytes = "n/a"
@@ -2821,12 +3062,12 @@ def render_fold_details(
 
     print()
     print(
-        "Role tuples use A / B / D order. The digit tuple adds folded witness W as "
-        "its fourth value. Proof groups with zero bytes are omitted. Component details "
-        "appear below the group total when a group contains multiple fields. "
-        "Unchanged choices omit merge base text. Exact proof component comparisons "
-        "show merge base bytes without a percentage. The terminal response is "
-        "reported separately and is not part of the terminal fold byte total."
+        "Each row shows the matrices and challenge used at that fold. Output to the "
+        "next level becomes the input shown on the next row. Each group has z, e, and "
+        "t segments. The complete relation has one shared r segment. The terminal fold uses only A and "
+        "sends the clear z, e, and t response shown in the terminal response section. "
+        "Proof groups with zero bytes are omitted. The terminal response bytes are not "
+        "part of the terminal fold byte total."
     )
     grind_rows = [
         level
@@ -2884,6 +3125,37 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
     proof_levels = summary.get("proof_levels")
     if not isinstance(planned_levels, list) or not isinstance(proof_levels, list):
         return
+    terminal_plan = summary.get("terminal_plan")
+    if isinstance(terminal_plan, dict) and planned_levels:
+        terminal_level = int(terminal_plan["level"])
+        expected_terminal_level = int(planned_levels[-1]["level"]) + 1
+        if terminal_level != expected_terminal_level:
+            raise ValueError(
+                "planned terminal level mismatch: "
+                f"planned={terminal_level}, expected={expected_terminal_level}"
+            )
+        predecessor_output = int(planned_levels[-1]["next_w_len"])
+        terminal_input = int(terminal_plan["input_witness_len"])
+        if terminal_input != predecessor_output:
+            raise ValueError(
+                "planned terminal input mismatch: "
+                f"terminal={terminal_input}, predecessor_output={predecessor_output}"
+            )
+        matching_proof = next(
+            (
+                proof
+                for proof in proof_levels
+                if int(proof["level"]) == terminal_level
+            ),
+            None,
+        )
+        if matching_proof is not None and int(matching_proof["d"]) != int(
+            terminal_plan["d_a"]
+        ):
+            raise ValueError(
+                f"planned/proof terminal A ring dimension mismatch at L{terminal_level}: "
+                f"planned={terminal_plan['d_a']}, proof={matching_proof['d']}"
+            )
     # The prover emits the direct terminal as an extra "proof fold level"
     # (`print_terminal_level_breakdown`), whereas the planner reports the
     # terminal separately as "planned terminal state" rather than a "planned
@@ -3204,8 +3476,10 @@ def render_report(args: argparse.Namespace) -> int:
             render_fold_details(
                 planned_levels,
                 proof_levels,
+                current.get("terminal_plan"),
                 baseline_planned_levels,
                 baseline_proof_levels,
+                main_case.get("terminal_plan") if main_case is not None else None,
             )
         if len(current_cases) > 1:
             print()
