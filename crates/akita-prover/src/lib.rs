@@ -13,6 +13,7 @@ pub mod types;
 mod validation;
 
 use akita_algebra::CyclotomicRing;
+use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::RingVec;
 
@@ -67,8 +68,10 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
     ///
     /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
     centered_coeffs_flat: Vec<i32>,
-    /// Infinity norm of the flat centered coefficient storage above.
-    pub centered_inf_norm: u32,
+    /// Smallest signed centered coefficient.
+    centered_min: i32,
+    /// Largest signed centered coefficient.
+    centered_max: i32,
     /// Ring dimension (field coefficients per ring element), fixed at construction.
     ring_dim: usize,
 }
@@ -78,13 +81,14 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
     pub fn from_coefficient_parts<const D: usize>(
         z_folded_coeffs: Vec<[F; D]>,
         centered_coeffs: Vec<[i32; D]>,
-        centered_inf_norm: u32,
     ) -> Self {
         debug_assert_eq!(z_folded_coeffs.len(), centered_coeffs.len());
+        let (centered_min, centered_max) = centered_coefficient_bounds(&centered_coeffs);
         Self {
             z_folded_rings: RingVec::from_coefficient_rows(z_folded_coeffs),
             centered_coeffs_flat: centered_coeffs.into_flattened(),
-            centered_inf_norm,
+            centered_min,
+            centered_max,
             ring_dim: D,
         }
     }
@@ -93,16 +97,14 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
     pub fn from_parts<const D: usize>(
         z_folded_rings: Vec<CyclotomicRing<F, D>>,
         centered_coeffs: Vec<[i32; D]>,
-        centered_inf_norm: u32,
     ) -> Self {
         debug_assert_eq!(z_folded_rings.len(), centered_coeffs.len());
+        let (centered_min, centered_max) = centered_coefficient_bounds(&centered_coeffs);
         Self {
             z_folded_rings: RingVec::from_ring_elems(&z_folded_rings),
-            centered_coeffs_flat: centered_coeffs
-                .iter()
-                .flat_map(|row| row.iter().copied())
-                .collect(),
-            centered_inf_norm,
+            centered_coeffs_flat: centered_coeffs.into_flattened(),
+            centered_min,
+            centered_max,
             ring_dim: D,
         }
     }
@@ -163,6 +165,18 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
         &self.centered_coeffs_flat
     }
 
+    /// Infinity norm derived from the centered coefficient buffer.
+    pub fn centered_inf_norm(&self) -> u32 {
+        self.centered_min
+            .unsigned_abs()
+            .max(self.centered_max.unsigned_abs())
+    }
+
+    /// Signed extrema derived from the centered coefficient buffer.
+    pub fn centered_signed_extrema(&self) -> (i32, i32) {
+        (self.centered_min, self.centered_max)
+    }
+
     /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
     pub fn centered_coeffs_trusted<const D: usize>(&self) -> &[[i32; D]] {
         debug_assert_eq!(self.ring_dim, D);
@@ -175,6 +189,26 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
     pub fn centered_coeffs_owned<const D: usize>(&self) -> Vec<[i32; D]> {
         self.centered_coeffs_trusted::<D>().to_vec()
     }
+}
+
+fn centered_coefficient_bounds<const D: usize>(rows: &[[i32; D]]) -> (i32, i32) {
+    if rows.is_empty() || D == 0 {
+        return (0, 0);
+    }
+    cfg_fold_reduce!(
+        rows,
+        || (i32::MAX, i32::MIN),
+        |(mut min, mut max), row| {
+            for &coefficient in row {
+                min = min.min(coefficient);
+                max = max.max(coefficient);
+            }
+            (min, max)
+        },
+        |(left_min, left_max), (right_min, right_max)| {
+            (left_min.min(right_min), left_max.max(right_max))
+        }
+    )
 }
 
 /// Prover-side output of the inner Ajtai commit step.
