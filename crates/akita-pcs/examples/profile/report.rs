@@ -1,3 +1,4 @@
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
@@ -8,9 +9,9 @@ use akita_types::{
     },
     layout::proof_size::field_bytes,
     sis::num_digits_for_bound,
-    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, NttTransformDomain,
-    OpenCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, SetupSumcheckProof,
-    TerminalLevelProof, ZFoldEncodingStats,
+    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule,
+    InnerCommitSecurityRoute, NttTransformDomain, OpenCommitMatrixParams, PolynomialGroupLayout,
+    PrecommittedLevelParams, SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -361,6 +362,9 @@ struct PlannedGroupReport {
     num_digits_open: usize,
     num_digits_fold: usize,
     challenge_l1_mass: usize,
+    challenge_count_pm1: usize,
+    challenge_count_pm2: usize,
+    challenge_operator_norm_threshold: Option<u32>,
     num_live_ring_elements_per_claim: usize,
     num_live_blocks: usize,
     num_positions_per_block: usize,
@@ -370,6 +374,20 @@ struct PlannedGroupReport {
     norm_proof_shape: Option<akita_types::PhysicalL2NormProofShape>,
     setup_prefix_natural_field_elements: usize,
     setup_prefix_padded_field_elements: usize,
+}
+
+fn reported_operator_norm_threshold(
+    security_route: InnerCommitSecurityRoute,
+    ring_dimension: usize,
+    challenge: &SparseChallengeConfig,
+) -> Option<u32> {
+    match security_route {
+        InnerCommitSecurityRoute::Linf(_) => None,
+        InnerCommitSecurityRoute::L2 { .. } => {
+            akita_challenges::selective_l2_operator_norm_rejection(ring_dimension, challenge)
+                .map(|policy| policy.threshold)
+        }
+    }
 }
 
 impl PlannedGroupReport {
@@ -391,6 +409,11 @@ impl PlannedGroupReport {
                 ..
             } => (Some(response_l2_sq_cap), Some(norm_proof_shape)),
         };
+        let challenge_operator_norm_threshold = reported_operator_norm_threshold(
+            security_route,
+            role_dims.d_a(),
+            &params.fold_challenge_config,
+        );
         let (public_num_vars, public_num_polynomials) = public_group
             .map(|layout| (layout.num_vars(), layout.num_polynomials()))
             .unwrap_or((0, 0));
@@ -415,6 +438,9 @@ impl PlannedGroupReport {
             num_digits_open: params.num_digits_open,
             num_digits_fold: params.num_digits_fold(),
             challenge_l1_mass: params.challenge_l1_mass(),
+            challenge_count_pm1: params.fold_challenge_config.count_pm1,
+            challenge_count_pm2: params.fold_challenge_config.count_pm2,
+            challenge_operator_norm_threshold,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_live_blocks: params.num_live_blocks,
             num_positions_per_block: params.num_positions_per_block,
@@ -452,6 +478,11 @@ impl PlannedGroupReport {
                 ..
             } => (Some(response_l2_sq_cap), Some(norm_proof_shape)),
         };
+        let challenge_operator_norm_threshold = reported_operator_norm_threshold(
+            security_route,
+            role_dims.d_a(),
+            &params.fold_challenge_config,
+        );
         Self {
             group,
             group_role: if setup_prefix_lengths.is_some() {
@@ -477,6 +508,9 @@ impl PlannedGroupReport {
             num_digits_open: params.num_digits_open,
             num_digits_fold: params.num_digits_fold,
             challenge_l1_mass: params.challenge_l1_mass(),
+            challenge_count_pm1: params.fold_challenge_config.count_pm1,
+            challenge_count_pm2: params.fold_challenge_config.count_pm2,
+            challenge_operator_norm_threshold,
             num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
             num_live_blocks: layout.num_live_blocks,
             num_positions_per_block: layout.num_positions_per_block,
@@ -516,6 +550,9 @@ impl PlannedGroupReport {
             num_digits_open = self.num_digits_open,
             num_digits_fold = self.num_digits_fold,
             challenge_l1_mass = self.challenge_l1_mass,
+            challenge_count_pm1 = self.challenge_count_pm1,
+            challenge_count_pm2 = self.challenge_count_pm2,
+            challenge_operator_norm_threshold = ?self.challenge_operator_norm_threshold,
             num_live_ring_elements_per_claim = self.num_live_ring_elements_per_claim,
             num_live_blocks = self.num_live_blocks,
             num_positions_per_block = self.num_positions_per_block,
@@ -652,6 +689,11 @@ pub(crate) fn emit_runtime_schedule_summary(
                 ..
             } => (Some(response_l2_sq_cap), Some(norm_proof_shape)),
         };
+        let challenge_operator_norm_threshold = reported_operator_norm_threshold(
+            security_route,
+            role_dims.d_a(),
+            &lp.fold_challenge_config,
+        );
         tracing::info!(
             label,
             level = level_idx,
@@ -672,6 +714,9 @@ pub(crate) fn emit_runtime_schedule_summary(
             ?d_input_raw_dimension,
             ?d_output_raw_dimension,
             challenge_l1_mass = lp.challenge_l1_mass(),
+            challenge_count_pm1 = lp.fold_challenge_config.count_pm1,
+            challenge_count_pm2 = lp.fold_challenge_config.count_pm2,
+            challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
             log_basis_inner = lp.log_basis_inner,
             log_basis_outer = lp.log_basis_outer,
             log_basis_open = lp.log_basis_open,

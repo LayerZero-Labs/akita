@@ -142,6 +142,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "tail_t_bytes": 64,
             "tail_t_field_elems": 32,
             "tail_t_ring_elems": 1,
+            "tail_z_budget_bytes": 16,
+            "z_witness_linf_cap": "4096",
+            "z_rice_low_bits_wire": 10,
+            "z_bits_per_coord_golomb": 3.0,
+            "z_bits_per_coord_packed": 13.0,
+            "z_packed_hypothetical_bytes": 52,
         }
 
         output = io.StringIO()
@@ -149,38 +155,41 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             render_tail_encoding(summary)
         report = output.getvalue()
 
-        self.assertIn("quotient-free terminal response", report)
-        self.assertIn("inner gadget basis width `6` bits", report)
-        self.assertIn("Folded-witness (`z`) segment", report)
-        self.assertIn("Opening-digit (`e`) segment", report)
-        self.assertIn("Inner-commitment (`t`) segment", report)
+        self.assertIn("gadget basis width `6` bits", report)
+        self.assertIn("| Folded response (`z`) | 20 bytes | 32 | 1 |", report)
+        self.assertIn("| Opening values (`e`) | 64 bytes | 32 | 1 |", report)
+        self.assertIn("| Inner-commitment values (`t`) | 64 bytes | 32 | 1 |", report)
+        self.assertIn("Golomb parameter `10`", report)
+        self.assertIn("coefficient limit `4096`", report)
+        self.assertIn("`3.00` bits per coefficient", report)
+        self.assertNotIn("Wire total", report)
+        self.assertNotIn("savings", report)
 
-    def test_compact_report_renders_terminal_response_component_table(self) -> None:
-        from scripts.profile_bench_report import render_terminal_response_components
+    def test_proof_table_embeds_terminal_response_components(self) -> None:
+        from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
 
-        case = {
-            "mode": "onehot_fp128",
-            "num_vars": 32,
-            "num_polys": 1,
-            "exit_code": 0,
-            "tail_encoding": "terminal_response",
-            "tail_z_bytes": 20,
-            "tail_e_bytes": 64,
-            "tail_t_bytes": 96,
-            "tail_bytes": 180,
-        }
+        case = normalize_case_summary(
+            {
+                "mode": "onehot_fp128",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "tail_encoding": "terminal_response",
+                "tail_z_bytes": 20,
+                "tail_e_bytes": 64,
+                "tail_t_bytes": 96,
+                "tail_bytes": 180,
+            }
+        )
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            render_terminal_response_components([case])
+            render_matrix_summary([case], None)
         report = output.getvalue()
 
-        self.assertIn("Terminal response component breakdown", report)
-        self.assertIn("20 bytes", report)
-        self.assertIn("64 bytes", report)
-        self.assertIn("96 bytes", report)
         self.assertIn("180 bytes", report)
-        self.assertIn("sum exactly", report)
+        self.assertIn("<sub>z 20 · e 64 · t 96</sub>", report)
+        self.assertNotIn("Terminal response component breakdown", report)
 
     def test_z_fold_encoding_stats_prefers_wire_low_bits(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -447,7 +456,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         current_log = (
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
-            'n_a=4 n_b=6 n_d=8 challenge_l1_mass=16 log_basis=6 position_index_bits=7 '
+            'n_a=4 n_b=6 n_d=8 response_l2_sq_cap=Some(100) challenge_l1_mass=53 '
+            'challenge_count_pm1=31 challenge_count_pm2=11 '
+            'challenge_operator_norm_threshold=Some(19) log_basis=6 position_index_bits=7 '
             'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
@@ -472,6 +483,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Fold schedule and proof cost", report)
         self.assertIn("Rings A/B/D: 64 / 32 / 16", report)
         self.assertIn("Rows A/B/D: 4 / 6 / 8", report)
+        self.assertIn("Folded-response bound: sum of squared coefficients (L2)", report)
+        self.assertIn(
+            "D64 · 31 coefficients at ±1 and 11 at ±2 · operator-norm threshold 19",
+            report,
+        )
         self.assertIn("<em>Matrix geometry</em>", report)
         self.assertIn(
             "<sub>Merge base</sub><br><strong>Final group</strong><br>"
@@ -618,6 +634,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "<strong>Folded output</strong><br>Field elements: 47,963,968",
             report,
         )
+        self.assertIn(
+            "Folded-response bound: maximum coefficient magnitude (Linf)",
+            report,
+        )
         self.assertNotIn("setup fields; relation", report)
 
     def test_proof_breakdown_omits_zero_components(self) -> None:
@@ -639,7 +659,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(levels[0]["response_l2_sq"], 14)
         planned_log = (
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
-            'n_a=4 n_b=6 n_d=8 challenge_l1_mass=16 log_basis=6 position_index_bits=7 '
+            'n_a=4 n_b=6 n_d=8 response_l2_sq_cap=Some(100) challenge_l1_mass=53 '
+            'challenge_count_pm1=31 challenge_count_pm2=11 '
+            'challenge_operator_norm_threshold=Some(19) log_basis=6 position_index_bits=7 '
             'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048\n'
@@ -654,9 +676,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Fold by fold", report)
         self.assertIn("<strong>Stage 1</strong><br>24 bytes", report)
         self.assertIn("range image 16", report)
-        self.assertIn("physical L2 norm proof 8", report)
-        self.assertIn("Observed physical L2 squared norm", report)
-        self.assertIn("14", report)
+        self.assertIn("L2 norm proof 8", report)
+        self.assertIn("Sum of squared response coefficients", report)
+        self.assertIn("14 ≤ cap 100", report)
         self.assertNotIn("<strong>Opening</strong>", report)
         self.assertNotIn("<strong>Stage 2</strong>", report)
         self.assertIn("+0.0% vs merge base", report)
@@ -731,11 +753,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 combined["proof_levels"],
                 None,
                 None,
-                combined["l2_grind_observations"],
             )
         report = output.getvalue()
-        self.assertIn("L2 cap grinding observations", report)
-        self.assertIn("50.00%", report)
+        self.assertNotIn("L2 cap grinding observations", report)
+        self.assertNotIn("50.00%", report)
 
     def test_failed_l2_run_preserves_partial_sample_without_grind_diagnostics(self) -> None:
         from scripts.profile_bench_report import combine_case_run_summaries

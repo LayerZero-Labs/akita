@@ -372,15 +372,6 @@ TAIL_SUMMARY_FLOAT_FIELDS = (
     "z_bits_per_coord_packed",
 )
 
-TAIL_ENCODING_POLICIES = {
-    "segment_typed": "non-zk folded terminal (default in profile bench)",
-    "terminal_response": "non-zk quotient-free terminal response (default in profile bench)",
-    "packed_digits": "zk-feature folded terminal fallback",
-    "field_elements": "root-direct cleartext witness",
-    "none": "root-direct zero-fold (no cleartext tail)",
-}
-
-
 def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) -> None:
     if "final_w_encoding" in kvs:
         summary["tail_encoding"] = kvs["final_w_encoding"]
@@ -427,12 +418,13 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     if encoding is None:
         return
 
-    policy = current.get("tail_policy")
-    policy_hint = TAIL_ENCODING_POLICIES.get(str(encoding), str(policy or encoding))
-    print(f"- Tail encoding: `{encoding}` ({policy_hint})")
+    print(f"- Tail encoding: `{encoding}`")
 
     if encoding == "packed_digits":
-        if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
+        if (
+            current.get("tail_num_elems") is not None
+            and current.get("tail_bits_per_elem") is not None
+        ):
             print(
                 f"  - Wire: `{fmt_count(float(current['tail_num_elems']))}` logical elements at "
                 f"`{current['tail_bits_per_elem']}` bits for each element (uniform `PackedDigits`)"
@@ -453,152 +445,105 @@ def render_tail_encoding(current: dict[str, object]) -> None:
         "tail_log_basis_inner", current.get("tail_log_basis_open")
     )
     if current.get("tail_num_elems") is not None and terminal_log_basis is not None:
-        basis_role = "inner" if encoding == "terminal_response" else "D/open"
         print(
             f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elements, "
-            f"{basis_role} gadget basis width `{terminal_log_basis}` bits, "
-            "folded-witness (`z`) segment first on the wire"
+            f"gadget basis width `{terminal_log_basis}` bits"
         )
 
     z_prefix = current.get("tail_z_prefix_bytes")
     z_golomb = current.get("tail_z_golomb_bytes")
-    z_wire = current.get("tail_z_bytes")
-    z_field = current.get("tail_z_field_elems")
-    z_ring = current.get("tail_z_ring_elems")
-    if z_wire is not None and z_field is not None and z_ring is not None:
-        prefix_golomb = ""
-        if z_prefix is not None and z_golomb is not None:
-            prefix_golomb = (
-                f" (length prefix `{fmt_bytes(float(z_prefix))} bytes` + Golomb "
-                f"`{fmt_bytes(float(z_golomb))} bytes`)"
-            )
-        print(
-            f"  - Folded-witness (`z`) segment: `{fmt_bytes(float(z_wire))} bytes`{prefix_golomb}, "
-            f"`{fmt_count(float(z_field))}` field coefficients, "
-            f"`{fmt_count(float(z_ring))}` ring elements"
-        )
-
-    for segment_label, bytes_key, field_key, ring_key in (
-        ("Opening-digit (`e`)", "tail_e_bytes", "tail_e_field_elems", "tail_e_ring_elems"),
+    segment_rows = []
+    for label, bytes_key, field_key, ring_key, segment_encoding in (
         (
-            "Inner-commitment (`t`)",
+            "Folded response (`z`)",
+            "tail_z_bytes",
+            "tail_z_field_elems",
+            "tail_z_ring_elems",
+            "Golomb",
+        ),
+        (
+            "Opening values (`e`)",
+            "tail_e_bytes",
+            "tail_e_field_elems",
+            "tail_e_ring_elems",
+            "raw field elements",
+        ),
+        (
+            "Inner-commitment values (`t`)",
             "tail_t_bytes",
             "tail_t_field_elems",
             "tail_t_ring_elems",
+            "raw field elements",
         ),
     ):
-        seg_bytes = current.get(bytes_key)
-        field_coeffs = current.get(field_key)
-        ring_elems = current.get(ring_key)
-        if seg_bytes is None:
+        if current.get(bytes_key) is None:
             continue
-        detail = f"`{fmt_bytes(float(seg_bytes))} bytes`"
-        if field_coeffs is not None:
-            detail += f", `{fmt_count(float(field_coeffs))}` field coefficients"
-        if ring_elems is not None:
-            detail += f", `{fmt_count(float(ring_elems))}` ring elements"
-        print(f"  - {segment_label} segment: {detail}")
-
-    if all(
-        current.get(key) is not None
-        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
-    ):
-        wire_total = (
-            int(current["tail_z_bytes"])
-            + int(current["tail_e_bytes"])
-            + int(current["tail_t_bytes"])
+        if (
+            bytes_key == "tail_z_bytes"
+            and z_prefix is not None
+            and z_golomb is not None
+        ):
+            segment_encoding = (
+                f"{fmt_bytes(float(z_prefix))}-byte length prefix + "
+                f"{fmt_bytes(float(z_golomb))}-byte Golomb payload"
+            )
+        field_coefficients = current.get(field_key)
+        ring_elements = current.get(ring_key)
+        segment_rows.append(
+            (
+                label,
+                f"{fmt_bytes(float(current[bytes_key]))} bytes",
+                (
+                    fmt_count(float(field_coefficients))
+                    if field_coefficients is not None
+                    else "—"
+                ),
+                fmt_count(float(ring_elements)) if ring_elements is not None else "—",
+                segment_encoding,
+            )
         )
-        print(f"  - Wire total (z+e+t): `{fmt_bytes(float(wire_total))} bytes`")
+    if segment_rows:
+        print()
+        print("| Segment | Bytes | Field coefficients | Ring elements | Encoding |")
+        print("| --- | ---: | ---: | ---: | --- |")
+        for row in segment_rows:
+            print("| " + " | ".join(row) + " |")
 
     z_budget = current.get("tail_z_budget_bytes")
-    z_slack = current.get("tail_z_slack_bytes")
     if z_budget is not None and z_golomb is not None:
-        slack_note = (
-            f", slack `{fmt_bytes(float(z_slack))} bytes` under planner upper bound"
-            if z_slack is not None
-            else ""
-        )
+        parameter = current.get("z_rice_low_bits_wire")
+        scheduled_parameter = current.get("z_rice_low_bits_cap")
+        cap = current.get("z_witness_linf_cap")
+        details = []
+        if parameter is not None:
+            details.append(f"Golomb parameter `{parameter}`")
+        if (
+            scheduled_parameter is not None
+            and scheduled_parameter != parameter
+        ):
+            details.append(f"scheduled Golomb parameter `{scheduled_parameter}`")
+        if cap is not None:
+            details.append(f"coefficient limit `{cap}`")
+        suffix = f" ({', '.join(details)})" if details else ""
         print(
-            f"  - Folded-witness Golomb budget: realized `{fmt_bytes(float(z_golomb))} bytes` out of "
-            f"a scheduled upper bound of `{fmt_bytes(float(z_budget))} bytes`{slack_note}"
+            f"- Golomb payload: `{fmt_bytes(float(z_golomb))} bytes` out of the scheduled "
+            f"`{fmt_bytes(float(z_budget))}-byte` budget{suffix}."
         )
 
-    z_witness_linf_cap = current.get("z_witness_linf_cap")
-    z_rice_low_bits_wire = current.get("z_rice_low_bits_wire")
-    z_rice_low_bits_cap = current.get("z_rice_low_bits_cap")
-    z_field_coeffs = current.get("tail_z_field_elems") or current.get("z_coords")
-    z_ring_elems = current.get("tail_z_ring_elems")
     z_bits_golomb = current.get("z_bits_per_coord_golomb")
     z_bits_packed = current.get("z_bits_per_coord_packed")
     z_packed_hyp = current.get("z_packed_hypothetical_bytes")
-    z_savings = current.get("z_golomb_savings_bytes")
-    if z_witness_linf_cap is not None and z_rice_low_bits_wire is not None and z_field_coeffs is not None:
-        comparison = ""
-        if z_bits_golomb is not None and z_bits_packed is not None:
-            k_note = f"wire Golomb parameter=`{z_rice_low_bits_wire}`"
-            if z_rice_low_bits_cap is not None:
-                k_note += f", planner-cap Golomb parameter=`{z_rice_low_bits_cap}`"
-            comparison = (
-                f", `{z_bits_golomb:.2f}` bits for each field coefficient "
-                f"({k_note}, derived from folded-witness infinity-norm cap "
-                f"`{z_witness_linf_cap}`) vs "
-                f"`{z_bits_packed:.2f}` bits for each field coefficient "
-                "(legacy uniform `PackedDigits` z planes)"
-            )
-        savings_note = ""
-        if z_packed_hyp is not None and z_golomb is not None and z_savings is not None:
-            savings_note = (
-                f"; hypothetical packed z `{fmt_bytes(float(z_packed_hyp))} bytes`, "
-                f"savings `{fmt_bytes(float(z_savings))} bytes`"
-            )
-        ring_note = (
-            f"`{fmt_count(float(z_ring_elems))}` ring elements, "
-            if z_ring_elems is not None
+    if z_bits_golomb is not None and z_bits_packed is not None:
+        packed_size = (
+            f" and `{fmt_bytes(float(z_packed_hyp))} bytes` total"
+            if z_packed_hyp is not None
             else ""
         )
         print(
-            f"  - Folded-witness Golomb model: {ring_note}"
-            f"`{fmt_count(float(z_field_coeffs))}` field coefficients{comparison}{savings_note}"
+            f"- Folded response encoding: `{z_bits_golomb:.2f}` bits per coefficient with "
+            f"Golomb coding, compared with `{z_bits_packed:.2f}` bits per coefficient"
+            f"{packed_size} for uniform packed digits."
         )
-
-
-def render_terminal_response_components(
-    cases: list[dict[str, object]], include_heading: bool = True
-) -> None:
-    rows = [
-        case
-        for case in cases
-        if case_status(case) == "ok"
-        and case.get("tail_encoding") in ("segment_typed", "terminal_response")
-        and all(
-            case.get(key) is not None
-            for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_bytes")
-        )
-    ]
-    if not rows:
-        return
-
-    if include_heading:
-        print("### Terminal response component breakdown")
-        print()
-    print(
-        "| Workload | Folded response (`z`) | Opening values (`e`) | "
-        "Inner-commitment values (`t`) | Total terminal response |"
-    )
-    print("| --- | ---: | ---: | ---: | ---: |")
-    for case in rows:
-        print(
-            f"| {md_text(human_case_label(case))} | "
-            f"{fmt_bytes(float(case['tail_z_bytes']))} bytes | "
-            f"{fmt_bytes(float(case['tail_e_bytes']))} bytes | "
-            f"{fmt_bytes(float(case['tail_t_bytes']))} bytes | "
-            f"{fmt_bytes(float(case['tail_bytes']))} bytes |"
-        )
-    print()
-    print(
-        "The `z` column includes its per-segment length prefixes and Golomb payload; `e` and `t` "
-        "are raw field bytes. These three columns sum exactly to the serialized terminal response."
-    )
 
 
 def write_text(path: pathlib.Path, text: str) -> None:
@@ -911,6 +856,9 @@ def extract_summary(
             summary["extension_root_direct_fallback"] = True
         elif "planned fold group" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
+            challenge_operator_norm_threshold = parse_tracing_optional_int(
+                kvs.get("challenge_operator_norm_threshold")
+            )
             planned_groups.setdefault(level, []).append(
                 {
                     "group": kvs["group"],
@@ -944,6 +892,18 @@ def extract_summary(
                     "num_digits_open": int(kvs["num_digits_open"]),
                     "num_digits_fold": int(kvs["num_digits_fold"]),
                     "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
+                    **{
+                        key: int(kvs[key])
+                        for key in ("challenge_count_pm1", "challenge_count_pm2")
+                        if key in kvs
+                    },
+                    **(
+                        {
+                            "challenge_operator_norm_threshold": challenge_operator_norm_threshold
+                        }
+                        if challenge_operator_norm_threshold is not None
+                        else {}
+                    ),
                     "num_live_ring_elements_per_claim": int(
                         kvs["num_live_ring_elements_per_claim"]
                     ),
@@ -1009,6 +969,9 @@ def extract_summary(
             block_index_domain_size = int(
                 kvs.get("block_index_domain_size", 1 << block_index_bits)
             )
+            challenge_operator_norm_threshold = parse_tracing_optional_int(
+                kvs.get("challenge_operator_norm_threshold")
+            )
             planned_levels[level] = {
                 "level": level,
                 "d_a": int(kvs.get("d_a", legacy_d)),
@@ -1026,6 +989,18 @@ def extract_summary(
                     kvs.get("response_l2_sq_cap")
                 ),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
+                **{
+                    key: int(kvs[key])
+                    for key in ("challenge_count_pm1", "challenge_count_pm2")
+                    if key in kvs
+                },
+                **(
+                    {
+                        "challenge_operator_norm_threshold": challenge_operator_norm_threshold
+                    }
+                    if challenge_operator_norm_threshold is not None
+                    else {}
+                ),
                 "log_basis_inner": int(kvs.get("log_basis_inner") or kvs["log_basis"]),
                 "log_basis_outer": int(kvs.get("log_basis_outer") or kvs["log_basis"]),
                 "log_basis_open": int(kvs.get("log_basis_open") or kvs["log_basis"]),
@@ -2268,6 +2243,34 @@ def fold_dimension_schedule(summary: dict[str, object]) -> str:
     return " → ".join(f"{d_a}/{d_b}/{d_d}" for d_a, d_b, d_d in tuples)
 
 
+def terminal_response_metric_value(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+    show_delta: bool,
+) -> str:
+    total = optional_value_with_baseline_delta(
+        current,
+        baseline,
+        "tail_bytes",
+        fmt_bytes,
+        " bytes",
+        show_delta,
+        "",
+    )
+    if all(
+        current.get(key) is not None
+        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
+    ):
+        total += (
+            "<br><sub>"
+            f"z {fmt_bytes(float(current['tail_z_bytes']))} · "
+            f"e {fmt_bytes(float(current['tail_e_bytes']))} · "
+            f"t {fmt_bytes(float(current['tail_t_bytes']))}"
+            "</sub>"
+        )
+    return total
+
+
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     main_baseline: dict[str, dict[str, object]] | None,
@@ -2348,17 +2351,26 @@ def render_matrix_summary(
             if include_fold_schedule:
                 row.append(fold_dimension_schedule(current))
             for metric in metrics:
-                row.append(
-                    optional_value_with_baseline_delta(
-                        current,
-                        baseline,
-                        metric.key,
-                        metric.value_formatter,
-                        metric.unit,
-                        main_baseline is not None,
-                        "",
+                if metric.key == "tail_bytes":
+                    row.append(
+                        terminal_response_metric_value(
+                            current,
+                            baseline,
+                            main_baseline is not None,
+                        )
                     )
-                )
+                else:
+                    row.append(
+                        optional_value_with_baseline_delta(
+                            current,
+                            baseline,
+                            metric.key,
+                            metric.value_formatter,
+                            metric.unit,
+                            main_baseline is not None,
+                            "",
+                        )
+                    )
             print("| " + " | ".join(row) + " |")
 
     if main_baseline is not None:
@@ -2510,10 +2522,20 @@ def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
 
 
 def planned_group_planner_value(group: dict[str, object]) -> str:
-    cap = group.get("response_l2_sq_cap")
-    security = f"Route: {group.get('security_route', 'L-infinity')}"
-    if cap is not None:
-        security += f"<br>L2 squared-norm cap: {fmt_count(float(cap))}"
+    if group.get("security_route") == "L2":
+        response_bound = "Folded-response bound: sum of squared coefficients (L2)"
+    else:
+        response_bound = "Folded-response bound: maximum coefficient magnitude (Linf)"
+    challenge = f"D{fmt_count(float(group['d_a']))}"
+    count_pm1 = group.get("challenge_count_pm1")
+    count_pm2 = group.get("challenge_count_pm2")
+    if count_pm1 is not None and count_pm2 is not None:
+        challenge += f" · {fmt_count(float(count_pm1))} coefficients at ±1"
+        if int(count_pm2) != 0:
+            challenge += f" and {fmt_count(float(count_pm2))} at ±2"
+    threshold = group.get("challenge_operator_norm_threshold")
+    if threshold is not None:
+        challenge += f" · operator-norm threshold {fmt_count(float(threshold))}"
     matrix = (
         f"Rings A/B/D: {fmt_count(float(group['d_a']))} / "
         f"{fmt_count(float(group['d_b']))} / {fmt_count(float(group['d_d']))}<br>"
@@ -2533,9 +2555,9 @@ def planned_group_planner_value(group: dict[str, object]) -> str:
         planned_group_label(group),
         [
             f"<em>Matrix geometry</em><br>{matrix}",
-            f"<br><em>Security</em><br>{security}",
+            f"<br><em>Security</em><br>{response_bound}",
             f"<br><em>Decomposition</em><br>{decomposition}",
-            f"<br><em>Challenge</em><br>L1 mass: {fmt_count(float(group['challenge_l1_mass']))}",
+            f"<br><em>Challenge</em><br>{challenge}",
         ],
     )
 
@@ -2653,7 +2675,10 @@ def proof_component_group(
 
 
 def proof_cost_summary(
-    level: dict[str, object], baseline: dict[str, object] | None
+    level: dict[str, object],
+    baseline: dict[str, object] | None,
+    planned: dict[str, object] | None,
+    baseline_planned: dict[str, object] | None,
 ) -> str:
     total = value_with_baseline_delta(
         level["total_bytes"],
@@ -2678,7 +2703,7 @@ def proof_cost_summary(
                 ("stage1_sumcheck_bytes", "sumcheck"),
                 ("stage1_interstage_claims_bytes", "claims"),
                 ("stage1_range_image_evaluation_bytes", "range image"),
-                ("stage1_norm_proof_bytes", "physical L2 norm proof"),
+                ("stage1_norm_proof_bytes", "L2 norm proof"),
             ),
         ),
         ("Stage 2", (("stage2_sumcheck_bytes", "sumcheck"),)),
@@ -2699,14 +2724,24 @@ def proof_cost_summary(
         if rendered is not None:
             rows.append(rendered)
     if level.get("response_l2_sq") is not None:
+        cap = planned.get("response_l2_sq_cap") if planned is not None else None
         observed = fmt_count(float(level["response_l2_sq"]))
+        if cap is not None:
+            observed += f" ≤ cap {fmt_count(float(cap))}"
         baseline_observed = (
             fmt_count(float(baseline["response_l2_sq"]))
             if baseline is not None and baseline.get("response_l2_sq") is not None
             else None
         )
+        baseline_cap = (
+            baseline_planned.get("response_l2_sq_cap")
+            if baseline_planned is not None
+            else None
+        )
+        if baseline_observed is not None and baseline_cap is not None:
+            baseline_observed += f" ≤ cap {fmt_count(float(baseline_cap))}"
         rows.append(
-            "<strong>Observed physical L2 squared norm</strong><br>"
+            "<strong>Sum of squared response coefficients</strong><br>"
             + exact_choice(observed, baseline_observed)
         )
     return "<br><br>".join(rows)
@@ -2717,7 +2752,6 @@ def render_fold_details(
     proof_levels: list[dict[str, object]],
     baseline_planned_levels: list[dict[str, object]] | None,
     baseline_proof_levels: list[dict[str, object]] | None,
-    l2_grind_observations: list[dict[str, object]] | None = None,
 ) -> None:
     planned = {int(level["level"]): level for level in planned_levels}
     proof = {int(level["level"]): level for level in proof_levels}
@@ -2776,7 +2810,12 @@ def render_fold_details(
 
         proof_bytes = "n/a"
         if proof_level is not None:
-            proof_bytes = proof_cost_summary(proof_level, baseline_proof_level)
+            proof_bytes = proof_cost_summary(
+                proof_level,
+                baseline_proof_level,
+                schedule,
+                baseline_schedule,
+            )
         row = [f"L{level_index}", step, schedule_choice, work, proof_bytes]
         print("| " + " | ".join(row) + " |")
 
@@ -2793,7 +2832,6 @@ def render_fold_details(
         level
         for level in proof_levels
         if int(level.get("grind_nonce_val", 0)) != 0
-        or int(level.get("grind_attempts", 0)) != 0
     ]
     if grind_rows:
         print()
@@ -2818,23 +2856,6 @@ def render_fold_details(
     else:
         print()
         print("Grinding was not measured because no proof fold data was emitted.")
-    if l2_grind_observations:
-        print()
-        print("#### L2 cap grinding observations")
-        print()
-        print(
-            "| Fold | Public L2 squared-norm cap | Measured samples | "
-            "Total attempts | Rejected attempts | Observed failure rate |"
-        )
-        print("| --- | ---: | ---: | ---: | ---: | ---: |")
-        for observation in l2_grind_observations:
-            print(
-                f"| L{observation['level']} | "
-                f"{fmt_count(float(observation['response_l2_sq_cap']))} | "
-                f"{observation['samples']} | {observation['attempts']} | "
-                f"{observation['rejected_attempts']} | "
-                f"{float(observation['observed_failure_rate']):.2%} |"
-            )
     print()
     print("</details>")
 
@@ -3023,16 +3044,9 @@ def render_report(args: argparse.Namespace) -> int:
     render_matrix_summary(current_cases, baselines[0][1])
     if args.compact:
         print()
-        print("<details>")
-        print("<summary>Terminal response components</summary>")
-        print()
-        render_terminal_response_components(current_cases, include_heading=False)
-        print()
-        print("</details>")
-        print()
         print(
-            "Detailed schedule and proof-size breakdowns by fold level are available in "
-            "the uploaded `report.md` benchmark artifact."
+            "The uploaded `report.md` benchmark artifact contains the detailed fold schedule, "
+            "proof-size breakdown, terminal response segments, and Golomb diagnostics."
         )
         return 0
 
@@ -3192,11 +3206,6 @@ def render_report(args: argparse.Namespace) -> int:
                 proof_levels,
                 baseline_planned_levels,
                 baseline_proof_levels,
-                (
-                    current.get("l2_grind_observations")
-                    if isinstance(current.get("l2_grind_observations"), list)
-                    else None
-                ),
             )
         if len(current_cases) > 1:
             print()
