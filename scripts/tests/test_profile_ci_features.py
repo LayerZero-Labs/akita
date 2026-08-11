@@ -36,16 +36,6 @@ class ProfileCiFeatureTests(unittest.TestCase):
             },
         )
 
-    def test_dense_multichunk_profile_links_only_its_catalog(self) -> None:
-        self.assertEqual(
-            schedule_features(
-                self.graph,
-                "akita-pcs",
-                "profile-ci-dense-distributed",
-            ),
-            {"fp128-dense-multi-chunk"},
-        )
-
     def test_every_schedule_feature_has_a_linkage_symbol(self) -> None:
         symbols = {
             schedule_symbol(feature) for feature in all_schedule_features(self.graph)

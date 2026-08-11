@@ -53,7 +53,6 @@ profile-ci = [
   "profile-ci-multi-group-recursive",
   "profile-ci-multi-group-recursive-w8r2",
   "profile-ci-distributed",
-  "profile-ci-dense-distributed",
 ]
 # Each CI matrix group enables one narrow profile feature so rustc only builds
 # the concrete profile modes that the group runs. `profile-ci` remains the
@@ -93,10 +92,6 @@ profile-ci-distributed = [
   "akita-config/schedules-fp128-onehot-multi-chunk",
   "akita-config/schedules-fp128-onehot-multi-chunk-w2r2",
   "akita-config/schedules-fp128-onehot-multi-chunk-w4r2",
-]
-profile-ci-dense-distributed = [
-  "profile-bench-selected",
-  "akita-config/schedules-fp128-dense-multi-chunk",
 ]
 # Compile the profile example with only the singleton adaptive fp128 one-hot
 # configuration. Run with `--no-default-features` so unrelated schedule tables

@@ -192,11 +192,6 @@ const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
         name: "dense_fp128",
         run: run_profile_dense_fp128,
     },
-    #[cfg(feature = "profile-ci-dense-distributed")]
-    ProfileMode {
-        name: "dense_fp128_multi_chunk_w8r2",
-        run: run_profile_dense_fp128_multi_chunk_w8r2,
-    },
     #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
     ProfileMode {
         name: "onehot_fp128",
