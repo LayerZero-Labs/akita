@@ -16,7 +16,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{ProverOpeningData, SelectedProverOpeningData};
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
@@ -30,7 +30,6 @@ use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
 use std::sync::{Mutex, Once};
-use std::time::Instant;
 
 mod common;
 use common::opening_from_poly_for_layout;
@@ -170,15 +169,6 @@ type DenseFixture<FField, E, const D: usize> = (
     CommittedGroupParams,
     OpeningScheduleSelection,
 );
-
-/// Count the total number of fold levels (including the batched root and the
-/// terminal step) in a singleton-shaped batched proof, matching the planner's
-/// `num_fold_levels` convention.
-fn batched_total_fold_levels<FF: CanonicalField, E: FieldCore>(
-    proof: &AkitaBatchedProof<FF, E>,
-) -> usize {
-    proof.num_fold_levels()
-}
 
 fn make_dense_fixture<FField, const D: usize, Cfg: CommitmentConfig<Field = FField>>(
     nv: usize,
@@ -330,7 +320,6 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
         other => panic!("{case} must reject with InvalidProof, got {other:?}"),
     }
 }
-
 
 #[test]
 fn trace_internalization_rejects_tampered_root_fold_handle() {

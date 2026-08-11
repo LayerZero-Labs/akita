@@ -438,9 +438,8 @@ fn first_stage3_proof_mut(
 /// Single-group recursive roundtrip: one final group, no user precommitted polynomials.
 /// Uses `RecursiveCommitmentConfig<BaseCfg>` so the proof carries a stage-3 recursive
 /// setup-sumcheck, but there are no external precommit groups in the opening claims.
-pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
-    transcript_domain: &'static [u8],
-) where
+pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(transcript_domain: &'static [u8])
+where
     BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
@@ -478,9 +477,8 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|i| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
             .collect();
-        let (commitment, hint) =
-            Recursive::<BaseCfg>::commit::<_, _>(&setup, &final_polys, &stack)
-                .expect("recursive direct commit");
+        let (commitment, hint) = Recursive::<BaseCfg>::commit::<_, _>(&setup, &final_polys, &stack)
+            .expect("recursive direct commit");
 
         let point = random_point(FINAL_NV, 0xcafe_2027_0001);
         let openings: Vec<F> = final_polys
@@ -528,9 +526,12 @@ pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
         let verifier_setup =
             Recursive::<BaseCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
                 .expect("verifier setup");
-        let verify_claims = OpeningClaims::from_groups(vec![
-            PolynomialGroupClaims::new(point, openings, &commitment).expect("verifier group"),
-        ])
+        let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            point,
+            openings,
+            &commitment,
+        )
+        .expect("verifier group")])
         .expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
         Recursive::<BaseCfg>::batched_verify(
@@ -971,13 +972,14 @@ where
         .expect("precommit");
 
         let final_poly = make_dense_poly(final_nv, 0xd1d1_0000_u64 ^ final_nv as u64);
-        let (final_commitment, final_hint, _sel) = AkitaCommitmentScheme::<Cfg>::commit_final_group(
-            &setup,
-            std::slice::from_ref(&final_poly),
-            &stack,
-            vec![pre_commitment.profile],
-        )
-        .expect("final commit");
+        let (final_commitment, final_hint, _sel) =
+            AkitaCommitmentScheme::<Cfg>::commit_final_group(
+                &setup,
+                std::slice::from_ref(&final_poly),
+                &stack,
+                vec![pre_commitment.profile],
+            )
+            .expect("final commit");
 
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, 1),
@@ -988,7 +990,8 @@ where
         let point = random_point(final_nv.max(PRE_NV), 0xcafe_0000_u64 ^ final_nv as u64);
 
         let pre_opening = opening_from_poly_for_layout(&pre_poly, &point[..PRE_NV], &pre_params);
-        let final_opening = opening_from_poly_for_layout(&final_poly, &point[..final_nv], final_group_params);
+        let final_opening =
+            opening_from_poly_for_layout(&final_poly, &point[..final_nv], final_group_params);
 
         let prover_groups = vec![
             PolynomialGroupClaims::new(
@@ -1046,8 +1049,7 @@ where
             )
             .expect("final verifier group"),
         ];
-        let verify_claims =
-            OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
+        let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &decoded,
@@ -1056,7 +1058,9 @@ where
             GroupBatchStatement::new(selection, verify_claims).expect("statement"),
             BasisMode::Lagrange,
         )
-        .unwrap_or_else(|e| panic!("dense precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}"));
+        .unwrap_or_else(|e| {
+            panic!("dense precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
+        });
     }
 }
 
@@ -1178,8 +1182,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             )
             .expect("final verifier group"),
         ];
-        let verify_claims =
-            OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
+        let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &decoded,
@@ -1188,7 +1191,9 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             GroupBatchStatement::new(selection, verify_claims).expect("statement"),
             BasisMode::Lagrange,
         )
-        .unwrap_or_else(|e| panic!("onehot precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}"));
+        .unwrap_or_else(|e| {
+            panic!("onehot precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
+        });
     }
 }
 
