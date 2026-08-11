@@ -241,9 +241,9 @@ where
                 )))
             }
         };
-        let mut projected = coefficient_rows.into_flattened();
-        projected.truncate(self.live_coeff_len()?);
-        DensePoly::from_field_evals(self.num_vars, D, projected)
+        let projected = coefficient_rows.into_flattened();
+        let projected_num_vars = self.num_vars.max(D.trailing_zeros() as usize);
+        DensePoly::from_field_evals(projected_num_vars, D, projected)
     }
 
     pub(crate) fn tensor_packed_extension_root_poly<E, const D: usize>(

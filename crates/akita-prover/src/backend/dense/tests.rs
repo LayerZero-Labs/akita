@@ -1,15 +1,43 @@
 use super::poly::DensePoly;
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7 as F;
-use akita_field::{Ext2, ExtField, FpExt4};
+use akita_field::{Ext2, ExtField, FpExt4, FpExt8};
 use akita_types::{
-    embed_ring_subfield_vector, tensor_column_partials_from_base_evals, tensor_packed_witness_evals,
+    embed_ring_subfield_vector, tensor_column_partials_from_base_evals,
+    tensor_packed_witness_evals, FpExtEncoding,
 };
 
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
         F::from_u64(offset + idx as u64 + 1)
     }))
+}
+
+fn assert_dense_tensor_projection_matches_reference<E, const D: usize>(num_vars: usize)
+where
+    E: FpExtEncoding<F>,
+{
+    let evals = (0..(1usize << num_vars))
+        .map(|idx| F::from_u64(17 * idx as u64 + 9))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
+    let packed = tensor_packed_witness_evals::<F, E>(num_vars, &evals).unwrap();
+    let packed_len = D / E::EXT_DEGREE;
+    let expected = packed
+        .chunks(packed_len)
+        .map(|chunk| {
+            let mut padded = chunk.to_vec();
+            padded.resize(packed_len, E::zero());
+            embed_ring_subfield_vector::<F, E, D>(
+                &padded,
+                akita_field::AkitaError::InvalidInput("test projection shape".to_string()),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let got = poly.tensor_packed_extension_poly::<E, D>().unwrap();
+
+    assert_eq!(got.ring_coeffs::<D>().unwrap(), expected);
 }
 
 #[test]
@@ -70,41 +98,21 @@ fn dense_tensor_opening_methods_match_flat_reference() {
     let expected_packed = tensor_packed_witness_evals::<F, E>(num_vars, &evals).unwrap();
     let got_packed = poly.tensor_packed_extension_evals::<E, D>().unwrap();
     assert_eq!(got_packed, expected_packed);
+}
 
-    let packed_len = D / <E as ExtField<F>>::EXT_DEGREE;
-    let expected_projection = expected_packed
-        .chunks(packed_len)
-        .map(|chunk| {
-            embed_ring_subfield_vector::<F, E, D>(
-                chunk,
-                akita_field::AkitaError::InvalidInput("test projection shape".to_string()),
-            )
-            .unwrap()
-        })
-        .collect::<Vec<_>>();
-    let got_projection = poly.tensor_packed_extension_poly::<E, D>().unwrap();
-    assert_eq!(
-        got_projection.ring_coeffs::<D>().unwrap(),
-        expected_projection
-    );
+#[test]
+fn dense_tensor_projection_matches_reference_for_every_supported_degree() {
+    const D: usize = 16;
 
-    type E2 = Ext2<F>;
-    let expected_packed_e2 = tensor_packed_witness_evals::<F, E2>(num_vars, &evals).unwrap();
-    let expected_projection_e2 = expected_packed_e2
-        .chunks(D / <E2 as ExtField<F>>::EXT_DEGREE)
-        .map(|chunk| {
-            embed_ring_subfield_vector::<F, E2, D>(
-                chunk,
-                akita_field::AkitaError::InvalidInput("test projection shape".to_string()),
-            )
-            .unwrap()
-        })
-        .collect::<Vec<_>>();
-    let got_projection_e2 = poly.tensor_packed_extension_poly::<E2, D>().unwrap();
-    assert_eq!(
-        got_projection_e2.ring_coeffs::<D>().unwrap(),
-        expected_projection_e2
-    );
+    assert_dense_tensor_projection_matches_reference::<F, D>(4);
+    assert_dense_tensor_projection_matches_reference::<Ext2<F>, D>(4);
+    assert_dense_tensor_projection_matches_reference::<FpExt4<F>, D>(4);
+    assert_dense_tensor_projection_matches_reference::<FpExt8<F>, D>(4);
+}
+
+#[test]
+fn dense_tensor_projection_preserves_transformed_padded_ring_coefficients() {
+    assert_dense_tensor_projection_matches_reference::<FpExt8<F>, 16>(3);
 }
 
 #[test]
