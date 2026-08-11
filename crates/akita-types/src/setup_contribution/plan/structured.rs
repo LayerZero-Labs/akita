@@ -109,17 +109,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             {
                 return Err(AkitaError::InvalidProof);
             }
-            // One dispatch policy governs both the inner fold-reduces and the
-            // outer three-way fork: a job is worth handing to Rayon only once
-            // it reaches PARALLEL_THRESHOLD. Forking on the largest job rather
-            // than the sum keeps those decisions from drifting, because a
-            // group whose every job stays sequential gains nothing from
-            // `rayon::join` and only pays its scheduling cost.
+            // E and T share the block-claim index space, so they stay one
+            // fused fold gated on their combined width. Splitting them would
+            // drop the multi-core reduce whenever each side alone sits under
+            // the threshold but the pair clears it.
             const PARALLEL_THRESHOLD: usize = 1 << 14;
-            let largest_job = e_len.max(t_len).max(z_cols);
+            let et_work = e_len
+                .checked_add(t_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("structured E/T width overflow".into()))?;
 
-            let run_e = || -> Result<E, AkitaError> {
-                let fold_e = |acc: Result<E, AkitaError>, block_claim: usize| {
+            let run_et = || -> Result<E, AkitaError> {
+                let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
                     let e_start = block_claim
                         .checked_mul(e_stride)
                         .ok_or(AkitaError::InvalidProof)?;
@@ -129,25 +129,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .iter()
                         .zip(direct_opening_gadget)
                         .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
-                    let block_challenge = *block_challenges
-                        .get(block_claim)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    Ok(acc? + block_challenge * e)
-                };
-                if e_len >= PARALLEL_THRESHOLD {
-                    cfg_fold_reduce!(
-                        0..block_claims,
-                        || Ok(E::zero()),
-                        fold_e,
-                        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-                    )
-                } else {
-                    (0..block_claims).fold(Ok(E::zero()), fold_e)
-                }
-            };
 
-            let run_t = || -> Result<E, AkitaError> {
-                let fold_t = |acc: Result<E, AkitaError>, block_claim: usize| {
                     let t_start = block_claim
                         .checked_mul(t_stride)
                         .ok_or(AkitaError::InvalidProof)?;
@@ -166,17 +148,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let block_challenge = *block_challenges
                         .get(block_claim)
                         .ok_or(AkitaError::InvalidProof)?;
-                    Ok(acc? + block_challenge * t)
+                    Ok(acc? + block_challenge * (group.consistency_weight * e + t))
                 };
-                if t_len >= PARALLEL_THRESHOLD {
+                if et_work >= PARALLEL_THRESHOLD {
                     cfg_fold_reduce!(
                         0..block_claims,
                         || Ok(E::zero()),
-                        fold_t,
+                        fold_et,
                         |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
                     )
                 } else {
-                    (0..block_claims).fold(Ok(E::zero()), fold_t)
+                    (0..block_claims).fold(Ok(E::zero()), fold_et)
                 }
             };
 
@@ -213,16 +195,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 }
             };
 
-            let (e, t, z) = if largest_job >= PARALLEL_THRESHOLD {
-                let (e, (t, z)) = cfg_join!(run_e, || cfg_join!(run_t, run_z));
-                (e?, t?, z?)
+            let (et, z) = if et_work.max(z_cols) >= PARALLEL_THRESHOLD {
+                let (et, z) = cfg_join!(run_et, run_z);
+                (et?, z?)
             } else {
-                (run_e()?, run_t()?, run_z()?)
+                (run_et()?, run_z()?)
             };
-            // E and Z share the group's consistency weight; applying it once
-            // after reduction keeps the contracted equation auditable and
-            // drops one field multiplication per block claim and position.
-            return Ok(group.consistency_weight * (e + z) + t);
+            // Z carries the group's consistency weight on every position;
+            // applying it once after reduction drops one field multiplication
+            // per position and leaves the contracted equation auditable.
+            return Ok(et + group.consistency_weight * z);
         }
 
         let point = self.relation_address.point();
