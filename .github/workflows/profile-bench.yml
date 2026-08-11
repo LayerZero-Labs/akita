@@ -15,6 +15,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Custom benchmark runners occasionally expose certificate chains that
+  # libgit2 rejects. Use the system Git client for pinned Git dependencies.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   # The active benchmark path is pinned to explicit preset modes. It deliberately
   # does not use the old adaptive `full`/`onehot` selectors.
