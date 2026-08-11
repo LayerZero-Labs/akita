@@ -51,13 +51,15 @@
 //! ║ Dense    ║ rec      ║      NA      ║  NA               ║      NA      ║  NA               ║
 //! ╠══════════╬══════════╬══════════════╬═══════════════════╬══════════════╬═══════════════════╣
 //! ║ OneHot   ║ nonrec   ║  ✓ [12,15]  ║  ✓ [16,20]        ║  cfg+ign    ║  cfg+ign          ║
-//! ║ OneHot   ║ rec      ║      NA      ║  cfg+ign          ║      NA      ║  NA               ║
+//! ║ OneHot   ║ rec      ║  cfg+ign    ║  cfg+ign           ║      NA      ║  NA               ║
 //! ╚══════════╩══════════╩══════════════╩═══════════════════╩══════════════╩═══════════════════╝
 //! ```
 //!
 //! Dense + recursive: no production schedule exists; those cells are permanently NA.
 //! OneHot mc nonrec:  cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
-//! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv is production-sized (ign).
+//! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
+//!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
+//!   pre    = RecursiveCommitmentConfig + user precommitted group (fp128_onehot_recursive_precommitted.rs).
 
 #![allow(missing_docs)]
 #![cfg(feature = "schedules-default")]
@@ -136,7 +138,18 @@ macro_rules! matrix_test {
             });
         }
     };
-    (recursive; $name:ident; $base_cfg:ty) => {
+    // recursive mode, no user precommit (fp128_onehot_recursive.rs schedule)
+    (recursive_direct; $name:ident; $base_cfg:ty) => {
+        #[test]
+        #[ignore = "production-sized; run explicitly with --release"]
+        fn $name() {
+            prove_verify_recursive_direct_roundtrip::<$base_cfg>(
+                concat!("completeness/", stringify!($name)).as_bytes(),
+            );
+        }
+    };
+    // recursive mode + user precommitted groups (fp128_onehot_recursive_precommitted.rs profiles)
+    (recursive_pre; $name:ident; $base_cfg:ty) => {
         #[test]
         #[ignore = "production-sized; run explicitly with --release"]
         fn $name() {
@@ -846,11 +859,18 @@ matrix_test!(onehot; fp128_onehot; fp128::OneHot; nvs=[12, 15, 20, 28]; k=256);
 matrix_test!(onehot_pre; fp128_onehot_pre; fp128::OneHot; final_nvs=[16, 20]; k=256);
 
 // ----------------------------------------------------------------------------
-// OneHot × single-chunk × precommitted × recursive    (production-sized, ignored)
-// Uses RecursiveCommitmentConfig which adds a setup-prefix stage-3 sumcheck.
+// OneHot × single-chunk × direct × recursive    (production-sized, ignored)
+// RecursiveCommitmentConfig, no user precommit; uses fp128_onehot_recursive.rs schedule.
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-onehot-recursive")]
-matrix_test!(recursive; fp128_onehot_rec; fp128::OneHot);
+matrix_test!(recursive_direct; fp128_onehot_rec; fp128::OneHot);
+
+// ----------------------------------------------------------------------------
+// OneHot × single-chunk × precommitted × recursive    (production-sized, ignored)
+// RecursiveCommitmentConfig + user precommit; profiles from fp128_onehot_recursive_precommitted.rs.
+// ----------------------------------------------------------------------------
+#[cfg(feature = "schedules-fp128-onehot-recursive")]
+matrix_test!(recursive_pre; fp128_onehot_rec_pre; fp128::OneHot);
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × direct × non-recursive    [32]

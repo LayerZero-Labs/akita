@@ -435,6 +435,116 @@ fn first_stage3_proof_mut(
 /// main group at `nv=32`, a recursive proof that offloads the setup contribution,
 /// a serialization round-trip, an honest verify, and a tampered-opening rejection.
 ///
+/// Single-group recursive roundtrip: one final group, no user precommitted polynomials.
+/// Uses `RecursiveCommitmentConfig<BaseCfg>` so the proof carries a stage-3 recursive
+/// setup-sumcheck, but there are no external precommit groups in the opening claims.
+pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(
+    transcript_domain: &'static [u8],
+) where
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+{
+    type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
+
+    const FINAL_NV: usize = 32;
+    const FINAL_GROUP_SIZE: usize = 2;
+
+    init_rayon_pool();
+    run_on_large_stack(move || {
+        let schedule_key =
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
+        let opening_layout = schedule_key.opening_layout().expect("opening layout");
+        let schedule = RecursiveCommitmentConfig::<BaseCfg>::runtime_schedule(schedule_key)
+            .expect("recursive direct schedule");
+        assert!(
+            schedule_uses_setup_prefix(&schedule),
+            "recursive schedule must carry setup-prefix metadata"
+        );
+        let root_params = multi_group_root_params(&schedule);
+
+        let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, FINAL_GROUP_SIZE)
+            .expect("recursive direct setup");
+        assert!(
+            !setup.prefix_slots.is_empty(),
+            "recursive setup must precompute prefix slots"
+        );
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+
+        let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
+            .map(|i| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
+            .collect();
+        let (commitment, hint) =
+            Recursive::<BaseCfg>::commit::<_, _>(&setup, &final_polys, &stack)
+                .expect("recursive direct commit");
+
+        let point = random_point(FINAL_NV, 0xcafe_2027_0001);
+        let openings: Vec<F> = final_polys
+            .iter()
+            .map(|poly| opening_from_poly_for_layout(poly, &point, root_params))
+            .collect();
+
+        let poly_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
+        let prover_data = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>, _>(
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                point.clone(),
+                openings.clone(),
+                commitment.clone(),
+            )
+            .expect("prover group")])
+            .expect("prover claims"),
+            vec![hint],
+            vec![&poly_refs[..]],
+        );
+        let selection = prover_data.0;
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        let proof = Recursive::<BaseCfg>::batched_prove(
+            &setup,
+            prover_data,
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("recursive direct prove");
+        assert!(
+            proof_has_recursive_setup_sumcheck(&proof),
+            "recursive proof must carry stage-3 setup sumcheck evidence"
+        );
+
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
+        proof.serialize_compressed(&mut bytes).expect("serialize");
+        let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
+
+        let verifier_setup =
+            Recursive::<BaseCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
+                .expect("verifier setup");
+        let verify_claims = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(point, openings, &commitment).expect("verifier group"),
+        ])
+        .expect("verifier claims");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        Recursive::<BaseCfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
+        .expect("recursive direct verify");
+    });
+}
+
+/// Multi-group recursive roundtrip: two user precommitted groups plus one final group.
 /// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
 /// recursion adapter and standalone profiles are derived from it.
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
