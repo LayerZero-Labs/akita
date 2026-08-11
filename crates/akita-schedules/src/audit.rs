@@ -325,10 +325,19 @@ fn audit_committed_params(
     )
 }
 
+#[derive(Clone, Copy)]
+struct TerminalSourceGeometry {
+    fold_level: usize,
+    input_witness_len: usize,
+    fold_log_basis: u32,
+    fold_digit_count: usize,
+}
+
 fn audit_terminal(
     params: &TerminalCommittedGroupParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     response_shape: &TerminalResponseShape,
+    source: TerminalSourceGeometry,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let label = "terminal fold";
@@ -390,19 +399,44 @@ fn audit_terminal(
         .checked_add(expected_e_field_elems)
         .and_then(|value| value.checked_add(expected_t_field_elems))
         .ok_or_else(|| invalid(label, "terminal response coordinates overflow"))?;
-    if let akita_types::InnerCommitSecurityRoute::L2 {
-        norm_proof_shape, ..
-    } = params.inner_commit_matrix.security_route()
-    {
-        if norm_proof_shape
-            != (akita_types::PhysicalL2NormProofShape::Direct {
-                physical_response_len: expected_z_coords,
-            })
-            || akita_challenges::selective_l2_operator_norm_rejection(d, sparse).is_none()
-        {
+    if matches!(
+        params.inner_commit_matrix.security_route(),
+        akita_types::InnerCommitSecurityRoute::L2 { .. }
+    ) {
+        if akita_challenges::selective_l2_operator_norm_rejection(d, sparse).is_none() {
+            return Err(invalid(label, "terminal L2 challenge is not certified"));
+        }
+        let fold_basis = 1usize
+            .checked_shl(source.fold_log_basis)
+            .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
+        let expected = selective_l2_inner_matrix(
+            policy,
+            SelectiveL2CandidateGeometry {
+                fold_level: source.fold_level,
+                input_witness_len: source.input_witness_len,
+                num_claims: 1,
+                num_chunks: 1,
+                inner_width: expected_width,
+                ring_dimension: d,
+                source_log_basis: params.log_basis_inner,
+                fold_basis,
+                fold_digit_count: source.fold_digit_count,
+                fold_challenge_config: sparse,
+                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                    physical_response_len: expected_z_coords,
+                }),
+            },
+        )?
+        .ok_or_else(|| {
+            invalid(
+                label,
+                "L2 route is not admitted by the calibrated terminal response model",
+            )
+        })?;
+        if params.inner_commit_matrix != expected {
             return Err(invalid(
                 label,
-                "terminal L2 route is not a direct check with a certified challenge",
+                "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
             ));
         }
     }
@@ -511,10 +545,188 @@ pub(crate) fn audit_resolved_schedule(
             ));
         }
     }
+    let terminal_source = schedule
+        .recursive_folds
+        .last()
+        .map(|step| &step.params.witness)
+        .unwrap_or(final_params);
     audit_terminal(
         &schedule.terminal.params.witness,
         &schedule.terminal.params.sparse_challenge_config,
         &schedule.terminal.params.response_shape,
+        TerminalSourceGeometry {
+            fold_level: schedule.recursive_folds.len() + 1,
+            input_witness_len: schedule.terminal.input_witness_len,
+            fold_log_basis: terminal_source.log_basis_open,
+            fold_digit_count: terminal_source.num_digits_fold,
+        },
         policy,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generated::{
+        GeneratedBlockGeometry, GeneratedInnerCommitMatrix, GeneratedTerminalFold,
+    };
+    use crate::{
+        PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap,
+    };
+    use akita_types::{
+        ChunkedWitnessCfg, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
+        SisTableDigest,
+    };
+
+    const INPUT_WITNESS_LEN: usize = 1_024;
+    const INNER_WIDTH: usize = 16;
+    const RESPONSE_CAP: u128 = 500_000_000;
+    const TEST_CAPS: &[SelectiveL2FoldCap] = &[SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: INPUT_WITNESS_LEN,
+        source_log_basis: 4,
+        challenge_ring_dimension: 64,
+        challenge_l2_sq: 75,
+        physical_response_len: INNER_WIDTH * 64,
+        fold_basis: 16,
+        fold_digit_count: 3,
+        response_l2_sq_cap: RESPONSE_CAP,
+    }];
+
+    fn policy() -> PlannerPolicy {
+        PlannerPolicy {
+            cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
+            setup_field_budget: None,
+            min_offloaded_witness_contraction: 3,
+            uniform_ring_dimension: 64,
+            setup_prefix_inner_ring_dimension: 64,
+            ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension {
+                ring_dimension: 64,
+            },
+            decomposition: DecompositionParams {
+                log_basis: 4,
+                log_commit_bound: 1,
+                log_open_bound: Some(128),
+            },
+            sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
+            sis_table_digest: SisTableDigest::CURRENT,
+            sis_l2_table_digest: SisL2TableDigest::CURRENT,
+            selective_l2_fold_caps: TEST_CAPS,
+            claim_ext_degree: 1,
+            chal_ext_degree: 1,
+            inner_basis_range: (3, 16),
+            opening_basis_range: (3, 6),
+            witness_chunk: ChunkedWitnessCfg::default(),
+            recursive_setup_planning: false,
+        }
+    }
+
+    #[test]
+    fn terminal_l2_expansion_and_audit_bind_predecessor_fold_digits() {
+        let policy = policy();
+        let sparse = akita_challenges::selective_l2_challenge_config(64)
+            .expect("certified D64 L2 challenge");
+        let expected = selective_l2_inner_matrix(
+            &policy,
+            SelectiveL2CandidateGeometry {
+                fold_level: 3,
+                input_witness_len: INPUT_WITNESS_LEN,
+                num_claims: 1,
+                num_chunks: 1,
+                inner_width: INNER_WIDTH,
+                ring_dimension: 64,
+                source_log_basis: 4,
+                fold_basis: 16,
+                fold_digit_count: 3,
+                fold_challenge_config: &sparse,
+                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                    physical_response_len: INNER_WIDTH * 64,
+                }),
+            },
+        )
+        .expect("candidate construction")
+        .expect("exact terminal calibration");
+        let generated = GeneratedTerminalFold {
+            geometry: GeneratedBlockGeometry {
+                live_ring_elements_per_claim: 16,
+                positions_per_block: 16,
+                live_blocks: 1,
+            },
+            inner_commit_matrix: GeneratedInnerCommitMatrix {
+                ring_dimension: 64,
+                log_basis: 4,
+            },
+            num_digits_inner: 1,
+            inner_output_rank: expected.output_rank() as u32,
+            inner_coeff_linf_bound: 0,
+            response_l2_sq_cap: Some(RESPONSE_CAP),
+            z_admission_linf_cap: 10,
+            z_rice_low_bits: 1,
+            z_payload_bytes: 1,
+        };
+        let mut terminal = generated
+            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN, 4, 3)
+            .expect("terminal must use the predecessor's fold digit count");
+        assert!(generated
+            .expand_to_level_params(
+                &policy,
+                |_| Ok(sparse),
+                3,
+                INPUT_WITNESS_LEN,
+                4,
+                num_digits_open(DecompositionParams {
+                    log_basis: 4,
+                    ..policy.decomposition
+                }),
+            )
+            .is_err());
+
+        let response_shape =
+            TerminalResponseShape::derive(&terminal, 10).expect("valid terminal response shape");
+        audit_terminal(
+            &terminal,
+            &sparse,
+            &response_shape,
+            TerminalSourceGeometry {
+                fold_level: 3,
+                input_witness_len: INPUT_WITNESS_LEN,
+                fold_log_basis: 4,
+                fold_digit_count: 3,
+            },
+            &policy,
+        )
+        .expect("canonical terminal matrix");
+
+        let (table_key, norm_proof_shape) = match terminal.inner_commit_matrix.security_route() {
+            InnerCommitSecurityRoute::L2 {
+                table_key,
+                norm_proof_shape,
+                ..
+            } => (table_key, norm_proof_shape),
+            InnerCommitSecurityRoute::Linf(_) => panic!("expected L2 terminal"),
+        };
+        terminal.inner_commit_matrix = InnerCommitMatrixParams::try_new_l2_with_min_rank(
+            table_key,
+            INNER_WIDTH,
+            RESPONSE_CAP + 1,
+            norm_proof_shape,
+        )
+        .expect("locally well-formed noncanonical matrix");
+        assert!(audit_terminal(
+            &terminal,
+            &sparse,
+            &response_shape,
+            TerminalSourceGeometry {
+                fold_level: 3,
+                input_witness_len: INPUT_WITNESS_LEN,
+                fold_log_basis: 4,
+                fold_digit_count: 3,
+            },
+            &policy,
+        )
+        .is_err());
+    }
 }

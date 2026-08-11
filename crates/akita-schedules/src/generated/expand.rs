@@ -896,6 +896,8 @@ impl GeneratedTerminalFold {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
         input_witness_len: usize,
+        source_fold_log_basis: u32,
+        source_fold_digit_count: usize,
     ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
         if ring_dimension == 0 {
@@ -960,59 +962,51 @@ impl GeneratedTerminalFold {
             ));
         }
         let inner_commit_matrix = if let Some(response_l2_sq_cap) = self.response_l2_sq_cap {
-            let mut selected = None;
-            for fold_log_basis in policy.opening_basis_range.0..=policy.opening_basis_range.1 {
-                let Some(fold_basis) = 1usize.checked_shl(fold_log_basis) else {
-                    continue;
-                };
-                let fold_digit_count = num_digits_open(DecompositionParams {
-                    log_basis: fold_log_basis,
-                    ..policy.decomposition
-                });
-                let Some(matrix) = selective_l2_inner_matrix(
-                    policy,
-                    SelectiveL2CandidateGeometry {
-                        fold_level,
-                        input_witness_len,
-                        num_claims: 1,
-                        num_chunks: 1,
-                        inner_width,
-                        ring_dimension,
-                        source_log_basis: log_basis_inner,
-                        fold_basis,
-                        fold_digit_count,
-                        fold_challenge_config: &sparse,
-                        norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
-                            physical_response_len: inner_width
-                                .checked_mul(ring_dimension)
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "terminal L2 response length overflow".into(),
-                                    )
-                                })?,
-                        }),
-                    },
-                )?
-                else {
-                    continue;
-                };
-                let cap_matches = matches!(
-                    matrix.security_route(),
-                    akita_types::InnerCommitSecurityRoute::L2 {
-                        response_l2_sq_cap: cap,
-                        ..
-                    } if cap == response_l2_sq_cap
-                );
-                if matrix.output_rank() == output_rank && cap_matches {
-                    selected = Some(matrix);
-                    break;
-                }
-            }
-            selected.ok_or_else(|| {
+            let fold_basis = 1usize
+                .checked_shl(source_fold_log_basis)
+                .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
+            let matrix = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
+                    fold_level,
+                    input_witness_len,
+                    num_claims: 1,
+                    num_chunks: 1,
+                    inner_width,
+                    ring_dimension,
+                    source_log_basis: log_basis_inner,
+                    fold_basis,
+                    fold_digit_count: source_fold_digit_count,
+                    fold_challenge_config: &sparse,
+                    norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                        physical_response_len: inner_width.checked_mul(ring_dimension).ok_or_else(
+                            || {
+                                AkitaError::InvalidSetup(
+                                    "terminal L2 response length overflow".into(),
+                                )
+                            },
+                        )?,
+                    }),
+                },
+            )?
+            .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "generated terminal L2 route has no canonical source model".into(),
                 )
-            })?
+            })?;
+            let cap_matches = matches!(
+                matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: cap,
+                    ..
+                } if cap == response_l2_sq_cap
+            );
+            if matrix.output_rank() != output_rank || !cap_matches {
+                return Err(AkitaError::InvalidSetup(
+                    "generated terminal L2 matrix disagrees with its canonical source model".into(),
+                ));
+            }
+            matrix
         } else {
             InnerCommitMatrixParams::try_new(
                 policy.sis_security_policy,

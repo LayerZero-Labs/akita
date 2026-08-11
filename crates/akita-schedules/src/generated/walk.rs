@@ -139,11 +139,21 @@ pub(crate) fn walk_generated_schedule_entry(
         input_witness_len = output_witness_len;
     }
     let terminal_level = entry.recursive_folds.len() + 1;
+    let terminal_source = expanded
+        .last()
+        .map(|(params, _, _)| params)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "generated schedule is missing its terminal source fold".into(),
+            )
+        })?;
     let terminal_params = entry.terminal.expand_to_level_params(
         policy,
         ring_challenge_config,
         terminal_level,
         input_witness_len,
+        terminal_source.log_basis_open,
+        terminal_source.num_digits_fold,
     )?;
     let z_coords = terminal_params
         .inner_width()
