@@ -116,12 +116,9 @@ fn cpu_ring_switch_relation_rows_use_distinct_open_and_outer_bases() {
                             cyclic_ntt,
                             1,
                             1,
-                            1,
-                            &e_hat,
                             &t_hat,
                             &z_segment,
                             3,
-                            2,
                             3,
                         )
                     },
@@ -137,12 +134,6 @@ fn cpu_ring_switch_relation_rows_use_distinct_open_and_outer_bases() {
         )
         .expect("direct D negacyclic rows");
     assert_eq!(via_backend.d_negacyclic, expected_d_negacyclic);
-    assert_eq!(
-        (
-            via_backend.d_cyclic,
-            via_backend.b_cyclic,
-            via_backend.a_quotients
-        ),
-        direct
-    );
+    assert_eq!(via_backend.b_cyclic, direct.b_cyclic);
+    assert_eq!(via_backend.a_quotients, direct.a_quotients);
 }

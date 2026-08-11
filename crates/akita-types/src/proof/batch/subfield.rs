@@ -142,10 +142,6 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         )
     }
 
-    pub(super) fn position_constant_coeff(&self, idx: usize) -> Option<F> {
-        subfield_constant(self.position_coordinates(idx).ok()?)
-    }
-
     pub(super) fn fold_constant_coeff(&self, idx: usize) -> Option<F> {
         subfield_constant(self.fold_coordinates(idx).ok()?)
     }

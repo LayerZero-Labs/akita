@@ -329,8 +329,9 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     pre_sizes: &[usize],
     final_size: usize,
     check_group_binding: bool,
-    check_streamed_parity: bool,
-) where
+    max_cached_ring_switch_elements: usize,
+) -> AkitaBatchedProof<OneHotF, OneHotF>
+where
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
     ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
@@ -340,7 +341,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let setup =
         AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(opening_num_vars, total).expect("setup");
     let cached_backend = CpuBackend::with_resource_limits(
-        usize::MAX,
+        max_cached_ring_switch_elements,
         CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
     )
     .expect("cached backend");
@@ -530,32 +531,6 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         BasisMode::Lagrange,
     )
     .expect("multi-group prove");
-    if check_streamed_parity {
-        let streamed_backend = CpuBackend::with_resource_limits(
-            0,
-            CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
-        )
-        .expect("streamed backend");
-        let streamed_prepared = streamed_backend
-            .prepare_setup(&setup)
-            .expect("streamed prepared setup");
-        let streamed_stack = akita_prover::UniformProverStack::uniform(
-            &streamed_backend,
-            &streamed_prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("streamed stack");
-        let mut streamed_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
-        let streamed_proof = AkitaCommitmentScheme::<ProtocolCfg>::batched_prove(
-            &setup,
-            build_prover_claims(),
-            &streamed_stack,
-            &mut streamed_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("streamed multi-group prove");
-        assert_eq!(streamed_proof, proof, "cached and streamed proofs differ");
-    }
     assert!(proof.num_fold_levels() >= 2);
     let planned_stage3 = multi_group_schedule
         .recursive_folds
@@ -670,28 +645,39 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             "tampered group opening must reject"
         );
     }
+    proof
 }
 
 #[test]
 fn multi_group_root_folded_group_binding_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1], 2, true, false);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1], 2, true, usize::MAX);
 }
 
 #[test]
 fn multi_group_root_allows_precommitted_arity_above_final_group() {
     type PlannerCfg = crate::test_support::EnvelopeFinalGroupConfig<OneHotCfg, OneHotCfg>;
 
-    multi_group_root_round_trip_onehot::<OneHotCfg, PlannerCfg>(20, 14, &[1], 1, false, false);
+    multi_group_root_round_trip_onehot::<OneHotCfg, PlannerCfg>(20, 14, &[1], 1, false, usize::MAX);
 }
 
 #[test]
 fn multi_group_root_opens_multi_polynomial_precommitted_group() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[2], 1, false, false);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[2], 1, false, usize::MAX);
 }
 
 #[test]
 fn three_group_cached_and_streamed_proofs_are_identical() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1, 1], 4, false, true);
+    let cached = multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(
+        14,
+        20,
+        &[1, 1],
+        4,
+        false,
+        usize::MAX,
+    );
+    let streamed =
+        multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1, 1], 4, false, 0);
+    assert_eq!(streamed, cached, "cached and streamed proofs differ");
 }
 
 #[test]
@@ -703,7 +689,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
         &[1],
         1,
         false,
-        false,
+        usize::MAX,
     );
 }
 
@@ -772,7 +758,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &setup,
         selected_prover_data::<OneHotCfg, _>(
             OpeningClaims::from_groups(vec![prover_group]).expect("valid one-hot prover claims"),
-            vec![hint.clone()],
+            vec![hint],
             vec![&poly_refs[..]],
         )
         .expect("valid one-hot prover opening data"),
@@ -781,38 +767,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         BasisMode::Lagrange,
     )
     .expect("batched onehot prove");
-
-    let streamed_backend =
-        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER)
-            .unwrap();
-    let streamed_prepared = streamed_backend.prepare_setup(&setup).unwrap();
-    let streamed_stack = akita_prover::UniformProverStack::uniform(
-        &streamed_backend,
-        &streamed_prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("streamed stack");
-    let streamed_group = PolynomialGroupClaims::new(
-        point.clone(),
-        vec![OneHotF::zero(); poly_refs.len()],
-        commitments[0].clone(),
-    )
-    .expect("valid streamed prover group");
-    let mut streamed_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-    let streamed_proof = OneHotScheme::batched_prove::<_, _, _>(
-        &setup,
-        selected_prover_data::<OneHotCfg, _>(
-            OpeningClaims::from_groups(vec![streamed_group]).expect("valid streamed prover claims"),
-            vec![hint],
-            vec![&poly_refs[..]],
-        )
-        .expect("valid streamed prover opening data"),
-        &streamed_stack,
-        &mut streamed_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("streamed batched onehot prove");
-    assert_eq!(streamed_proof, proof, "cached and streamed proofs differ");
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();

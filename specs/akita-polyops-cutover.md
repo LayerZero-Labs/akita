@@ -36,7 +36,7 @@ public prover APIs, and cut over commitment and ring-switch compute traits from
 fixed built-in plan methods to source-typed operation kernels. The replacement
 is a set of view/provider traits plus backend kernels for commitment,
 opening/folding, decompose-fold, direct witness, tensor projection, and
-ring-switch relation/quotient operations.
+one ring-switch relation operation.
 
 The cutover must include the tensor methods that currently live on
 `AkitaPolyOps`:
@@ -251,7 +251,7 @@ Targeted checks while implementing:
 ```bash
 cargo test -p akita-prover backend::dense
 cargo test -p akita-prover backend::onehot
-cargo test -p akita-prover protocol::quadratic_equation
+cargo test -p akita-prover protocol::ring_relation
 cargo test -p akita-pcs --test akita_e2e
 cargo test -p akita-pcs --test commitment_contract
 cargo test -p akita-pcs --test ring_switch
@@ -364,9 +364,9 @@ current prover protocol code and proof objects
 
 Ring-switch witness/protocol state
         |
-        | exposes relation/quotient views
+        | exposes RingSwitchRelationView
         v
-Ring-switch kernels on CPU or Metal
+RingSwitchRelationKernel on CPU or Metal
         |
         | canonical rows
         v
@@ -703,10 +703,9 @@ that already own their invariants:
   `crates/akita-prover/src/backend/multilinear_polynomial.rs`;
 - recursive witness view and kernels in
   `crates/akita-prover/src/backend/recursive_witness.rs`.
-- ring-switch relation/quotient source views near
-  `crates/akita-prover/src/protocol/ring_switch.rs` or
-  `crates/akita-prover/src/protocol/quadratic_equation.rs`, depending on where
-  the owning witness state naturally lives.
+- the ring-switch relation view in
+  `crates/akita-prover/src/backend/ring_switch.rs`. The protocol owns witness
+  state in `crates/akita-prover/src/protocol/ring_relation.rs`.
 
 Avoid moving all implementation code into the compute module tree.
 `crates/akita-prover/src/compute/` should own backend traits, shared operation
@@ -797,10 +796,9 @@ Affected public and semi-public surfaces:
 - `crates/akita-prover/src/protocol/flow.rs`: replace root claim evaluation,
   extension opening reduction, tensor projection, and root tensor projection
   call sites with provider/view plus operation-context kernel calls.
-- `crates/akita-prover/src/protocol/quadratic_equation.rs`: replace
-  `P::decompose_fold_batched` and `poly.decompose_fold` with opening batch
-  kernels. Replace ring-switch row calls with relation/quotient source views
-  and ring-switch operation contexts.
+- `crates/akita-prover/src/protocol/ring_relation.rs`: use opening batch kernels
+  for decomposition and call `RingSwitchRelationKernel` once for all D, B, and
+  A relation rows.
 - `crates/akita-prover/src/protocol/ring_switch.rs`: replace commitment helper
   bounds and recursive witness commit calls with source-typed commit kernels.
 - `crates/akita-scheme/src/lib.rs`: replace prover API bounds and tensor root
@@ -841,7 +839,7 @@ Capability boundaries for the main public and semi-public APIs:
 | root extension-opening reduction preparation/proving | `RootTensorSource` and, for dense fallback, explicit direct-witness-capable tensor view support | tensor context plus `TensorProjectionKernel`/`TensorProjectionBatchKernel` | Sparse batch paths must stay batch kernels. Dense fallback is explicit CPU tensor behavior, not a polynomial default. |
 | root fold evaluation and decompose-fold | `RootOpeningSource` and matching batch source for batched decompose | opening context plus `OpeningFoldKernel`/`OpeningBatchKernel` | Includes base and ring multiplier points. |
 | `QuadraticEquation::new_prover` | root opening/decompose sources for root claims; recursive witness view sources for recursive claims | opening context for decompose-fold and digit rows used by hint construction | It must not require tensor/direct capabilities merely to build quadratic equations. |
-| `ring_switch_build_w`, `compute_r_split_eq` | ring-switch relation/quotient source views, not root polynomial sources | ring-switch context plus relation/quotient kernels and cyclic rows for blinding | Relation/quotient views carry the currently validated `w_hat`, `t_hat`, `z` segment, and norm metadata. |
+| ring relation construction | `RingSwitchRelationView`, not a root polynomial source | ring-switch context plus `RingSwitchRelationKernel` | The view carries the decomposed D and B rows, the centered A segment, and its norm bound. The result carries D rows in both transform domains, B cyclic rows, and A quotient rows. |
 | `commit_w`, `commit_next_w_with_policy` | recursive witness commit source, not root polynomial source | commit context plus recursive witness commit kernel and B-side digit rows | Cross-`D` dispatch prepares and validates a target-dimension commit context inside the dispatch arm. |
 
 The full `AkitaRootPoly` marker is acceptable only on top-level convenience
@@ -913,8 +911,8 @@ tensor kernel
   output: column partials, dense/sparse tensor witnesses, root projection poly
 
 ring-switch kernel
-  input:  relation/quotient view + ring-switch context
-  output: RingSwitchRelationRows or quotient rows
+  input:  RingSwitchRelationView + ring-switch context
+  output: RingSwitchRelationRows
 ```
 
 This gives seamless mixed-backend execution because every operation consumes
@@ -993,22 +991,23 @@ Required documentation updates in the implementation PR:
 - Leave historical specs alone unless they describe `AkitaPolyOps` as active
   future guidance. Historical mentions can remain as context.
 
-## Execution
+## Historical Execution Plan
 
-Suggested implementation sequence for one code PR:
+The cutover used this implementation sequence. The ring-switch steps below now
+refer to the single relation operation that replaced the planned parallel
+relation and quotient operations.
 
 1. Add operation contexts and source-typed kernel traits for commit,
-   opening/decompose, tensor projection, and ring-switch relation/quotient
-   operations.
+   opening/decompose, tensor projection, and ring-switch relation operations.
 2. Add the new root provider/view traits and protocol source views without
    changing public APIs yet.
 3. Add standard borrowed views for dense, one-hot, sparse-ring, root tensor
    projection, multilinear dispatch, recursive witness, and ring-switch
-   relation/quotient inputs.
+   relation inputs.
 4. Implement CPU commit kernels for the new commit views by reducing to
    standard row helpers or directly to existing CPU kernels.
-5. Implement CPU ring-switch relation/quotient kernels for the new ring-switch
-   views by reducing to the existing fused quotient row kernel.
+5. Implement the CPU ring-switch relation kernel. It computes all D, B, and A
+   rows and returns one `RingSwitchRelationRows` value.
 6. Implement CPU opening/decompose kernels by moving the current dense,
    one-hot, sparse-ring, root projection, multilinear dispatch, and recursive
    witness logic out of `AkitaPolyOps` impls.
@@ -1016,7 +1015,7 @@ Suggested implementation sequence for one code PR:
    out of `AkitaPolyOps` impls, preserving dense same-point sharing and one-hot
    sparse batch paths.
 8. Cut over `api/commitment.rs`, `api/scheme.rs`, `protocol/flow.rs`,
-   `protocol/quadratic_equation.rs`, `protocol/ring_switch.rs`, `akita-scheme`,
+   `protocol/ring_relation.rs`, `protocol/ring_switch.rs`, `akita-scheme`,
    examples, benches, and tests to the operation stack.
 9. Delete `AkitaPolyOps`, its blanket `&P` impl, and the old monolithic
    `ProverComputeBackend` public boundary.
@@ -1056,7 +1055,7 @@ Expected implementation diff:
 - `crates/akita-prover/src/backend/*.rs`: moderate churn moving impl blocks
   from `AkitaPolyOps` to provider/view/kernel impls.
 - `crates/akita-prover/src/protocol/flow.rs` and
-  `crates/akita-prover/src/protocol/quadratic_equation.rs`: moderate call-site
+  `crates/akita-prover/src/protocol/ring_relation.rs`: moderate call-site
   churn, no intended protocol logic change.
 - `akita-scheme`, `akita-pcs` examples, benches, and tests: mechanical generic
   bound and helper updates.
@@ -1073,7 +1072,7 @@ left as a compatibility path beside the new one.
   current compute backend and Metal roadmap; this spec supersedes the
   `AkitaPolyOps` cutover notes there.
 - [`crates/akita-prover/src/lib.rs`](../crates/akita-prover/src/lib.rs):
-  current `AkitaPolyOps` definition and blanket reference impl.
+  current source traits, operation stacks, and public prover exports.
 - [`crates/akita-prover/src/compute/`](../crates/akita-prover/src/compute/):
   typed compute backend setup, low-level commit/ring-switch plans, and PO1
   source-typed kernel trait skeletons.
@@ -1091,8 +1090,8 @@ left as a compatibility path beside the new one.
 - [`crates/akita-prover/src/protocol/flow.rs`](../crates/akita-prover/src/protocol/flow.rs):
   root opening evaluation, extension opening reduction, tensor projection, and
   recursive proving flow call sites.
-- [`crates/akita-prover/src/protocol/quadratic_equation.rs`](../crates/akita-prover/src/protocol/quadratic_equation.rs):
-  decompose-fold and batched decompose-fold call sites.
+- [`crates/akita-prover/src/protocol/ring_relation.rs`](../crates/akita-prover/src/protocol/ring_relation.rs):
+  opening decomposition and ring relation construction.
 - [`crates/akita-prover/src/protocol/ring_switch.rs`](../crates/akita-prover/src/protocol/ring_switch.rs):
   recursive witness commitment and ring-switch flow call sites.
 

@@ -39,6 +39,11 @@ pub(crate) use compression_witness::{
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 
+struct GroupOpeningMaterial<F: FieldCore> {
+    e_hat: DigitBlocks,
+    e_folded: RingVec<F>,
+}
+
 fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     pre_folded_e: &[&[CyclotomicRing<F, D>]],
     role_subcolumns: usize,
@@ -503,8 +508,7 @@ impl RingRelationProver {
             d_d = dims.d_d(),
         )
         .entered();
-        let mut group_e_hat = Vec::with_capacity(num_groups);
-        let mut group_e_folded = Vec::with_capacity(num_groups);
+        let mut group_openings = Vec::with_capacity(num_groups);
         let mut offset = 0usize;
         for group_index in 0..num_groups {
             let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
@@ -547,8 +551,10 @@ impl RingRelationProver {
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("D-role opening decomposition failed: {err:?}"))
             })?;
-            group_e_hat.push(e_hat_g);
-            group_e_folded.push(e_folded_g);
+            group_openings.push(GroupOpeningMaterial {
+                e_hat: e_hat_g,
+                e_folded: e_folded_g,
+            });
             offset = end;
         }
         let e_hat_concat = if lp.has_precommitted_groups() {
@@ -556,14 +562,14 @@ impl RingRelationProver {
                 opening_batch
                     .root_group_order()?
                     .into_iter()
-                    .map(|group_index| &group_e_hat[group_index]),
+                    .map(|group_index| &group_openings[group_index].e_hat),
             )?)
         } else {
             None
         };
         let e_hat = e_hat_concat
             .as_ref()
-            .or_else(|| group_e_hat.first())
+            .or_else(|| group_openings.first().map(|group| &group.e_hat))
             .ok_or(AkitaError::InvalidProof)?;
         let (v, d_quotients) = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
@@ -744,16 +750,14 @@ impl RingRelationProver {
             if hints.len() != num_groups {
                 return Err(AkitaError::InvalidProof);
             }
-            let group_material = group_e_hat.into_iter().zip(group_e_folded);
-            for (
-                group_index,
-                (((z_folded_rings, z_folded_centered_per_chunk), hint), (e_hat, e_folded)),
-            ) in group_z
+            for (group_index, ((z_material, hint), opening)) in group_z
                 .into_iter()
                 .zip(hints)
-                .zip(group_material)
+                .zip(group_openings)
                 .enumerate()
             {
+                let (z_folded_rings, z_folded_centered_per_chunk) = z_material;
+                let GroupOpeningMaterial { e_hat, e_folded } = opening;
                 let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
                 let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
                 if hint.ring_dim() != group_dims.d_a() || hint.inner_rows().len() != k_g {
@@ -778,11 +782,7 @@ impl RingRelationProver {
             let hint = hints.into_iter().next().ok_or(AkitaError::InvalidProof)?;
             let (z_folded_rings, z_folded_centered_per_chunk) =
                 group_z.into_iter().next().ok_or(AkitaError::InvalidProof)?;
-            let e_hat = group_e_hat
-                .into_iter()
-                .next()
-                .ok_or(AkitaError::InvalidProof)?;
-            let e_folded = group_e_folded
+            let GroupOpeningMaterial { e_hat, e_folded } = group_openings
                 .into_iter()
                 .next()
                 .ok_or(AkitaError::InvalidProof)?;
