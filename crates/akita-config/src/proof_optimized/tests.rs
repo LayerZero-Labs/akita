@@ -111,14 +111,6 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     .estimate
     .estimated_proof_payload_bytes()
     .expect("Linf-only proof estimate");
-    eprintln!(
-        "D64 selective L2: rank={}, collision_l2_sq={}, response_cap={}, proof_bytes={}, linf_only_bytes={}",
-        step.params.witness.inner_commit_matrix.output_rank(),
-        table_key.collision_l2_sq,
-        response_cap,
-        proof_bytes,
-        no_l2_bytes,
-    );
     assert!(proof_bytes < no_l2_bytes);
 }
 
@@ -166,13 +158,6 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         schedule.recursive_folds.len(),
         linf_schedule.schedule.recursive_folds.len(),
         "the modeled L2 suffix should improve bytes without adding a fold"
-    );
-    eprintln!(
-        "fp64 direct terminal L2: rank={}, cap={:?}, proof_bytes={}, linf_only_bytes={}",
-        terminal.witness.inner_commit_matrix.output_rank(),
-        terminal.witness.response_l2_sq_cap(),
-        proof_bytes,
-        linf_bytes,
     );
     assert!(proof_bytes < linf_bytes);
 }
@@ -223,7 +208,7 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn response_model_reduces_planned_payload_in_every_field_profile() {
-    fn compare<Cfg: CommitmentConfig>(num_vars: usize) -> (usize, usize) {
+    fn compare<Cfg: CommitmentConfig>(num_vars: usize) {
         let policy = crate::policy_of::<Cfg>();
         assert!(
             matches!(
@@ -231,11 +216,6 @@ fn response_model_reduces_planned_payload_in_every_field_profile() {
                 akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1
             ),
             "{} must use the typed L2 response model",
-            std::any::type_name::<Cfg>()
-        );
-        assert!(
-            Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
-            "{} must not depend on empirical production caps",
             std::any::type_name::<Cfg>()
         );
         let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
@@ -285,24 +265,17 @@ fn response_model_reduces_planned_payload_in_every_field_profile() {
         .estimated_proof_payload_bytes()
         .expect("L-infinity proof estimate");
         assert!(modeled < linf);
-        (modeled, linf)
     }
 
-    let fp32_onehot = compare::<fp32::OneHot>(30);
-    let fp32_dense = compare::<fp32::Dense>(26);
-    let fp64_onehot = compare::<fp64::OneHot>(30);
-    let fp64_dense = compare::<fp64::Dense>(26);
-    let fp128_onehot = compare::<fp128::OneHot>(36);
-    let fp128_dense = compare::<fp128::Dense>(28);
-    eprintln!(
-        "planned response-model/Linf bytes: fp32 onehot={fp32_onehot:?}, fp32 dense={fp32_dense:?}, fp64 onehot={fp64_onehot:?}, fp64 dense={fp64_dense:?}, fp128 onehot={fp128_onehot:?}, fp128 dense={fp128_dense:?}"
-    );
+    compare::<fp32::OneHot>(30);
+    compare::<fp32::Dense>(26);
+    compare::<fp64::OneHot>(30);
+    compare::<fp64::Dense>(26);
+    compare::<fp128::OneHot>(36);
+    compare::<fp128::Dense>(28);
 
     #[cfg(feature = "all-schedules")]
-    {
-        let fp128_dense_w8r2 = compare::<fp128::DenseMultiChunk>(16);
-        eprintln!("planned response-model/Linf bytes: fp128 dense W8R2={fp128_dense_w8r2:?}");
-    }
+    compare::<fp128::DenseMultiChunk>(16);
 }
 
 #[cfg(feature = "all-schedules")]
@@ -316,11 +289,6 @@ fn every_generated_profile_opts_in_and_ships_an_l2_route() {
                 akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1
             ),
             "{} must use the typed L2 response model",
-            std::any::type_name::<Cfg>()
-        );
-        assert!(
-            Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
-            "{} must not depend on empirical production caps",
             std::any::type_name::<Cfg>()
         );
         let catalog = Cfg::schedule_catalog().expect("generated catalog");

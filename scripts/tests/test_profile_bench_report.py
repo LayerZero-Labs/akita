@@ -492,7 +492,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("B commitment: ring D32 · module rank 6", report)
         self.assertIn("D opening: ring D16 · module rank 8", report)
         self.assertIn("Sum of squared coefficients (L2)", report)
-        self.assertIn("Scheduled cap: 100", report)
+        self.assertIn("Sum of squared coefficients (L2): ≤ 100", report)
         self.assertIn(
             "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 19",
             report,
@@ -574,6 +574,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "challenge_count_pm1=31 challenge_count_pm2=11 "
                 "challenge_operator_norm_threshold=Some(19) "
                 "response_l2_sq_cap=Some(633237013) "
+                "z_admission_linf_cap=Some(2570) "
                 "num_live_ring_elements_per_claim=1908 "
                 "num_positions_per_block=256 num_live_blocks=8 "
                 "block_index_domain_size=8",
@@ -619,7 +620,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 19",
             report,
         )
-        self.assertIn("Scheduled cap: 633,237,013", report)
+        self.assertIn("Maximum coefficient magnitude (Linf): ≤ 2,570", report)
+        self.assertIn("Sum of squared coefficients (L2): ≤ 633,237,013", report)
         self.assertIn("<em>Input from L0</em><br>Field elements: 2,048", report)
         self.assertIn("Clear z, e, and t terminal response", report)
         self.assertNotIn("| L1 | terminal fold | — | — |", report)

@@ -144,9 +144,6 @@ where
         Envelope::sis_modulus_profile()
     }
 
-    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
-        Envelope::SELECTIVE_L2_FOLD_CAPS;
-
     fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,

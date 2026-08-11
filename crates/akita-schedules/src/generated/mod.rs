@@ -146,7 +146,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
     pub sis_l2_table_digest: akita_types::SisL2TableDigest,
-    pub selective_l2_fold_caps: &'static [crate::SelectiveL2FoldCap],
     pub uniform_ring_dimension: usize,
     pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
@@ -180,7 +179,7 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
     SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{

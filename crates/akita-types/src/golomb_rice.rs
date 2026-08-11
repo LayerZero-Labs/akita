@@ -237,20 +237,6 @@ pub fn sample_optimal_rice_low_bits(values: &[i64], zigzag_w: u32, low_bits_hi: 
         .unwrap_or(0)
 }
 
-/// Payload byte length for each `rice_low_bits` in `0..=low_bits_hi` on a realized `z` sample.
-pub fn golomb_rice_low_bits_sweep_payload_bytes(
-    values: &[i64],
-    zigzag_w: u32,
-    low_bits_hi: u32,
-) -> Result<Vec<(u32, usize)>, AkitaError> {
-    (0..=low_bits_hi)
-        .map(|rice_low_bits| {
-            let bits = golomb_rice_total_bits(values, rice_low_bits, zigzag_w)?;
-            Ok((rice_low_bits, bits.div_ceil(8)))
-        })
-        .collect()
-}
-
 /// Distribution summary for terminal fold-response `z` coefficients.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZFoldEncodingStats {

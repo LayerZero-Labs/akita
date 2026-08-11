@@ -3,10 +3,7 @@ use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    golomb_rice::{
-        analyze_z_fold_golomb_encoding, golomb_rice_low_bits_sweep_payload_bytes,
-        golomb_rice_zigzag_width, rice_low_bits_for_cap,
-    },
+    golomb_rice::{analyze_z_fold_golomb_encoding, golomb_rice_zigzag_width},
     layout::proof_size::field_bytes,
     sis::{compute_num_digits_field_width, num_digits_for_bound},
     AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule,
@@ -151,9 +148,6 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             "[{label}]     t: {t_bytes} B, field_coeffs={t_field_elems}, ring_elems={t_ring_elems}",
         );
         assert_eq!(tail_bytes, z_wire_bytes + e_bytes + t_bytes);
-        if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
-            emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
-        }
     }
 }
 
@@ -190,73 +184,6 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
         params.log_basis_inner,
         witness.z_payloads.first().map_or(0, Vec::len),
     )
-}
-
-fn emit_z_golomb_k_sweep<FF: FieldCore>(
-    label: &str,
-    witness: &akita_types::TerminalResponse<FF>,
-    schedule: &FoldSchedule,
-    field_bits: u32,
-    actual_z_payload_bytes: usize,
-) {
-    let Some(group) = witness.layout.groups.first() else {
-        return;
-    };
-    let Ok(z_values) = akita_types::decode_terminal_z_golomb_payload(
-        witness
-            .z_payloads
-            .first()
-            .map(Vec::as_slice)
-            .unwrap_or_default(),
-        group,
-    ) else {
-        return;
-    };
-    let z_values = z_values.into_iter().map(i64::from).collect::<Vec<_>>();
-    let Ok(stats) = terminal_response_z_fold_stats(witness, schedule, field_bits) else {
-        return;
-    };
-    let low_bits_hi = stats
-        .rice_low_bits_cap
-        .saturating_add(4)
-        .max(stats.rice_low_bits_sample);
-    let Ok(sweep) =
-        golomb_rice_low_bits_sweep_payload_bytes(&z_values, stats.zigzag_w, low_bits_hi)
-    else {
-        return;
-    };
-    let low_bits_observed = rice_low_bits_for_cap(u128::from(stats.observed_max_abs));
-    eprintln!(
-        "[{label}]   z_golomb_low_bits_sweep (coords={}):",
-        z_values.len()
-    );
-    for &(rice_low_bits, bytes) in &sweep {
-        let marker = if rice_low_bits == stats.rice_low_bits_wire {
-            "  <-- wire low bits"
-        } else if rice_low_bits == stats.rice_low_bits_cap {
-            "  <-- cap low bits (planner reference)"
-        } else if rice_low_bits == stats.rice_low_bits_sample {
-            "  <-- sample-optimal on this witness"
-        } else if rice_low_bits == low_bits_observed {
-            "  <-- low bits from observed max only (NOT sound)"
-        } else {
-            ""
-        };
-        let delta = bytes as i64 - actual_z_payload_bytes as i64;
-        eprintln!(
-            "[{label}]     low_bits={rice_low_bits:2}: payload={bytes:6} B ({:.2} bits/coord, delta_vs_actual={delta:+}){marker}",
-            (bytes.saturating_mul(8)) as f64 / z_values.len().max(1) as f64,
-        );
-    }
-    if let Some((rice_low_bits, bytes)) = sweep.iter().min_by_key(|(_, b)| *b) {
-        let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
-        eprintln!(
-            "[{label}]   z_golomb_sweep_summary: best low_bits={rice_low_bits} -> {bytes} B \
-             (vs actual {actual_z_payload_bytes} B at wire_low_bits={}, delta {save_vs_beta} B; \
-             wire low bits must be >= best for honest encodes)",
-            stats.rice_low_bits_wire,
-        );
-    }
 }
 
 /// Surface the public setup prefix and every initialized exact NTT cache slot.
@@ -758,37 +685,19 @@ pub(crate) fn emit_runtime_schedule_summary(
         );
     }
 
-    // Older merge-base report parsers consume this compatibility event. The
-    // current parser uses the setup-offload group emitted above.
-    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        if let Some(prefix) = &fold.params.incoming_setup_prefix {
-            let layout = &prefix.commitment_params.layout;
-            tracing::info!(
-                label,
-                successor_level = index + 1,
-                setup_prefix_natural_field_elements = prefix.natural_len,
-                setup_prefix_padded_field_elements = prefix.n_prefix().unwrap_or(0),
-                log_basis_inner = layout.log_basis_inner,
-                log_basis_open = prefix.commitment_params.log_basis_open,
-                num_live_blocks = layout.num_live_blocks,
-                num_positions_per_block = layout.num_positions_per_block,
-                n_a = layout.inner_commit_matrix.output_rank(),
-                n_b = layout.outer_commit_matrix.output_rank(),
-                a_input_raw_dimension = ?layout.inner_commit_matrix.raw_input_dimension(),
-                a_output_raw_dimension = ?layout.inner_commit_matrix.raw_output_dimension(),
-                b_input_raw_dimension = ?layout.outer_commit_matrix.raw_input_dimension(),
-                b_output_raw_dimension = ?layout.outer_commit_matrix.raw_output_dimension(),
-                "planned recursive setup edge"
-            );
-        }
-    }
-
     let terminal_level = levels - 1;
     let terminal = &schedule.terminal;
     let witness = &terminal.params.witness;
     let challenge = &terminal.params.sparse_challenge_config;
     let security_route = witness.inner_commit_matrix.security_route();
     let response_l2_sq_cap = witness.response_l2_sq_cap();
+    let z_admission_linf_cap = terminal
+        .params
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .map(|group| group.z_admission_linf_cap);
     let challenge_operator_norm_threshold =
         reported_operator_norm_threshold(security_route, witness.d_a(), challenge);
     tracing::info!(
@@ -810,6 +719,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
         security_route = ?security_route,
         response_l2_sq_cap = ?response_l2_sq_cap,
+        z_admission_linf_cap = ?z_admission_linf_cap,
         num_live_ring_elements_per_claim = witness.num_live_ring_elements_per_claim,
         num_positions_per_block = witness.num_positions_per_block,
         num_live_blocks = witness.num_live_blocks,

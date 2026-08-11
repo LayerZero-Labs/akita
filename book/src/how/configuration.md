@@ -56,15 +56,12 @@ owns shipped table data. The verifier-reachable proof-size formula.
   `crates/akita-config/src/lib.rs` (`resolve_schedule`).
 - `book/src/usage/profiling.md` and `.github/workflows/profile-bench.yml`.
 
-### Selective physical L2 candidates
+### Selective L2 candidates
 
 The coefficient `L∞` route remains available at every fold. A production
-preset may also enable the typed physical `L2` response model. Every shipped
+preset may also enable the typed `L2` response model. Every shipped
 fp32, fp64, and fp128 dense and one-hot family enables it. This includes each
-generated multi-chunk and recursive companion. Production presets leave the
-exact cap table empty. Exact rows remain available for tests and compatibility.
-Such a row binds every part of the source, challenge, and response geometry, so
-it cannot be reused for a different state.
+generated multi-chunk and recursive companion.
 
 The planner always retains its ordinary L infinity candidate. From level 3
 onward, an enabled family also evaluates the same canonical block split with

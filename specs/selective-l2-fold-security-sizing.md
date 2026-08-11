@@ -450,14 +450,12 @@ cargo run -p akita-sis-estimator --release --example euclidean_width_table -- --
 ### Calibrated response model admission
 
 The planner keeps its ordinary L infinity search at every state. Every
-production family enables `TypedProtocolMomentsV1` and leaves the exact cap
-table empty. At level 3 and later, the planner evaluates the ordinary best block
+production family enables `TypedProtocolMomentsV1`. At level 3 and later, the
+planner evaluates the ordinary best block
 split under both security routes for response bases 16 and above. It keeps the
 L2 alternative only when it lowers the A rank. Response basis 8 is excluded
 because it caused deterministic stage 2 folded oracle consistency failures in
-two D64 production profiles. The protocol cause has not been fixed. Exact rows
-remain available for tests and compatibility. An exact row takes precedence
-only when the complete source, challenge, and response key matches.
+two D64 production profiles. The protocol cause has not been fixed.
 
 The typed model carries the expected squared norm of the recursive witness
 through the protocol. Dense roots use centered field digit moments. One-hot
@@ -735,7 +733,7 @@ has been folded into the book.
 7. Add small field limb inner products only where the no wrap test requires
    them.
 8. Add verifier replay and malformed proof tests.
-9. Add the exact L2 candidate to the existing suffix comparison.
+9. Add the modeled L2 candidate to the existing suffix comparison.
 10. Regenerate schedules and produce the required three way report.
 11. Run the full repository gates and update the owning book pages.
 

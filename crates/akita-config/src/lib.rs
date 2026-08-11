@@ -30,28 +30,6 @@ use akita_types::{
 /// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
 macro_rules! impl_multi_chunk_companion {
     ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident) => {
-        impl_multi_chunk_companion!(
-            @core
-            $cfg,
-            $base,
-            $profile,
-            $feat,
-            $table,
-            <$base as $crate::CommitmentConfig>::SELECTIVE_L2_FOLD_CAPS
-        );
-    };
-    ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident, selective_l2_caps = $selective_l2_caps:expr) => {
-        impl_multi_chunk_companion!(
-            @core
-            $cfg,
-            $base,
-            $profile,
-            $feat,
-            $table,
-            $selective_l2_caps
-        );
-    };
-    (@core $cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident, $selective_l2_caps:expr) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
@@ -59,9 +37,6 @@ macro_rules! impl_multi_chunk_companion {
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
-            const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
-                $selective_l2_caps;
-
             fn decomposition() -> akita_types::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
             }
@@ -162,7 +137,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_types::sis::SisTableDigest::CURRENT,
         sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
-        selective_l2_fold_caps: Cfg::SELECTIVE_L2_FOLD_CAPS,
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         inner_basis_range: Cfg::inner_basis_range(),
@@ -249,9 +223,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Exact SIS modulus profile used by security-floor lookups.
     fn sis_modulus_profile() -> SisModulusProfileId;
-
-    /// Measured later-fold L2 caps admitted as additional planner candidates.
-    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] = &[];
 
     /// Prove that the concrete base field has exactly the modulus named by
     /// the SIS profile. Runtime callers use this before table lookup so a

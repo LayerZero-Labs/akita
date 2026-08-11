@@ -38,8 +38,7 @@ impl_proof_optimized_preset!(
     32,
     fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
     schedules = ("schedules-fp32-dense", "fp32_dense", fp32_dense_table),
-    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE,
-    selective_l2_caps = &[]
+    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );
 impl_proof_optimized_preset!(
     OneHot,
@@ -51,6 +50,5 @@ impl_proof_optimized_preset!(
     1,
     fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = ("schedules-fp32-onehot", "fp32_onehot", fp32_onehot_table),
-    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE,
-    selective_l2_caps = &[]
+    ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );

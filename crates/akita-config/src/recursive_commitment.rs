@@ -25,9 +25,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     const D: usize = Cfg::D;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Cfg::RING_DIMENSION_SCHEDULE_MODE;
-    const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
-        Cfg::SELECTIVE_L2_FOLD_CAPS;
-
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
     }

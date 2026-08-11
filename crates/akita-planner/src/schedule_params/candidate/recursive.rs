@@ -419,9 +419,8 @@ fn finalize_recursive_level_candidate(
 /// Return the established L-infinity candidate plus any calibrated L2
 /// alternative at this state.
 ///
-/// An exact cap binds one physical response geometry. The general response
-/// model reuses the ordinary best split. The suffix DP then prices that
-/// alternative against the L-infinity candidate.
+/// The response model reuses the ordinary best split. The suffix DP then prices
+/// that alternative against the L-infinity candidate.
 #[allow(clippy::too_many_arguments)]
 fn recursive_level_base_candidate_for_split(
     policy: &PlannerPolicy,
@@ -597,71 +596,29 @@ fn append_selective_l2_candidates(
     fold_level: usize,
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<(), AkitaError> {
-    let fold_basis = 1usize
-        .checked_shl(log_basis_open)
-        .ok_or_else(|| AkitaError::InvalidSetup("L2 fold basis overflow".into()))?;
     let selected_l2_challenge = akita_challenges::selective_l2_challenge_config(dimensions.d_a());
     let l2_challenge_cfg = selected_l2_challenge.as_ref().unwrap_or(ring_challenge_cfg);
-    let mut exact_geometries = policy
-        .selective_l2_fold_caps
-        .iter()
-        .filter(|cap| {
-            cap.fold_level == fold_level
-                && cap.input_witness_len == search.current_witness_len
-                && cap.source_log_basis == log_basis_inner
-                && cap.challenge_ring_dimension == dimensions.d_a()
-                && cap.challenge_l2_sq == l2_challenge_cfg.challenge_l2_sq_max()
-                && cap.fold_basis == fold_basis
-                && cap.physical_response_len != 0
-        })
-        .map(|cap| (cap.physical_response_len, cap.fold_digit_count))
-        .collect::<Vec<_>>();
-    exact_geometries.sort_unstable();
-    exact_geometries.dedup();
-    for &(physical_response_len, fold_digit_count) in &exact_geometries {
-        append_selective_l2_candidate(
-            candidates,
-            policy,
-            payload_mode,
-            ring_challenge_cfg,
-            dimensions,
-            search,
-            source,
-            log_basis_inner,
-            log_basis_open,
-            fold_level,
-            physical_response_len,
-            Some(fold_digit_count),
-            None,
-        )?;
-    }
-    let model_enabled = policy.selective_l2_response_model_enabled();
-    if model_enabled {
+    if policy.selective_l2_response_model_enabled() {
         if let (Some((base, _)), Some(source_moment)) = (model_base, source_moment) {
             let physical_response_len = base
                 .inner_commit_matrix
                 .input_width()
                 .checked_mul(dimensions.d_a())
                 .ok_or_else(|| AkitaError::InvalidSetup("L2 response length overflow".into()))?;
-            if !exact_geometries.iter().any(|(exact_len, digits)| {
-                *exact_len == physical_response_len && *digits == base.num_digits_fold
-            }) {
-                append_selective_l2_candidate(
-                    candidates,
-                    policy,
-                    payload_mode,
-                    ring_challenge_cfg,
-                    dimensions,
-                    search,
-                    source,
-                    log_basis_inner,
-                    log_basis_open,
-                    fold_level,
-                    physical_response_len,
-                    None,
-                    source_moment.response_l2_sq_cap(l2_challenge_cfg.challenge_l2_sq_max()),
-                )?;
-            }
+            append_selective_l2_candidate(
+                candidates,
+                policy,
+                payload_mode,
+                ring_challenge_cfg,
+                dimensions,
+                search,
+                source,
+                log_basis_inner,
+                log_basis_open,
+                fold_level,
+                physical_response_len,
+                source_moment.response_l2_sq_cap(l2_challenge_cfg.challenge_l2_sq_max()),
+            )?;
         }
     }
     Ok(())
@@ -680,7 +637,6 @@ fn append_selective_l2_candidate(
     log_basis_open: u32,
     fold_level: usize,
     physical_response_len: usize,
-    exact_fold_digit_count: Option<usize>,
     modeled_response_l2_sq_cap: Option<u128>,
 ) -> Result<(), AkitaError> {
     let fold_basis = 1usize
@@ -721,19 +677,14 @@ fn append_selective_l2_candidate(
         return Ok(());
     };
     let linf_rank = base.inner_commit_matrix.output_rank();
-    if exact_fold_digit_count.is_some_and(|expected| expected != base.num_digits_fold) {
-        return Ok(());
-    }
     let Some(inner_commit_matrix) = selective_l2_inner_matrix(
         policy,
         SelectiveL2CandidateGeometry {
             fold_level,
-            input_witness_len: search.current_witness_len,
             num_claims: 1,
             num_chunks: search.num_chunks,
             inner_width: base.inner_commit_matrix.input_width(),
             ring_dimension: d_a,
-            source_log_basis: log_basis_inner,
             fold_basis,
             fold_digit_count: base.num_digits_fold,
             fold_challenge_config: l2_challenge_cfg,

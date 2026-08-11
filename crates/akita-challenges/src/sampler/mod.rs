@@ -7,8 +7,6 @@
 
 mod op_norm;
 mod op_norm_accumulate;
-#[cfg(test)]
-mod orbit_diagnostics;
 mod position_sample;
 mod signed_sparse;
 mod xof;

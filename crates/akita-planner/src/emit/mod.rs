@@ -640,32 +640,11 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         .map(|d| d.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let selective_l2_fold_caps = identity
-        .selective_l2_fold_caps
-        .iter()
-        .map(|cap| {
-            format!(
-                "SelectiveL2FoldCap {{ fold_level: {}, input_witness_len: {}, source_log_basis: {}, challenge_ring_dimension: {}, challenge_l2_sq: {}, physical_response_len: {}, fold_basis: {}, fold_digit_count: {}, response_l2_sq_cap: {} }}",
-                cap.fold_level,
-                cap.input_witness_len,
-                cap.source_log_basis,
-                cap.challenge_ring_dimension,
-                cap.challenge_l2_sq,
-                cap.physical_response_len,
-                cap.fold_basis,
-                cap.fold_digit_count,
-                cap.response_l2_sq_cap
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
     format!(
         concat!(
             "{ring_dimension_policy_statics}",
             "#[rustfmt::skip]\n",
             "pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[{ring_dims}];\n",
-            "#[rustfmt::skip]\n",
-            "pub(crate) static CATALOG_SELECTIVE_L2_FOLD_CAPS: &[SelectiveL2FoldCap] = &[{selective_l2_fold_caps}];\n",
             "#[rustfmt::skip]\n",
             "pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = ",
             "GeneratedScheduleCatalogIdentity {{\n",
@@ -681,7 +660,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
             "    sis_l2_table_digest: SisL2TableDigest({sis_l2_table_digest}),\n",
-            "    selective_l2_fold_caps: CATALOG_SELECTIVE_L2_FOLD_CAPS,\n",
             "    uniform_ring_dimension: {uniform_ring_dimension},\n",
             "    setup_prefix_inner_ring_dimension: {setup_prefix_inner_ring_dimension},\n",
             "    decomposition: {decomposition},\n",
@@ -716,7 +694,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         sis_security_policy = identity.sis_security_policy.name(),
         sis_table_digest = format_bytes(identity.sis_table_digest.0),
         sis_l2_table_digest = format_bytes(identity.sis_l2_table_digest.0),
-        selective_l2_fold_caps = selective_l2_fold_caps,
         uniform_ring_dimension = identity.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension = identity.setup_prefix_inner_ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
@@ -814,7 +791,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
-         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
+         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

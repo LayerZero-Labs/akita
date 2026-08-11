@@ -193,7 +193,6 @@ fn audit_committed_params(
     params: &CommittedGroupParams,
     num_claims: usize,
     fold_level: usize,
-    input_witness_len: usize,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     if num_claims == 0 {
@@ -274,12 +273,10 @@ fn audit_committed_params(
                 policy,
                 SelectiveL2CandidateGeometry {
                     fold_level,
-                    input_witness_len,
                     num_claims,
                     num_chunks: params.witness_chunk.num_chunks,
                     inner_width: expected_a_width,
                     ring_dimension: dims.d_a(),
-                    source_log_basis: params.log_basis_inner,
                     fold_basis,
                     fold_digit_count: params.num_digits_fold,
                     fold_challenge_config: &params.fold_challenge_config,
@@ -328,7 +325,6 @@ fn audit_committed_params(
 #[derive(Clone, Copy)]
 struct TerminalL2ModelState {
     fold_level: usize,
-    input_witness_len: usize,
 }
 
 fn audit_terminal(
@@ -413,12 +409,10 @@ fn audit_terminal(
             policy,
             SelectiveL2CandidateGeometry {
                 fold_level: model_state.fold_level,
-                input_witness_len: model_state.input_witness_len,
                 num_claims: 1,
                 num_chunks: 1,
                 inner_width: expected_width,
                 ring_dimension: d,
-                source_log_basis: params.log_basis_inner,
                 fold_basis,
                 fold_digit_count: params.fold_digit_count,
                 fold_challenge_config: sparse,
@@ -527,7 +521,6 @@ pub(crate) fn audit_resolved_schedule(
         final_params,
         profiles.final_group.group.num_polynomials(),
         0,
-        schedule.root.input_witness_len,
         policy,
     )?;
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
@@ -536,7 +529,6 @@ pub(crate) fn audit_resolved_schedule(
             &step.params.witness,
             1,
             index + 1,
-            step.input_witness_len,
             policy,
         )?;
         if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {
@@ -552,7 +544,6 @@ pub(crate) fn audit_resolved_schedule(
         &schedule.terminal.params.response_shape,
         TerminalL2ModelState {
             fold_level: schedule.recursive_folds.len() + 1,
-            input_witness_len: schedule.terminal.input_witness_len,
         },
         policy,
     )
@@ -564,9 +555,7 @@ mod tests {
     use crate::generated::{
         GeneratedBlockGeometry, GeneratedInnerCommitMatrix, GeneratedTerminalFold,
     };
-    use crate::{
-        PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap,
-    };
+    use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
     use akita_types::{
         ChunkedWitnessCfg, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
         SisTableDigest,
@@ -575,18 +564,6 @@ mod tests {
     const INPUT_WITNESS_LEN: usize = 1_024;
     const INNER_WIDTH: usize = 16;
     const RESPONSE_CAP: u128 = 500_000_000;
-    const TEST_CAPS: &[SelectiveL2FoldCap] = &[SelectiveL2FoldCap {
-        fold_level: 3,
-        input_witness_len: INPUT_WITNESS_LEN,
-        source_log_basis: 4,
-        challenge_ring_dimension: 64,
-        challenge_l2_sq: 75,
-        physical_response_len: INNER_WIDTH * 64,
-        fold_basis: 16,
-        fold_digit_count: 3,
-        response_l2_sq_cap: RESPONSE_CAP,
-    }];
-
     fn policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
@@ -609,7 +586,6 @@ mod tests {
             sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
             sis_l2_table_digest: SisL2TableDigest::CURRENT,
-            selective_l2_fold_caps: TEST_CAPS,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (3, 16),
@@ -628,16 +604,14 @@ mod tests {
             &policy,
             SelectiveL2CandidateGeometry {
                 fold_level: 3,
-                input_witness_len: INPUT_WITNESS_LEN,
                 num_claims: 1,
                 num_chunks: 1,
                 inner_width: INNER_WIDTH,
                 ring_dimension: 64,
-                source_log_basis: 4,
                 fold_basis: 16,
                 fold_digit_count: 3,
                 fold_challenge_config: &sparse,
-                response_l2_sq_cap: None,
+                response_l2_sq_cap: Some(RESPONSE_CAP),
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
                     physical_response_len: INNER_WIDTH * 64,
                 }),
@@ -700,10 +674,7 @@ mod tests {
             &terminal,
             &sparse,
             &response_shape,
-            TerminalL2ModelState {
-                fold_level: 3,
-                input_witness_len: INPUT_WITNESS_LEN,
-            },
+            TerminalL2ModelState { fold_level: 3 },
             &policy,
         )
         .expect("canonical terminal matrix");
@@ -727,10 +698,7 @@ mod tests {
             &terminal,
             &sparse,
             &response_shape,
-            TerminalL2ModelState {
-                fold_level: 3,
-                input_witness_len: INPUT_WITNESS_LEN,
-            },
+            TerminalL2ModelState { fold_level: 3 },
             &policy,
         )
         .is_err());

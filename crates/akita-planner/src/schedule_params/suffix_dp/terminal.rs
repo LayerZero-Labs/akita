@@ -84,12 +84,10 @@ pub(crate) fn terminal_direct_suffix_cost(
             policy,
             akita_schedules::planner_support::SelectiveL2CandidateGeometry {
                 fold_level: terminal_fold_level,
-                input_witness_len,
                 num_claims: 1,
                 num_chunks: 1,
                 inner_width: terminal_params.inner_width(),
                 ring_dimension: terminal_params.d_a(),
-                source_log_basis: terminal_params.log_basis_inner,
                 fold_basis,
                 fold_digit_count: terminal_lp.num_digits_fold,
                 fold_challenge_config: &l2_challenge,

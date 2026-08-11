@@ -1086,6 +1086,9 @@ def extract_summary(
                 "response_l2_sq_cap": parse_tracing_optional_int(
                     kvs.get("response_l2_sq_cap")
                 ),
+                "z_admission_linf_cap": parse_tracing_optional_int(
+                    kvs.get("z_admission_linf_cap")
+                ),
                 **{
                     key: int(kvs[key])
                     for key in (
@@ -1898,19 +1901,12 @@ class Metric:
 
 MEASURED_METRICS = [
     Metric("setup_s", "Setup and preparation", "s", fmt_seconds),
-    Metric("setup_expand_s", "Setup expansion", "s", fmt_seconds),
-    Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
+    Metric("setup_expand_s", "↳ Setup expansion", "s", fmt_seconds),
+    Metric("backend_prepare_s", "↳ Backend preparation", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
     Metric("verify_total_s", "Verify, multi-threaded", "ms", fmt_milliseconds),
     Metric("verify_single_total_s", "Verify, single-threaded", "ms", fmt_milliseconds),
-    Metric("verify_akita_s", "Verifier core, multi-threaded", "ms", fmt_milliseconds),
-    Metric(
-        "verify_single_akita_s",
-        "Verifier core, single-threaded",
-        "ms",
-        fmt_milliseconds,
-    ),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric(
         "num_setup_field_elements",
@@ -2645,13 +2641,17 @@ def challenge_line(params: dict[str, object]) -> str:
 
 
 def response_bound_lines(params: dict[str, object]) -> list[str]:
+    linf_cap = params.get("z_admission_linf_cap")
+    linf_line = "Maximum coefficient magnitude (Linf)"
+    if linf_cap is not None:
+        linf_line += f": ≤ {fmt_count(float(linf_cap))}"
     if params.get("security_route") == "L2":
-        rows = ["Sum of squared coefficients (L2)"]
+        rows = [linf_line, "Sum of squared coefficients (L2)"]
         cap = params.get("response_l2_sq_cap")
         if cap is not None:
-            rows.append(f"Scheduled cap: {fmt_count(float(cap))}")
+            rows[-1] += f": ≤ {fmt_count(float(cap))}"
         return rows
-    return ["Maximum coefficient magnitude (Linf)"]
+    return [linf_line]
 
 
 def digit_count_phrase(value: object, role: str = "") -> str:

@@ -14,13 +14,10 @@ use akita_types::{InnerCommitMatrixParams, PhysicalL2NormProofShape, SisMatrixRo
 #[derive(Clone, Copy, Debug)]
 pub struct SelectiveL2CandidateGeometry<'a> {
     pub fold_level: usize,
-    pub input_witness_len: usize,
     pub num_claims: usize,
     pub num_chunks: usize,
     pub inner_width: usize,
     pub ring_dimension: usize,
-    /// Balanced decomposition basis of the current source witness.
-    pub source_log_basis: u32,
     pub fold_basis: usize,
     pub fold_digit_count: usize,
     pub fold_challenge_config: &'a SparseChallengeConfig,
@@ -52,19 +49,7 @@ pub fn selective_l2_inner_matrix(
         .inner_width
         .checked_mul(geometry.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("L2 physical response length overflow".into()))?;
-    let response_l2_sq_cap = geometry.response_l2_sq_cap.or_else(|| {
-        policy.selective_l2_cap_for_candidate(
-            geometry.fold_level,
-            geometry.input_witness_len,
-            physical_response_len,
-            geometry.source_log_basis,
-            geometry.ring_dimension,
-            geometry.fold_basis,
-            geometry.fold_digit_count,
-            geometry.fold_challenge_config.challenge_l2_sq_max(),
-        )
-    });
-    let Some(response_l2_sq_cap) = response_l2_sq_cap else {
+    let Some(response_l2_sq_cap) = geometry.response_l2_sq_cap else {
         return Ok(None);
     };
     let norm_proof_shape = match geometry.norm_proof_shape {
@@ -160,7 +145,7 @@ pub fn projected_collision_role_price(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PlannerCostModelId, SelectionPolicyId, SelectiveL2FoldCap};
+    use crate::{PlannerCostModelId, SelectionPolicyId};
     use akita_types::{
         ChunkedWitnessCfg, DecompositionParams, SisL2TableDigest, SisModulusProfileId,
         SisSecurityPolicyId, SisTableDigest,
@@ -170,17 +155,6 @@ mod tests {
     fn missing_l2_rank_is_an_ineligible_candidate() {
         const INNER_WIDTH: usize = 6_400_000_000_001;
         const RING_DIMENSION: usize = 64;
-        static CAPS: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap {
-            fold_level: 3,
-            input_witness_len: 7,
-            source_log_basis: 4,
-            challenge_ring_dimension: RING_DIMENSION,
-            challenge_l2_sq: 75,
-            physical_response_len: INNER_WIDTH * RING_DIMENSION,
-            fold_basis: 16,
-            fold_digit_count: 3,
-            response_l2_sq_cap: 1,
-        }];
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
@@ -202,7 +176,6 @@ mod tests {
             sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
             sis_l2_table_digest: SisL2TableDigest::CURRENT,
-            selective_l2_fold_caps: &CAPS,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (1, 1),
@@ -216,16 +189,14 @@ mod tests {
             &policy,
             SelectiveL2CandidateGeometry {
                 fold_level: 3,
-                input_witness_len: 7,
                 num_claims: 1,
                 num_chunks: 1,
                 inner_width: INNER_WIDTH,
                 ring_dimension: RING_DIMENSION,
-                source_log_basis: 4,
                 fold_basis: 16,
                 fold_digit_count: 3,
                 fold_challenge_config: &challenge,
-                response_l2_sq_cap: None,
+                response_l2_sq_cap: Some(1),
                 norm_proof_shape: None,
             },
         )
@@ -239,30 +210,6 @@ mod tests {
         const INNER_WIDTH: usize = 128;
         const RING_DIMENSION: usize = 128;
         const RESPONSE_CAP: u128 = 1 << 20;
-        static CAPS: [SelectiveL2FoldCap; 2] = [
-            SelectiveL2FoldCap {
-                fold_level: 3,
-                input_witness_len: 7,
-                source_log_basis: 4,
-                challenge_ring_dimension: RING_DIMENSION,
-                challenge_l2_sq: 31,
-                physical_response_len: INNER_WIDTH * RING_DIMENSION,
-                fold_basis: 8,
-                fold_digit_count: 4,
-                response_l2_sq_cap: RESPONSE_CAP,
-            },
-            SelectiveL2FoldCap {
-                fold_level: 3,
-                input_witness_len: 7,
-                source_log_basis: 4,
-                challenge_ring_dimension: RING_DIMENSION,
-                challenge_l2_sq: 31,
-                physical_response_len: INNER_WIDTH * RING_DIMENSION,
-                fold_basis: 16,
-                fold_digit_count: 3,
-                response_l2_sq_cap: RESPONSE_CAP,
-            },
-        ];
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
@@ -284,7 +231,6 @@ mod tests {
             sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
             sis_l2_table_digest: SisL2TableDigest::CURRENT,
-            selective_l2_fold_caps: &CAPS,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (4, 4),
@@ -297,16 +243,14 @@ mod tests {
             &policy,
             SelectiveL2CandidateGeometry {
                 fold_level: 3,
-                input_witness_len: 7,
                 num_claims: 1,
                 num_chunks: 1,
                 inner_width: INNER_WIDTH,
                 ring_dimension: RING_DIMENSION,
-                source_log_basis: 4,
                 fold_basis: 8,
                 fold_digit_count: 4,
                 fold_challenge_config: &challenge,
-                response_l2_sq_cap: None,
+                response_l2_sq_cap: Some(RESPONSE_CAP),
                 norm_proof_shape: None,
             },
         )
@@ -316,16 +260,14 @@ mod tests {
             &policy,
             SelectiveL2CandidateGeometry {
                 fold_level: 3,
-                input_witness_len: 7,
                 num_claims: 1,
                 num_chunks: 1,
                 inner_width: INNER_WIDTH,
                 ring_dimension: RING_DIMENSION,
-                source_log_basis: 4,
                 fold_basis: 16,
                 fold_digit_count: 3,
                 fold_challenge_config: &challenge,
-                response_l2_sq_cap: None,
+                response_l2_sq_cap: Some(RESPONSE_CAP),
                 norm_proof_shape: None,
             },
         )
