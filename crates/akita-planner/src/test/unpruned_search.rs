@@ -13,6 +13,7 @@ struct UnprunedState {
     level: usize,
     input_witness_len: usize,
     current_log_basis: u32,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
     dimension_ceiling: CommitmentRingDims,
     payload_phase: akita_types::CommitmentPayloadPhase,
 }
@@ -31,6 +32,7 @@ fn enumerate_suffixes(
         level,
         input_witness_len,
         current_log_basis,
+        source_moment,
         dimension_ceiling,
         payload_phase,
     } = state;
@@ -83,6 +85,7 @@ fn enumerate_suffixes(
                         log_basis,
                         level,
                         None,
+                        source_moment,
                     )?
                 } else {
                     derive_linf_candidate_level_params(
@@ -116,6 +119,7 @@ fn enumerate_suffixes(
                             key,
                             level,
                             None,
+                            source_moment,
                         )?
                     } else {
                         None
@@ -154,12 +158,29 @@ fn enumerate_suffixes(
                     } else {
                         params.role_dims()
                     };
+                    let next_source_moment = if policy.selective_l2_response_model_enabled() {
+                        let opening_layout = suffix_opening_layout(input_witness_len, None)?;
+                        Some(crate::response_model::next_source_moment(
+                            &params,
+                            &opening_layout,
+                            &[source_moment.ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "unpruned response source moment is missing".into(),
+                                )
+                            })?],
+                            field_bits,
+                            policy.claim_ext_degree,
+                        )?)
+                    } else {
+                        None
+                    };
                     for child in enumerate_suffixes(
                         ctx,
                         UnprunedState {
                             level: level + 1,
                             input_witness_len: output_witness_len,
                             current_log_basis: log_basis,
+                            source_moment: next_source_moment,
                             dimension_ceiling: child_ceiling,
                             payload_phase: payload_phase.after(params.payload_mode),
                         },
@@ -270,6 +291,25 @@ pub(super) fn find_schedule(
                         true,
                     )?
                 {
+                    let next_source_moment = if policy.selective_l2_response_model_enabled() {
+                        let opening_layout = schedule_key.opening_layout()?;
+                        let source_groups = crate::response_model::root_group_source_moments(
+                            &root_params,
+                            &opening_layout,
+                            honest_fold_policy,
+                            &[],
+                            field_bits,
+                        )?;
+                        Some(crate::response_model::next_source_moment(
+                            &root_params,
+                            &opening_layout,
+                            &source_groups,
+                            field_bits,
+                            policy.claim_ext_degree,
+                        )?)
+                    } else {
+                        None
+                    };
                     let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
                         policy.challenge_field_bits()?,
                         policy.claim_ext_degree,
@@ -287,6 +327,7 @@ pub(super) fn find_schedule(
                             level: 1,
                             input_witness_len: output_witness_len,
                             current_log_basis: log_basis,
+                            source_moment: next_source_moment,
                             dimension_ceiling: *root_dimensions,
                             payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
                         },

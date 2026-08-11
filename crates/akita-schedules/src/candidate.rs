@@ -24,6 +24,10 @@ pub struct SelectiveL2CandidateGeometry<'a> {
     pub fold_basis: usize,
     pub fold_digit_count: usize,
     pub fold_challenge_config: &'a SparseChallengeConfig,
+    /// Planner-frozen response cap. Generated schedule expansion and resolved
+    /// schedule audit replay this exact public value instead of rerunning an
+    /// offline response model.
+    pub response_l2_sq_cap: Option<u128>,
     /// Override the recursive proof shape when the response is checked in the
     /// clear, as it is at the terminal boundary.
     pub norm_proof_shape: Option<PhysicalL2NormProofShape>,
@@ -34,7 +38,7 @@ pub fn selective_l2_inner_matrix(
     policy: &PlannerPolicy,
     geometry: SelectiveL2CandidateGeometry<'_>,
 ) -> Result<Option<InnerCommitMatrixParams>, AkitaError> {
-    // The physical-L2 route is calibrated and end-to-end validated only for
+    // The physical-L2 route is validated end to end only for
     // response bases 16 and above. Basis 8 reaches a different stage-2
     // geometry and is not an eligible planning candidate.
     if geometry.fold_level < 3
@@ -48,16 +52,19 @@ pub fn selective_l2_inner_matrix(
         .inner_width
         .checked_mul(geometry.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("L2 physical response length overflow".into()))?;
-    let Some(response_l2_sq_cap) = policy.selective_l2_cap_for_candidate(
-        geometry.fold_level,
-        geometry.input_witness_len,
-        physical_response_len,
-        geometry.source_log_basis,
-        geometry.ring_dimension,
-        geometry.fold_basis,
-        geometry.fold_digit_count,
-        geometry.fold_challenge_config.challenge_l2_sq_max(),
-    ) else {
+    let response_l2_sq_cap = geometry.response_l2_sq_cap.or_else(|| {
+        policy.selective_l2_cap_for_candidate(
+            geometry.fold_level,
+            geometry.input_witness_len,
+            physical_response_len,
+            geometry.source_log_basis,
+            geometry.ring_dimension,
+            geometry.fold_basis,
+            geometry.fold_digit_count,
+            geometry.fold_challenge_config.challenge_l2_sq_max(),
+        )
+    });
+    let Some(response_l2_sq_cap) = response_l2_sq_cap else {
         return Ok(None);
     };
     let norm_proof_shape = match geometry.norm_proof_shape {
@@ -176,6 +183,7 @@ mod tests {
         }];
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -217,6 +225,7 @@ mod tests {
                 fold_basis: 16,
                 fold_digit_count: 3,
                 fold_challenge_config: &challenge,
+                response_l2_sq_cap: None,
                 norm_proof_shape: None,
             },
         )
@@ -256,6 +265,7 @@ mod tests {
         ];
         let policy = PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -296,6 +306,7 @@ mod tests {
                 fold_basis: 8,
                 fold_digit_count: 4,
                 fold_challenge_config: &challenge,
+                response_l2_sq_cap: None,
                 norm_proof_shape: None,
             },
         )
@@ -314,6 +325,7 @@ mod tests {
                 fold_basis: 16,
                 fold_digit_count: 3,
                 fold_challenge_config: &challenge,
+                response_l2_sq_cap: None,
                 norm_proof_shape: None,
             },
         )

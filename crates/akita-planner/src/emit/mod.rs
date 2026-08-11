@@ -672,6 +672,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    family_name: \"{family_name}\",\n",
             "    protocol_epoch: {protocol_epoch},\n",
             "    cost_model: PlannerCostModelId::{cost_model},\n",
+            "    selective_l2_response_model: SelectiveL2ResponseModelId::{selective_l2_response_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
             "    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::{recursive_split_search_policy},\n",
             "    setup_field_budget: {setup_field_budget},\n",
@@ -703,6 +704,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         family_name = identity.family_name,
         protocol_epoch = identity.protocol_epoch,
         cost_model = identity.cost_model.name(),
+        selective_l2_response_model = identity.selective_l2_response_model.name(),
         selection_policy = identity.selection_policy.name(),
         recursive_split_search_policy = identity.recursive_split_search_policy.name(),
         setup_field_budget = match identity.setup_field_budget {
@@ -812,7 +814,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
-         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
+         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2FoldCap, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

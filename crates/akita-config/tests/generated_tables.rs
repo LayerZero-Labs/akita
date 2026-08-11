@@ -206,6 +206,11 @@ fn catalog_identity_rejects_planner_policy_changes() {
     let mut mutated = catalog;
     mutated.identity.min_offloaded_witness_contraction += 1;
     assert_rejected("offloaded witness contraction", mutated);
+
+    let mut mutated = catalog;
+    mutated.identity.selective_l2_response_model =
+        akita_schedules::SelectiveL2ResponseModelId::Disabled;
+    assert_rejected("selective L2 response model", mutated);
 }
 
 #[cfg(feature = "all-schedules")]

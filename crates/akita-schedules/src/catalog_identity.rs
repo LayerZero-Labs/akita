@@ -47,6 +47,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.sis_security_policy.tag()));
     h.write_bytes(&policy.sis_table_digest.0);
     h.write_bytes(&policy.sis_l2_table_digest.0);
+    h.write_u64(u64::from(policy.selective_l2_response_model.tag()));
     write_selective_l2_fold_caps(&mut h, policy.selective_l2_fold_caps);
     h.write_u64(policy.uniform_ring_dimension as u64);
     h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
@@ -81,6 +82,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
     h.write_bytes(&identity.sis_table_digest.0);
     h.write_bytes(&identity.sis_l2_table_digest.0);
+    h.write_u64(u64::from(identity.selective_l2_response_model.tag()));
     write_selective_l2_fold_caps(&mut h, identity.selective_l2_fold_caps);
     h.write_u64(identity.uniform_ring_dimension as u64);
     h.write_u64(identity.setup_prefix_inner_ring_dimension as u64);
@@ -132,6 +134,7 @@ struct CatalogIdentityExpectation {
     family_name: &'static str,
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
+    selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     selection_policy: crate::SelectionPolicyId,
     recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     setup_field_budget: Option<usize>,
@@ -165,6 +168,7 @@ impl CatalogIdentityExpectation {
             family_name: identity.family_name,
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
+            selective_l2_response_model: identity.selective_l2_response_model,
             selection_policy: identity.selection_policy,
             recursive_split_search_policy: identity.recursive_split_search_policy,
             setup_field_budget: identity.setup_field_budget,
@@ -212,6 +216,7 @@ fn catalog_identity_expectation(
         family_name,
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
+        selective_l2_response_model: policy.selective_l2_response_model,
         selection_policy: policy.selection_policy,
         recursive_split_search_policy: policy.recursive_split_search_policy,
         setup_field_budget: policy.setup_field_budget,
@@ -253,6 +258,7 @@ pub fn expected_catalog_identity(
         family_name: expected.family_name,
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
+        selective_l2_response_model: expected.selective_l2_response_model,
         selection_policy: expected.selection_policy,
         recursive_split_search_policy: expected.recursive_split_search_policy,
         setup_field_budget: expected.setup_field_budget,

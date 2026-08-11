@@ -249,6 +249,7 @@ fn price_level_candidate_with_children(
             ctx.key,
             state.level,
             None,
+            state.source_moment,
         )? {
             let level_proof_size = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
                 .checked_add(eor_bytes)
@@ -357,6 +358,7 @@ pub(crate) fn derive_selected_suffix_schedule(
         level,
         current_witness_len,
         current_lb,
+        source_moment,
         incoming_setup_prefix,
         dimension_ceiling,
         payload_phase,
@@ -375,6 +377,14 @@ pub(crate) fn derive_selected_suffix_schedule(
         // searches and could turn one catalog row into millions of redundant
         // recomputations.
         return Ok(empty_suffix_result());
+    }
+    if policy.selective_l2_response_model_enabled()
+        && !(level_zero_is_root && level == 0)
+        && source_moment.is_none()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "recursive suffix is missing its response source moment".into(),
+        ));
     }
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (level_zero_is_root && level == 0);
@@ -550,6 +560,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                                 open_lb,
                                 level,
                                 incoming_setup_prefix,
+                                source_moment,
                             )?
                         } else {
                             derive_candidate_level_params(
@@ -564,6 +575,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                                 open_lb,
                                 level,
                                 incoming_setup_prefix,
+                                source_moment,
                             )?
                         };
                         candidates.extend(level_candidates.into_iter().map(
@@ -579,6 +591,53 @@ pub(crate) fn derive_selected_suffix_schedule(
         }
 
         for (candidate_params, next_witness_len, eor_bytes) in candidates {
+            let next_source_moment = if policy.selective_l2_response_model_enabled() {
+                let source_groups = if root_level_key.is_some() {
+                    crate::response_model::root_group_source_moments(
+                        &candidate_params,
+                        current_opening_layout,
+                        root_honest_fold_policy.ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "root batch is missing its response source policy".into(),
+                            )
+                        })?,
+                        precommitted_honest_fold_policies,
+                        policy.decomposition.field_bits(),
+                    )?
+                } else if let Some(natural_prefix_len) = incoming_setup_prefix {
+                    let prefix_params = candidate_params.group_params(current_opening_layout, 0)?;
+                    let prefix_energy = crate::response_model::field_digit_energy(
+                        natural_prefix_len,
+                        policy.decomposition.field_bits(),
+                        prefix_params.log_basis_inner(),
+                        prefix_params.num_digits_inner(),
+                    )?;
+                    vec![
+                        crate::response_model::SourceMomentEstimate::new(prefix_energy)
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "setup-prefix source has zero energy".into(),
+                                )
+                            })?,
+                        source_moment.ok_or_else(|| {
+                            AkitaError::InvalidSetup("recursive response source is missing".into())
+                        })?,
+                    ]
+                } else {
+                    vec![source_moment.ok_or_else(|| {
+                        AkitaError::InvalidSetup("recursive response source is missing".into())
+                    })?]
+                };
+                Some(crate::response_model::next_source_moment(
+                    &candidate_params,
+                    current_opening_layout,
+                    &source_groups,
+                    policy.decomposition.field_bits(),
+                    policy.claim_ext_degree,
+                )?)
+            } else {
+                None
+            };
             if let Some(natural_prefix_len) = incoming_setup_prefix {
                 let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
                 if !offloaded_witness_contracts(
@@ -610,6 +669,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                         level: level + 1,
                         current_witness_len: next_witness_len,
                         current_lb: open_lb,
+                        source_moment: next_source_moment,
                         incoming_setup_prefix: None,
                         dimension_ceiling: candidate_params.role_dims(),
                         payload_phase: payload_phase.after(candidate_params.payload_mode),
@@ -632,6 +692,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                         level: level + 1,
                         current_witness_len: next_witness_len,
                         current_lb: open_lb,
+                        source_moment: next_source_moment,
                         incoming_setup_prefix: Some(natural_len),
                         dimension_ceiling: candidate_params.role_dims(),
                         payload_phase,

@@ -143,9 +143,13 @@ impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct UnitOneHotFoldPolicy {
     field_bits: u32,
+    source_chunk_size: usize,
     snap: DigitSnapCalibration,
     legacy_fallback: BalancedSignedDigitFoldPolicy,
 }
+
+/// Canonical logical chunk size of the shipping unit one-hot representation.
+pub const DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE: usize = 256;
 
 impl UnitOneHotFoldPolicy {
     /// Construct the shipping no-snap policy with its historical dominance
@@ -158,6 +162,7 @@ impl UnitOneHotFoldPolicy {
     ) -> Self {
         Self {
             field_bits,
+            source_chunk_size: DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
             snap: DigitSnapCalibration::NONE,
             legacy_fallback: BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
                 field_bits,
@@ -177,12 +182,30 @@ impl UnitOneHotFoldPolicy {
         legacy_witness.validate()?;
         Ok(Self {
             field_bits,
+            source_chunk_size: DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
             snap,
             legacy_fallback: BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
                 field_bits,
                 legacy_witness,
             ),
         })
+    }
+
+    /// Number of logical coefficients represented by one unit entry.
+    #[must_use]
+    pub const fn source_chunk_size(self) -> usize {
+        self.source_chunk_size
+    }
+
+    /// Replace the source chunk size while retaining the same fold sizing rule.
+    pub fn with_source_chunk_size(mut self, source_chunk_size: usize) -> Result<Self, AkitaError> {
+        if source_chunk_size == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "unit one-hot source chunk size must be nonzero".into(),
+            ));
+        }
+        self.source_chunk_size = source_chunk_size;
+        Ok(self)
     }
 
     fn exact_threshold(&self, query: HonestFoldSizingQuery<'_>) -> Option<u128> {

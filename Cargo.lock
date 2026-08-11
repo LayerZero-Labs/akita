@@ -131,6 +131,7 @@ dependencies = [
  "akita-field",
  "akita-schedules",
  "akita-types",
+ "libm",
 ]
 
 [[package]]

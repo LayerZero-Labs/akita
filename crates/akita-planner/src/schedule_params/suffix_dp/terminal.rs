@@ -3,6 +3,7 @@ use super::*;
 /// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
 /// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
 /// fold-then-direct branch without aborting fold-then-fold exploration.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn try_terminal_direct_suffix_cost(
     policy: &PlannerPolicy,
     input_witness_len: usize,
@@ -11,6 +12,7 @@ pub(crate) fn try_terminal_direct_suffix_cost(
     key: PolynomialGroupLayout,
     terminal_fold_level: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Option<(CandidateTerminalResponse, usize)>, AkitaError> {
     if terminal_lp.witness_chunk.num_chunks > 1 {
         return Ok(None);
@@ -23,6 +25,7 @@ pub(crate) fn try_terminal_direct_suffix_cost(
         key,
         terminal_fold_level,
         opening_layout,
+        source_moment,
     );
     match result {
         Ok(candidate) => Ok(Some(candidate)),
@@ -34,6 +37,7 @@ pub(crate) fn try_terminal_direct_suffix_cost(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn terminal_direct_suffix_cost(
     policy: &PlannerPolicy,
     input_witness_len: usize,
@@ -42,6 +46,7 @@ pub(crate) fn terminal_direct_suffix_cost(
     key: PolynomialGroupLayout,
     terminal_fold_level: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<(CandidateTerminalResponse, usize), AkitaError> {
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
     let num_polynomials = if terminal_fold_level == 0 {
@@ -73,6 +78,8 @@ pub(crate) fn terminal_direct_suffix_cost(
         let fold_basis = 1usize
             .checked_shl(terminal_lp.log_basis_open)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
+        let response_l2_sq_cap = source_moment
+            .and_then(|moment| moment.response_l2_sq_cap(l2_challenge.challenge_l2_sq_max()));
         if let Some(l2_matrix) = akita_schedules::planner_support::selective_l2_inner_matrix(
             policy,
             akita_schedules::planner_support::SelectiveL2CandidateGeometry {
@@ -86,6 +93,7 @@ pub(crate) fn terminal_direct_suffix_cost(
                 fold_basis,
                 fold_digit_count: terminal_lp.num_digits_fold,
                 fold_challenge_config: &l2_challenge,
+                response_l2_sq_cap,
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
                     physical_response_len: terminal_params
                         .inner_width()

@@ -17,8 +17,9 @@
 
 pub use akita_schedules::{
     ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId,
-    SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
+    SelectiveL2ResponseModelId, SisModulusProfileId, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod emit;
@@ -26,6 +27,7 @@ pub mod emit;
 pub mod generated_families;
 mod planner;
 mod policy;
+mod response_model;
 pub mod schedule_params;
 
 pub use akita_schedules::{

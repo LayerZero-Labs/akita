@@ -494,6 +494,7 @@ pub fn find_schedule(
             level: 0,
             current_witness_len: root_input_witness_len,
             current_lb: 0,
+            source_moment: None,
             incoming_setup_prefix: None,
             dimension_ceiling,
             payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,

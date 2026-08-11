@@ -11,17 +11,6 @@ use akita_schedules::{schedule_from_entry, GeneratedScheduleTable};
 #[cfg(feature = "schedules-default")]
 use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, PolynomialGroupLayout};
 
-#[test]
-#[allow(clippy::assertions_on_constants)]
-fn exact_source_calibrations_keep_empirical_response_tail_margin() {
-    const MAX_OBSERVED_RESPONSE_TO_MEAN_PPM: u128 = 1_055_525;
-    const REQUIRED_RESIDUAL_MARGIN_PPM: u128 = 1_150_000;
-    assert!(
-        EXACT_SOURCE_RESPONSE_HEADROOM_PPM * 1_000_000
-            >= MAX_OBSERVED_RESPONSE_TO_MEAN_PPM * REQUIRED_RESIDUAL_MARGIN_PPM
-    );
-}
-
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_levels_are_exactly_root_and_recursive_folds() {
@@ -87,8 +76,8 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
             * step.params.witness.inner_commit_matrix.ring_dimension(),
         65_536,
     );
-    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 4,);
-    assert_eq!(response_cap, 4_546_785_600);
+    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 3);
+    assert_eq!(response_cap, 262_954_353);
     let expected_collision = akita_types::sis::role_a_collision_l2_sq_for_response_bound(
         u128::from(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2.threshold),
         response_cap,
@@ -109,7 +98,8 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     )
     .expect("proof estimate");
     let mut no_l2_policy = crate::policy_of::<fp128::OneHot>();
-    no_l2_policy.selective_l2_fold_caps = &[];
+    no_l2_policy.selective_l2_response_model =
+        akita_schedules::SelectiveL2ResponseModelId::Disabled;
     let no_l2_bytes = akita_planner::find_schedule(
         &key,
         fp128::OneHot::root_honest_fold_policy(),
@@ -146,7 +136,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         terminal.sparse_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(3_614_436_000));
+    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(2_618_810_696));
     assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 7);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");
@@ -159,7 +149,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
     )
     .expect("proof estimate");
     let mut linf_policy = crate::policy_of::<fp64::OneHot>();
-    linf_policy.selective_l2_fold_caps = &[];
+    linf_policy.selective_l2_response_model = akita_schedules::SelectiveL2ResponseModelId::Disabled;
     let linf_schedule = akita_planner::find_schedule(
         &key,
         fp64::OneHot::root_honest_fold_policy(),
@@ -198,7 +188,7 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
             entry.terminal.fold_log_basis,
             entry.terminal.fold_digit_count
         ),
-        (5, 2)
+        (6, 2)
     );
 
     let schedule = fp128::Dense::runtime_schedule(key).expect("generated dense schedule");
@@ -210,14 +200,14 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
         .witness;
     assert_eq!(
         (predecessor.log_basis_open, predecessor.num_digits_fold),
-        (4, 3)
+        (5, 2)
     );
     assert_eq!(
         (
             schedule.terminal.params.witness.fold_log_basis,
             schedule.terminal.params.witness.fold_digit_count,
         ),
-        (5, 2)
+        (6, 2)
     );
     assert!(matches!(
         schedule
@@ -234,9 +224,18 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
 #[test]
 fn response_model_reduces_planned_payload_in_every_field_profile() {
     fn compare<Cfg: CommitmentConfig>(num_vars: usize) -> (usize, usize) {
+        let policy = crate::policy_of::<Cfg>();
         assert!(
-            !Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
-            "{} must opt into L2 planning",
+            matches!(
+                policy.selective_l2_response_model,
+                akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1
+            ),
+            "{} must use the typed L2 response model",
+            std::any::type_name::<Cfg>()
+        );
+        assert!(
+            Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
+            "{} must not depend on empirical production caps",
             std::any::type_name::<Cfg>()
         );
         let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
@@ -272,7 +271,8 @@ fn response_model_reduces_planned_payload_in_every_field_profile() {
         )
         .expect("modeled proof estimate");
         let mut linf_policy = crate::policy_of::<Cfg>();
-        linf_policy.selective_l2_fold_caps = &[];
+        linf_policy.selective_l2_response_model =
+            akita_schedules::SelectiveL2ResponseModelId::Disabled;
         let linf = akita_planner::find_schedule(
             &key,
             Cfg::root_honest_fold_policy(),
@@ -309,9 +309,18 @@ fn response_model_reduces_planned_payload_in_every_field_profile() {
 #[test]
 fn every_generated_profile_opts_in_and_ships_an_l2_route() {
     fn assert_profile<Cfg: CommitmentConfig>() {
+        let policy = crate::policy_of::<Cfg>();
         assert!(
-            !Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
-            "{} must opt into L2 planning",
+            matches!(
+                policy.selective_l2_response_model,
+                akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1
+            ),
+            "{} must use the typed L2 response model",
+            std::any::type_name::<Cfg>()
+        );
+        assert!(
+            Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
+            "{} must not depend on empirical production caps",
             std::any::type_name::<Cfg>()
         );
         let catalog = Cfg::schedule_catalog().expect("generated catalog");

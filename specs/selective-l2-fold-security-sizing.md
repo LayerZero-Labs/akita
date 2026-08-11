@@ -255,10 +255,10 @@ for every accepted proof.
 
 The response distribution affects completeness and prover cost. It determines
 how often the prover can find an allowed Fiat Shamir nonce whose response lies
-below `S_max`. The planner uses exact source-energy calibrations where they are
-available and a balanced-digit second-moment model elsewhere. End-to-end
-measurements set the empirical multiplier. Neither input is an assumption in
-the binding proof.
+below `S_max`. The planner uses typed source moments and a separate model error
+envelope. Held out end to end measurements test that envelope and the final cap
+slack. Neither the model nor those measurements are assumptions in the binding
+proof.
 
 ## Protocol design
 
@@ -287,9 +287,9 @@ claims are present and how many values to read.
 ### Candidate eligibility
 
 The planner always emits an L infinity candidate. It may emit an L2 candidate
-only when a calibrated production profile enables the response model and the
-canonical derivation supplies `S_max` and the norm proof shape for that
-physical response domain.
+only when a production profile enables the typed response model and the
+canonical derivation supplies `S_max` and the norm proof shape for that physical
+response domain.
 
 There is no global L2 cap and no hard coded rule that every level after a fixed
 index must use L2. Different field profiles and witness geometries reach useful
@@ -449,27 +449,70 @@ cargo run -p akita-sis-estimator --release --example euclidean_width_table -- --
 
 ### Calibrated response model admission
 
-The planner keeps its ordinary L infinity search at every state. A zero-length
-source-energy calibration opts a family into the balanced-digit response model.
-At level 3 and later, the planner evaluates the ordinary best block split under
-both security routes for response bases 16 and above, and keeps the L2
-alternative only when it lowers the A rank. Response basis 8 is excluded from
-the L2 route because it caused deterministic stage-2 folded-oracle consistency
-failures in two D64 production profiles. The underlying protocol cause has not
-been generalized and fixed. Exact physical-geometry rows remain available for focused fixtures and
-take precedence over the model only when the source basis, challenge ring
-dimension, challenge energy, and the rest of the state key all match.
-Production exact source-energy calibrations use a common 1.25 response-tail
-multiplier.
+The planner keeps its ordinary L infinity search at every state. Every
+production family enables `TypedProtocolMomentsV1` and leaves the exact cap
+table empty. At level 3 and later, the planner evaluates the ordinary best block
+split under both security routes for response bases 16 and above. It keeps the
+L2 alternative only when it lowers the A rank. Response basis 8 is excluded
+because it caused deterministic stage 2 folded oracle consistency failures in
+two D64 production profiles. The protocol cause has not been fixed. Exact rows
+remain available for tests and compatibility. An exact row takes precedence
+only when the complete source, challenge, and response key matches.
 
-For an uncalibrated state, the modeled cap is the balanced-digit second moment
-`input_len * (B^2 + 2) / 12`, times the fixed challenge squared energy and a
-1.75 empirical multiplier. End-to-end samples cover fp32, fp64, and fp128
-dense and one-hot families, including direct, recursive, multi-group, and
-multi-chunk profiles. The recorded maxima retain at least 15 percent cap
-margin. This is a completeness model, not a soundness assumption. The selected
-concrete cap is frozen into the schedule and remains the verifier-enforced SIS
-input.
+The typed model carries the expected squared norm of the recursive witness
+through the protocol. Dense roots use centered field digit moments. One-hot
+roots use the exact number of unit entries. Later Z segments use rounded normal
+residue moments. Their variance is the previous source energy times the
+challenge energy, divided by the physical response length. E, T, and R use
+centered field digit moments for the exact live scalar counts. The last field
+digit plane uses its actual residual width. Negative binary compression uses a
+second moment of one half per coefficient. Extension tensor packing multiplies
+logical energy by `(2K - 1) / K`.
+
+The challenge multiplication identity is exact under scalar challenge
+covariance. The accepted fixed point operator norm sampler is not assumed to be
+perfectly orbit invariant. Measurements cover five million random orbit pairs
+and 32 complete orbits at each of D64 and D128. They found no acceptance
+mismatches or mixed orbits. Raw and explicitly randomized covariance defects
+were both about 0.07 percent, so this change does not add transcript
+symmetrization.
+
+The suffix state retains seven leading bits of source energy and rounds upward.
+This loses less than `1/64` relative precision and prevents the dynamic program
+from creating a separate state for every integer energy. The planner computes
+
+```text
+cap = ceil(bucketed_source_energy * challenge_l2_sq * 1.03 * 1.06).
+```
+
+The 1.03 factor covers source model error. The 1.06 factor is the per attempt
+response allowance. If the first factor bounds the true conditional mean,
+Markov's inequality gives
+
+```text
+Pr[response_l2_sq <= 1.06 * conditional_mean] >= 3 / 53.
+```
+
+The protocol permits 4096 independent attempts. The resulting worst case
+exhaustion probability is negligible. The Markov statement does not assume a
+Gaussian response tail. The rounded normal hypothesis is only used to predict
+the Z digits of the next source witness.
+
+Held out end to end samples cover 14 fp32, fp64, and fp128 profile modes. They
+include dense, one-hot, direct, recursive, multi-group, and multi-chunk paths.
+All proofs passed both verifier modes. Across 52 selected L2 responses, cap
+slack was 6.90 to 18.18 percent. One response needed one retry. Aggregate source
+model error was negative 0.20 to positive 8.95 percent. The largest unfavorable
+component error was 2.24 percent. A recursive multi-group W8 setup state retained
+enough correlation that its E and T energies were about 25 percent below the
+uniform model. This made the model conservative and produced the 18.18 percent
+maximum cap slack.
+
+This is a completeness model, not a soundness assumption. The selected cap is
+frozen into the generated schedule and remains the verifier enforced SIS input.
+If model construction fails, the geometry is unsupported, the Euclidean table
+has no row, or the L2 rank does not improve, the planner keeps the L infinity
+candidate.
 
 The existing suffix search prices the ordinary L infinity candidate and the
 modeled L2 candidate. This comparison includes the different A rank, T width,

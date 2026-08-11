@@ -129,6 +129,7 @@ fn recursive_candidates_add_only_the_exact_smaller_l2_alternative() {
         4,
         3,
         None,
+        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
     )
     .expect("late-fold candidates");
     let linf_rank = candidates
@@ -194,6 +195,7 @@ fn mixed_model_policy_keeps_nonzero_exact_geometry() {
         4,
         3,
         None,
+        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
     )
     .expect("mixed exact and modeled candidates");
 
@@ -207,6 +209,61 @@ fn mixed_model_policy_keeps_nonzero_exact_geometry() {
                 }
             )
     }));
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn disabled_model_keeps_exact_geometry_without_source_moment() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_schedules::SelectiveL2FoldCap;
+    use akita_types::InnerCommitSecurityRoute;
+
+    const EXACT_CAPS: &[SelectiveL2FoldCap] = &[SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 948_672,
+        source_log_basis: 4,
+        challenge_ring_dimension: 64,
+        challenge_l2_sq: 75,
+        physical_response_len: 65_536,
+        fold_basis: 16,
+        fold_digit_count: 3,
+        response_l2_sq_cap: 1 << 29,
+    }];
+
+    let mut policy = policy_of::<OneHot>();
+    policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+    policy.selective_l2_fold_caps = EXACT_CAPS;
+    let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let candidates = derive_candidate_level_params(
+        None,
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &challenge,
+        CommitmentRingDims::uniform(64),
+        948_672,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        4,
+        4,
+        3,
+        None,
+        None,
+    )
+    .expect("exact candidates with disabled response model");
+
+    assert!(candidates.iter().any(|(params, _)| {
+        params.inner_commit_matrix.input_width() * 64 == 65_536
+            && matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: 536_870_912,
+                    ..
+                }
+            )
+    }));
+    assert!(candidates.iter().any(|(params, _)| matches!(
+        params.inner_commit_matrix.security_route(),
+        InnerCommitSecurityRoute::Linf(_)
+    )));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -229,6 +286,7 @@ fn response_model_adds_at_most_one_best_split_l2_alternative() {
         4,
         3,
         None,
+        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
     )
     .expect("modeled late-fold candidates");
     let linf = candidates

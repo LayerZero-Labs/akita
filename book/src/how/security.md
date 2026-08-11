@@ -75,11 +75,10 @@ implementation acceptance criteria live in
 ## Norm bounds and weak binding
 
 Every committed level records one A role security route. The coefficient
-`L∞` route is always available. An empirically calibrated one-hot preset may
-also model an `L2` candidate from level 3 onward. Exact calibration rows take
-precedence over the general balanced-digit response model. The root and early
-folds do not use the `L2` route. A clear terminal response may use the route
-because the verifier computes its complete integer norm directly.
+`L∞` route is always available. Every production profile also enables the typed
+`L2` response model from level 3 onward. The root and early folds do not use the
+`L2` route. A clear terminal response may use the route because the verifier
+computes its complete integer norm directly.
 
 Let `kappa_1` be the maximum physical coefficient `L1` norm of the fold
 challenge. Let `gamma` be the bound used for challenge multiplication. This is
@@ -114,11 +113,21 @@ Exact accepted support certificates show that each rejected family retains at
 least 128 bits.
 
 The response model is an honest prover model, not a security assumption. An
-exact calibration uses the measured source energy. Other eligible one-hot
-states use the balanced-digit second moment with empirical headroom. The
-planner freezes the resulting candidate cap into the schedule. The verifier
-still enforces that exact cap. A model error can make proving fail more often,
-but it cannot make the verifier accept a response above the cap.
+eligible source carries a modeled squared norm through the typed Z, E, T, R,
+compression, and extension packing operations. The planner rounds that source
+estimate upward, adds a 3 percent model envelope, and permits a response up to
+1.06 times the resulting conditional mean. Markov's inequality gives a
+distribution free grinding bound if the 3 percent envelope covers the source
+model error. The planner freezes the resulting cap into the schedule. The
+verifier enforces that exact cap. A model error can make proving fail more
+often, but it cannot make the verifier accept a response above the cap.
+
+The challenge response identity is exact when the accepted challenge has
+scalar covariance. The fixed point operator norm filter is not assumed to have
+perfect symmetry. Five million sampled orbit comparisons at D64 and D128 had no
+acceptance mismatches. Full orbit tests also had no mixed outcomes. The measured
+covariance defect was about 0.07 percent, and explicit orbit randomization did
+not improve it. The protocol therefore keeps the existing challenge sampler.
 
 **Implementation map**
 

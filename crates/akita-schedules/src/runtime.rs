@@ -11,7 +11,7 @@ use akita_types::{
 };
 use std::sync::Arc;
 
-/// One empirical calibration for selective L2 response planning.
+/// One explicit selective L2 cap for compatibility fixtures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectiveL2FoldCap {
     pub fold_level: usize,
@@ -82,6 +82,35 @@ impl SelectiveL2FoldCap {
 pub enum PlannerCostModelId {
     /// Exact protocol payload plus setup-envelope accounting.
     ExactPayloadAndSetupEnvelope,
+}
+
+/// Offline response-energy model used to admit selective L2 candidates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectiveL2ResponseModelId {
+    /// Do not derive modeled L2 caps. Exact test calibrations may still be
+    /// supplied through [`PlannerPolicy::selective_l2_fold_caps`].
+    Disabled,
+    /// Typed Z/E/T/R/compression moment propagation with extension tensor
+    /// packing and a Markov-backed grinding cap.
+    TypedProtocolMomentsV1,
+}
+
+impl SelectiveL2ResponseModelId {
+    /// Stable identity tag.
+    pub const fn tag(self) -> u32 {
+        match self {
+            Self::Disabled => 0,
+            Self::TypedProtocolMomentsV1 => 1,
+        }
+    }
+
+    /// Stable identity name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Disabled => "Disabled",
+            Self::TypedProtocolMomentsV1 => "TypedProtocolMomentsV1",
+        }
+    }
 }
 
 impl PlannerCostModelId {
@@ -226,6 +255,7 @@ impl RingDimensionScheduleMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
+    pub selective_l2_response_model: SelectiveL2ResponseModelId,
     pub selection_policy: SelectionPolicyId,
     pub recursive_split_search_policy: RecursiveSplitSearchPolicy,
     /// Optional host admission budget for materialized setup field elements.
@@ -245,7 +275,8 @@ pub struct PlannerPolicy {
     pub sis_security_policy: SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
     pub sis_l2_table_digest: akita_types::SisL2TableDigest,
-    /// Empirical calibration caps. Empty keeps every level on the Linf route.
+    /// Optional exact compatibility caps. Production policies use the typed
+    /// response model and leave this table empty.
     pub selective_l2_fold_caps: &'static [SelectiveL2FoldCap],
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
@@ -272,21 +303,16 @@ impl PlannerPolicy {
         }
     }
 
-    /// Whether this family opts into the balanced-digit suffix response model.
+    /// Whether this family opts into the typed suffix response model.
     pub fn selective_l2_response_model_enabled(&self) -> bool {
-        self.selective_l2_fold_caps
-            .iter()
-            .any(|entry| entry.physical_response_len == 0)
+        self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMomentsV1
     }
 
     /// Return the data-backed L2 cap for this candidate geometry.
     ///
-    /// Exact measured rows take precedence. Other scalar single-chunk states
-    /// in an opted-in family use the balanced-digit second moment
-    /// `n * (B^2 + 2) / 12`, multiplied by the exact challenge energy and a
-    /// 1.75 empirical headroom. The model is a completeness and planning
-    /// input only; the resulting cap is frozen into the schedule and enforced
-    /// exactly by the verifier.
+    /// This lookup remains only for explicit fixtures and compatibility rows.
+    /// Production planning supplies a cap from the typed planner-only response
+    /// model, while generated expansion and audit replay the frozen public cap.
     #[allow(clippy::too_many_arguments)]
     pub fn selective_l2_cap_for_candidate(
         &self,
@@ -323,28 +349,7 @@ impl PlannerPolicy {
                     || entry.physical_response_len == physical_response_len)
             })
             .map(|entry| entry.response_l2_sq_cap);
-        if exact.is_some() {
-            return exact;
-        }
-        if !self.selective_l2_response_model_enabled()
-            || fold_level < 3
-            || input_witness_len == 0
-            || challenge_l2_sq == 0
-        {
-            return None;
-        }
-
-        const MODEL_HEADROOM_PPM: u128 = 1_750_000;
-        const MODEL_SCALE: u128 = 12_000_000;
-        let basis = 1u128.checked_shl(source_log_basis)?;
-        let second_moment_numerator = basis.checked_mul(basis)?.checked_add(2)?;
-        let scaled = (input_witness_len as u128)
-            .checked_mul(second_moment_numerator)?
-            .checked_mul(challenge_l2_sq)?
-            .checked_mul(MODEL_HEADROOM_PPM)?;
-        scaled
-            .checked_add(MODEL_SCALE - 1)
-            .map(|rounded| rounded / MODEL_SCALE)
+        exact
     }
 
     /// Whether a candidate fits the optional host setup budget.
@@ -456,11 +461,11 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
             "minimum offloaded witness contraction must be positive".to_string(),
         ));
     }
-    if !policy.selective_l2_fold_caps.is_empty()
+    if (policy.selective_l2_response_model_enabled() || !policy.selective_l2_fold_caps.is_empty())
         && policy.sis_l2_table_digest != akita_types::SisL2TableDigest::CURRENT
     {
         return Err(AkitaError::InvalidSetup(
-            "selective L2 caps require the current audited Euclidean table".into(),
+            "selective L2 planning requires the current audited Euclidean table".into(),
         ));
     }
     validate_selective_l2_caps(policy.selective_l2_fold_caps)?;
@@ -868,6 +873,7 @@ mod tests {
     fn adaptive_policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
             selection_policy: SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -939,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn source_energy_model_materializes_cap_and_matches_every_split() {
+    fn zero_length_exact_cap_matches_every_physical_split() {
         static MODEL: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap::from_source_energy_model(
             3, 2_083_904, 3, 64, 16, 3, 9_441_218, 75, 1_060_000,
         )];
@@ -966,7 +972,7 @@ mod tests {
         }
         assert_eq!(
             policy.selective_l2_cap_for_candidate(3, 2_083_904, 65_536, 3, 64, 32, 3, 75),
-            Some(1_504_318_200),
+            None,
         );
         for mismatched in [
             policy.selective_l2_cap_for_candidate(3, 2_083_904, 65_536, 4, 64, 16, 3, 75),
@@ -978,137 +984,21 @@ mod tests {
     }
 
     #[test]
-    fn balanced_digit_model_covers_every_measured_field_profile_state() {
-        static OPT_IN: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap::from_source_energy_model(
-            3, 1, 3, 64, 16, 3, 1, 75, 1_000_000,
-        )];
-        let mut policy = adaptive_policy();
-        policy.selective_l2_fold_caps = &OPT_IN;
-        let measured_caps = [
-            (511_872, 5, 75, 2_493_100_682u128),
-            (2_083_904, 3, 75, 750_576_831),
-            (231_488, 6, 75, 3_898_932_413),
-            (144_384, 6, 75, 3_003_850_896),
-            (252_544, 6, 31, 2_982_511_152),
-            (130_816, 6, 31, 1_754_411_666),
-            (594_624, 3, 75, 304_965_657),
-            (223_744, 5, 75, 1_694_697_605),
-            (124_672, 6, 75, 3_572_946_399),
-        ];
-        for (input_witness_len, source_log_basis, challenge_l2_sq, measured_cap) in measured_caps {
-            let modeled = policy
-                .selective_l2_cap_for_candidate(
-                    99,
-                    input_witness_len,
-                    1,
-                    source_log_basis,
-                    64,
-                    16,
-                    3,
-                    challenge_l2_sq,
-                )
-                .expect("opted-in model row");
-            assert!(modeled >= measured_cap, "{modeled} < {measured_cap}");
-        }
-    }
-
-    #[test]
-    fn balanced_digit_model_keeps_empirical_margin_across_all_calibrated_profiles() {
-        static OPT_IN: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap::from_source_energy_model(
-            3, 1, 3, 64, 16, 3, 1, 75, 1_000_000,
-        )];
-        let mut policy = adaptive_policy();
-        policy.selective_l2_fold_caps = &OPT_IN;
-        // Maxima from independent end-to-end profile transcripts after the
-        // modeled schedules reached their final fixed point. These cover every
-        // supported field profile, dense and one-hot witness families, and
-        // every selected source basis in the CI rows.
-        let measured_response_maxima = [
-            // fp32, nv30: L3, L4, terminal (five transcripts).
-            (550_400, 4, 31, 543_303_338u128),
-            (253_440, 4, 31, 237_644_475),
-            (125_568, 5, 31, 404_233_159),
-            // fp64, nv30: L3, L4, L5, terminal (three transcripts).
-            (707_264, 3, 75, 381_539_045),
-            (224_576, 5, 75, 1_627_247_429),
-            (113_408, 6, 75, 3_039_802_323),
-            (80_640, 6, 75, 2_428_004_762),
-            // fp128, nv36: L3, L4, L5, terminal (three transcripts).
-            (1_046_016, 4, 75, 1_466_514_925),
-            (396_800, 4, 75, 506_859_809),
-            (267_776, 4, 75, 353_853_006),
-            (184_320, 4, 75, 244_149_861),
-            // fp128 multi-group recursive, nv32/4 polys (one transcript).
-            (1_574_400, 4, 75, 1_944_140_528),
-            (488_960, 4, 75, 640_793_094),
-            (288_256, 4, 75, 384_556_280),
-            (226_816, 4, 75, 272_556_161),
-            // fp128 recursive W8R2 multi-group, nv32/4 polys (one transcript).
-            (800_256, 4, 75, 1_041_804_258),
-            (366_080, 4, 75, 451_575_010),
-            (257_536, 4, 75, 325_401_197),
-            (176_128, 4, 75, 226_971_740),
-            // fp128 direct W2R2, nv32 (one transcript).
-            (1_009_152, 4, 75, 1_410_227_575),
-            (396_800, 4, 75, 505_517_105),
-            (267_776, 4, 75, 343_828_764),
-            (184_320, 4, 75, 245_434_915),
-            // fp128 direct W4R2, nv32 (one transcript).
-            (380_800, 5, 75, 1_869_008_722),
-            (159_872, 6, 75, 3_180_422_664),
-            // fp128 direct W8R2, nv32 (one transcript).
-            (280_960, 5, 75, 1_247_240_235),
-            (160_320, 6, 75, 2_694_523_385),
-            // fp128 multi-group direct, nv32/4 polys (one transcript).
-            (1_031_232, 3, 75, 326_301_206),
-            (361_984, 4, 75, 409_562_093),
-            (257_536, 4, 75, 321_178_079),
-            (176_128, 4, 75, 228_249_358),
-            // fp32 dense, nv26 (four transcripts).
-            (550_400, 4, 31, 529_173_246),
-            (253_440, 4, 31, 233_433_991),
-            (125_568, 5, 31, 406_864_610),
-            // fp64 dense, nv26 (four transcripts).
-            (488_960, 4, 75, 990_837_236),
-            (255_488, 4, 75, 495_567_628),
-            (112_704, 6, 75, 2_976_911_626),
-            (80_640, 6, 75, 2_416_267_258),
-            // fp128 dense, nv28 (four transcripts).
-            (1_097_280, 3, 75, 368_452_280),
-            (407_040, 4, 75, 498_875_502),
-            (267_776, 4, 75, 352_749_212),
-            (184_320, 4, 75, 253_707_961),
-            // fp128 dense W8R2, nv16 (four transcripts).
-            (157_504, 6, 75, 2_643_733_056),
-        ];
-        for (input_witness_len, source_log_basis, challenge_l2_sq, measured_max) in
-            measured_response_maxima
-        {
-            let modeled = policy
-                .selective_l2_cap_for_candidate(
-                    99,
-                    input_witness_len,
-                    1,
-                    source_log_basis,
-                    64,
-                    16,
-                    3,
-                    challenge_l2_sq,
-                )
-                .expect("opted-in model row");
-            assert!(
-                modeled * 1_000_000 >= measured_max * 1_150_000,
-                "modeled cap {modeled} lacks 15% margin over measured max {measured_max}"
-            );
-        }
-    }
-
-    #[test]
     fn adaptive_dimensions_do_not_require_a_global_carrier() {
         let mut policy = adaptive_policy();
         policy.uniform_ring_dimension = 3;
         validate_policy(&policy)
             .expect("individually supported D512 A must not depend on the uniform-only field");
+    }
+
+    #[test]
+    fn typed_response_model_requires_current_l2_table_identity() {
+        let mut policy = adaptive_policy();
+        policy.sis_l2_table_digest = akita_types::SisL2TableDigest([0; 32]);
+        let error = validate_policy(&policy).expect_err("stale L2 table identity");
+        assert!(error
+            .to_string()
+            .contains("selective L2 planning requires the current audited Euclidean table"));
     }
 
     #[test]

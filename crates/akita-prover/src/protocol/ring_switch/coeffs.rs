@@ -80,6 +80,102 @@ fn emit_compression_witness<F: FieldCore>(
     Ok(())
 }
 
+fn integer_slice_l2_sq(values: &[i8]) -> u128 {
+    values.iter().fold(0u128, |sum, &value| {
+        let magnitude = u128::from(value.unsigned_abs());
+        // A witness is indexed by `usize`, while each i8 square is at most
+        // 2^14. Consequently this sum cannot overflow u128 on a supported
+        // host, even for the largest addressable witness.
+        sum + magnitude * magnitude
+    })
+}
+
+fn trace_witness_source_moments(witness: &[i8], layout: &WitnessLayout, lp: &CommittedGroupParams) {
+    if !tracing::enabled!(
+        target: "akita_prover::protocol::fold_response_model",
+        tracing::Level::INFO
+    ) {
+        return;
+    }
+
+    let mut z_coeffs = 0usize;
+    let mut e_coeffs = 0usize;
+    let mut t_coeffs = 0usize;
+    let mut z_l2_sq = 0u128;
+    let mut e_l2_sq = 0u128;
+    let mut t_l2_sq = 0u128;
+    for unit in layout.units() {
+        for (range, coeffs, energy) in [
+            (unit.z_range(), &mut z_coeffs, &mut z_l2_sq),
+            (unit.e_range(), &mut e_coeffs, &mut e_l2_sq),
+            (unit.t_range(), &mut t_coeffs, &mut t_l2_sq),
+        ] {
+            *coeffs += range.len();
+            *energy += integer_slice_l2_sq(&witness[range]);
+        }
+    }
+
+    let mut r_coeffs = 0usize;
+    let mut r_l2_sq = 0u128;
+    for row in layout.r_rows() {
+        let range = row.range();
+        r_coeffs += range.len();
+        r_l2_sq += integer_slice_l2_sq(&witness[range]);
+    }
+
+    let mut compression_coeffs = 0usize;
+    let mut compression_l2_sq = 0u128;
+    for layer in layout.compression_layers() {
+        for (_, span) in layer.f_spans() {
+            let range = span.range();
+            compression_coeffs += range.len();
+            compression_l2_sq += integer_slice_l2_sq(&witness[range]);
+        }
+        let range = layer.h_span().range();
+        compression_coeffs += range.len();
+        compression_l2_sq += integer_slice_l2_sq(&witness[range]);
+    }
+
+    let alignment_coeffs = layout
+        .compression_alignment_ranges()
+        .iter()
+        .map(std::ops::Range::len)
+        .sum::<usize>();
+    let classified_coeffs =
+        z_coeffs + e_coeffs + t_coeffs + r_coeffs + compression_coeffs + alignment_coeffs;
+    debug_assert_eq!(classified_coeffs, witness.len());
+    let source_l2_sq = z_l2_sq + e_l2_sq + t_l2_sq + r_l2_sq + compression_l2_sq;
+
+    tracing::info!(
+        target: "akita_prover::protocol::fold_response_model",
+        source_coeffs = witness.len(),
+        source_l2_sq,
+        z_coeffs,
+        z_l2_sq,
+        e_coeffs,
+        e_l2_sq,
+        t_coeffs,
+        t_l2_sq,
+        r_coeffs,
+        r_l2_sq,
+        compression_coeffs,
+        compression_l2_sq,
+        alignment_coeffs,
+        log_basis_inner = lp.log_basis_inner,
+        log_basis_outer = lp.log_basis_outer,
+        log_basis_open = lp.log_basis_open,
+        num_digits_inner = lp.num_digits_inner,
+        num_digits_outer = lp.num_digits_outer,
+        num_digits_open = lp.num_digits_open,
+        num_digits_fold = lp.num_digits_fold,
+        d_a = lp.role_dims().d_a(),
+        d_b = lp.role_dims().d_b(),
+        d_d = lp.role_dims().d_d(),
+        compressed = lp.payload_mode.is_compressed(),
+        "recursive witness source moments"
+    );
+}
+
 /// Emit one group's physical Z, E, and T planes through the canonical layout.
 fn emit_group_witness_segments<F: CanonicalField>(
     out: &mut [i8],
@@ -404,6 +500,7 @@ where
             actual: out.len(),
         });
     }
+    trace_witness_source_moments(&out, &witness_layout, lp);
 
     // Every segment of the generated witness is balanced, but grouped
     // roots may mix decomposition bases. The whole-buffer certificate

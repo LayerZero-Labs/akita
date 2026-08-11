@@ -64,7 +64,7 @@ impl_proof_optimized_preset!(
         potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
         potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
     },
-    selective_l2_caps = super::FP128_DENSE_L2_CAPS
+    selective_l2_caps = &[]
 );
 impl_proof_optimized_preset!(
     OneHot,
@@ -83,7 +83,7 @@ impl_proof_optimized_preset!(
         potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
         potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
     },
-    selective_l2_caps = super::FP128_ONEHOT_L2_CAPS
+    selective_l2_caps = &[]
 );
 impl_multi_chunk_companion!(
     OneHotMultiChunk,
@@ -112,5 +112,5 @@ impl_multi_chunk_companion!(
     akita_types::MultiChunkProfileId::W8R2,
     "schedules-fp128-dense-multi-chunk",
     fp128_dense_multi_chunk_table,
-    selective_l2_caps = super::FP128_DENSE_MULTI_CHUNK_L2_CAPS
+    selective_l2_caps = &[]
 );

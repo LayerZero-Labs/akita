@@ -513,6 +513,7 @@ impl GeneratedCommittedGroup {
                     fold_basis,
                     fold_digit_count: num_digits_fold,
                     fold_challenge_config: &ring_challenge_cfg,
+                    response_l2_sq_cap: Some(response_l2_sq_cap),
                     norm_proof_shape: None,
                 },
             )?
@@ -986,6 +987,7 @@ impl GeneratedTerminalFold {
                     fold_basis,
                     fold_digit_count,
                     fold_challenge_config: &sparse,
+                    response_l2_sq_cap: Some(response_l2_sq_cap),
                     norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
                         physical_response_len: inner_width.checked_mul(ring_dimension).ok_or_else(
                             || {
@@ -1083,6 +1085,7 @@ mod tests {
     fn recursive_fp128_policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,

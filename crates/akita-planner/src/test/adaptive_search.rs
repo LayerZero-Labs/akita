@@ -158,7 +158,7 @@ fn terminal_candidates_compete_across_opening_bases() {
         ring_dimension: 128,
     };
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
-    policy.selective_l2_fold_caps = &[];
+    policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(14),
         &policy,
@@ -251,7 +251,7 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
     }));
 
     let mut linf_policy = fp128_policy;
-    linf_policy.selective_l2_fold_caps = &[];
+    linf_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let linf = find_schedule(
         PolynomialGroupLayout::singleton(40),
         &linf_policy,
@@ -286,7 +286,7 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
                 fold_digit_count: target.params.witness.num_digits_fold,
                 response_l2_sq_cap: 2,
             }];
-            let mut tightened_policy = fp128_policy;
+            let mut tightened_policy = linf_policy;
             tightened_policy.selective_l2_fold_caps = Box::leak(tightened_caps.into_boxed_slice());
             let candidate = find_schedule(
                 PolynomialGroupLayout::singleton(40),
@@ -311,8 +311,9 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
         )
     }));
 
-    // The measured fp32 geometry has a smaller local L2 A rank, but its norm
-    // proof makes the complete suffix lose to the L-infinity route.
+    // A synthetic exact cap on the measured fp32 geometry keeps a smaller
+    // local L2 A rank, but its norm proof makes the complete suffix lose to the
+    // L-infinity route.
     let fp32_policy = policy_of::<fp32::OneHot>();
     let fp32_challenge = fp32::OneHot::ring_challenge_config(128).expect("D128 challenge");
     let candidates = derive_candidate_level_params(
@@ -327,6 +328,7 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
         6,
         3,
         None,
+        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
     )
     .expect("fp32 measured candidates");
     let rank_for = |is_l2: bool| {
@@ -367,10 +369,39 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
         physical_response_len: l2_params.inner_commit_matrix.input_width() * 128,
         fold_basis: 64,
         fold_digit_count: 2,
-        response_l2_sq_cap,
+        response_l2_sq_cap: response_l2_sq_cap
+            .checked_mul(4)
+            .expect("synthetic fp32 cap"),
     }];
     let mut exact_fp32_policy = fp32_policy;
+    exact_fp32_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     exact_fp32_policy.selective_l2_fold_caps = Box::leak(exact_fp32_caps.into_boxed_slice());
+    let exact_candidates = derive_candidate_level_params(
+        None,
+        &exact_fp32_policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &fp32_challenge,
+        CommitmentRingDims::uniform(128),
+        252_544,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 6 },
+        6,
+        6,
+        3,
+        None,
+        None,
+    )
+    .expect("fp32 exact candidates");
+    let exact_l2_rank = exact_candidates
+        .iter()
+        .find_map(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+            .then(|| params.inner_commit_matrix.output_rank())
+        })
+        .expect("fp32 exact L2 candidate");
+    assert!(exact_l2_rank < linf_rank);
     let fp32_schedule = find_schedule(
         PolynomialGroupLayout::singleton(28),
         &exact_fp32_policy,
@@ -948,7 +979,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     // fixed-D64 domain, where two equal-payload schedules differ in setup size.
     let mut base_policy = policy_of::<OneHotMultiChunkW4R2>();
     base_policy.uniform_ring_dimension = 64;
-    base_policy.selective_l2_fold_caps = &[];
+    base_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(32),

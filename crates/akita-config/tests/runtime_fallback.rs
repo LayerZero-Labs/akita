@@ -317,6 +317,8 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selective_l2_response_model:
+            akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
         selection_policy: Cfg::selection_policy(),
         recursive_split_search_policy:
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,

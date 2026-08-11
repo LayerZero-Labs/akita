@@ -38,7 +38,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        89_592
+        80_644
     );
 }
 
@@ -100,7 +100,7 @@ fn scalar_recursive_nv36_selects_offloaded_schedule() {
     );
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        91_346
+        81_364
     );
 }
 

@@ -21,6 +21,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", optional = true, d
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types" }
+libm = "0.2"
 
 [features]
 default = []

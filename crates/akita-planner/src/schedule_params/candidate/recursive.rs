@@ -595,6 +595,7 @@ fn append_selective_l2_candidates(
     log_basis_inner: u32,
     log_basis_open: u32,
     fold_level: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<(), AkitaError> {
     let fold_basis = 1usize
         .checked_shl(log_basis_open)
@@ -631,11 +632,12 @@ fn append_selective_l2_candidates(
             fold_level,
             physical_response_len,
             Some(fold_digit_count),
+            None,
         )?;
     }
     let model_enabled = policy.selective_l2_response_model_enabled();
     if model_enabled {
-        if let Some((base, _)) = model_base {
+        if let (Some((base, _)), Some(source_moment)) = (model_base, source_moment) {
             let physical_response_len = base
                 .inner_commit_matrix
                 .input_width()
@@ -657,6 +659,7 @@ fn append_selective_l2_candidates(
                     fold_level,
                     physical_response_len,
                     None,
+                    source_moment.response_l2_sq_cap(l2_challenge_cfg.challenge_l2_sq_max()),
                 )?;
             }
         }
@@ -678,6 +681,7 @@ fn append_selective_l2_candidate(
     fold_level: usize,
     physical_response_len: usize,
     exact_fold_digit_count: Option<usize>,
+    modeled_response_l2_sq_cap: Option<u128>,
 ) -> Result<(), AkitaError> {
     let fold_basis = 1usize
         .checked_shl(log_basis_open)
@@ -733,6 +737,7 @@ fn append_selective_l2_candidate(
             fold_basis,
             fold_digit_count: base.num_digits_fold,
             fold_challenge_config: l2_challenge_cfg,
+            response_l2_sq_cap: modeled_response_l2_sq_cap,
             norm_proof_shape: None,
         },
     )?
@@ -797,6 +802,7 @@ pub(crate) fn derive_candidate_level_params(
     log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(
         setup_prefix_cache,
@@ -835,6 +841,7 @@ pub(crate) fn derive_candidate_level_params(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        source_moment,
     )?;
     Ok(candidates)
 }
@@ -899,6 +906,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(
         setup_prefix_cache,
@@ -958,6 +966,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        source_moment,
     )?;
     Ok(candidates)
 }

@@ -265,8 +265,7 @@ fn audit_committed_params(
             ),
         )?,
         InnerCommitSecurityRoute::L2 {
-            response_l2_sq_cap: _,
-            ..
+            response_l2_sq_cap, ..
         } => {
             let fold_basis = 1usize
                 .checked_shl(params.log_basis_open)
@@ -284,13 +283,14 @@ fn audit_committed_params(
                     fold_basis,
                     fold_digit_count: params.num_digits_fold,
                     fold_challenge_config: &params.fold_challenge_config,
+                    response_l2_sq_cap: Some(response_l2_sq_cap),
                     norm_proof_shape: None,
                 },
             )?
             .ok_or_else(|| {
                 invalid(
                     label,
-                    "L2 route is not admitted by the calibrated suffix response model",
+                    "L2 route is not admitted by the frozen suffix response cap",
                 )
             })?;
             if params.inner_commit_matrix != expected {
@@ -422,6 +422,7 @@ fn audit_terminal(
                 fold_basis,
                 fold_digit_count: params.fold_digit_count,
                 fold_challenge_config: sparse,
+                response_l2_sq_cap: params.response_l2_sq_cap(),
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
                     physical_response_len: expected_z_coords,
                 }),
@@ -430,7 +431,7 @@ fn audit_terminal(
         .ok_or_else(|| {
             invalid(
                 label,
-                "L2 route is not admitted by the calibrated terminal response model",
+                "L2 route is not admitted by the frozen terminal response cap",
             )
         })?;
         if params.inner_commit_matrix != expected {
@@ -589,6 +590,7 @@ mod tests {
     fn policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -635,6 +637,7 @@ mod tests {
                 fold_basis: 16,
                 fold_digit_count: 3,
                 fold_challenge_config: &sparse,
+                response_l2_sq_cap: None,
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
                     physical_response_len: INNER_WIDTH * 64,
                 }),
@@ -672,9 +675,17 @@ mod tests {
             }) as u32,
             ..generated
         };
-        assert!(wrong_fold_digits
+        let expanded_wrong_fold_digits = wrong_fold_digits
             .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
-            .is_err());
+            .expect("frozen cap expansion must preserve stored fold digits");
+        assert_eq!(
+            expanded_wrong_fold_digits.fold_digit_count,
+            wrong_fold_digits.fold_digit_count as usize
+        );
+        assert_ne!(
+            expanded_wrong_fold_digits.fold_digit_count,
+            terminal.fold_digit_count
+        );
         let wrong_fold_basis = GeneratedTerminalFold {
             fold_log_basis: 3,
             ..generated
@@ -708,10 +719,10 @@ mod tests {
         terminal.inner_commit_matrix = InnerCommitMatrixParams::try_new_l2_with_min_rank(
             table_key,
             INNER_WIDTH,
-            RESPONSE_CAP + 1,
+            RESPONSE_CAP * 16,
             norm_proof_shape,
         )
-        .expect("locally well-formed noncanonical matrix");
+        .expect("locally well-formed matrix with a stale table bucket");
         assert!(audit_terminal(
             &terminal,
             &sparse,

@@ -147,6 +147,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selective_l2_response_model:
+            akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
         selection_policy: Cfg::selection_policy(),
         recursive_split_search_policy:
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
