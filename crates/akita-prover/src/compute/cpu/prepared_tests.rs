@@ -335,7 +335,7 @@ fn concurrent_failed_growth_leaves_valid_prefix_recoverable() {
 }
 
 #[test]
-fn ring_switch_domains_keep_independent_exact_prefix_lengths() {
+fn ring_switch_d_role_prepares_both_domains_at_exact_extent() {
     let prepared = prepared();
     let e_hat = vec![[1i8; D]; 5];
     let t_hat = vec![[1i8; D]; 3];
@@ -368,7 +368,7 @@ fn ring_switch_domains_keep_independent_exact_prefix_lengths() {
     }));
     assert!(cache.contains_key(&NttCacheKey {
         ring_d: D,
-        num_ring_elements: 2,
+        num_ring_elements: 10,
         domain: NttTransformDomain::Negacyclic,
     }));
     assert_eq!(cache.len(), 2);
@@ -399,6 +399,7 @@ fn cyclic_only_ring_switch_rows_do_not_prepare_negacyclic_state() {
         .expect("B-only ring-switch rows");
 
     assert_eq!(rows.b_cyclic.len(), 2);
+    assert!(rows.d_negacyclic.is_empty());
     assert!(rows.d_cyclic.is_empty());
     assert!(rows.a_quotients.is_empty());
     let cache = prepared.shared_ntt.lock().unwrap();

@@ -67,7 +67,7 @@ where
     TS: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = claims.opening_layout()?;
     let opening_num_vars = opening_batch.max_num_vars();
