@@ -152,7 +152,7 @@ macro_rules! delegate_opening_kernels {
                 &self,
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
-                plan: OpeningFoldPlan<'_, F, D>,
+                plan: OpeningFoldPlan<'_, F>,
             ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
                 CpuBackend::DEFAULT.evaluate_and_fold(prepared, source, plan)
             }
