@@ -92,15 +92,23 @@ prefix opening. The second factor is the compact MLE of the same
 `SetupContributionPlan` used by Stage 2. The final factor evaluates the powers
 of `alpha` inside one ring.
 
+When a setup prefix is selected, the first factor is an evaluation of the actual
+full power-of-two setup prefix `S[0..n_prefix]`. The active support
+`natural_len` belongs to the setup-index weight: rows outside that support have
+zero weight even though the committed setup coefficients in the tail are real.
+The Boolean setup-product claim is therefore unchanged, while the deferred
+opening claim is bound to the full-prefix commitment.
+
 Stage 3 returns the full challenge point for the recursive suffix. It does not
 replace or modify the next witness claim produced by Stage 2.
 
 ## Setup prefix offloading
 
 A schedule may select an authenticated setup prefix slot. The verifier checks
-that the selected slot covers the natural setup length required by the plan,
-absorbs the slot identity, and uses the proof's setup prefix evaluation. If no
-slot is selected, it evaluates the local public setup directly.
+that the selected slot covers the active setup length required by the plan and
+the full power-of-two prefix needed by its commitment domain, absorbs the slot
+identity, and uses the proof's setup prefix evaluation. If no slot is selected,
+it evaluates the local public setup directly.
 
 The slot changes where the public setup polynomial is opened. It does not
 change the setup index weights or relation geometry.

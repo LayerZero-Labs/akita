@@ -73,10 +73,10 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     );
     assert_eq!(&incoming_prefixes[..2], &[Some(11_316_224), None]);
     assert!(incoming_prefixes[2..].iter().all(Option::is_none));
-    assert_eq!(prover.num_field_elements, 11_316_224);
+    assert_eq!(prover.num_field_elements, 16_777_216);
     assert_eq!(verifier.num_field_elements, 8_388_608);
-    assert_eq!(setup_for_two.num_field_elements, 8_388_608);
-    assert_eq!(setup_for_four.num_field_elements, 11_316_224);
+    assert_eq!(setup_for_two.num_field_elements, 132_096);
+    assert_eq!(setup_for_four.num_field_elements, 16_777_216);
 }
 
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".

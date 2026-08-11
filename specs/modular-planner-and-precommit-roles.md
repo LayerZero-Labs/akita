@@ -352,7 +352,7 @@ must all use the same exact range table.
 For one proposed offload edge, the planner knows:
 
 - producer fold and direct setup footprint;
-- natural and padded prefix lengths;
+- natural support and full-prefix lengths;
 - consuming recursive fold;
 - consuming basis and ring dimension;
 - consuming challenge and chunk configuration;
