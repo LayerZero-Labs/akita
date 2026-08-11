@@ -121,8 +121,25 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         )
     }
 
-    pub(super) fn position_constant_coeff(&self, idx: usize) -> Option<F> {
-        subfield_constant(self.position_coordinates(idx).ok()?)
+    pub(super) fn accumulate_position_product_high_half<const D: usize>(
+        &self,
+        idx: usize,
+        rhs: &CyclotomicRing<F, D>,
+        output: &mut [F],
+    ) -> Result<(), AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        if output.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: output.len(),
+            });
+        }
+        add_subfield_product_high_half(
+            self.position_coordinates(idx)?,
+            self.extension_degree,
+            rhs,
+            output,
+        )
     }
 
     pub(super) fn fold_constant_coeff(&self, idx: usize) -> Option<F> {
@@ -274,6 +291,33 @@ fn add_subfield_product<F: FieldCore, const D: usize>(
         rhs.shift_scale_accumulate_into(output, shift, coordinate);
         if shift != 0 {
             rhs.shift_scale_accumulate_into(output, D - shift, -coordinate);
+        }
+    }
+    Ok(())
+}
+
+fn add_subfield_product_high_half<F: FieldCore, const D: usize>(
+    coordinates: &[F],
+    extension_degree: usize,
+    rhs: &CyclotomicRing<F, D>,
+    output: &mut [F],
+) -> Result<(), AkitaError> {
+    let stride = D / (2 * extension_degree);
+    let rhs = rhs.coefficients();
+    for (index, &coordinate) in coordinates.iter().enumerate().skip(1) {
+        if coordinate.is_zero() {
+            continue;
+        }
+        let shift = index.checked_mul(stride).ok_or(AkitaError::InvalidProof)?;
+        if shift == 0 || shift >= D {
+            return Err(AkitaError::InvalidProof);
+        }
+        for rhs_index in (D - shift)..D {
+            output[shift + rhs_index - D] += coordinate * rhs[rhs_index];
+        }
+        let inverse_shift = D - shift;
+        for rhs_index in shift..D {
+            output[inverse_shift + rhs_index - D] -= coordinate * rhs[rhs_index];
         }
     }
     Ok(())
