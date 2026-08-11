@@ -10,12 +10,12 @@ use super::backend::{
 };
 use super::cpu::CpuBackend;
 use super::kernels::{
-    OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
-    RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel, RootCommitKernel,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use super::operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchQuotientPlan, RingSwitchRelationPlan,
+    RingSwitchRelationPlan,
 };
 use super::plans::RingSwitchRelationRows;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -296,24 +296,6 @@ macro_rules! delegate_ring_switch_kernels {
                 F: HalvingField,
             {
                 CpuBackend::DEFAULT.relation_rows(prepared, source, plan)
-            }
-        }
-
-        impl<S, F, const D: usize> RingSwitchQuotientKernel<S, F, D> for $ty
-        where
-            F: FieldCore + CanonicalField,
-            CpuBackend: RingSwitchQuotientKernel<S, F, D>,
-        {
-            fn quotient_rows(
-                &self,
-                prepared: &Self::PreparedSetup,
-                source: S,
-                plan: RingSwitchQuotientPlan,
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-            where
-                F: HalvingField,
-            {
-                CpuBackend::DEFAULT.quotient_rows(prepared, source, plan)
             }
         }
     };

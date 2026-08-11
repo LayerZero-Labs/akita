@@ -1,9 +1,9 @@
 use super::*;
 use crate::api::commitment::for_each_outer_slice_input;
-use crate::backend::{RingSwitchQuotientView, RingSwitchRelationView};
+use crate::backend::RingSwitchRelationView;
 use crate::compute::{
-    OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
-    RingSwitchRelationKernel, RingSwitchRelationPlan, RuntimeRingSwitchProveBackend,
+    OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel, RingSwitchRelationPlan,
+    RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::ring_relation::{CompressionSourceId, CompressionWitnessMaterialization};
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
@@ -138,7 +138,7 @@ fn ring_from_flat_y<F: FieldCore, const D: usize>(
     Ok(CyclotomicRing::from_coefficients(coeffs))
 }
 
-fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
+pub(super) fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     reduced: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -148,50 +148,19 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>
     CyclotomicRing::from_coefficients(quotient)
 }
 
-fn add_cyclic_ring_product<F: FieldCore, const D: usize>(
-    acc: &mut [F; D],
-    lhs: &CyclotomicRing<F, D>,
-    rhs: &CyclotomicRing<F, D>,
-) {
-    let lhs_coeffs = lhs.coefficients();
-    let rhs_coeffs = rhs.coefficients();
-    for (i, &a) in lhs_coeffs.iter().enumerate() {
-        if a.is_zero() {
-            continue;
-        }
-        for (j, &b) in rhs_coeffs.iter().enumerate() {
-            if !b.is_zero() {
-                acc[(i + j) % D] += a * b;
-            }
-        }
-    }
-}
-
-fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
-    acc: &mut [F; D],
-    scalar: F,
-    rhs: &CyclotomicRing<F, D>,
-) {
-    for (idx, &coeff) in rhs.coefficients().iter().enumerate() {
-        if !coeff.is_zero() {
-            acc[idx] += scalar * coeff;
-        }
-    }
-}
-
 fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
     coeffs: &[i32; D],
 ) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
 }
 
-fn cyclic_consistency_z_product<F, const D: usize>(
+fn consistency_z_product_high_half<F, const D: usize>(
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     z_folded_centered: &[[i32; D]],
     num_positions_per_block: usize,
     depth_commit: usize,
     log_basis: u32,
-) -> Result<(CyclotomicRing<F, D>, CyclotomicRing<F, D>), AkitaError>
+) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
@@ -208,46 +177,26 @@ where
         )));
     }
     let g_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
-    let mut cyclic = [F::zero(); D];
-    let mut reduced = CyclotomicRing::<F, D>::zero();
-    let position_rings = if ring_multiplier_point.is_constant() {
-        None
-    } else {
-        Some(
-            ring_multiplier_point
-                .materialize_position_rings::<D>()?
-                .ok_or(AkitaError::InvalidProof)?,
-        )
-    };
-
-    {
-        if ring_multiplier_point.position_len() < num_positions_per_block {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring-multiplier a length mismatch: actual={} expected_at_least={num_positions_per_block}",
-                ring_multiplier_point.position_len()
-            )));
-        }
-        for block_idx in 0..num_positions_per_block {
-            let mut z_block = CyclotomicRing::<F, D>::zero();
-            for (digit_idx, &g) in g_commit.iter().enumerate() {
-                let z_idx = block_idx * depth_commit + digit_idx;
-                z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
-            }
-            if let Some(scalar) = ring_multiplier_point.position_constant_coeff(block_idx) {
-                add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
-                reduced += z_block.scale(&scalar);
-            } else {
-                let multiplier = position_rings
-                    .as_ref()
-                    .and_then(|rings| rings.get(block_idx))
-                    .ok_or(AkitaError::InvalidProof)?;
-                add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
-                reduced += *multiplier * z_block;
-            }
-        }
+    if ring_multiplier_point.position_len() < num_positions_per_block {
+        return Err(AkitaError::InvalidInput(format!(
+            "ring-multiplier a length mismatch: actual={} expected_at_least={num_positions_per_block}",
+            ring_multiplier_point.position_len()
+        )));
     }
-
-    Ok((CyclotomicRing::from_coefficients(cyclic), reduced))
+    let mut high_half = [F::zero(); D];
+    for block_idx in 0..num_positions_per_block {
+        let mut z_block = CyclotomicRing::<F, D>::zero();
+        for (digit_idx, &g) in g_commit.iter().enumerate() {
+            let z_idx = block_idx * depth_commit + digit_idx;
+            z_block += centered_i32_ring::<F, D>(&z_folded_centered[z_idx]).scale(&g);
+        }
+        ring_multiplier_point.accumulate_position_product_high_half(
+            block_idx,
+            &z_block,
+            &mut high_half,
+        )?;
+    }
+    Ok(CyclotomicRing::from_coefficients(high_half))
 }
 
 fn compute_group_a_relation_quotients<F, B, const D: usize>(
@@ -279,15 +228,13 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let mut z_segments = z_centered.chunks(inner_width);
-    let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
     let relation_rows = RingSwitchRelationKernel::relation_rows(
         backend,
         prepared,
         RingSwitchRelationView {
             e_hat: &[],
             t_hat: &[],
-            z_segment: first_z_segment,
+            z_segment: z_centered,
             z_folded_centered_inf_norm: group.z_inf,
         },
         RingSwitchRelationPlan {
@@ -299,42 +246,25 @@ where
         },
     )
     .map_err(|err| AkitaError::InvalidInput(format!("A quotient rows failed: {err:?}")))?;
-    if !relation_rows.d_cyclic.is_empty()
+    if !relation_rows.d_negacyclic.is_empty()
+        || !relation_rows.d_cyclic.is_empty()
         || !relation_rows.b_cyclic.is_empty()
         || relation_rows.a_quotients.len() != n_a
     {
         return Err(AkitaError::InvalidProof);
     }
-    let mut a_quotients = relation_rows.a_quotients;
-    for z_segment in z_segments {
-        let segment_rows = RingSwitchQuotientKernel::quotient_rows(
-            backend,
-            prepared,
-            RingSwitchQuotientView {
-                z_segment,
-                z_folded_centered_inf_norm: group.z_inf,
-            },
-            RingSwitchQuotientPlan { n_a },
-        )?;
-        if segment_rows.len() != n_a {
-            return Err(AkitaError::InvalidProof);
-        }
-        for (dst, src) in a_quotients.iter_mut().zip(segment_rows) {
-            *dst += src;
-        }
-    }
+    let a_quotients = relation_rows.a_quotients;
 
     let consistency_z_quotient = if ring_multiplier_point.is_constant() {
         CyclotomicRing::<F, D>::zero()
     } else {
-        let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
+        consistency_z_product_high_half::<F, D>(
             ring_multiplier_point,
             z_centered,
             group.params.num_positions_per_block(),
             group.params.num_digits_inner(),
             group.params.log_basis_inner(),
-        )?;
-        quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
+        )?
     };
     let quotient =
         parallel_high_half_accumulate::<F, _, D>(challenges, |i| e_folded.get(i).copied())?;
@@ -374,7 +304,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B>(
     groups: &[PreparedRingSwitchGroup<'_, F>],
     group_ring_multiplier_points: &[&RingMultiplierOpeningPoint<F>],
     group_challenges: &[Challenges],
-    e_hat_concat: &DigitBlocks,
+    d_quotients: &RingVec<F>,
     y: &RingVec<F>,
     compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<RelationQuotientOutput<F>, AkitaError>
@@ -655,6 +585,7 @@ where
                             AkitaError::InvalidInput(format!("B quotient rows failed: {err:?}"))
                         })?;
                         if b_rows.b_cyclic.len() != physical_n_b
+                            || !b_rows.d_negacyclic.is_empty()
                             || !b_rows.d_cyclic.is_empty()
                             || !b_rows.a_quotients.is_empty()
                         {
@@ -689,61 +620,18 @@ where
         let d_end = y_offset
             .checked_add(d_coeff_len)
             .ok_or(AkitaError::InvalidProof)?;
-        let recomposed_d = if let Some(compression) = compression {
-            RingVec::from_coeffs(
-                compression
-                    .source(CompressionSourceId::Opening)?
-                    .witness
-                    .stages()
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .recompose::<F>()?,
-            )
-        } else {
-            RingVec::from_coeffs(
-                y.coeffs()
-                    .get(y_offset..d_end)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .to_vec(),
-            )
-        };
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             rhs_layout.opening_ring_dim,
             |D_D| {
-                let d_rows = RingSwitchRelationKernel::relation_rows(
-                    backend,
-                    prepared,
-                    RingSwitchRelationView {
-                        e_hat: e_hat_concat.typed_planes::<D_D>()?,
-                        t_hat: &[],
-                        z_segment: &[],
-                        z_folded_centered_inf_norm: 0,
-                    },
-                    RingSwitchRelationPlan {
-                        n_d: n_d_active,
-                        n_b: 0,
-                        n_a: 0,
-                        log_basis_open: lp.shared_d_digit_log_basis(),
-                        log_basis_outer: lp.shared_d_digit_log_basis(),
-                    },
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!("D quotient rows failed: {err:?}"))
-                })?;
-                if d_rows.d_cyclic.len() != n_d_active
-                    || !d_rows.b_cyclic.is_empty()
-                    || !d_rows.a_quotients.is_empty()
-                {
+                let d_rows = d_quotients.as_ring_slice::<D_D>()?;
+                if d_rows.len() != n_d_active {
                     return Err(AkitaError::InvalidProof);
                 }
-                for (d_idx, cyclic) in d_rows.d_cyclic.iter().enumerate() {
+                for (d_idx, quotient) in d_rows.iter().enumerate() {
                     let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
-                    let reduced = ring_from_flat_y::<F, D_D>(&recomposed_d, d_idx * D_D)?;
-                    result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
-                        quotient_from_cyclic_and_reduced(cyclic, &reduced),
-                    ));
+                    result[row_idx] = Some(RelationQuotientOutput::row_from_ring(*quotient));
                 }
                 Ok::<(), AkitaError>(())
             }

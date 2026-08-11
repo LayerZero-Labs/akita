@@ -21,6 +21,7 @@ mod common;
 mod compression;
 mod crt_matvec;
 mod decompose;
+mod digit_relation;
 mod digits;
 mod fused_quotients;
 mod i8_matvec;
@@ -44,13 +45,17 @@ pub use decompose::{
     decompose_block, decompose_block_i8, decompose_commit_blocks_into,
     decompose_commit_rows_i8_into, decompose_rows_i8, decompose_rows_i8_into, try_centered_i8,
 };
+pub(crate) use digit_relation::{
+    digit_relation_matrix_extent, digit_relation_rows_cached_prover_bounds,
+    digit_relation_rows_streamed_prover_bounds, DigitRelationRows,
+};
 use digits::*;
 pub(crate) use fused_quotients::centered_quotient_rows_with_i16_tail;
 #[cfg(test)]
 pub(crate) use fused_quotients::fused_split_eq_quotients;
 pub(crate) use fused_quotients::{
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
-    fused_split_eq_quotients_streamed_prover_bounds,
+    fused_split_eq_quotients_streamed_prover_bounds, FusedQuotientRows,
 };
 use i8_matvec::*;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;

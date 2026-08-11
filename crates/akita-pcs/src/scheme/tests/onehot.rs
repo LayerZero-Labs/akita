@@ -329,7 +329,9 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     pre_sizes: &[usize],
     final_size: usize,
     check_group_binding: bool,
-) where
+    max_cached_ring_switch_elements: usize,
+) -> AkitaBatchedProof<OneHotF, OneHotF>
+where
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
     ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
@@ -338,11 +340,16 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
     let setup =
         AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(opening_num_vars, total).expect("setup");
-    let prepared = CpuBackend::DEFAULT
+    let cached_backend = CpuBackend::with_resource_limits(
+        max_cached_ring_switch_elements,
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+    )
+    .expect("cached backend");
+    let prepared = cached_backend
         .prepare_setup(&setup)
         .expect("prepared setup");
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
+        &cached_backend,
         &prepared,
         setup.expanded.as_ref(),
     )
@@ -479,40 +486,40 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         .collect();
     let final_refs: Vec<&OneHotPoly<OneHotF, u8>> = final_polys.iter().collect();
 
-    let mut prover_groups = Vec::new();
-    for (group_idx, openings) in pre_openings.iter().enumerate() {
-        prover_groups.push(
-            PolynomialGroupClaims::new(
-                pre_point.clone(),
-                openings.clone(),
-                pre_commitments[group_idx].clone(),
-            )
-            .expect("pre prover group"),
-        );
-    }
-    prover_groups.push(
-        PolynomialGroupClaims::new(
-            final_point.clone(),
-            final_openings.clone(),
-            final_commitment.clone(),
-        )
-        .expect("final prover group"),
-    );
-
-    let mut prover_polys: Vec<&[&OneHotPoly<OneHotF, u8>]> = Vec::new();
-    for refs in &pre_refs_by_group {
-        prover_polys.push(&refs[..]);
-    }
-    prover_polys.push(&final_refs[..]);
     let mut prover_hints = pre_hints;
     prover_hints.push(final_hint);
+    let build_prover_claims = || {
+        let mut groups = Vec::new();
+        for (group_idx, openings) in pre_openings.iter().enumerate() {
+            groups.push(
+                PolynomialGroupClaims::new(
+                    pre_point.clone(),
+                    openings.clone(),
+                    pre_commitments[group_idx].clone(),
+                )
+                .expect("pre prover group"),
+            );
+        }
+        groups.push(
+            PolynomialGroupClaims::new(
+                final_point.clone(),
+                final_openings.clone(),
+                final_commitment.clone(),
+            )
+            .expect("final prover group"),
+        );
+        let mut polys: Vec<&[&OneHotPoly<OneHotF, u8>]> =
+            pre_refs_by_group.iter().map(|refs| &refs[..]).collect();
+        polys.push(&final_refs[..]);
+        selected_prover_data::<ProtocolCfg, _>(
+            OpeningClaims::from_groups(groups).expect("prover claims"),
+            prover_hints.clone(),
+            polys,
+        )
+        .expect("multi-group prover data")
+    };
 
-    let prover_claims = selected_prover_data::<ProtocolCfg, _>(
-        OpeningClaims::from_groups(prover_groups).expect("prover claims"),
-        prover_hints,
-        prover_polys,
-    )
-    .expect("multi-group prover data");
+    let prover_claims = build_prover_claims();
     let selection = prover_claims.0;
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
@@ -638,23 +645,39 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             "tampered group opening must reject"
         );
     }
+    proof
 }
 
 #[test]
 fn multi_group_root_folded_group_binding_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1], 2, true);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1], 2, true, usize::MAX);
 }
 
 #[test]
 fn multi_group_root_allows_precommitted_arity_above_final_group() {
     type PlannerCfg = crate::test_support::EnvelopeFinalGroupConfig<OneHotCfg, OneHotCfg>;
 
-    multi_group_root_round_trip_onehot::<OneHotCfg, PlannerCfg>(20, 14, &[1], 1, false);
+    multi_group_root_round_trip_onehot::<OneHotCfg, PlannerCfg>(20, 14, &[1], 1, false, usize::MAX);
 }
 
 #[test]
 fn multi_group_root_opens_multi_polynomial_precommitted_group() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[2], 1, false);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[2], 1, false, usize::MAX);
+}
+
+#[test]
+fn three_group_cached_and_streamed_proofs_are_identical() {
+    let cached = multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(
+        14,
+        20,
+        &[1, 1],
+        4,
+        false,
+        usize::MAX,
+    );
+    let streamed =
+        multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1, 1], 4, false, 0);
+    assert_eq!(streamed, cached, "cached and streamed proofs differ");
 }
 
 #[test]
@@ -666,6 +689,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
         &[1],
         1,
         false,
+        usize::MAX,
     );
 }
 
@@ -707,9 +731,14 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         .collect();
 
     let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let cached_backend = CpuBackend::with_resource_limits(
+        usize::MAX,
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+    )
+    .unwrap();
+    let prepared = cached_backend.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
+        &cached_backend,
         &prepared,
         setup.expanded.as_ref(),
     )
@@ -718,8 +747,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let (commitment, hint) =
         OneHotScheme::commit::<_, _>(&setup, &polys, &stack).expect("batched onehot commit");
     let commitments = [commitment];
-    let hints = vec![hint];
-
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let prover_group = PolynomialGroupClaims::new(
         point.clone(),
@@ -731,7 +758,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &setup,
         selected_prover_data::<OneHotCfg, _>(
             OpeningClaims::from_groups(vec![prover_group]).expect("valid one-hot prover claims"),
-            hints,
+            vec![hint],
             vec![&poly_refs[..]],
         )
         .expect("valid one-hot prover opening data"),
