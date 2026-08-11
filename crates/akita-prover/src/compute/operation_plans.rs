@@ -1,7 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{CommittedGroupParams, CommittedGroupProfile, RingMultiplierOpeningPoint};
+use akita_types::{CommittedGroupParams, CommittedGroupProfile, SubfieldMultiplierOpeningPoint};
 
 // ===========================================================================
 // Open, source-typed operation boundary
@@ -87,7 +87,7 @@ pub enum OpeningFoldPlan<'a, F: FieldCore> {
     /// Proper-extension multiplier point in compact subfield coordinates.
     Subfield {
         /// Position and outer-fold multipliers for this opening.
-        multipliers: &'a RingMultiplierOpeningPoint<F>,
+        multipliers: &'a SubfieldMultiplierOpeningPoint<F>,
         /// Number of ring-element positions in each block.
         num_positions_per_block: usize,
     },
@@ -123,11 +123,6 @@ impl<F: FieldCore> OpeningFoldPlan<'_, F> {
                 multipliers,
                 num_positions_per_block,
             } => {
-                if multipliers.as_base().is_some() {
-                    return Err(AkitaError::InvalidInput(
-                        "subfield opening plan contains base multipliers".to_string(),
-                    ));
-                }
                 multipliers.ensure_ring_dim::<D>()?;
                 (
                     multipliers.fold_len(),

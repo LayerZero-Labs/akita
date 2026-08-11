@@ -412,7 +412,7 @@ where
 
     pub(crate) fn fold_blocks_subfield<const D: usize>(
         &self,
-        multipliers: &akita_types::RingMultiplierOpeningPoint<F>,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         let (num_rings, num_live_blocks) = self.view_layout(D, num_positions_per_block)?;
@@ -444,7 +444,7 @@ where
 
     pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        multipliers: &akita_types::RingMultiplierOpeningPoint<F>,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
     ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
         crate::backend::poly_helpers::fused_evaluate_and_fold_subfield(

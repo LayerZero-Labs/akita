@@ -19,7 +19,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField};
-use akita_types::RingMultiplierOpeningPoint;
+use akita_types::SubfieldMultiplierOpeningPoint;
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]
@@ -586,7 +586,7 @@ where
 /// Fused outer evaluation over compact proper-extension multipliers.
 pub(crate) fn fused_evaluate_and_fold_subfield<F, const D: usize>(
     folded: Vec<CyclotomicRing<F, D>>,
-    multipliers: &RingMultiplierOpeningPoint<F>,
+    multipliers: &SubfieldMultiplierOpeningPoint<F>,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
     F: CanonicalField,

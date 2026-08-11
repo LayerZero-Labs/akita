@@ -450,7 +450,7 @@ where
 
     pub(crate) fn fold_blocks_subfield<const D: usize>(
         &self,
-        multipliers: &akita_types::RingMultiplierOpeningPoint<F>,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         let blocks = self.blocks_for(D, num_positions_per_block)?;
@@ -472,18 +472,12 @@ where
         num_positions_per_block: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         let folded = self.fold_blocks::<D>(position_weights, num_positions_per_block);
-        let eval = folded
-            .iter()
-            .zip(live_block_weights.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
-                acc + f_i.scale(s_i)
-            });
-        (eval, folded)
+        crate::backend::poly_helpers::fused_evaluate_and_fold_base(folded, live_block_weights)
     }
 
     pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        multipliers: &akita_types::RingMultiplierOpeningPoint<F>,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
     ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
         crate::backend::poly_helpers::fused_evaluate_and_fold_subfield(
@@ -638,7 +632,7 @@ where
 
 fn fold_sparse_block_subfield<F, const D: usize>(
     entries: &[SparseRingBlockEntry],
-    multipliers: &akita_types::RingMultiplierOpeningPoint<F>,
+    multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
     num_positions_per_block: usize,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where

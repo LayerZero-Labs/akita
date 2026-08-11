@@ -433,15 +433,11 @@ where
 
     pub(crate) fn evaluate_and_fold_subfield(
         &self,
-        multipliers: &akita_types::RingMultiplierOpeningPoint<F>,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
     ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
-        let position_weights = multipliers
-            .materialize_position_rings::<D>()?
-            .ok_or(AkitaError::InvalidProof)?;
-        let live_block_weights = multipliers
-            .materialize_fold_rings::<D>()?
-            .ok_or(AkitaError::InvalidProof)?;
+        let position_weights = multipliers.materialize_position_rings::<D>()?;
+        let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
         self.evaluate_and_fold_ring(
             &live_block_weights,
             &position_weights,

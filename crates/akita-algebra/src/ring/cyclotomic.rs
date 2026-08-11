@@ -115,7 +115,7 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     /// addition, and modular reduction when they have a specialized path.
     #[inline]
     pub fn scale_accumulate_into(&self, dst: &mut Self, k: F) {
-        for (d, s) in dst.coeffs.iter_mut().zip(self.coeffs) {
+        for (d, s) in dst.coeffs.iter_mut().zip(self.coeffs.iter().copied()) {
             *d = s.mul_add(k, *d);
         }
     }

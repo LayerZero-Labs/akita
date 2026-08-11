@@ -36,8 +36,9 @@ where
             OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
         return Ok((eval, folded));
     }
+    let multipliers = point.as_subfield().ok_or(AkitaError::InvalidProof)?;
     let plan = OpeningFoldPlan::Subfield {
-        multipliers: point,
+        multipliers,
         num_positions_per_block,
     };
     let OpeningFoldOutput { eval, folded } =

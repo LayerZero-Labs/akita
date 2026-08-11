@@ -21,7 +21,7 @@ use akita_field::{
 };
 use akita_types::{
     embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding,
-    RingMultiplierOpeningPoint,
+    SubfieldMultiplierOpeningPoint,
 };
 
 impl<F> DensePoly<F>
@@ -90,15 +90,11 @@ where
 
     pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        multipliers: &RingMultiplierOpeningPoint<F>,
+        multipliers: &SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
     ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
-        let position_weights = multipliers
-            .materialize_position_rings::<D>()?
-            .ok_or(AkitaError::InvalidProof)?;
-        let live_block_weights = multipliers
-            .materialize_fold_rings::<D>()?
-            .ok_or(AkitaError::InvalidProof)?;
+        let position_weights = multipliers.materialize_position_rings::<D>()?;
+        let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
         Ok(
             crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
                 self.fold_blocks_ring(&position_weights, num_positions_per_block),

@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::RingMultiplierOpeningPoint;
+use akita_types::SubfieldMultiplierOpeningPoint;
 
 pub(super) fn fold_onehot_block<F, const D: usize>(
     entries: &[SparseRingBlockEntry],
@@ -49,7 +49,7 @@ pub(super) fn fold_onehot_block_subfield<F, I, const D: usize>(
     onehot_k: usize,
     indices: &[Option<I>],
     ring_range: std::ops::Range<usize>,
-    multipliers: &RingMultiplierOpeningPoint<F>,
+    multipliers: &SubfieldMultiplierOpeningPoint<F>,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore,

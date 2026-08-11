@@ -46,7 +46,12 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         self.ring_dim
     }
 
-    pub(super) fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+    /// Check that these coordinates were validated for ring dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input error when `D` differs from the stored dimension.
+    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
         if self.ring_dim == D {
             Ok(())
         } else {
@@ -57,11 +62,13 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         }
     }
 
-    pub(super) fn position_len(&self) -> usize {
+    /// Number of compact position multipliers.
+    pub fn position_len(&self) -> usize {
         self.position_coordinates.len() / self.extension_degree
     }
 
-    pub(super) fn fold_len(&self) -> usize {
+    /// Number of compact live-block multipliers.
+    pub fn fold_len(&self) -> usize {
         self.live_block_coordinates.len() / self.extension_degree
     }
 
@@ -75,14 +82,24 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
                 .all(|value| subfield_constant(value).is_some())
     }
 
-    pub(super) fn materialize_position_rings<const D: usize>(
+    /// Materialize the position multipliers for an arbitrary-ring source kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `D` differs from the validated ring dimension.
+    pub fn materialize_position_rings<const D: usize>(
         &self,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         self.ensure_ring_dim::<D>()?;
         materialize_subfield_rings::<F, D>(&self.position_coordinates, self.extension_degree)
     }
 
-    pub(super) fn materialize_fold_rings<const D: usize>(
+    /// Materialize the live-block multipliers for an arbitrary-ring source kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `D` differs from the validated ring dimension.
+    pub fn materialize_fold_rings<const D: usize>(
         &self,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         self.ensure_ring_dim::<D>()?;
@@ -121,7 +138,12 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         )
     }
 
-    pub(super) fn accumulate_fold_product<const D: usize>(
+    /// Add `fold[idx] * rhs` to `output` without materializing the multiplier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a mismatched ring dimension or out-of-range index.
+    pub fn accumulate_fold_product<const D: usize>(
         &self,
         idx: usize,
         rhs: &CyclotomicRing<F, D>,
@@ -136,7 +158,12 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
         )
     }
 
-    pub(super) fn accumulate_position_monomial<const D: usize>(
+    /// Add `scale * position[idx] * X^shift` without materializing the multiplier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a mismatched ring dimension, index, or shift.
+    pub fn accumulate_position_monomial<const D: usize>(
         &self,
         idx: usize,
         shift: usize,

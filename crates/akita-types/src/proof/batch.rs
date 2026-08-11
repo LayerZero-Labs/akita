@@ -135,6 +135,14 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
+    /// Borrow the validated compact opening point, when this is a proper extension.
+    pub fn as_subfield(&self) -> Option<&SubfieldMultiplierOpeningPoint<F>> {
+        match self {
+            Self::Base(_) => None,
+            Self::Subfield(point) => Some(point),
+        }
+    }
+
     /// Materialize the position multipliers for a prover ring kernel.
     pub fn materialize_position_rings<const D: usize>(
         &self,
@@ -227,50 +235,6 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
                 Ok(())
             }
             Self::Subfield(point) => point.accumulate_position_product(idx, rhs, output),
-        }
-    }
-
-    /// Add `fold[idx] * rhs` to `output` without expanding the multiplier.
-    pub fn accumulate_fold_product<const D: usize>(
-        &self,
-        idx: usize,
-        rhs: &CyclotomicRing<F, D>,
-        output: &mut CyclotomicRing<F, D>,
-    ) -> Result<(), AkitaError> {
-        match self {
-            Self::Base(point) => {
-                let scalar = point
-                    .live_block_weights
-                    .get(idx)
-                    .ok_or(AkitaError::InvalidProof)?;
-                *output += rhs.scale(scalar);
-                Ok(())
-            }
-            Self::Subfield(point) => point.accumulate_fold_product(idx, rhs, output),
-        }
-    }
-
-    /// Add `scale * position[idx] * X^shift` without expanding the multiplier.
-    pub fn accumulate_position_monomial<const D: usize>(
-        &self,
-        idx: usize,
-        shift: usize,
-        scale: F,
-        output: &mut CyclotomicRing<F, D>,
-    ) -> Result<(), AkitaError> {
-        if shift >= D {
-            return Err(AkitaError::InvalidProof);
-        }
-        match self {
-            Self::Base(point) => {
-                let scalar = point
-                    .position_weights
-                    .get(idx)
-                    .ok_or(AkitaError::InvalidProof)?;
-                output.coefficients_mut()[shift] += *scalar * scale;
-                Ok(())
-            }
-            Self::Subfield(point) => point.accumulate_position_monomial(idx, shift, scale, output),
         }
     }
 
@@ -838,6 +802,8 @@ mod tests {
 
         let mut actual = CyclotomicRing::zero();
         point
+            .as_subfield()
+            .expect("proper extension multipliers")
             .accumulate_fold_product(0, &rhs, &mut actual)
             .expect("compact fold product");
         assert_eq!(actual, expected_ring * rhs);
@@ -846,6 +812,8 @@ mod tests {
         for shift in [0, D / 2, D - 1] {
             let mut actual = CyclotomicRing::zero();
             point
+                .as_subfield()
+                .expect("proper extension multipliers")
                 .accumulate_position_monomial(0, shift, scale, &mut actual)
                 .expect("compact shifted monomial");
             assert_eq!(actual, expected_ring.negacyclic_shift(shift).scale(&scale));

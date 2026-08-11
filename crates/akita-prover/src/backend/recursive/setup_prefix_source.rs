@@ -203,7 +203,7 @@ fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(
             let end = (start + num_positions_per_block).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
-                acc += ring.scale(scalar);
+                ring.scale_accumulate_into(&mut acc, *scalar);
             }
             acc
         })
@@ -262,12 +262,8 @@ fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>
             multipliers,
             num_positions_per_block,
         } => {
-            let position_weights = multipliers
-                .materialize_position_rings::<D>()?
-                .ok_or(AkitaError::InvalidProof)?;
-            let live_block_weights = multipliers
-                .materialize_fold_rings::<D>()?
-                .ok_or(AkitaError::InvalidProof)?;
+            let position_weights = multipliers.materialize_position_rings::<D>()?;
+            let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
             let folded =
                 fold_setup_prefix_blocks_ring(&coeffs, &position_weights, num_positions_per_block);
             let (eval, folded) = crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
@@ -505,5 +501,38 @@ where
         <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::sparse_linear_combination(
             self, prepared, batch, coeffs,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn setup_prefix_q128_base_fold_matches_separate_oracle() {
+        type F = Prime128OffsetA7F7;
+        const D: usize = 8;
+        let coeffs: Vec<CyclotomicRing<F, D>> = (0..5)
+            .map(|row| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|column| {
+                    F::from_u64((row * D + column + 1) as u64)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let weights = (2..6).map(F::from_u64).collect::<Vec<_>>();
+        let expected = coeffs
+            .chunks(4)
+            .map(|block| {
+                block
+                    .iter()
+                    .zip(&weights)
+                    .fold(CyclotomicRing::zero(), |acc, (ring, weight)| {
+                        acc + ring.scale(weight)
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(fold_setup_prefix_blocks(&coeffs, &weights, 4), expected);
     }
 }

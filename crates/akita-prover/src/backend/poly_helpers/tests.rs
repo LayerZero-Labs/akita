@@ -41,6 +41,9 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     )
     .expect("valid compact opening point");
     let multipliers = &prepared.ring_multiplier_point;
+    let subfield_multipliers = multipliers
+        .as_subfield()
+        .expect("proper extension multipliers");
     let position_rings = multipliers
         .materialize_position_rings::<D>()
         .expect("valid ring dimension")
@@ -73,7 +76,7 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     );
     assert_output(
         dense
-            .evaluate_and_fold_subfield(multipliers, POSITIONS)
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
             .expect("dense compact fold"),
         dense.fold_blocks_ring(&position_rings, POSITIONS),
     );
@@ -95,7 +98,7 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     .expect("one-hot source");
     assert_output(
         onehot
-            .evaluate_and_fold_subfield(multipliers, POSITIONS)
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
             .expect("one-hot compact fold"),
         onehot.fold_blocks_ring(&position_rings, POSITIONS),
     );
@@ -109,7 +112,7 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     .expect("sparse-ring source");
     assert_output(
         sparse
-            .evaluate_and_fold_subfield(multipliers, POSITIONS)
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
             .expect("sparse-ring compact fold"),
         sparse.fold_blocks_ring(&position_rings, POSITIONS),
     );
@@ -119,7 +122,7 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     let suffix = witness.view::<F, D>().expect("suffix source");
     assert_output(
         suffix
-            .evaluate_and_fold_subfield(multipliers, POSITIONS)
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
             .expect("suffix compact fold"),
         suffix.fold_blocks_ring(&position_rings, POSITIONS),
     );
