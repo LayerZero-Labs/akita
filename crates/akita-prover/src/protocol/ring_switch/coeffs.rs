@@ -5,10 +5,13 @@ use crate::protocol::ring_relation::{
     validate_chunked_witness_cfg, CompressionSourceId, CompressionWitnessMaterialization,
     RelationQuotientOutput,
 };
-use crate::protocol::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
+use crate::protocol::ring_relation_witness::{
+    CenteredFoldChunk, RingRelationGroupWitness, RingRelationWitness,
+};
 use crate::validation::validate_i8_setup_log_basis;
 use crate::DecomposeFoldWitness;
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
+use akita_field::parallel::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
@@ -26,7 +29,7 @@ pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
     pub(crate) e_folded: RingVec<F>,
     pub(crate) z_centered: Vec<i32>,
     pub(crate) z_inf: u32,
-    pub(crate) z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
+    pub(crate) z_folded_centered_per_chunk: Option<Vec<CenteredFoldChunk>>,
 }
 
 fn emit_packed_negative_binary(
@@ -146,30 +149,14 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
 ) -> Result<(), AkitaError> {
     let units = layout.units_for_group(group_id)?;
     let unit_count = units.clone().count();
-    if unit_count != group.z_folded_centered_per_chunk.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: unit_count,
-            actual: group.z_folded_centered_per_chunk.len(),
-        });
-    }
-    for (unit, z_centered) in units.zip(&group.z_folded_centered_per_chunk) {
-        let typed: Vec<[i32; D_GROUP]> = {
-            let _span = tracing::info_span!("ring_switch_copy_typed_z").entered();
-            z_centered
-                .iter()
-                .map(|row| {
-                    row.as_slice()
-                        .try_into()
-                        .map_err(|_| AkitaError::InvalidSize {
-                            expected: D_GROUP,
-                            actual: row.len(),
-                        })
-                })
-                .collect::<Result<_, _>>()?
-        };
+    let mut emit_chunk = |unit, z_centered: &[i32]| -> Result<(), AkitaError> {
         let z_planes = {
             let _span = tracing::info_span!("ring_switch_decompose_z_planes").entered();
-            decompose_z_folded_planes(&typed, num_digits_fold, group.params.log_basis_open())?
+            decompose_z_folded_planes::<D_GROUP>(
+                z_centered,
+                num_digits_fold,
+                group.params.log_basis_open(),
+            )?
         };
         {
             let _span = tracing::info_span!("ring_switch_emit_z_planes").entered();
@@ -181,6 +168,30 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
                 num_digits_fold,
                 &z_planes,
             )?;
+        }
+        Ok(())
+    };
+    match &group.z_folded_centered_per_chunk {
+        Some(chunks) => {
+            if unit_count != chunks.len() {
+                return Err(AkitaError::InvalidSize {
+                    expected: unit_count,
+                    actual: chunks.len(),
+                });
+            }
+            for (unit, chunk) in units.zip(chunks) {
+                emit_chunk(unit, chunk.coefficients())?;
+            }
+        }
+        None => {
+            if unit_count != 1 {
+                return Err(AkitaError::InvalidSize {
+                    expected: unit_count,
+                    actual: 1,
+                });
+            }
+            let unit = units.into_iter().next().ok_or(AkitaError::InvalidProof)?;
+            emit_chunk(unit, &group.z_centered)?;
         }
     }
     {
@@ -479,22 +490,27 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 
 /// Decompose centered Z fold responses into `(position, commit_digit, fold_digit)` planes.
 fn decompose_z_folded_planes<const D: usize>(
-    z_folded_centered: &[[i32; D]],
+    z_folded_centered: &[i32],
     num_digits_fold: usize,
     log_basis: u32,
 ) -> Result<Vec<[i8; D]>, AkitaError> {
-    let plane_count = z_folded_centered
+    let (rows, remainder) = z_folded_centered.as_chunks::<D>();
+    if !remainder.is_empty() {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: z_folded_centered.len(),
+        });
+    }
+    let plane_count = rows
         .len()
         .checked_mul(num_digits_fold)
         .ok_or_else(|| AkitaError::InvalidSetup("Z plane count overflow".to_string()))?;
     let mut all_planes = vec![[0i8; D]; plane_count];
-    for (k, z_j) in z_folded_centered.iter().enumerate() {
-        balanced_decompose_centered_i32_i8_into(
-            z_j,
-            &mut all_planes[k * num_digits_fold..(k + 1) * num_digits_fold],
-            log_basis,
-        );
-    }
+    cfg_iter!(rows)
+        .zip(cfg_chunks_mut!(&mut all_planes, num_digits_fold))
+        .for_each(|(z_j, planes)| {
+            balanced_decompose_centered_i32_i8_into(z_j, planes, log_basis);
+        });
     Ok(all_planes)
 }
 

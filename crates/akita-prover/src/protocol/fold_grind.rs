@@ -18,6 +18,7 @@ use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
     window_sparse_challenges,
 };
+use super::ring_relation_witness::CenteredFoldChunk;
 use crate::DecomposeFoldWitness;
 use akita_types::dispatch_for_field;
 
@@ -67,41 +68,21 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
     }
 }
 
-#[cfg(test)]
-fn accepts_fold_witness<F: CanonicalField, const D: usize>(
-    ctx: &FoldGrindAcceptanceCtx,
-    witness: &DecomposeFoldWitness<F>,
-    z_folded_centered_per_chunk: &[Vec<[i32; D]>],
-) -> bool {
-    for coeff in z_folded_centered_per_chunk
-        .iter()
-        .flat_map(|chunk| chunk.iter())
-        .flat_map(|coeffs| coeffs.iter())
-    {
-        if !coeff_within_digit_bounds(*coeff, ctx) {
-            return false;
-        }
-    }
-    let _ = witness;
-    true
-}
-
 fn accepts_fold_witness_flat<F: CanonicalField>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
-    centered_per_chunk: &[Vec<Vec<i32>>],
+    centered_per_chunk: Option<&[CenteredFoldChunk]>,
 ) -> bool {
-    let coefficients = centered_per_chunk
-        .iter()
-        .flat_map(|chunk| chunk.iter())
-        .flat_map(|row| row.iter());
-    for &coefficient in coefficients {
-        if !coeff_within_digit_bounds(coefficient, ctx) {
-            return false;
-        }
+    let accepts = |min: i32, max: i32| {
+        coeff_within_digit_bounds(min, ctx) && coeff_within_digit_bounds(max, ctx)
+    };
+    match centered_per_chunk {
+        Some(chunks) => chunks.iter().all(|chunk| {
+            let (min, max) = chunk.signed_extrema();
+            accepts(min, max)
+        }),
+        None => accepts(witness.centered_min, witness.centered_max),
     }
-    let _ = witness;
-    true
 }
 
 pub(crate) struct FoldGrindGroup<'params, 'group, G> {
@@ -120,7 +101,9 @@ impl<G> Clone for FoldGrindGroup<'_, '_, G> {
 
 pub(crate) struct FoldGrindGroupOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
-    pub(crate) centered_per_chunk: Vec<Vec<Vec<i32>>>,
+    /// `None` means the single chunk borrows the witness's global centered
+    /// buffer. Multi-chunk folds retain one flat centered buffer per chunk.
+    pub(crate) centered_per_chunk: Option<Vec<CenteredFoldChunk>>,
     pub(crate) challenges: Challenges,
 }
 
@@ -253,7 +236,7 @@ pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     point_indices: &[usize],
     root_lp: &CommittedGroupParams,
     params: &(impl LevelParamsLike + ?Sized),
-) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
+) -> Result<(DecomposeFoldWitness<F>, Option<Vec<CenteredFoldChunk>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     P: RootOpeningSource<F, D>,
@@ -273,8 +256,7 @@ where
             params.num_digits_inner(),
             params.log_basis_inner(),
         )?;
-        let per_chunk = vec![witness.centered_coeffs_owned::<D>()];
-        return Ok((witness, per_chunk));
+        return Ok((witness, None));
     }
 
     let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
@@ -296,10 +278,10 @@ where
         .collect::<Result<Vec<_>, AkitaError>>()?;
     let per_chunk = windows
         .iter()
-        .map(|w| w.centered_coeffs_owned::<D>())
+        .map(CenteredFoldChunk::from_witness)
         .collect();
     let global = aggregate_decompose_fold_witnesses::<F, D>(windows)?;
-    Ok((global, per_chunk))
+    Ok((global, Some(per_chunk)))
 }
 
 fn first_jointly_accepted_nonce<T>(
@@ -363,11 +345,11 @@ where
                             .group
                             .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
                     let candidate = {
-                        let _span = tracing::info_span!("fold_grind_acceptance_scan").entered();
+                        let _span = tracing::info_span!("fold_grind_acceptance_check").entered();
                         accepts_fold_witness_flat(
                             &prepared_group.acceptance,
                             &output.witness,
-                            &output.centered_per_chunk,
+                            output.centered_per_chunk.as_deref(),
                         )
                         .then_some(output)
                     };
@@ -520,15 +502,25 @@ mod tests {
         let witness = DecomposeFoldWitness::from_parts::<D>(
             vec![CyclotomicRing::<F, D>::zero()],
             vec![[12; D]],
-            12,
         );
-        let chunks = vec![vec![[129, 0, 0, 0]], vec![[-12; D]]];
+        let rejected_chunk = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[129, 0, 0, 0]],
+        );
+        let accepted_chunk = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[-12; D]],
+        );
+        let chunks = vec![
+            CenteredFoldChunk::from_witness(&rejected_chunk),
+            CenteredFoldChunk::from_witness(&accepted_chunk),
+        ];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
         let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound);
-        assert!(!accepts_fold_witness::<F, D>(
+        assert!(!accepts_fold_witness_flat(
             &acceptance,
             &witness,
-            &chunks
+            Some(&chunks)
         ));
     }
 
@@ -538,18 +530,12 @@ mod tests {
         let witness = DecomposeFoldWitness::from_parts::<D>(
             vec![CyclotomicRing::<F, D>::zero()],
             vec![[2022, 0, 0, 0]],
-            2022,
         );
-        let chunks = vec![witness.centered_coeffs_owned::<D>()];
         let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(6, 2);
         assert_eq!(neg_bound, 2080);
         assert_eq!(pos_bound, 2015);
         let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound);
-        assert!(!accepts_fold_witness::<F, D>(
-            &acceptance,
-            &witness,
-            &chunks
-        ));
+        assert!(!accepts_fold_witness_flat(&acceptance, &witness, None));
     }
 
     #[test]
@@ -564,5 +550,21 @@ mod tests {
         assert!(coeff_within_digit_bounds(positive, &acceptance));
         assert!(!coeff_within_digit_bounds(-negative_abs - 1, &acceptance));
         assert!(!coeff_within_digit_bounds(positive + 1, &acceptance));
+    }
+
+    #[test]
+    fn fold_witness_records_signed_extrema_for_constant_time_acceptance() {
+        const D: usize = 4;
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero(); 2],
+            vec![[-2_080, 17, 0, 2_015], [-3, 4, 9, -11]],
+        );
+
+        assert_eq!(witness.centered_min, -2_080);
+        assert_eq!(witness.centered_max, 2_015);
+        assert_eq!(witness.centered_inf_norm, 2_080);
+
+        let acceptance = fold_grind_acceptance_ctx(2_080, 2_015);
+        assert!(accepts_fold_witness_flat(&acceptance, &witness, None));
     }
 }

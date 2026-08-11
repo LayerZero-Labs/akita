@@ -140,17 +140,9 @@ pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         }
     }
 
-    let centered_inf_norm = centered_coeffs
-        .iter()
-        .flat_map(|coeffs| coeffs.iter())
-        .map(|coeff| coeff.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-
     Ok(DecomposeFoldWitness::from_parts(
         z_folded_rings,
         centered_coeffs,
-        centered_inf_norm,
     ))
 }
 

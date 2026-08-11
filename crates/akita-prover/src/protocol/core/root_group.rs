@@ -194,10 +194,7 @@ where
                     )?;
                 Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldGrindGroupOutput {
                     witness,
-                    centered_per_chunk: centered
-                        .into_iter()
-                        .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
-                        .collect(),
+                    centered_per_chunk: centered,
                     challenges: challenges.clone(),
                 })
             }
