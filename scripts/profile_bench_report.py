@@ -24,7 +24,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 7
+CASE_SCHEMA_VERSION = 8
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -629,6 +629,10 @@ def require_int(summary: dict[str, object], key: str) -> int:
 
 def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
     missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
+    if str(summary.get("mode", "")).startswith("dense_") and summary.get(
+        "statement_prepare_s"
+    ) is None:
+        missing.append("statement_prepare_s")
     if (
         summary.get("verification_modes") == "multi_and_single"
         and summary.get("verify_single_total_s") is None
@@ -658,6 +662,7 @@ def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
 
 
 TIMING_SAMPLE_METRICS = (
+    "statement_prepare_s",
     "setup_s",
     "setup_expand_s",
     "backend_prepare_s",
@@ -852,6 +857,8 @@ def extract_summary(
             summary["max_i8_log_basis"] = int(kvs["max_i8_log_basis"])
             summary["balanced_digit_safe_width"] = int(kvs["balanced_digit_safe_width"])
             summary["raw_i8_safe_width"] = int(kvs["raw_i8_safe_width"])
+        elif is_info_event(line, "statement_prepare") and kvs.get("label") == mode:
+            summary["statement_prepare_s"] = float(kvs["elapsed_s"])
         elif is_info_event(line, "setup_expand") and kvs.get("label") == mode:
             summary["setup_expand_s"] = float(kvs["elapsed_s"])
         elif is_info_event(line, "backend_prepare") and kvs.get("label") == mode:
@@ -1184,6 +1191,7 @@ def run_benchmark_case(
 
 def infer_failure_phase(summary: dict[str, object], first_missing: str | None = None) -> str:
     phase_by_metric = {
+        "statement_prepare_s": "statement preparation",
         "setup_s": "setup",
         "commit_s": "commit",
         "prove_total_s": "prove",
@@ -1240,6 +1248,7 @@ SUMMARY_CSV_COLUMNS = (
     "num_vars",
     "num_polys",
     "runs",
+    "statement_prepare_s",
     "setup_s",
     "setup_expand_s",
     "backend_prepare_s",
@@ -1701,7 +1710,8 @@ class Metric:
 
 
 MEASURED_METRICS = [
-    Metric("setup_s", "Setup and preparation", "s", fmt_seconds),
+    Metric("statement_prepare_s", "Statement preparation", "s", fmt_seconds),
+    Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("setup_expand_s", "Setup expansion", "s", fmt_seconds),
     Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
@@ -2150,6 +2160,12 @@ def render_matrix_summary(
         (
             "Phase time",
             [
+                Metric(
+                    "statement_prepare_s",
+                    "Statement preparation",
+                    " s",
+                    fmt_seconds,
+                ),
                 Metric("setup_s", "Setup", " s", fmt_seconds),
                 Metric("commit_s", "Commit", " s", fmt_seconds),
                 Metric("prove_total_s", "Prove", " s", fmt_seconds),
@@ -2954,6 +2970,7 @@ def render_report(args: argparse.Namespace) -> int:
         if case_runs > 1:
             ranges = []
             for key, label in [
+                ("statement_prepare_s", "statement preparation"),
                 ("setup_s", "setup"),
                 ("commit_s", "commit"),
                 ("prove_total_s", "prove"),

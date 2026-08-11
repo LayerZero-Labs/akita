@@ -1,8 +1,10 @@
 use super::poly::DensePoly;
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7 as F;
-use akita_field::{ExtField, FpExt4};
-use akita_types::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
+use akita_field::{Ext2, ExtField, FpExt4};
+use akita_types::{
+    embed_ring_subfield_vector, tensor_column_partials_from_base_evals, tensor_packed_witness_evals,
+};
 
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
@@ -68,6 +70,41 @@ fn dense_tensor_opening_methods_match_flat_reference() {
     let expected_packed = tensor_packed_witness_evals::<F, E>(num_vars, &evals).unwrap();
     let got_packed = poly.tensor_packed_extension_evals::<E, D>().unwrap();
     assert_eq!(got_packed, expected_packed);
+
+    let packed_len = D / <E as ExtField<F>>::EXT_DEGREE;
+    let expected_projection = expected_packed
+        .chunks(packed_len)
+        .map(|chunk| {
+            embed_ring_subfield_vector::<F, E, D>(
+                chunk,
+                akita_field::AkitaError::InvalidInput("test projection shape".to_string()),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let got_projection = poly.tensor_packed_extension_poly::<E, D>().unwrap();
+    assert_eq!(
+        got_projection.ring_coeffs::<D>().unwrap(),
+        expected_projection
+    );
+
+    type E2 = Ext2<F>;
+    let expected_packed_e2 = tensor_packed_witness_evals::<F, E2>(num_vars, &evals).unwrap();
+    let expected_projection_e2 = expected_packed_e2
+        .chunks(D / <E2 as ExtField<F>>::EXT_DEGREE)
+        .map(|chunk| {
+            embed_ring_subfield_vector::<F, E2, D>(
+                chunk,
+                akita_field::AkitaError::InvalidInput("test projection shape".to_string()),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let got_projection_e2 = poly.tensor_packed_extension_poly::<E2, D>().unwrap();
+    assert_eq!(
+        got_projection_e2.ring_coeffs::<D>().unwrap(),
+        expected_projection_e2
+    );
 }
 
 #[test]

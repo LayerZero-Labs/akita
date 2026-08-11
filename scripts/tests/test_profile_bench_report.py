@@ -213,6 +213,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         log = "\n".join(
             [
+                " INFO akita_profile_run: statement_prepare label=dense_fp128 elapsed_s=0.125",
                 " INFO akita_profile_run: setup_expand label=dense_fp128 elapsed_s=0.25",
                 " INFO akita_profile_run: backend_prepare label=dense_fp128 elapsed_s=0.75",
                 " INFO akita_profile_run: setup label=dense_fp128 elapsed_s=1.0",
@@ -225,6 +226,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary = extract_summary(log, "dense_fp128", 28, 1)
 
+        self.assertEqual(summary["statement_prepare_s"], 0.125)
         self.assertEqual(summary["setup_expand_s"], 0.25)
         self.assertEqual(summary["backend_prepare_s"], 0.75)
         self.assertEqual(summary["setup_s"], 1.0)
@@ -308,6 +310,14 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary["verification_modes"] = "multi_and_single"
         self.assertIn("verify_single_total_s", missing_required_run_metrics(summary))
+
+    def test_dense_run_requires_statement_preparation_timing(self) -> None:
+        from scripts.profile_bench_report import extract_summary, missing_required_run_metrics
+
+        summary = extract_summary("", "dense_fp32", 26, 1)
+        self.assertIn("statement_prepare_s", missing_required_run_metrics(summary))
+        summary["statement_prepare_s"] = 0.125
+        self.assertNotIn("statement_prepare_s", missing_required_run_metrics(summary))
 
     def test_setup_size_converts_merge_base_ring_count_to_flat_fields(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -696,6 +706,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_vars": 32,
                 "num_polys": 1,
                 "exit_code": 0,
+                "statement_prepare_s": 1.0,
                 "setup_s": 2.0,
                 "setup_vector_bytes": 4 * 1024 * 1024,
                 "setup_ntt_cache_bytes": 8 * 1024 * 1024,
@@ -710,6 +721,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         )
         baseline = dict(current)
         for key in (
+            "statement_prepare_s",
             "setup_s",
             "setup_vector_bytes",
             "setup_ntt_cache_bytes",
@@ -727,7 +739,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             render_matrix_summary([current], {str(current["case_id"]): baseline})
         report = output.getvalue()
 
-        self.assertEqual(report.count("+100.0%"), 9)
+        self.assertEqual(report.count("+100.0%"), 10)
         self.assertNotIn("vs base</sub>", report)
         self.assertNotIn("vs merge base</sub>", report)
         self.assertIn("### Phase time", report)
