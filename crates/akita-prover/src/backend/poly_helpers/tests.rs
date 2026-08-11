@@ -12,6 +12,122 @@ use akita_field::CanonicalField;
 use akita_field::{Fp64, Prime128Offset275};
 use akita_types::sis::compute_num_digits_field_width;
 
+#[test]
+fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
+    use crate::backend::{DensePoly, OneHotPoly, RecursiveWitnessFlat, SparseRingPoly};
+    use akita_field::{ExtField, FpExt4, Prime32Offset99};
+    use akita_types::{prepare_opening_point, BasisMode};
+
+    type F = Prime32Offset99;
+    type E = FpExt4<F>;
+    const D: usize = 32;
+    const POSITIONS: usize = 4;
+
+    let mut point = vec![E::zero(); 8];
+    for (index, coordinate) in point[5..].iter_mut().enumerate() {
+        *coordinate = E::from_base_slice(&[
+            F::from_u64(index as u64 + 2),
+            F::from_u64(3 * index as u64 + 5),
+            F::from_u64(5 * index as u64 + 7),
+            F::from_u64(7 * index as u64 + 11),
+        ]);
+    }
+    let prepared = prepare_opening_point::<F, E, D>(
+        &point,
+        BasisMode::Lagrange,
+        POSITIONS,
+        2,
+        D.trailing_zeros() as usize,
+    )
+    .expect("valid compact opening point");
+    let multipliers = &prepared.ring_multiplier_point;
+    let subfield_multipliers = multipliers
+        .as_subfield()
+        .expect("proper extension multipliers");
+    let position_rings = multipliers
+        .materialize_position_rings::<D>()
+        .expect("valid ring dimension")
+        .expect("proper extension multipliers");
+    let fold_rings = multipliers
+        .materialize_fold_rings::<D>()
+        .expect("valid ring dimension")
+        .expect("proper extension multipliers");
+
+    let assert_output = |actual: (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>),
+                         expected_folded: Vec<CyclotomicRing<F, D>>| {
+        let expected_eval = expected_folded
+            .iter()
+            .zip(&fold_rings)
+            .fold(CyclotomicRing::zero(), |acc, (folded, weight)| {
+                acc + *folded * *weight
+            });
+        assert_eq!(actual.1, expected_folded);
+        assert_eq!(actual.0, expected_eval);
+    };
+
+    let dense = DensePoly::from_ring_coeffs::<D>(
+        (0..8)
+            .map(|ring| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                    F::from_u64((ring * D + coefficient + 1) as u64)
+                }))
+            })
+            .collect(),
+    );
+    assert_output(
+        dense
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("dense compact fold"),
+        dense.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+
+    let onehot = OneHotPoly::<F>::new(
+        D,
+        D,
+        vec![
+            Some(0),
+            Some(31),
+            None,
+            Some(5),
+            Some(17),
+            None,
+            Some(9),
+            Some(23),
+        ],
+    )
+    .expect("one-hot source");
+    assert_output(
+        onehot
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("one-hot compact fold"),
+        onehot.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+
+    let sparse = SparseRingPoly::<F>::from_signed_coeffs(
+        8,
+        D,
+        8,
+        vec![(0, 1, 1), (2, 30, -1), (4, 17, 1), (7, 31, -1)],
+    )
+    .expect("sparse-ring source");
+    assert_output(
+        sparse
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("sparse-ring compact fold"),
+        sparse.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+
+    let digits = (0..8 * D).map(|index| (index % 7) as i8 - 3).collect();
+    let witness = RecursiveWitnessFlat::from_i8_digits(digits);
+    let suffix = witness.view::<F, D>().expect("suffix source");
+    assert_output(
+        suffix
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("suffix compact fold"),
+        suffix.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+}
+
 /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
 /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /
 /// AVX-512). Restricted to `|coeff| <= 2` so the SIMD fast path fires.
