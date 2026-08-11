@@ -109,6 +109,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             {
                 return Err(AkitaError::InvalidProof);
             }
+            // E and T share the block-claim index space, so they stay one
+            // fused fold gated on their combined width, and Z keeps its own
+            // gate. Splitting E from T would drop the multi-core reduce
+            // whenever each side alone sits under the threshold but the pair
+            // clears it.
             let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
                 let e_start = block_claim
                     .checked_mul(e_stride)
@@ -141,21 +146,21 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 Ok(acc? + block_challenge * (group.consistency_weight * e + t))
             };
             const PARALLEL_THRESHOLD: usize = 1 << 14;
-            let et_work = weights
-                .e
-                .len()
-                .checked_add(weights.t.len())
-                .ok_or(AkitaError::InvalidProof)?;
-            let et = if et_work >= PARALLEL_THRESHOLD {
-                cfg_fold_reduce!(
-                    0..block_claims,
-                    || Ok(E::zero()),
-                    fold_et,
-                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-                )
-            } else {
-                (0..block_claims).fold(Ok(E::zero()), fold_et)
-            }?;
+            let et_work = e_len
+                .checked_add(t_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("structured E/T width overflow".into()))?;
+            let run_et = || -> Result<E, AkitaError> {
+                if et_work >= PARALLEL_THRESHOLD {
+                    cfg_fold_reduce!(
+                        0..block_claims,
+                        || Ok(E::zero()),
+                        fold_et,
+                        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                    )
+                } else {
+                    (0..block_claims).fold(Ok(E::zero()), fold_et)
+                }
+            };
             let fold_z = |acc: Result<E, AkitaError>, position: usize| {
                 let start = position
                     .checked_mul(group.depth_witness)
@@ -171,23 +176,39 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .zip(&witness_gadget)
                     .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
                 Ok(acc?
-                    + group.consistency_weight
-                        * *opening_a_evals
-                            .get(position)
-                            .ok_or(AkitaError::InvalidProof)?
+                    + *opening_a_evals
+                        .get(position)
+                        .ok_or(AkitaError::InvalidProof)?
                         * inner)
             };
-            let z = if weights.z.len() >= PARALLEL_THRESHOLD {
-                cfg_fold_reduce!(
-                    0..group.num_positions_per_block,
-                    || Ok(E::zero()),
-                    fold_z,
-                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-                )
+            let run_z = || -> Result<E, AkitaError> {
+                if z_cols >= PARALLEL_THRESHOLD {
+                    cfg_fold_reduce!(
+                        0..group.num_positions_per_block,
+                        || Ok(E::zero()),
+                        fold_z,
+                        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                    )
+                } else {
+                    (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
+                }
+            };
+            // Running E/T against Z costs one `rayon::join`, and that cost
+            // grows with the pool size, so it has to be repaid by both sides
+            // at once. Requiring the smaller of the two to clear the same
+            // threshold its own reduce uses keeps the fork on groups where
+            // each side is independently worth a parallel reduce; a group
+            // with one large and one small side runs them in sequence.
+            let (et, z) = if et_work.min(z_cols) >= PARALLEL_THRESHOLD {
+                let (et, z) = cfg_join!(run_et, run_z);
+                (et?, z?)
             } else {
-                (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
-            }?;
-            return Ok(et + z);
+                (run_et()?, run_z()?)
+            };
+            // Z carries the group's consistency weight on every position;
+            // applying it once after reduction drops one field multiplication
+            // per position and leaves the contracted equation auditable.
+            return Ok(et + group.consistency_weight * z);
         }
 
         let point = self.relation_address.point();
