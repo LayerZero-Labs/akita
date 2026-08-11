@@ -8,6 +8,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_types::{tensor_opening_split, RingVec, TensorColumnSource};
+use std::borrow::Cow;
 use std::mem::size_of;
 use std::sync::OnceLock;
 
@@ -201,11 +202,15 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
     ///
     /// Returns an error if `ring_d` is not a power of two or if
     /// `evals.len() != 2^num_vars`.
-    pub fn from_field_evals(
+    pub fn from_field_evals<'a>(
         num_vars: usize,
         ring_d: usize,
-        evals: &[F],
-    ) -> Result<Self, AkitaError> {
+        evals: impl Into<Cow<'a, [F]>>,
+    ) -> Result<Self, AkitaError>
+    where
+        F: 'a,
+    {
+        let evals = evals.into();
         if ring_d == 0 || !ring_d.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
                 "ring degree D={ring_d} is not a power of two"
@@ -222,9 +227,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         }
 
         let physical_len = expected_len.max(MIN_FLAT_COEFF_LEN);
-        let mut coeffs = Vec::with_capacity(physical_len);
-        coeffs.extend_from_slice(evals);
-        coeffs.resize(physical_len, F::zero());
 
         // Padding zeros are centered-0 (trivially small-i8), so a poly whose
         // live coefficients are all small stays all-small — identical to the
@@ -233,7 +235,7 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         let half_q = q / 2;
         let mut small_i8_coeffs = Vec::with_capacity(physical_len);
         let mut all_small_i8 = true;
-        for coeff in evals {
+        for coeff in evals.iter() {
             if let Some(centered) = try_centered_i8(*coeff, q, half_q) {
                 small_i8_coeffs.push(centered);
             } else {
@@ -244,6 +246,12 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         if all_small_i8 {
             small_i8_coeffs.resize(physical_len, 0);
         }
+
+        // Reuse an owned evaluation vector. Borrowed inputs pay the same
+        // single copy as before, while profile and application builders can
+        // transfer large buffers without doubling their resident memory.
+        let mut coeffs = evals.into_owned();
+        coeffs.resize(physical_len, F::zero());
 
         Ok(Self {
             num_vars,

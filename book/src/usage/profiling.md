@@ -190,6 +190,12 @@ Each measured sample performs these operations:
 7. Verify the claimed openings with the configured multi-threaded pool.
 8. Verify the same proof and claims again with one thread.
 
+Dense profile witnesses use an index-derived SplitMix64 stream. This keeps the
+input deterministic while allowing every evaluation to be generated in
+parallel without a shared random-number generator. The generated `Vec` is
+transferred directly into `DensePoly`; it is not retained as a duplicate input
+buffer. This stream is benchmark data, not cryptographic randomness.
+
 The profile workflow does not test malformed proofs or rejection paths. The
 test suite owns those checks.
 
