@@ -182,7 +182,7 @@ where
             ring_dimension,
             |D| {
                 let point_indices = (0..self.num_polynomials()).collect::<Vec<_>>();
-                let (witness, centered) =
+                let (witness, coefficients) =
                     crate::protocol::fold_grind::fold_probe_witness_kernel::<F, P, B, D>(
                         ctx.backend(),
                         Some(ctx.prepared()),
@@ -194,10 +194,7 @@ where
                     )?;
                 Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldGrindGroupOutput {
                     witness,
-                    centered_per_chunk: centered
-                        .into_iter()
-                        .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
-                        .collect(),
+                    coefficients,
                     challenges: challenges.clone(),
                 })
             }

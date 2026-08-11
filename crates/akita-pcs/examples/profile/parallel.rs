@@ -30,6 +30,17 @@ impl ProfileThreadPools {
         POOLS.get().expect("profile thread pools not initialized")
     }
 
+    pub(crate) fn prove_threads(&self) -> usize {
+        #[cfg(feature = "parallel")]
+        {
+            rayon::current_num_threads()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            1
+        }
+    }
+
     /// Run verifier-side work on the verify pool when it differs from the prove pool.
     pub(crate) fn in_verify_multi<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
         #[cfg(feature = "parallel")]
