@@ -257,11 +257,12 @@ where
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                cached_digit_decompose_fold_partitioned::<D>(
+                cached_digit_decompose_fold_partitioned::<F, D>(
                     digit_planes,
                     challenges,
                     num_positions_per_block,
                     num_digits,
+                    log_basis,
                 )
             };
             let modulus = (-F::one()).to_canonical_u128() + 1;
