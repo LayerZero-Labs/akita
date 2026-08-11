@@ -64,14 +64,27 @@ where
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_dims = lp.group_role_dims(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
+        let challenge_config = group_lp.fold_challenge_config();
+        let rejection = matches!(
+            group_lp.inner_commit_matrix_params().security_route(),
+            akita_types::InnerCommitSecurityRoute::L2 { .. }
+        )
+        .then(|| {
+            akita_challenges::selective_l2_operator_norm_rejection(
+                group_dims.d_a(),
+                &challenge_config,
+            )
+        })
+        .flatten();
         group_challenges.push(
-            LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
+            LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
                 group_dims.d_a(),
                 group_index,
                 group_lp.num_live_blocks(),
                 k_g,
-                &group_lp.fold_challenge_config(),
+                &challenge_config,
                 grind_nonce,
+                rejection,
             )?,
         );
     }

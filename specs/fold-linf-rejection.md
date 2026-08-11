@@ -40,7 +40,7 @@ There is one sizing and grinding flow for every valid sparse configuration.
 
 This honest coefficient-`L∞` sizing flow is separate from the A-role security
 route. The ordinary A route prices the verifier-enforced balanced-digit
-envelope in the coefficient-`L∞` SIS table. Eligible measured later folds may
+envelope in the coefficient-`L∞` SIS table. Eligible calibrated later folds may
 instead carry the exact physical norm proof and Euclidean SIS route defined by
 [`selective-l2-fold-security-sizing.md`](selective-l2-fold-security-sizing.md).
 

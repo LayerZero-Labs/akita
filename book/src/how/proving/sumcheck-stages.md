@@ -14,10 +14,10 @@ witness:
 3. **Stage 3 — setup product sumcheck.** Optionally carries a recursive setup
    contribution together with the next opening.
 
-This chapter explains the Stage-1 range protocol and the Stage-2 fused
-relation protocol in detail. Stage 3 is summarized at the end. The terminal
-fold, which runs none of these sumchecks, is covered in
-[The proving protocol](./proving.md).
+This chapter explains the Stage 1 range protocol and the Stage 2 fused relation
+protocol in detail. Stage 3 is summarized at the end. The terminal fold runs
+none of these sumchecks. When it uses an L2 route, the verifier computes the
+clear response norm directly. See [The proving protocol](./proving.md).
 
 ## Stage 1: digit range check
 

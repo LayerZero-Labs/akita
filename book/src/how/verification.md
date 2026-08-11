@@ -82,7 +82,9 @@ At a high level:
    every recursive fold, using the schedule-selected `LevelParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
-   block, D block, or quotient sumcheck.
+   block, D block, or quotient sumcheck. If the terminal A matrix uses an L2
+   route, the verifier also computes the decoded response's exact integer
+   squared norm and compares it with the scheduled cap.
 
 At each nonterminal fold, the verifier checks fixed 128-byte `p_H` and `p_F`
 payload shapes, reconstructs the B, D, F, and H relation right hand sides, and
@@ -90,6 +92,12 @@ folds the compression relations at their native ring dimensions. It derives
 the negative-binary support from `WitnessLayout` and evaluates the stage-1
 equality table restricted to those intervals; compression roles never enlarge
 or shrink the ordinary A/B/D common address block.
+
+An L2 fold at D64 or D128 also replays operator norm rejection from the
+transcript. The schedule fixes the sparse challenge family and both the true
+subset threshold and strict integer threshold. A challenge is accepted only
+when the integer interval calculation proves that every spectral magnitude is
+within the strict threshold.
 
 Root replay reads each commitment group's point directly from
 `PolynomialGroupClaims`.
@@ -138,7 +146,7 @@ replay, it:
    canonical security table, role, modulus, rank, width, bound, and ring
    dimension;
 5. checks root, recursive, setup-prefix, challenge, witness-partition, terminal
-   response, and full terminal infinity-norm-cap geometry;
+   response, and full terminal norm cap geometry;
 6. checks that the schedule fits the setup field capacity; and only then
 7. binds the instance descriptor and replays the proof.
 

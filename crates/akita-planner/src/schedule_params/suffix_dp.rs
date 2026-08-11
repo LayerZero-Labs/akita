@@ -6,7 +6,7 @@ use std::{
 
 use akita_field::AkitaError;
 use akita_types::{
-    active_setup_field_len, level_proof_bytes, terminal_response_bytes,
+    active_setup_field_len, level_proof_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
@@ -242,6 +242,7 @@ fn price_level_candidate_with_children(
     {
         let field_bits = policy.decomposition.field_bits();
         if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
+            policy,
             state.current_witness_len,
             candidate_params,
             field_bits,

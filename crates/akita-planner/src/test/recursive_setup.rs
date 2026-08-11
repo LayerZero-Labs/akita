@@ -38,7 +38,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        91_832
+        89_592
     );
 }
 
@@ -98,15 +98,9 @@ fn scalar_recursive_nv36_selects_offloaded_schedule() {
             opening: 128,
         }
     );
-    assert!(planned.schedule.recursive_folds.iter().any(|fold| {
-        matches!(
-            fold.params.witness.inner_commit_matrix.security_route(),
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
-        )
-    }));
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        92_952
+        91_346
     );
 }
 

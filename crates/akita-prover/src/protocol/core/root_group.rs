@@ -20,6 +20,7 @@ pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
 pub(crate) trait RootProverGroupMeta<F: FieldCore> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128>;
 }
 
 pub(crate) trait RootProverGroupOpening<F, E, B>: RootProverGroupMeta<F>
@@ -107,6 +108,13 @@ where
             ));
         }
         Ok(num_vars)
+    }
+
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
+        self.polynomial_refs().iter().try_fold(0u128, |sum, poly| {
+            crate::compute::RootPolyMeta::<F>::exact_integer_coeff_l2_sq(*poly)
+                .and_then(|energy| sum.checked_add(energy))
+        })
     }
 }
 

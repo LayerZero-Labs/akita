@@ -90,6 +90,7 @@ pub struct GeneratedTerminalFold {
     pub num_digits_inner: u32,
     pub inner_output_rank: u32,
     pub inner_coeff_linf_bound: u128,
+    pub response_l2_sq_cap: Option<u128>,
     pub z_admission_linf_cap: u128,
     pub z_rice_low_bits: u32,
     pub z_payload_bytes: u64,

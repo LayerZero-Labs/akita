@@ -110,11 +110,16 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
     witness: &DecomposeFoldWitness<F>,
     centered_per_chunk: &[Vec<Vec<i32>>],
 ) -> Option<Option<u128>> {
+    let measure_response_l2 = ctx.response_l2_sq_cap.is_some()
+        || tracing::enabled!(
+            target: "akita_prover::protocol::fold_response_model",
+            tracing::Level::INFO
+        );
     let coefficients = centered_per_chunk
         .iter()
         .flat_map(|chunk| chunk.iter())
         .flat_map(|row| row.iter());
-    if ctx.response_l2_sq_cap.is_none() {
+    if !measure_response_l2 {
         return coefficients
             .into_iter()
             .all(|&coefficient| coeff_within_digit_bounds(coefficient, ctx))
@@ -133,7 +138,7 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
     }
     let _ = witness;
     ctx.response_l2_sq_cap
-        .is_some_and(|cap| response_l2_sq <= cap)
+        .is_none_or(|cap| response_l2_sq <= cap)
         .then_some(Some(response_l2_sq))
 }
 
@@ -177,7 +182,7 @@ pub(crate) fn sample_terminal_fold_response<F, P, B, T>(
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RuntimeOpeningSource<F>,
+    P: RuntimeOpeningSource<F> + crate::compute::RootPolyMeta<F>,
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
@@ -202,19 +207,31 @@ where
             "terminal response cap exceeds its fixed matrix capacity".into(),
         ));
     }
+    let response_l2_sq_cap = params.response_l2_sq_cap();
+    let operator_rejection = if response_l2_sq_cap.is_some() {
+        Some(
+            akita_challenges::selective_l2_operator_norm_rejection(params.d_a(), sparse)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unsupported terminal L2 challenge policy".into())
+                })?,
+        )
+    } else {
+        None
+    };
     let binding = FoldLinfProtocolBinding::CURRENT;
     let polys = [poly];
     let point_indices = [0usize];
     let (nonce, (witness, challenges)) =
         first_jointly_accepted_nonce(binding.max_grind_attempts, |nonce| {
             let mut preview = PreviewFoldDraw::new(transcript);
-            let challenges = preview.draw_folding_challenges(
+            let challenges = preview.draw_folding_challenges_with_rejection(
                 params.d_a(),
                 0,
                 params.num_live_blocks,
                 1,
                 sparse,
                 nonce,
+                operator_rejection,
             )?;
             let witness = dispatch_for_field!(
                 akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
@@ -241,6 +258,11 @@ where
             if golomb_rice_values_within_cap(&centered, admission_cap).is_err() {
                 return Ok(None);
             }
+            if response_l2_sq_cap.is_some_and(|cap| {
+                akita_types::sis::checked_centered_l2_sq(&centered).is_none_or(|norm| norm > cap)
+            }) {
+                return Ok(None);
+            }
             let zigzag_width = golomb_rice_zigzag_width(admission_cap);
             let wire_bits = golomb_rice_total_wire_bits(
                 &centered,
@@ -253,12 +275,50 @@ where
             Ok(Some((witness, challenges)))
         })?;
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
-    let live_challenges =
-        live.draw_folding_challenges(params.d_a(), 0, params.num_live_blocks, 1, sparse, nonce)?;
+    let live_challenges = live.draw_folding_challenges_with_rejection(
+        params.d_a(),
+        0,
+        params.num_live_blocks,
+        1,
+        sparse,
+        nonce,
+        operator_rejection,
+    )?;
     if live_challenges != challenges {
         return Err(AkitaError::InvalidInput(
             "terminal grind preview did not match live transcript replay".into(),
         ));
+    }
+    if tracing::enabled!(
+        target: "akita_prover::protocol::fold_response_model",
+        tracing::Level::INFO
+    ) {
+        let source_l2_sq = crate::compute::RootPolyMeta::exact_integer_coeff_l2_sq(poly);
+        let conditional_mean_l2_sq =
+            source_l2_sq.and_then(|energy| energy.checked_mul(sparse.challenge_l2_sq_max()));
+        let response_l2_sq =
+            akita_types::sis::checked_centered_l2_sq(witness.centered_coeffs_flat());
+        tracing::info!(
+            target: "akita_prover::protocol::fold_response_model",
+            terminal = true,
+            nonce,
+            attempts = nonce + 1,
+            ring_dimension = params.d_a(),
+            num_live_blocks = params.num_live_blocks,
+            num_positions_per_block = params.num_positions_per_block,
+            response_coeffs = witness.centered_coeffs_flat().len(),
+            log_basis_inner = params.log_basis_inner,
+            num_digits_inner = params.num_digits_inner,
+            challenge_weight = sparse.weight(),
+            challenge_l1 = sparse.l1_norm(),
+            challenge_l2_sq = sparse.challenge_l2_sq_max(),
+            challenge_linf = sparse.infinity_norm(),
+            source_l2_sq = ?source_l2_sq,
+            conditional_mean_l2_sq = ?conditional_mean_l2_sq,
+            response_l2_sq = ?response_l2_sq,
+            response_l2_sq_cap = ?response_l2_sq_cap,
+            "terminal fold response model sample"
+        );
     }
     Ok(TerminalFoldGrindOutput { witness, nonce })
 }
@@ -383,13 +443,26 @@ where
                 for prepared_group in groups {
                     let group = &prepared_group.input;
                     let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
-                    let challenges = preview.draw_folding_challenges(
+                    let challenge_config = group.params.fold_challenge_config();
+                    let rejection = matches!(
+                        group.params.inner_commit_matrix_params().security_route(),
+                        InnerCommitSecurityRoute::L2 { .. }
+                    )
+                    .then(|| {
+                        akita_challenges::selective_l2_operator_norm_rejection(
+                            ring_d,
+                            &challenge_config,
+                        )
+                    })
+                    .flatten();
+                    let challenges = preview.draw_folding_challenges_with_rejection(
                         ring_d,
                         group.group_index,
                         group.params.num_live_blocks(),
                         group.group.num_polynomials(),
-                        &group.params.fold_challenge_config(),
+                        &challenge_config,
                         nonce,
+                        rejection,
                     )?;
                     let output =
                         group
@@ -415,13 +488,21 @@ where
     {
         let group = &prepared_group.input;
         let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
-        let challenges = live.draw_folding_challenges(
+        let challenge_config = group.params.fold_challenge_config();
+        let rejection = matches!(
+            group.params.inner_commit_matrix_params().security_route(),
+            InnerCommitSecurityRoute::L2 { .. }
+        )
+        .then(|| akita_challenges::selective_l2_operator_norm_rejection(ring_d, &challenge_config))
+        .flatten();
+        let challenges = live.draw_folding_challenges_with_rejection(
             ring_d,
             group.group_index,
             group.params.num_live_blocks(),
             group.group.num_polynomials(),
-            &group.params.fold_challenge_config(),
+            &challenge_config,
             nonce,
+            rejection,
         )?;
         if challenges != output.challenges {
             return Err(AkitaError::InvalidInput(
@@ -436,6 +517,42 @@ where
             response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
             "selected physical fold response"
         );
+        if let Some(response_l2_sq) = *observed_l2_sq {
+            let source_l2_sq = group.group.exact_integer_coeff_l2_sq();
+            let conditional_mean_l2_sq = source_l2_sq
+                .and_then(|energy| energy.checked_mul(challenge_config.challenge_l2_sq_max()));
+            let response_coeffs = output
+                .centered_per_chunk
+                .iter()
+                .flat_map(|chunk| chunk.iter())
+                .map(Vec::len)
+                .sum::<usize>();
+            tracing::info!(
+                target: "akita_prover::protocol::fold_response_model",
+                group_index = group.group_index,
+                nonce,
+                attempts = nonce + 1,
+                ring_dimension = ring_d,
+                num_polynomials = group.group.num_polynomials(),
+                num_live_blocks = group.params.num_live_blocks(),
+                num_positions_per_block = group.params.num_positions_per_block(),
+                num_chunks = output.centered_per_chunk.len(),
+                response_coeffs,
+                log_basis_inner = group.params.log_basis_inner(),
+                num_digits_inner = group.params.num_digits_inner(),
+                log_basis_response = group.params.log_basis_open(),
+                num_digits_response = group.params.num_digits_fold(),
+                challenge_weight = challenge_config.weight(),
+                challenge_l1 = challenge_config.l1_norm(),
+                challenge_l2_sq = challenge_config.challenge_l2_sq_max(),
+                challenge_linf = challenge_config.infinity_norm(),
+                source_l2_sq = ?source_l2_sq,
+                conditional_mean_l2_sq = ?conditional_mean_l2_sq,
+                response_l2_sq,
+                response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
+                "fold response model sample"
+            );
+        }
     }
     Ok((
         candidate_outputs

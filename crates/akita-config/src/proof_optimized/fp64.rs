@@ -51,5 +51,5 @@ impl_proof_optimized_preset!(
     fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = ("schedules-fp64-onehot", "fp64_onehot", fp64_onehot_table),
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE,
-    selective_l2_caps = super::FP64_D128_ONEHOT_L2_CAPS
+    selective_l2_caps = super::FP64_D64_ONEHOT_L2_CAPS
 );

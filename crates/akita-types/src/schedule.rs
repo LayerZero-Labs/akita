@@ -652,6 +652,15 @@ impl TerminalCommittedGroupParams {
         &self,
         sparse: &akita_challenges::SparseChallengeConfig,
     ) -> Result<u128, AkitaError> {
+        if matches!(
+            self.inner_commit_matrix.security_route(),
+            crate::sis::InnerCommitSecurityRoute::L2 { .. }
+        ) {
+            // A clear-terminal L2 route still needs a finite coefficient cap
+            // for signed-i16 kernels and Golomb decoding, but SIS security is
+            // provided by the directly checked complete Euclidean norm.
+            return Ok(i16::MAX as u128);
+        }
         let challenge = crate::sis::FoldChallengeNorms::new(sparse);
         let collision_capacity = self.inner_commit_matrix.coeff_linf_bound().ok_or_else(|| {
             AkitaError::InvalidSetup("terminal A cannot use an L2 security route".into())
@@ -665,6 +674,17 @@ impl TerminalCommittedGroupParams {
         // Terminal NTT kernels currently consume signed i16 coefficients.
         // This representation limit is independent of the SIS capacity.
         Ok(certified_capacity.min(i16::MAX as u128))
+    }
+
+    /// Verifier-enforced complete physical L2 cap for a clear terminal route.
+    #[must_use]
+    pub fn response_l2_sq_cap(&self) -> Option<u128> {
+        match self.inner_commit_matrix.security_route() {
+            crate::sis::InnerCommitSecurityRoute::Linf(_) => None,
+            crate::sis::InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap, ..
+            } => Some(response_l2_sq_cap),
+        }
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {

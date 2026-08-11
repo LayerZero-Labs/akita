@@ -322,13 +322,25 @@ where
         proof.terminal_response(),
         scheduled.response_shape.logical_num_elems(),
     )?;
-    let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
+    let operator_rejection = if params.response_l2_sq_cap().is_some() {
+        Some(
+            akita_challenges::selective_l2_operator_norm_rejection(
+                params.d_a(),
+                &scheduled.sparse_challenge_config,
+            )
+            .ok_or(AkitaError::InvalidProof)?,
+        )
+    } else {
+        None
+    };
+    let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
         params.d_a(),
         0,
         params.num_live_blocks,
         1,
         &scheduled.sparse_challenge_config,
         proof.fold_grind_nonce,
+        operator_rejection,
     )?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);
     super::terminal_direct::verify_terminal_ring_relations(

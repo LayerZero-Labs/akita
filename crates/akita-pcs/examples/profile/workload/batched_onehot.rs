@@ -1,7 +1,7 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_lagrange_opening, planned_payload_bytes, prover_claims, random_claim_point,
-    report_proof_size_against_planner, run_verifier_timings, verifier_claims,
+    onehot_lagrange_opening, planned_payload_bytes, profile_transcript, prover_claims,
+    random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
@@ -19,7 +19,6 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
@@ -121,7 +120,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let t0 = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+        let mut prover_transcript = profile_transcript::<FF>();
         tracing::info!(
             label,
             ?setup_contribution_mode,
@@ -234,7 +233,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )
     };
     let verify = |claims| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
+        let mut verifier_transcript = profile_transcript::<FF>();
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,

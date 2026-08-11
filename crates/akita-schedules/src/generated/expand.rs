@@ -446,7 +446,12 @@ impl GeneratedCommittedGroup {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
-        let ring_challenge_cfg = ring_challenge_config(ring_d)?;
+        let ring_challenge_cfg = if response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(ring_d)
+                .unwrap_or(ring_challenge_config(ring_d)?)
+        } else {
+            ring_challenge_config(ring_d)?
+        };
         let num_digits_inner = if let Some(num_digits_inner) = exact_num_digits_inner {
             usize::try_from(num_digits_inner).map_err(|_| {
                 AkitaError::InvalidSetup(
@@ -504,14 +509,16 @@ impl GeneratedCommittedGroup {
                     num_chunks: policy.chunks_at_level(fold_level),
                     inner_width,
                     ring_dimension: ring_d,
+                    source_log_basis: log_basis_inner,
                     fold_basis,
                     fold_digit_count: num_digits_fold,
                     fold_challenge_config: &ring_challenge_cfg,
+                    norm_proof_shape: None,
                 },
             )?
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "generated L2 route is not admitted for this exact measured candidate".into(),
+                    "generated L2 route is not admitted by the calibrated response model".into(),
                 )
             })?;
             if !matches!(
@@ -887,7 +894,7 @@ impl GeneratedTerminalFold {
         &self,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        _fold_level: usize,
+        fold_level: usize,
         input_witness_len: usize,
     ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
@@ -931,26 +938,92 @@ impl GeneratedTerminalFold {
         }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal A width overflow".to_string()))?;
-        let sparse = ring_challenge_config(ring_dimension)?;
+        let sparse = if self.response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no certified operator-norm challenge".into(),
+                )
+            })?
+        } else {
+            ring_challenge_config(ring_dimension)?
+        };
         let output_rank = usize::try_from(self.inner_output_rank).map_err(|_| {
             AkitaError::InvalidSetup(
                 "generated terminal inner rank does not fit the target platform".into(),
             )
         })?;
-        if output_rank == 0 || self.inner_coeff_linf_bound == 0 {
+        if output_rank == 0
+            || (self.response_l2_sq_cap.is_none() && self.inner_coeff_linf_bound == 0)
+        {
             return Err(AkitaError::InvalidSetup(
                 "generated terminal matrix contract must be nonzero".into(),
             ));
         }
-        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            output_rank,
-            inner_width,
-            self.inner_coeff_linf_bound,
-            ring_dimension,
-        )?;
+        let inner_commit_matrix = if let Some(response_l2_sq_cap) = self.response_l2_sq_cap {
+            let mut selected = None;
+            for fold_log_basis in policy.opening_basis_range.0..=policy.opening_basis_range.1 {
+                let Some(fold_basis) = 1usize.checked_shl(fold_log_basis) else {
+                    continue;
+                };
+                let fold_digit_count = num_digits_open(DecompositionParams {
+                    log_basis: fold_log_basis,
+                    ..policy.decomposition
+                });
+                let Some(matrix) = selective_l2_inner_matrix(
+                    policy,
+                    SelectiveL2CandidateGeometry {
+                        fold_level,
+                        input_witness_len,
+                        num_claims: 1,
+                        num_chunks: 1,
+                        inner_width,
+                        ring_dimension,
+                        source_log_basis: log_basis_inner,
+                        fold_basis,
+                        fold_digit_count,
+                        fold_challenge_config: &sparse,
+                        norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                            physical_response_len: inner_width
+                                .checked_mul(ring_dimension)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "terminal L2 response length overflow".into(),
+                                    )
+                                })?,
+                        }),
+                    },
+                )?
+                else {
+                    continue;
+                };
+                let cap_matches = matches!(
+                    matrix.security_route(),
+                    akita_types::InnerCommitSecurityRoute::L2 {
+                        response_l2_sq_cap: cap,
+                        ..
+                    } if cap == response_l2_sq_cap
+                );
+                if matrix.output_rank() == output_rank && cap_matches {
+                    selected = Some(matrix);
+                    break;
+                }
+            }
+            selected.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no canonical source model".into(),
+                )
+            })?
+        } else {
+            InnerCommitMatrixParams::try_new(
+                policy.sis_security_policy,
+                policy.sis_table_digest,
+                policy.sis_modulus_profile,
+                output_rank,
+                inner_width,
+                self.inner_coeff_linf_bound,
+                ring_dimension,
+            )?
+        };
         let terminal = TerminalCommittedGroupParams {
             log_basis_inner,
             inner_commit_matrix,

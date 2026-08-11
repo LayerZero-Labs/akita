@@ -805,7 +805,7 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     const NV: usize = 30;
     const BATCH_SIZE: usize = 4;
     const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
-    type L2Cfg = crate::test_support::ForcedLargeFieldL2Config<OneHotCfg>;
+    type L2Cfg = OneHotCfg;
     type L2Scheme = AkitaCommitmentScheme<L2Cfg>;
 
     let layout = akita_batched_root_layout::<L2Cfg>(NV, BATCH_SIZE).expect("L2 root layout");
@@ -886,7 +886,6 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         .iter()
         .position(|fold| fold.stage1.norm_proof.is_some())
         .expect("generated schedule must select one L2 fold");
-
     let mut bad_norm = proof.clone();
     bad_norm.recursive_folds[l2_index]
         .stage1

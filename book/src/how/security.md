@@ -75,19 +75,22 @@ implementation acceptance criteria live in
 ## Norm bounds and weak binding
 
 Every committed level records one A role security route. The coefficient
-`L∞` route is always available. A later nonterminal fold may also have an `L2`
-candidate when its preset supplies a measured cap for that exact fold level,
-incoming witness length, response length, digit basis, and digit count. The
-root, early folds, and terminal response do not use the `L2` route.
+`L∞` route is always available. An empirically calibrated one-hot preset may
+also model an `L2` candidate from level 3 onward. Exact calibration rows take
+precedence over the general balanced-digit response model. The root and early
+folds do not use the `L2` route. A clear terminal response may use the route
+because the verifier computes its complete integer norm directly.
 
 Let `kappa_1` be the maximum physical coefficient `L1` norm of the fold
-challenge. Let `Z_inf` be the accepted physical coefficient bound on the
-response, and let `S` be the accepted squared norm of the complete physical
-response. The two collision bounds are
+challenge. Let `gamma` be the bound used for challenge multiplication. This is
+either `kappa_1`, or a verifier enforced operator norm threshold. Let `Z_inf`
+be the accepted physical coefficient bound on the response, and let `S` be the
+accepted squared norm of the complete physical response. The two collision
+bounds are
 
 ```text
 C_inf  = 8 * kappa_1 * Z_inf
-C_2_sq = 64 * kappa_1^2 * S.
+C_2_sq = 64 * gamma^2 * S.
 ```
 
 These formulas use the physical ring coefficients that enter the A role
@@ -98,7 +101,24 @@ point would count that conversion twice.
 An `L∞` schedule carries no norm proof. An `L2` schedule binds its cap and
 integer proof shape into the schedule descriptor. The verifier proves the norm
 of the same physical Z coefficients used by the security calculation and then
-checks the public cap. The existing digit range proof remains mandatory.
+checks the public cap. The existing digit range proof remains mandatory. For a
+clear terminal response, the verifier decodes every coefficient, computes the
+integer square sum, and checks the same cap without a sumcheck.
+
+The D64 and D128 L2 routes use transcript replayed operator norm rejection.
+D64 uses the `(31, 11)` signed shell, a certified true threshold of 18, and a
+strict fixed point threshold of 19. D128 reuses the production `(31, 0)` shell,
+a certified true threshold of 13, and a strict threshold of 14. The strict
+predicate only accepts when its integer interval calculation proves the bound.
+Exact accepted support certificates show that each rejected family retains at
+least 128 bits.
+
+The response model is an honest prover model, not a security assumption. An
+exact calibration uses the measured source energy. Other eligible one-hot
+states use the balanced-digit second moment with empirical headroom. The
+planner freezes the resulting candidate cap into the schedule. The verifier
+still enforces that exact cap. A model error can make proving fail more often,
+but it cannot make the verifier accept a response above the cap.
 
 **Implementation map**
 

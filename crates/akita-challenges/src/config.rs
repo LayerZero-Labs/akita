@@ -17,6 +17,118 @@ pub const D64_PRODUCTION_PM1_COUNT: usize = 31;
 /// Production D=64 signed sparse ±2 count (LaBRADOR-aligned).
 pub const D64_PRODUCTION_PM2_COUNT: usize = 10;
 
+/// D=64 exact shell used by the selective-L2 operator-norm route.
+///
+/// The raw family has about 130.15 bits of support. The independently checked
+/// `Gamma <= 18` certificate retains about 128.06 bits; the runtime predicate
+/// uses threshold 19 so its strict fixed-point enclosure provably contains
+/// that certified subset.
+pub const D64_L2_OP_NORM_PM1_COUNT: usize = 31;
+pub const D64_L2_OP_NORM_PM2_COUNT: usize = 11;
+
+/// D=128 selective-L2 route reuses the production `(31, 0)` shell.
+pub const D128_L2_OP_NORM_PM1_COUNT: usize = 31;
+pub const D128_L2_OP_NORM_PM2_COUNT: usize = 0;
+
+/// Verifier-enforced operator-norm rejection policy for selective L2 folds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OperatorNormRejection {
+    /// Strict certified predicate threshold used by prover and verifier.
+    pub threshold: u32,
+    /// Mathematical threshold whose accepted-support floor was certified.
+    pub certified_subset_threshold: u32,
+}
+
+impl OperatorNormRejection {
+    /// D=64 selective-L2 policy. Its support certificate is
+    /// `cert_d64_a31_b11_gamma18.json` from the Akita paper artifacts.
+    pub const D64_SELECTIVE_L2: Self = Self {
+        threshold: 19,
+        certified_subset_threshold: 18,
+    };
+
+    /// D=128 selective-L2 policy. Its support certificate is
+    /// `scripts/operator_norm/d128/cert_d128_w31_gamma13.json`.
+    pub const D128_SELECTIVE_L2: Self = Self {
+        threshold: 14,
+        certified_subset_threshold: 13,
+    };
+
+    /// Validate the exact challenge family covered by the support certificate.
+    pub fn validate(
+        self,
+        ring_d: usize,
+        config: &SparseChallengeConfig,
+    ) -> Result<(), &'static str> {
+        let covered = match self {
+            Self::D64_SELECTIVE_L2 => {
+                ring_d == 64
+                    && config.count_pm1 == D64_L2_OP_NORM_PM1_COUNT
+                    && config.count_pm2 == D64_L2_OP_NORM_PM2_COUNT
+            }
+            Self::D128_SELECTIVE_L2 => {
+                ring_d == 128
+                    && config.count_pm1 == D128_L2_OP_NORM_PM1_COUNT
+                    && config.count_pm2 == D128_L2_OP_NORM_PM2_COUNT
+            }
+            _ => false,
+        };
+        if !covered {
+            return Err("unsupported operator-norm rejection policy or challenge family");
+        }
+        Ok(())
+    }
+
+    /// Canonical transcript-domain bytes for this rejection policy.
+    pub fn domain_separator_bytes(self) -> [u8; 9] {
+        let mut out = [0u8; 9];
+        out[0] = 1;
+        out[1..5].copy_from_slice(&self.threshold.to_le_bytes());
+        out[5..9].copy_from_slice(&self.certified_subset_threshold.to_le_bytes());
+        out
+    }
+}
+
+/// Exact challenge config paired with
+/// [`OperatorNormRejection::D64_SELECTIVE_L2`].
+pub const D64_SELECTIVE_L2_CHALLENGE_CONFIG: SparseChallengeConfig = SparseChallengeConfig {
+    count_pm1: D64_L2_OP_NORM_PM1_COUNT,
+    count_pm2: D64_L2_OP_NORM_PM2_COUNT,
+};
+
+/// Exact challenge config paired with
+/// [`OperatorNormRejection::D128_SELECTIVE_L2`].
+pub const D128_SELECTIVE_L2_CHALLENGE_CONFIG: SparseChallengeConfig = SparseChallengeConfig {
+    count_pm1: D128_L2_OP_NORM_PM1_COUNT,
+    count_pm2: D128_L2_OP_NORM_PM2_COUNT,
+};
+
+/// Challenge family selected by a certified selective-L2 route.
+#[inline]
+#[must_use]
+pub fn selective_l2_challenge_config(ring_d: usize) -> Option<SparseChallengeConfig> {
+    match ring_d {
+        64 => Some(D64_SELECTIVE_L2_CHALLENGE_CONFIG),
+        128 => Some(D128_SELECTIVE_L2_CHALLENGE_CONFIG),
+        _ => None,
+    }
+}
+
+/// Rejection policy selected by a certified selective-L2 schedule, if any.
+#[inline]
+#[must_use]
+pub fn selective_l2_operator_norm_rejection(
+    ring_d: usize,
+    config: &SparseChallengeConfig,
+) -> Option<OperatorNormRejection> {
+    let policy = match ring_d {
+        64 => OperatorNormRejection::D64_SELECTIVE_L2,
+        128 => OperatorNormRejection::D128_SELECTIVE_L2,
+        _ => return None,
+    };
+    policy.validate(ring_d, config).is_ok().then_some(policy)
+}
+
 /// Ring degrees with a production fold-challenge ladder entry.
 macro_rules! production_fold_challenge_ring_dims {
     ($($dim:literal),+ $(,)?) => {
@@ -320,5 +432,27 @@ mod entropy_tests {
                 assert!(cfg.validate_for_ring_dim(*d).is_ok());
             }
         }
+    }
+
+    #[test]
+    fn selective_l2_operator_norm_policies_are_dimension_and_family_typed() {
+        let d64 = D64_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let d128 = D128_SELECTIVE_L2_CHALLENGE_CONFIG;
+        assert_eq!(selective_l2_challenge_config(64), Some(d64));
+        assert_eq!(selective_l2_challenge_config(128), Some(d128));
+        assert_eq!(selective_l2_challenge_config(256), None);
+        assert_eq!(
+            selective_l2_operator_norm_rejection(64, &d64),
+            Some(OperatorNormRejection::D64_SELECTIVE_L2)
+        );
+        assert_eq!(
+            selective_l2_operator_norm_rejection(128, &d128),
+            Some(OperatorNormRejection::D128_SELECTIVE_L2)
+        );
+        assert!(selective_l2_operator_norm_rejection(64, &d128).is_none());
+        assert!(selective_l2_operator_norm_rejection(128, &d64).is_none());
+        assert!(OperatorNormRejection::D128_SELECTIVE_L2
+            .validate(128, &SparseChallengeConfig::pm1_only(30))
+            .is_err());
     }
 }

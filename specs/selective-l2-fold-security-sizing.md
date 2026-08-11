@@ -117,9 +117,10 @@ This change does not add the following features.
 * It does not replace L infinity sizing at every fold.
 * It does not add an L2 check to the root or early folds.
 * It does not use a Gaussian assumption as part of security.
-* It does not use the experimental challenge operator norm cap of 17.
-* It does not add challenge operator norm rejection.
-* It does not add a direct terminal L2 check or force terminal rank three.
+* It does not use an uncertified operator norm cap of 17.
+* It does not add operator norm rejection above D128 without a separate
+  accepted support certificate.
+* It does not force terminal rank three.
 * It does not remove the digit range proof.
 * It does not add zero knowledge machinery, four square slack, carry witnesses,
   or an inequality proof inside the field.
@@ -254,10 +255,10 @@ for every accepted proof.
 
 The response distribution affects completeness and prover cost. It determines
 how often the prover can find an allowed Fiat Shamir nonce whose response lies
-below `S_max`. This change uses measured profiles to choose useful caps. A later
-change may replace those measurements with a proved Rademacher or Gaussian
-model. That later model may improve cap selection, but it is not an assumption
-in the binding proof.
+below `S_max`. The planner uses exact source-energy calibrations where they are
+available and a balanced-digit second-moment model elsewhere. End-to-end
+measurements set the empirical multiplier. Neither input is an assumption in
+the binding proof.
 
 ## Protocol design
 
@@ -286,18 +287,18 @@ claims are present and how many values to read.
 ### Candidate eligibility
 
 The planner always emits an L infinity candidate. It may emit an L2 candidate
-only when a checked profile supplies `S_max` and the norm proof shape for that
+only when a calibrated one-hot profile enables the response model and the
+canonical derivation supplies `S_max` and the norm proof shape for that
 physical response domain.
 
 There is no global L2 cap and no hard coded rule that every level after a fixed
 index must use L2. Different field profiles and witness geometries reach useful
 energy ranges at different levels. Generated schedules record the exact levels
-that select L2.
+and concrete caps that select L2.
 
-The first rollout supplies caps only for later nonterminal folds whose
-acceptance rate has been measured with the CI benchmark profiles. A candidate
-is discarded if its measured nonce search exceeds the existing attempt cap or
-if its complete suffix is not smaller than an L infinity suffix.
+The model starts at level 3. The planner discards a candidate if it does not
+lower the A rank or if its complete suffix is not smaller than an L infinity
+suffix. The existing bounded nonce limit remains unchanged.
 
 ### Prover acceptance
 
@@ -446,22 +447,32 @@ command to rebuild the Rust rows and the local audit file.
 cargo run -p akita-sis-estimator --release --example euclidean_width_table -- --format rust-split
 ```
 
-### Exact candidate admission
+### Calibrated response model admission
 
-The planner keeps its ordinary L infinity search at every state. A measured cap
-does not change any earlier state. When the current fold level and input witness
-length match a cap, the cap's physical response length determines one block
-split. The planner builds that one L2 candidate and keeps it only when it lowers
-the A rank for the same split.
+The planner keeps its ordinary L infinity search at every state. A zero-length
+source-energy calibration opts a family into the balanced-digit response model.
+At level 3 and later, the planner evaluates the ordinary best block split under
+both security routes for response bases 16 and above, and keeps the L2
+alternative only when it lowers the A rank. Response basis 8 is excluded from
+the L2 route because it caused deterministic stage-2 folded-oracle consistency
+failures in two D64 production profiles. The underlying protocol cause has not
+been generalized and fixed. Exact physical-geometry rows remain available for focused fixtures and
+take precedence over the model only when the source basis, challenge ring
+dimension, challenge energy, and the rest of the state key all match.
+Production exact source-energy calibrations use a common 1.25 response-tail
+multiplier.
+
+For an uncalibrated state, the modeled cap is the balanced-digit second moment
+`input_len * (B^2 + 2) / 12`, times the fixed challenge squared energy and a
+1.75 empirical multiplier. End-to-end samples cover fp32, fp64, and fp128. The
+recorded maxima retain at least 15 percent cap margin. This is a completeness
+model, not a soundness assumption. The selected concrete cap is frozen into
+the schedule and remains the verifier-enforced SIS input.
 
 The existing suffix search prices the ordinary L infinity candidate and the
-exact L2 candidate. This comparison includes the different A rank, T width,
+modeled L2 candidate. This comparison includes the different A rank, T width,
 next witness length, later folds, and terminal response. The planner does not
-keep extra predecessor splits to reach a future cap.
-
-Caps may start at any eligible later fold and may have gaps. Each cap must name
-a valid exact candidate at fold level 3 or later and below the recursion depth
-limit. The cap list must be strictly sorted.
+keep extra predecessor splits merely to expose more modeled alternatives.
 
 The final planner comparison includes the norm proof bytes, changed A payload,
 changed T decomposition, changed next witness, all later folds, and the
@@ -508,8 +519,9 @@ infinity correction to the new norm proof.
 * [x] The Euclidean scalar mapping uses `sqrt(C_2_sq)` and never
       `sqrt(width * C_2_sq)` for a complete collision norm.
 * [x] Production L2 table rows use quantum ADPS16 at 128 bits.
-* [x] At an exact measured state, the planner prices the ordinary L infinity
-      candidate and the one L2 candidate determined by the cap geometry.
+* [x] At each calibrated suffix state, the planner prices the ordinary L
+      infinity candidate and at most one L2 alternative for its canonical
+      split.
 * [x] Root, early, and terminal levels carry no L2 proof.
 * [x] Tampering with the norm, cap, route, subclaim, virtual evaluation, nonce,
       or proof shape causes verification to fail.
@@ -615,12 +627,23 @@ Witness geometry and fold history differ by level and field profile. One cap
 either fails honest proving or loses the expected rank reduction. Caps are
 schedule values attached only to checked candidates.
 
-#### Operator norm cap 17
+#### Certified operator norm rejection
 
-A smaller challenge multiplication operator norm can improve the L2 formula.
-It requires a verifier enforced challenge rejection rule and its own accepted
-challenge analysis. This change uses the physical challenge L1 norm, which is
-already deterministic and sound.
+A smaller challenge multiplication operator norm improves the L2 formula.
+The D64 continuation uses the `(31, 11)` shell with a certified true threshold
+of 18 and a strict integer threshold of 19. The D128 continuation reuses the
+production `(31, 0)` shell with a certified true threshold of 13 and a strict
+threshold of 14. The transcript binds the family and both thresholds. The
+prover and verifier replay the same rejection sequence. Each route has an exact
+accepted support certificate that retains at least 128 bits. Other dimensions
+continue to use the deterministic challenge L1 norm.
+
+#### Direct terminal L2 check
+
+The terminal response is already clear. The verifier decodes every centered
+coefficient, computes its exact integer squared norm, and rejects a value above
+the scheduled cap. This route needs no recursive norm proof. It uses certified
+operator norm rejection and the same A role collision formula.
 
 #### Four square inequality proof
 

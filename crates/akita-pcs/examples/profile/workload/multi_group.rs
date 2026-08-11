@@ -22,7 +22,6 @@ use akita_prover::{
     RuntimeCommitBackendFor,
 };
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_transcript::AkitaTranscript;
 use akita_types::{
     dispatch_for_field, BasisMode, CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding,
     GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, PolynomialGroupLayout,
@@ -338,7 +337,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         .selection();
 
         let t_prove = Instant::now();
-        let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
+        let mut prover_transcript = super::profile_transcript::<FF>();
         tracing::info!(
             label,
             ?setup_contribution_mode,
@@ -455,7 +454,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         .expect("verifier statement")
     };
     let verify = |statement| {
-        let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
+        let mut verifier_transcript = super::profile_transcript::<FF>();
         AkitaCommitmentScheme::<ProofCfg>::batched_verify(
             &proof,
             &verifier_setup,

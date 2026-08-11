@@ -20,3 +20,13 @@ use proof_size::{
     assert_observed_proof_size, planned_payload_bytes, report_proof_size_against_planner,
 };
 pub(crate) use single_group::{run_dense_for, run_onehot};
+
+fn profile_transcript<F>() -> akita_transcript::AkitaTranscript<F>
+where
+    F: akita_field::CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge,
+{
+    let label = std::env::var("AKITA_L2_MODEL_SAMPLE")
+        .map(|sample| format!("profile/l2-model/{sample}"))
+        .unwrap_or_else(|_| "profile".to_string());
+    akita_transcript::AkitaTranscript::<F>::new(label.as_bytes())
+}

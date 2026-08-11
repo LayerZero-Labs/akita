@@ -109,6 +109,7 @@ fn enumerate_suffixes(
                         || level >= akita_schedules::ADAPTIVE_SEARCH_LEVELS
                     {
                         suffix_dp::try_terminal_direct_suffix_cost(
+                            policy,
                             input_witness_len,
                             &params,
                             field_bits,

@@ -396,8 +396,8 @@ fn run_profile_onehot_fp128_with_cfg<
     num_polys: usize,
 ) {
     assert!(
-        matches!(nv, 32 | 36),
-        "fp128 one-hot profile supports generated nv=32 and nv=36 rows"
+        matches!(nv, 32 | 36 | 40),
+        "fp128 one-hot profile supports generated nv=32, nv=36, and nv=40 rows"
     );
     assert_singleton_mode(label, num_polys);
 

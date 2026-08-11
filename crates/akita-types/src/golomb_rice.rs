@@ -405,6 +405,29 @@ pub fn golomb_rice_total_wire_bits(
     })
 }
 
+/// Conservative planner estimate for an L2-bounded Golomb-Rice payload.
+///
+/// The zigzag magnitude is at most `2 * |z_i|`. Cauchy-Schwarz gives
+/// `sum_i |z_i| <= floor(sqrt(num_values * l2_sq_cap))`, which bounds the
+/// complete unary-quotient contribution without a distributional assumption.
+/// This estimate does not replace the scheduled payload cap enforced on wire.
+#[must_use]
+pub fn golomb_rice_l2_planner_payload_bytes(
+    num_values: usize,
+    l2_sq_cap: u128,
+    rice_low_bits: u32,
+) -> Option<usize> {
+    let num_values_u128 = u128::try_from(num_values).ok()?;
+    let sum_abs_bound = num_values_u128.checked_mul(l2_sq_cap)?.isqrt();
+    let quotient_sum_bound = sum_abs_bound.checked_mul(2)?.checked_shr(rice_low_bits)?;
+    let fixed_bits = num_values.checked_mul(rice_low_bits as usize + 1)?;
+    let quotient_bits = usize::try_from(quotient_sum_bound).ok()?;
+    fixed_bits
+        .checked_add(quotient_bits)?
+        .checked_add(7)
+        .map(|bits| bits / 8)
+}
+
 /// Whether every coefficient lies in `[-cap, cap]`.
 pub fn golomb_rice_values_within_cap(values: &[i64], cap: u128) -> Result<(), AkitaError> {
     for &n in values {
@@ -628,6 +651,55 @@ mod tests {
             .map(|&n| golomb_rice_quotient_for_coord(n, rice_low_bits, zigzag_w).expect("quotient"))
             .max()
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn l2_planner_payload_bound_contains_actual_encodings() {
+        let rice_low_bits = 4;
+        let cases = [
+            vec![0i64; 64],
+            vec![7i64; 64],
+            {
+                let mut sparse = vec![0i64; 64];
+                sparse[0] = 127;
+                sparse[17] = -31;
+                sparse
+            },
+            (0..64)
+                .map(|index| if index % 2 == 0 { 15 } else { -16 })
+                .collect(),
+        ];
+
+        for values in cases {
+            let l2_sq_cap = values.iter().fold(0u128, |acc, &value| {
+                acc + i128::from(value).unsigned_abs().pow(2)
+            });
+            let zigzag_w = golomb_rice_zigzag_width(
+                values
+                    .iter()
+                    .map(|&value| i128::from(value).unsigned_abs())
+                    .max()
+                    .unwrap_or(0),
+            );
+            let encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).expect("encode");
+            let estimate =
+                golomb_rice_l2_planner_payload_bytes(values.len(), l2_sq_cap, rice_low_bits)
+                    .expect("planner estimate");
+            assert!(
+                encoded.len() <= estimate,
+                "actual payload {} exceeds L2 estimate {estimate}",
+                encoded.len()
+            );
+        }
+    }
+
+    #[test]
+    fn l2_planner_payload_estimate_tracks_energy() {
+        let low =
+            golomb_rice_l2_planner_payload_bytes(1024, 1 << 20, 9).expect("low-energy estimate");
+        let high =
+            golomb_rice_l2_planner_payload_bytes(1024, 1 << 30, 9).expect("high-energy estimate");
+        assert!(low < high);
     }
 
     #[test]

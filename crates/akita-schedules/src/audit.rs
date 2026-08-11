@@ -280,15 +280,17 @@ fn audit_committed_params(
                     num_chunks: params.witness_chunk.num_chunks,
                     inner_width: expected_a_width,
                     ring_dimension: dims.d_a(),
+                    source_log_basis: params.log_basis_inner,
                     fold_basis,
                     fold_digit_count: params.num_digits_fold,
                     fold_challenge_config: &params.fold_challenge_config,
+                    norm_proof_shape: None,
                 },
             )?
             .ok_or_else(|| {
                 invalid(
                     label,
-                    "L2 route is not an admitted exact measured later scalar fold",
+                    "L2 route is not admitted by the calibrated suffix response model",
                 )
             })?;
             if params.inner_commit_matrix != expected {
@@ -388,6 +390,22 @@ fn audit_terminal(
         .checked_add(expected_e_field_elems)
         .and_then(|value| value.checked_add(expected_t_field_elems))
         .ok_or_else(|| invalid(label, "terminal response coordinates overflow"))?;
+    if let akita_types::InnerCommitSecurityRoute::L2 {
+        norm_proof_shape, ..
+    } = params.inner_commit_matrix.security_route()
+    {
+        if norm_proof_shape
+            != (akita_types::PhysicalL2NormProofShape::Direct {
+                physical_response_len: expected_z_coords,
+            })
+            || akita_challenges::selective_l2_operator_norm_rejection(d, sparse).is_none()
+        {
+            return Err(invalid(
+                label,
+                "terminal L2 route is not a direct check with a certified challenge",
+            ));
+        }
+    }
     if response_shape.layout.groups.len() != 1
         || response_shape.layout.ring_dimension != d
         || group.z_coords != expected_z_coords

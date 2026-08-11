@@ -78,19 +78,32 @@ pub fn role_a_collision_inf_norm_for_response_bound(
 ///
 /// If each response has squared norm at most `response_l2_sq_bound`, the same
 /// extraction factors as [`role_a_collision_inf_norm_for_response_bound`]
-/// bound the collision length by `8 * challenge_l1_norm * ||z||_2`. Squaring
-/// that scale gives `64 * challenge_l1_norm^2 * response_l2_sq_bound`.
+/// bound the collision length by `8 * challenge_operator_bound * ||z||_2`.
+/// The challenge bound is either its deterministic L1 norm or a
+/// verifier-enforced multiplication-operator threshold. Squaring that scale
+/// gives `64 * challenge_operator_bound^2 * response_l2_sq_bound`.
 ///
 /// The response bound covers the complete physical coefficient vector across
 /// every A-matrix input row. No embedding or matrix-width factor is applied.
 #[must_use]
 pub fn role_a_collision_l2_sq_for_response_bound(
-    challenge_l1_norm: u128,
+    challenge_operator_bound: u128,
     response_l2_sq_bound: u128,
 ) -> Option<u128> {
     64u128
-        .checked_mul(challenge_l1_norm.checked_mul(challenge_l1_norm)?)?
+        .checked_mul(challenge_operator_bound.checked_mul(challenge_operator_bound)?)?
         .checked_mul(response_l2_sq_bound)
+}
+
+/// Checked squared Euclidean norm of centered physical coefficients.
+#[must_use]
+pub fn checked_centered_l2_sq<T: Copy + Into<i64>>(values: &[T]) -> Option<u128> {
+    values.iter().try_fold(0u128, |sum, &value| {
+        let magnitude = u128::from(value.into().unsigned_abs());
+        magnitude
+            .checked_mul(magnitude)
+            .and_then(|square| sum.checked_add(square))
+    })
 }
 
 /// Largest raw folded-response `L∞` bound fitting an A-role collision bucket.

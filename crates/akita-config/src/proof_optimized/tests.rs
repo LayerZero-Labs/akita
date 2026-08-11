@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(feature = "schedules-default")]
-use crate::proof_optimized::{fp128, fp32};
+use crate::proof_optimized::{fp128, fp32, fp64};
 #[cfg(feature = "schedules-default")]
 use crate::CommitmentConfig;
 #[cfg(feature = "schedules-default")]
@@ -10,6 +10,17 @@ use akita_schedules::fp32_onehot_table;
 use akita_schedules::{schedule_from_entry, GeneratedScheduleTable};
 #[cfg(feature = "schedules-default")]
 use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, PolynomialGroupLayout};
+
+#[test]
+#[allow(clippy::assertions_on_constants)]
+fn exact_source_calibrations_keep_empirical_response_tail_margin() {
+    const MAX_OBSERVED_RESPONSE_TO_MEAN_PPM: u128 = 1_055_525;
+    const REQUIRED_RESIDUAL_MARGIN_PPM: u128 = 1_150_000;
+    assert!(
+        EXACT_SOURCE_RESPONSE_HEADROOM_PPM * 1_000_000
+            >= MAX_OBSERVED_RESPONSE_TO_MEAN_PPM * REQUIRED_RESIDUAL_MARGIN_PPM
+    );
+}
 
 #[cfg(feature = "schedules-default")]
 #[test]
@@ -43,6 +54,175 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
             .map_or(schedule.root.output_witness_len, |step| step
                 .output_witness_len)
     );
+}
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn d64_selective_l2_binds_the_certified_operator_norm_family() {
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(40));
+    let schedule =
+        fp128::OneHot::runtime_schedule(key.clone()).expect("generated one-hot schedule");
+    let (step, table_key, response_cap) = schedule
+        .recursive_folds
+        .iter()
+        .find_map(
+            |step| match step.params.witness.inner_commit_matrix.security_route() {
+                akita_types::InnerCommitSecurityRoute::Linf(_) => None,
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    table_key,
+                    response_l2_sq_cap,
+                    ..
+                } => Some((step, table_key, response_l2_sq_cap)),
+            },
+        )
+        .expect("shipped fp128 row must retain one L2 route");
+    assert_eq!(
+        step.params.witness.fold_challenge_config,
+        akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+    );
+    assert_eq!(step.params.witness.log_basis_open, 4);
+    assert_eq!(step.params.witness.num_digits_fold, 3);
+    assert_eq!(
+        step.params.witness.inner_commit_matrix.input_width()
+            * step.params.witness.inner_commit_matrix.ring_dimension(),
+        65_536,
+    );
+    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 4,);
+    assert_eq!(response_cap, 4_546_785_600);
+    let expected_collision = akita_types::sis::role_a_collision_l2_sq_for_response_bound(
+        u128::from(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2.threshold),
+        response_cap,
+    )
+    .expect("collision bound");
+    assert_eq!(
+        table_key.collision_l2_sq,
+        expected_collision.next_power_of_two()
+    );
+
+    let catalog = fp128::OneHot::schedule_catalog().expect("fp128 catalog");
+    let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
+    let proof_bytes = akita_schedules::estimate_proof_bytes(
+        entry,
+        &key,
+        &crate::policy_of::<fp128::OneHot>(),
+        fp128::OneHot::ring_challenge_config,
+    )
+    .expect("proof estimate");
+    let mut no_l2_policy = crate::policy_of::<fp128::OneHot>();
+    no_l2_policy.selective_l2_fold_caps = &[];
+    let no_l2_bytes = akita_planner::find_schedule(
+        &key,
+        fp128::OneHot::root_honest_fold_policy(),
+        &[],
+        &no_l2_policy,
+        fp128::OneHot::ring_challenge_config,
+    )
+    .expect("Linf-only schedule")
+    .estimate
+    .estimated_proof_payload_bytes()
+    .expect("Linf-only proof estimate");
+    eprintln!(
+        "D64 selective L2: rank={}, collision_l2_sq={}, response_cap={}, proof_bytes={}, linf_only_bytes={}",
+        step.params.witness.inner_commit_matrix.output_rank(),
+        table_key.collision_l2_sq,
+        response_cap,
+        proof_bytes,
+        no_l2_bytes,
+    );
+    assert!(proof_bytes < no_l2_bytes);
+}
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn fp64_response_model_selects_globally_winning_l2_suffix() {
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(28));
+    let schedule = fp64::OneHot::runtime_schedule(key.clone()).expect("generated fp64 schedule");
+    assert!(schedule.recursive_folds.iter().any(|step| matches!(
+        step.params.witness.inner_commit_matrix.security_route(),
+        akita_types::InnerCommitSecurityRoute::L2 { .. }
+    )));
+    let terminal = &schedule.terminal.params;
+    assert_eq!(
+        terminal.sparse_challenge_config,
+        akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+    );
+    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(3_614_436_000));
+    assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 7);
+
+    let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");
+    let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
+    let proof_bytes = akita_schedules::estimate_proof_bytes(
+        entry,
+        &key,
+        &crate::policy_of::<fp64::OneHot>(),
+        fp64::OneHot::ring_challenge_config,
+    )
+    .expect("proof estimate");
+    let mut linf_policy = crate::policy_of::<fp64::OneHot>();
+    linf_policy.selective_l2_fold_caps = &[];
+    let linf_schedule = akita_planner::find_schedule(
+        &key,
+        fp64::OneHot::root_honest_fold_policy(),
+        &[],
+        &linf_policy,
+        fp64::OneHot::ring_challenge_config,
+    )
+    .expect("fp64 Linf schedule");
+    let linf_bytes = linf_schedule
+        .estimate
+        .estimated_proof_payload_bytes()
+        .expect("fp64 proof estimate");
+    assert_eq!(
+        schedule.recursive_folds.len(),
+        linf_schedule.schedule.recursive_folds.len(),
+        "the modeled L2 suffix should improve bytes without adding a fold"
+    );
+    eprintln!(
+        "fp64 direct terminal L2: rank={}, cap={:?}, proof_bytes={}, linf_only_bytes={}",
+        terminal.witness.inner_commit_matrix.output_rank(),
+        terminal.witness.response_l2_sq_cap(),
+        proof_bytes,
+        linf_bytes,
+    );
+    assert!(proof_bytes < linf_bytes);
+}
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn response_model_reduces_planned_payload_in_every_field_profile() {
+    fn compare<Cfg: CommitmentConfig>(num_vars: usize) -> (usize, usize) {
+        let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+        let catalog = Cfg::schedule_catalog().expect("generated catalog");
+        let entry =
+            akita_schedules::generated::table_entry(catalog, &key).expect("generated schedule row");
+        let modeled = akita_schedules::estimate_proof_bytes(
+            entry,
+            &key,
+            &crate::policy_of::<Cfg>(),
+            Cfg::ring_challenge_config,
+        )
+        .expect("modeled proof estimate");
+        let mut linf_policy = crate::policy_of::<Cfg>();
+        linf_policy.selective_l2_fold_caps = &[];
+        let linf = akita_planner::find_schedule(
+            &key,
+            Cfg::root_honest_fold_policy(),
+            &[],
+            &linf_policy,
+            Cfg::ring_challenge_config,
+        )
+        .expect("L-infinity schedule")
+        .estimate
+        .estimated_proof_payload_bytes()
+        .expect("L-infinity proof estimate");
+        assert!(modeled < linf);
+        (modeled, linf)
+    }
+
+    let fp32 = compare::<fp32::OneHot>(30);
+    let fp64 = compare::<fp64::OneHot>(30);
+    let fp128 = compare::<fp128::OneHot>(36);
+    eprintln!("planned response-model/Linf bytes: fp32={fp32:?}, fp64={fp64:?}, fp128={fp128:?}");
 }
 
 #[cfg(feature = "schedules-default")]

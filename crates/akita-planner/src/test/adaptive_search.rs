@@ -158,6 +158,7 @@ fn terminal_candidates_compete_across_opening_bases() {
         ring_dimension: 128,
     };
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selective_l2_fold_caps = &[];
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(14),
         &policy,
@@ -249,29 +250,8 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
         )
     }));
 
-    // Tightening the same measured geometry can make a smaller successor end
-    // the complete suffix one fold earlier than the L-infinity-only frontier.
-    let tightened_caps = fp128_policy
-        .selective_l2_fold_caps
-        .iter()
-        .copied()
-        .map(|mut cap| {
-            cap.response_l2_sq_cap = 2;
-            cap
-        })
-        .collect::<Vec<_>>();
-    let mut tightened_policy = fp128_policy;
-    tightened_policy.selective_l2_fold_caps = Box::leak(tightened_caps.into_boxed_slice());
     let mut linf_policy = fp128_policy;
     linf_policy.selective_l2_fold_caps = &[];
-    let tightened = find_schedule(
-        PolynomialGroupLayout::singleton(40),
-        &tightened_policy,
-        fp128::OneHot::root_honest_fold_policy(),
-        &domain,
-        fp128::OneHot::ring_challenge_config,
-    )
-    .expect("tightened fp128 L2 schedule");
     let linf = find_schedule(
         PolynomialGroupLayout::singleton(40),
         &linf_policy,
@@ -280,6 +260,46 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
         fp128::OneHot::ring_challenge_config,
     )
     .expect("fp128 L-infinity comparison schedule");
+    // Some ordinary later split must become a one-fold-shorter suffix under a
+    // synthetic exact rank-one cap. Searching the current Linf path keeps this
+    // regression independent of unrelated geometry retuning.
+    let tightened = (3..=linf.schedule.recursive_folds.len())
+        .find_map(|target_level| {
+            let target = &linf.schedule.recursive_folds[target_level - 1];
+            let target_matrix = &target.params.witness.inner_commit_matrix;
+            let source_log_basis = linf.schedule.recursive_folds[target_level - 2]
+                .params
+                .witness
+                .log_basis_open;
+            let tightened_caps = vec![akita_schedules::SelectiveL2FoldCap {
+                fold_level: target_level,
+                input_witness_len: target.input_witness_len,
+                source_log_basis,
+                challenge_ring_dimension: target_matrix.ring_dimension(),
+                challenge_l2_sq: akita_challenges::selective_l2_challenge_config(
+                    target_matrix.ring_dimension(),
+                )
+                .expect("certified target challenge")
+                .challenge_l2_sq_max(),
+                physical_response_len: target_matrix.input_width() * target_matrix.ring_dimension(),
+                fold_basis: 1usize << target.params.witness.log_basis_open,
+                fold_digit_count: target.params.witness.num_digits_fold,
+                response_l2_sq_cap: 2,
+            }];
+            let mut tightened_policy = fp128_policy;
+            tightened_policy.selective_l2_fold_caps = Box::leak(tightened_caps.into_boxed_slice());
+            let candidate = find_schedule(
+                PolynomialGroupLayout::singleton(40),
+                &tightened_policy,
+                fp128::OneHot::root_honest_fold_policy(),
+                &domain,
+                fp128::OneHot::ring_challenge_config,
+            )
+            .ok()?;
+            (candidate.schedule.recursive_folds.len() + 1 == linf.schedule.recursive_folds.len())
+                .then_some(candidate)
+        })
+        .expect("a tighter exact L2 cap must remove one recursive fold");
     assert_eq!(
         tightened.schedule.recursive_folds.len() + 1,
         linf.schedule.recursive_folds.len()
@@ -301,10 +321,10 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
         akita_types::CommitmentPayloadMode::Compressed,
         &fp32_challenge,
         CommitmentRingDims::uniform(128),
-        386_560,
-        crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
-        4,
-        4,
+        252_544,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 6 },
+        6,
+        6,
         3,
         None,
     )
@@ -322,9 +342,38 @@ fn complete_suffix_selects_l2_only_when_it_wins_globally() {
     let l2_rank = rank_for(true).expect("fp32 L2 candidate");
     assert!(l2_rank < linf_rank);
 
+    let l2_params = candidates
+        .iter()
+        .find(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+        })
+        .map(|(params, _)| params)
+        .expect("fp32 L2 candidate");
+    let InnerCommitSecurityRoute::L2 {
+        response_l2_sq_cap, ..
+    } = l2_params.inner_commit_matrix.security_route()
+    else {
+        unreachable!("selected fp32 candidate is L2")
+    };
+    let exact_fp32_caps = vec![akita_schedules::SelectiveL2FoldCap {
+        fold_level: 3,
+        input_witness_len: 252_544,
+        source_log_basis: 6,
+        challenge_ring_dimension: 128,
+        challenge_l2_sq: 31,
+        physical_response_len: l2_params.inner_commit_matrix.input_width() * 128,
+        fold_basis: 64,
+        fold_digit_count: 2,
+        response_l2_sq_cap,
+    }];
+    let mut exact_fp32_policy = fp32_policy;
+    exact_fp32_policy.selective_l2_fold_caps = Box::leak(exact_fp32_caps.into_boxed_slice());
     let fp32_schedule = find_schedule(
         PolynomialGroupLayout::singleton(28),
-        &fp32_policy,
+        &exact_fp32_policy,
         fp32::OneHot::root_honest_fold_policy(),
         &domain,
         fp32::OneHot::ring_challenge_config,
@@ -899,6 +948,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     // fixed-D64 domain, where two equal-payload schedules differ in setup size.
     let mut base_policy = policy_of::<OneHotMultiChunkW4R2>();
     base_policy.uniform_ring_dimension = 64;
+    base_policy.selective_l2_fold_caps = &[];
     let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(
         PolynomialGroupLayout::singleton(32),

@@ -5,6 +5,8 @@
 //! commitment. Every [`SparseChallengeConfig`] uses the signed-sparse sampler:
 //! `count_pm1` coefficients at ±1 and `count_pm2` at ±2.
 
+mod op_norm;
+mod op_norm_accumulate;
 mod position_sample;
 mod signed_sparse;
 mod xof;
@@ -17,8 +19,103 @@ use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::Transcript;
+use std::sync::{Arc, LazyLock};
 
-use crate::{SparseChallenge, SparseChallengeConfig};
+use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
+
+use op_norm::OpNormTable;
+
+const OP_NORM_PREDICATE_SCALE: u32 = 48;
+const MAX_OP_NORM_ATTEMPTS: usize = 4096;
+static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
+    LazyLock::new(|| {
+        let config = crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let policy = OperatorNormRejection::D64_SELECTIVE_L2;
+        let table = OpNormTable::new(
+            64,
+            OP_NORM_PREDICATE_SCALE,
+            config.l1_norm() as u64,
+            u64::from(policy.threshold),
+        )
+        .map_err(|_| "failed to initialize the D64 selective-L2 operator-norm table")?;
+        if !table.strict_threshold_contains_true_subset(
+            u64::from(policy.certified_subset_threshold),
+            u64::from(policy.threshold),
+        ) {
+            return Err("the D64 operator-norm table does not contain its certified subset");
+        }
+        Ok(Arc::new(table))
+    });
+static D128_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
+    LazyLock::new(|| {
+        let config = crate::D128_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let policy = OperatorNormRejection::D128_SELECTIVE_L2;
+        let table = OpNormTable::new(
+            128,
+            OP_NORM_PREDICATE_SCALE,
+            config.l1_norm() as u64,
+            u64::from(policy.threshold),
+        )
+        .map_err(|_| "failed to initialize the D128 selective-L2 operator-norm table")?;
+        if !table.strict_threshold_contains_true_subset(
+            u64::from(policy.certified_subset_threshold),
+            u64::from(policy.threshold),
+        ) {
+            return Err("the D128 operator-norm table does not contain its certified subset");
+        }
+        Ok(Arc::new(table))
+    });
+
+pub(crate) fn sample_challenges_from_xof_cursor(
+    cursor: &mut XofCursor,
+    ring_d: usize,
+    n: usize,
+    cfg: &SparseChallengeConfig,
+    rejection: Option<OperatorNormRejection>,
+) -> Result<Vec<SparseChallenge>, AkitaError> {
+    let Some(rejection) = rejection else {
+        return SignedSparseScratch::sample_challenges(cursor, ring_d, n, cfg);
+    };
+    rejection
+        .validate(ring_d, cfg)
+        .map_err(|error| AkitaError::InvalidSetup(error.into()))?;
+    let table = match rejection {
+        OperatorNormRejection::D64_SELECTIVE_L2 => &*D64_SELECTIVE_L2_OP_NORM_TABLE,
+        OperatorNormRejection::D128_SELECTIVE_L2 => &*D128_SELECTIVE_L2_OP_NORM_TABLE,
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "unsupported operator-norm rejection policy".into(),
+            ));
+        }
+    };
+    let table = Arc::clone(
+        table
+            .as_ref()
+            .map_err(|message| AkitaError::InvalidSetup((*message).into()))?,
+    );
+    let mut scratch = SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2);
+    let mut challenges = Vec::with_capacity(n);
+    for _ in 0..n {
+        let mut accepted = None;
+        for _ in 0..MAX_OP_NORM_ATTEMPTS {
+            scratch.sample(cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
+            if table.accept_strict_parts(
+                scratch.positions(),
+                scratch.coeffs(),
+                u64::from(rejection.threshold),
+            )? {
+                accepted = Some(scratch.take_challenge());
+                break;
+            }
+        }
+        challenges.push(accepted.ok_or_else(|| {
+            AkitaError::InvalidInput(format!(
+                "operator-norm rejection exceeded {MAX_OP_NORM_ATTEMPTS} attempts"
+            ))
+        })?);
+    }
+    Ok(challenges)
+}
 
 /// Sample `n` sparse ring fold challenges from a transcript.
 ///
@@ -57,7 +154,7 @@ where
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
     let seed = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, 32);
     let mut cursor = XofCursor::from_seed(&seed);
-    SignedSparseScratch::sample_challenges(&mut cursor, ring_d, n, cfg)
+    sample_challenges_from_xof_cursor(&mut cursor, ring_d, n, cfg, None)
 }
 
 #[cfg(test)]

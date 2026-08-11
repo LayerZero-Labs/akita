@@ -416,12 +416,12 @@ fn finalize_recursive_level_candidate(
     Ok(Some((score, candidate_params, next_witness_len)))
 }
 
-/// Return the established L-infinity candidate plus any exact measured L2
+/// Return the established L-infinity candidate plus any calibrated L2
 /// alternative at this state.
 ///
-/// A measured cap binds the input length and physical response geometry, which
-/// determines one block split. The suffix DP then prices that alternative
-/// against the ordinary L-infinity candidate.
+/// An exact cap binds one physical response geometry. The general response
+/// model reuses the ordinary best split. The suffix DP then prices that
+/// alternative against the L-infinity candidate.
 #[allow(clippy::too_many_arguments)]
 fn recursive_level_base_candidate_for_split(
     policy: &PlannerPolicy,
@@ -585,6 +585,7 @@ fn best_linf_candidate(
 #[allow(clippy::too_many_arguments)]
 fn append_selective_l2_candidates(
     candidates: &mut Vec<(CommittedGroupParams, usize)>,
+    model_base: Option<&(CommittedGroupParams, usize)>,
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
@@ -595,20 +596,100 @@ fn append_selective_l2_candidates(
     log_basis_open: u32,
     fold_level: usize,
 ) -> Result<(), AkitaError> {
-    let Some(cap) = policy.selective_l2_fold_caps.iter().find(|cap| {
-        cap.fold_level == fold_level && cap.input_witness_len == search.current_witness_len
-    }) else {
-        return Ok(());
-    };
     let fold_basis = 1usize
         .checked_shl(log_basis_open)
         .ok_or_else(|| AkitaError::InvalidSetup("L2 fold basis overflow".into()))?;
+    let selected_l2_challenge = akita_challenges::selective_l2_challenge_config(dimensions.d_a());
+    let l2_challenge_cfg = selected_l2_challenge.as_ref().unwrap_or(ring_challenge_cfg);
+    let mut exact_geometries = policy
+        .selective_l2_fold_caps
+        .iter()
+        .filter(|cap| {
+            cap.fold_level == fold_level
+                && cap.input_witness_len == search.current_witness_len
+                && cap.source_log_basis == log_basis_inner
+                && cap.challenge_ring_dimension == dimensions.d_a()
+                && cap.challenge_l2_sq == l2_challenge_cfg.challenge_l2_sq_max()
+                && cap.fold_basis == fold_basis
+                && cap.physical_response_len != 0
+        })
+        .map(|cap| (cap.physical_response_len, cap.fold_digit_count))
+        .collect::<Vec<_>>();
+    exact_geometries.sort_unstable();
+    exact_geometries.dedup();
+    for &(physical_response_len, fold_digit_count) in &exact_geometries {
+        append_selective_l2_candidate(
+            candidates,
+            policy,
+            payload_mode,
+            ring_challenge_cfg,
+            dimensions,
+            search,
+            source,
+            log_basis_inner,
+            log_basis_open,
+            fold_level,
+            physical_response_len,
+            Some(fold_digit_count),
+        )?;
+    }
+    let model_enabled = policy.selective_l2_response_model_enabled();
+    if model_enabled {
+        if let Some((base, _)) = model_base {
+            let physical_response_len = base
+                .inner_commit_matrix
+                .input_width()
+                .checked_mul(dimensions.d_a())
+                .ok_or_else(|| AkitaError::InvalidSetup("L2 response length overflow".into()))?;
+            if !exact_geometries.iter().any(|(exact_len, digits)| {
+                *exact_len == physical_response_len && *digits == base.num_digits_fold
+            }) {
+                append_selective_l2_candidate(
+                    candidates,
+                    policy,
+                    payload_mode,
+                    ring_challenge_cfg,
+                    dimensions,
+                    search,
+                    source,
+                    log_basis_inner,
+                    log_basis_open,
+                    fold_level,
+                    physical_response_len,
+                    None,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_selective_l2_candidate(
+    candidates: &mut Vec<(CommittedGroupParams, usize)>,
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
+    search: &RecursiveLevelSearch,
+    source: crate::InnerBasisSource,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    fold_level: usize,
+    physical_response_len: usize,
+    exact_fold_digit_count: Option<usize>,
+) -> Result<(), AkitaError> {
+    let fold_basis = 1usize
+        .checked_shl(log_basis_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 fold basis overflow".into()))?;
+    let selected_l2_challenge = akita_challenges::selective_l2_challenge_config(dimensions.d_a());
+    let l2_challenge_cfg = selected_l2_challenge.as_ref().unwrap_or(ring_challenge_cfg);
     let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
     let d_a = dimensions.d_a();
-    if cap.fold_basis != fold_basis || cap.physical_response_len % d_a != 0 {
+    if !physical_response_len.is_multiple_of(d_a) {
         return Ok(());
     }
-    let inner_width = cap.physical_response_len / d_a;
+    let inner_width = physical_response_len / d_a;
     if delta_commit == 0 || !inner_width.is_multiple_of(delta_commit) {
         return Ok(());
     }
@@ -623,7 +704,7 @@ fn append_selective_l2_candidates(
     let Some(mut base) = recursive_level_base_candidate_for_split(
         policy,
         payload_mode,
-        ring_challenge_cfg,
+        l2_challenge_cfg,
         dimensions,
         search,
         source,
@@ -636,6 +717,9 @@ fn append_selective_l2_candidates(
         return Ok(());
     };
     let linf_rank = base.inner_commit_matrix.output_rank();
+    if exact_fold_digit_count.is_some_and(|expected| expected != base.num_digits_fold) {
+        return Ok(());
+    }
     let Some(inner_commit_matrix) = selective_l2_inner_matrix(
         policy,
         SelectiveL2CandidateGeometry {
@@ -645,9 +729,11 @@ fn append_selective_l2_candidates(
             num_chunks: search.num_chunks,
             inner_width: base.inner_commit_matrix.input_width(),
             ring_dimension: d_a,
+            source_log_basis: log_basis_inner,
             fold_basis,
             fold_digit_count: base.num_digits_fold,
-            fold_challenge_config: ring_challenge_cfg,
+            fold_challenge_config: l2_challenge_cfg,
+            norm_proof_shape: None,
         },
     )?
     else {
@@ -725,7 +811,7 @@ pub(crate) fn derive_candidate_level_params(
     else {
         return Ok(Vec::new());
     };
-    let mut candidates = best_linf_candidate(
+    let best_linf = best_linf_candidate(
         policy,
         payload_mode,
         ring_challenge_cfg,
@@ -735,11 +821,11 @@ pub(crate) fn derive_candidate_level_params(
         log_basis_inner,
         log_basis_open,
         fold_level,
-    )?
-    .into_iter()
-    .collect();
+    )?;
+    let mut candidates = best_linf.clone().into_iter().collect();
     append_selective_l2_candidates(
         &mut candidates,
+        best_linf.as_ref(),
         policy,
         payload_mode,
         ring_challenge_cfg,
@@ -827,6 +913,17 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     else {
         return Ok(Vec::new());
     };
+    let best_linf = best_linf_candidate(
+        policy,
+        payload_mode,
+        ring_challenge_cfg,
+        dimensions,
+        &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+    )?;
     let mut candidates = Vec::new();
     walk_recursive_splits(
         policy,
@@ -851,6 +948,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     )?;
     append_selective_l2_candidates(
         &mut candidates,
+        best_linf.as_ref(),
         policy,
         payload_mode,
         ring_challenge_cfg,

@@ -308,7 +308,8 @@ fn generated_entry(
                 .witness
                 .inner_commit_matrix
                 .coeff_linf_bound()
-                .expect("validated terminal matrix is L infinity"),
+                .unwrap_or(0),
+            response_l2_sq_cap: schedule.terminal.params.witness.response_l2_sq_cap(),
             z_admission_linf_cap: terminal_group.z_admission_linf_cap,
             z_rice_low_bits: terminal_group.z_rice_low_bits,
             z_payload_bytes: terminal_group.z_payload_bytes as u64,
@@ -539,13 +540,17 @@ fn emit_schedule_entry(
     }
     writeln!(
         out,
-        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
         emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
         entry.terminal.num_digits_inner,
         entry.terminal.inner_output_rank,
         entry.terminal.inner_coeff_linf_bound,
+        entry.terminal.response_l2_sq_cap.map_or_else(
+            || "None".to_string(),
+            |cap| format!("Some({cap})"),
+        ),
         entry.terminal.z_admission_linf_cap,
         entry.terminal.z_rice_low_bits,
         entry.terminal.z_payload_bytes,
@@ -636,9 +641,12 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         .iter()
         .map(|cap| {
             format!(
-                "SelectiveL2FoldCap {{ fold_level: {}, input_witness_len: {}, physical_response_len: {}, fold_basis: {}, fold_digit_count: {}, response_l2_sq_cap: {} }}",
+                "SelectiveL2FoldCap {{ fold_level: {}, input_witness_len: {}, source_log_basis: {}, challenge_ring_dimension: {}, challenge_l2_sq: {}, physical_response_len: {}, fold_basis: {}, fold_digit_count: {}, response_l2_sq_cap: {} }}",
                 cap.fold_level,
                 cap.input_witness_len,
+                cap.source_log_basis,
+                cap.challenge_ring_dimension,
+                cap.challenge_l2_sq,
                 cap.physical_response_len,
                 cap.fold_basis,
                 cap.fold_digit_count,

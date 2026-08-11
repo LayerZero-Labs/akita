@@ -105,6 +105,9 @@ fn recursive_candidates_add_only_the_exact_smaller_l2_alternative() {
     const TEST_L2_CAPS: &[SelectiveL2FoldCap] = &[SelectiveL2FoldCap {
         fold_level: 3,
         input_witness_len: 948_672,
+        source_log_basis: 4,
+        challenge_ring_dimension: 64,
+        challenge_l2_sq: 75,
         physical_response_len: 65_536,
         fold_basis: 16,
         fold_digit_count: 3,
@@ -151,6 +154,103 @@ fn recursive_candidates_add_only_the_exact_smaller_l2_alternative() {
         .min()
         .expect("measured L2 candidate");
     assert!(l2_rank < linf_rank);
+    assert_eq!(candidates.len(), 2);
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn mixed_model_policy_keeps_nonzero_exact_geometry() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_schedules::SelectiveL2FoldCap;
+    use akita_types::InnerCommitSecurityRoute;
+
+    const MIXED_CAPS: &[SelectiveL2FoldCap] = &[
+        SelectiveL2FoldCap {
+            fold_level: 3,
+            input_witness_len: 948_672,
+            source_log_basis: 4,
+            challenge_ring_dimension: 64,
+            challenge_l2_sq: 75,
+            physical_response_len: 65_536,
+            fold_basis: 16,
+            fold_digit_count: 3,
+            response_l2_sq_cap: 1 << 29,
+        },
+        SelectiveL2FoldCap::from_source_energy_model(11, 1, 3, 64, 16, 3, 1, 75, 1_000_000),
+    ];
+
+    let mut policy = policy_of::<OneHot>();
+    policy.selective_l2_fold_caps = MIXED_CAPS;
+    let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let candidates = derive_candidate_level_params(
+        None,
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &challenge,
+        CommitmentRingDims::uniform(64),
+        948_672,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        4,
+        4,
+        3,
+        None,
+    )
+    .expect("mixed exact and modeled candidates");
+
+    assert!(candidates.iter().any(|(params, _)| {
+        params.inner_commit_matrix.input_width() * 64 == 65_536
+            && matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: 536_870_912,
+                    ..
+                }
+            )
+    }));
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn response_model_adds_at_most_one_best_split_l2_alternative() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_types::InnerCommitSecurityRoute;
+
+    let policy = policy_of::<OneHot>();
+    let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let candidates = derive_candidate_level_params(
+        None,
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &challenge,
+        CommitmentRingDims::uniform(64),
+        948_672,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        4,
+        4,
+        3,
+        None,
+    )
+    .expect("modeled late-fold candidates");
+    let linf = candidates
+        .iter()
+        .filter(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::Linf(_)
+            )
+        })
+        .count();
+    let l2 = candidates
+        .iter()
+        .filter(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+        })
+        .count();
+    assert_eq!(linf, 1);
+    assert_eq!(l2, 1);
     assert_eq!(candidates.len(), 2);
 }
 

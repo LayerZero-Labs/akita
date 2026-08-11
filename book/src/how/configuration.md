@@ -58,26 +58,53 @@ owns shipped table data. The verifier-reachable proof-size formula.
 
 ### Selective physical L2 candidates
 
-The coefficient `L∞` route remains the default at every fold. A preset may
-also supply a squared physical `L2` cap for an exact later nonterminal fold
-candidate. The cap key includes the fold level, incoming witness length,
-physical response length, fold basis, and fold digit count. A cap does not
-apply to another row or to a successor whose witness length changed.
+The coefficient `L∞` route remains available at every fold. A one-hot preset
+may also supply empirical calibration rows for physical `L2` response planning.
+A row with a physical response length of zero opts the family into the
+balanced-digit response model. An exact row binds the fold level, incoming
+witness length, source digit basis, challenge ring dimension, challenge
+energy, response length, fold basis, and fold digit count. A row cannot cross
+challenge families or reuse a measured source state under another basis.
 
-The planner uses its ordinary L infinity search until the current state exactly
-matches a cap. The cap's physical response length determines one block split.
-At that state, the planner adds that one L2 candidate when it lowers the A rank.
-The existing suffix search then compares the L infinity and L2 candidates. The
-planner does not keep extra splits at earlier levels.
+The planner always retains its ordinary L infinity candidate. From level 3
+onward, an opted-in family also evaluates the same canonical block split with
+an L2 A matrix for response bases 16 and above. Basis 8 is not admitted because
+it caused deterministic stage-2 folded-oracle consistency failures in two D64
+production profiles. That geometry remains unsupported until the protocol cause
+is fixed and validated. The planner keeps an eligible alternative only when it
+lowers the A rank. This
+adds at most one modeled L2 alternative per basis and dimension state, which
+keeps the suffix search bounded.
 
-A cap may appear at any eligible fold from level 3 onward, and cap levels may
-have gaps. Each cap must name a valid exact candidate below the recursion depth
-limit. The cap list must be strictly sorted.
+An exact calibration takes precedence when its state key matches. It multiplies
+the measured source energy and exact challenge energy by 1.25, leaving more
+than 18 percent margin over the largest observed response-to-mean ratio. Other
+eligible states use
+
+```text
+ceil(input_len * (B^2 + 2) / 12 * challenge_l2_sq * 1.75),
+```
+
+where `B` is the source digit basis. The balanced-digit second moment supplies
+the base estimate. The 1.75 multiplier covers the largest source-energy and
+response deviations seen in end-to-end fp32, fp64, and fp128 samples, with at
+least 15 percent remaining margin over every recorded response maximum.
 
 The suffix comparison includes the norm proof, A payload, next witness, later
 folds, and terminal response. A smaller A rank can reduce the next witness
 enough to remove a fold, but the planner keeps `L∞` when the extra norm proof
 costs more than the suffix saves.
+
+This model affects completeness and schedule selection only. Once the planner
+selects a route, its concrete cap is frozen into the generated schedule. The
+prover rejection samples against that cap and the verifier enforces the same
+value. The SIS calculation therefore still uses the public accepted cap and
+does not trust the statistical model.
+
+A clear terminal L2 candidate has no recursive norm proof. The verifier checks
+the decoded response norm directly. The planner may use the certified energy
+to estimate a smaller Golomb payload for candidate comparison. The scheduled
+Golomb byte cap and the payload grind remain unchanged.
 
 Generated schedule identity includes the cap policy and the separate L2 table
 digest. Runtime expansion derives the route, cap, proof shape, and A rank from

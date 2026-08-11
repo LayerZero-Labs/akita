@@ -4,6 +4,7 @@ use super::*;
 /// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
 /// fold-then-direct branch without aborting fold-then-fold exploration.
 pub(crate) fn try_terminal_direct_suffix_cost(
+    policy: &PlannerPolicy,
     input_witness_len: usize,
     terminal_lp: &CommittedGroupParams,
     field_bits: u32,
@@ -15,6 +16,7 @@ pub(crate) fn try_terminal_direct_suffix_cost(
         return Ok(None);
     }
     let result = terminal_direct_suffix_cost(
+        policy,
         input_witness_len,
         terminal_lp,
         field_bits,
@@ -33,6 +35,7 @@ pub(crate) fn try_terminal_direct_suffix_cost(
 }
 
 pub(crate) fn terminal_direct_suffix_cost(
+    policy: &PlannerPolicy,
     input_witness_len: usize,
     terminal_lp: &CommittedGroupParams,
     field_bits: u32,
@@ -61,17 +64,57 @@ pub(crate) fn terminal_direct_suffix_cost(
             "terminal direct response must be a scalar flat fold".to_string(),
         ));
     }
-    let (terminal_params, admission_cap) =
+    let (mut terminal_params, admission_cap) =
         akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
+    let mut sparse_challenge_config = terminal_lp.fold_challenge_config;
+    if let Some(l2_challenge) =
+        akita_challenges::selective_l2_challenge_config(terminal_params.d_a())
+    {
+        let fold_basis = 1usize
+            .checked_shl(terminal_lp.log_basis_open)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
+        if let Some(l2_matrix) = akita_schedules::planner_support::selective_l2_inner_matrix(
+            policy,
+            akita_schedules::planner_support::SelectiveL2CandidateGeometry {
+                fold_level: terminal_fold_level,
+                input_witness_len,
+                num_claims: 1,
+                num_chunks: 1,
+                inner_width: terminal_params.inner_width(),
+                ring_dimension: terminal_params.d_a(),
+                source_log_basis: terminal_params.log_basis_inner,
+                fold_basis,
+                fold_digit_count: terminal_lp.num_digits_fold,
+                fold_challenge_config: &l2_challenge,
+                norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                    physical_response_len: terminal_params
+                        .inner_width()
+                        .checked_mul(terminal_params.d_a())
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("terminal L2 response length overflow".into())
+                        })?,
+                }),
+            },
+        )? {
+            if l2_matrix.output_rank() < terminal_params.inner_commit_matrix.output_rank() {
+                terminal_params.inner_commit_matrix = l2_matrix;
+                sparse_challenge_config = l2_challenge;
+            }
+        }
+    }
     let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
-    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
+    let estimated_terminal_bytes = terminal_response_planner_bytes(
+        field_bits,
+        &witness_shape,
+        terminal_params.response_l2_sq_cap(),
+    );
     let direct = CandidateTerminalResponse {
         params: terminal_params,
-        sparse_challenge_config: terminal_lp.fold_challenge_config,
+        sparse_challenge_config,
         input_witness_len,
         estimated_direct_payload_bytes: 0,
         response_shape: witness_shape,
-        estimated_payload_bytes: terminal_bytes,
+        estimated_payload_bytes: estimated_terminal_bytes,
     };
-    Ok((direct, terminal_bytes))
+    Ok((direct, estimated_terminal_bytes))
 }

@@ -11,16 +11,70 @@ use akita_types::{
 };
 use std::sync::Arc;
 
-/// One empirically checked squared-norm cap for an exact later nonterminal
-/// fold candidate.
+/// One empirical calibration for selective L2 response planning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectiveL2FoldCap {
     pub fold_level: usize,
     pub input_witness_len: usize,
+    /// Source signed-digit basis used by the measured state.
+    pub source_log_basis: u32,
+    /// Ring dimension whose challenge distribution produced the measurement.
+    pub challenge_ring_dimension: usize,
+    /// Exact squared challenge-energy bound used by the measurement.
+    pub challenge_l2_sq: u128,
+    /// Exact physical response length, or zero for a source-state calibration.
+    /// A zero-length row also opts the family into the canonical balanced-digit
+    /// response model at other eligible suffix states.
     pub physical_response_len: usize,
     pub fold_basis: usize,
     pub fold_digit_count: usize,
     pub response_l2_sq_cap: u128,
+}
+
+impl SelectiveL2FoldCap {
+    /// Materialize a verifier-enforced cap from a measured source energy.
+    ///
+    /// `headroom_ppm` scales the exact conditional mean
+    /// `challenge_l2_sq * source_l2_sq`. A model row intentionally leaves the
+    /// response length at zero so planner search can price the canonical split
+    /// without binding the calibration to one response geometry.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn from_source_energy_model(
+        fold_level: usize,
+        input_witness_len: usize,
+        source_log_basis: u32,
+        challenge_ring_dimension: usize,
+        fold_basis: usize,
+        fold_digit_count: usize,
+        source_l2_sq: u128,
+        challenge_l2_sq: u128,
+        headroom_ppm: u128,
+    ) -> Self {
+        const SCALE: u128 = 1_000_000;
+        let conditional_mean = match source_l2_sq.checked_mul(challenge_l2_sq) {
+            Some(value) => value,
+            None => panic!("selective L2 conditional mean overflow"),
+        };
+        let scaled = match conditional_mean.checked_mul(headroom_ppm) {
+            Some(value) => value,
+            None => panic!("selective L2 headroom overflow"),
+        };
+        let rounded = match scaled.checked_add(SCALE - 1) {
+            Some(value) => value,
+            None => panic!("selective L2 cap rounding overflow"),
+        };
+        Self {
+            fold_level,
+            input_witness_len,
+            source_log_basis,
+            challenge_ring_dimension,
+            challenge_l2_sq,
+            physical_response_len: 0,
+            fold_basis,
+            fold_digit_count,
+            response_l2_sq_cap: rounded / SCALE,
+        }
+    }
 }
 
 /// Quantities materialized and checked by the current bounded planner cost model.
@@ -191,7 +245,7 @@ pub struct PlannerPolicy {
     pub sis_security_policy: SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
     pub sis_l2_table_digest: akita_types::SisL2TableDigest,
-    /// Measured candidate caps. Empty keeps every level on the Linf route.
+    /// Empirical calibration caps. Empty keeps every level on the Linf route.
     pub selective_l2_fold_caps: &'static [SelectiveL2FoldCap],
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
@@ -218,33 +272,79 @@ impl PlannerPolicy {
         }
     }
 
-    /// Return the measured L2 cap for this exact candidate geometry.
+    /// Whether this family opts into the balanced-digit suffix response model.
+    pub fn selective_l2_response_model_enabled(&self) -> bool {
+        self.selective_l2_fold_caps
+            .iter()
+            .any(|entry| entry.physical_response_len == 0)
+    }
+
+    /// Return the data-backed L2 cap for this candidate geometry.
+    ///
+    /// Exact measured rows take precedence. Other scalar single-chunk states
+    /// in an opted-in family use the balanced-digit second moment
+    /// `n * (B^2 + 2) / 12`, multiplied by the exact challenge energy and a
+    /// 1.75 empirical headroom. The model is a completeness and planning
+    /// input only; the resulting cap is frozen into the schedule and enforced
+    /// exactly by the verifier.
+    #[allow(clippy::too_many_arguments)]
     pub fn selective_l2_cap_for_candidate(
         &self,
         fold_level: usize,
         input_witness_len: usize,
         physical_response_len: usize,
+        source_log_basis: u32,
+        challenge_ring_dimension: usize,
         fold_basis: usize,
         fold_digit_count: usize,
+        challenge_l2_sq: u128,
     ) -> Option<u128> {
-        self.selective_l2_fold_caps
+        let exact = self
+            .selective_l2_fold_caps
             .iter()
             .find(|entry| {
                 (
                     entry.fold_level,
                     entry.input_witness_len,
-                    entry.physical_response_len,
+                    entry.source_log_basis,
+                    entry.challenge_ring_dimension,
+                    entry.challenge_l2_sq,
                     entry.fold_basis,
                     entry.fold_digit_count,
                 ) == (
                     fold_level,
                     input_witness_len,
-                    physical_response_len,
+                    source_log_basis,
+                    challenge_ring_dimension,
+                    challenge_l2_sq,
                     fold_basis,
                     fold_digit_count,
-                )
+                ) && (entry.physical_response_len == 0
+                    || entry.physical_response_len == physical_response_len)
             })
-            .map(|entry| entry.response_l2_sq_cap)
+            .map(|entry| entry.response_l2_sq_cap);
+        if exact.is_some() {
+            return exact;
+        }
+        if !self.selective_l2_response_model_enabled()
+            || fold_level < 3
+            || input_witness_len == 0
+            || challenge_l2_sq == 0
+        {
+            return None;
+        }
+
+        const MODEL_HEADROOM_PPM: u128 = 1_750_000;
+        const MODEL_SCALE: u128 = 12_000_000;
+        let basis = 1u128.checked_shl(source_log_basis)?;
+        let second_moment_numerator = basis.checked_mul(basis)?.checked_add(2)?;
+        let scaled = (input_witness_len as u128)
+            .checked_mul(second_moment_numerator)?
+            .checked_mul(challenge_l2_sq)?
+            .checked_mul(MODEL_HEADROOM_PPM)?;
+        scaled
+            .checked_add(MODEL_SCALE - 1)
+            .map(|rounded| rounded / MODEL_SCALE)
     }
 
     /// Whether a candidate fits the optional host setup budget.
@@ -285,7 +385,7 @@ impl PlannerPolicy {
 
 /// Suffix-DP depth cap shared by planner search and runtime policy validation.
 pub const MAX_RECURSION_DEPTH: usize = 12;
-/// First fold level eligible for a measured L2 candidate.
+/// First fold level eligible for a calibrated L2 candidate.
 const SELECTIVE_L2_CAP_FIRST_LEVEL: usize = 3;
 
 fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaError> {
@@ -293,16 +393,29 @@ fn validate_selective_l2_caps(caps: &[SelectiveL2FoldCap]) -> Result<(), AkitaEr
         let invalid_geometry = cap.fold_level < SELECTIVE_L2_CAP_FIRST_LEVEL
             || cap.fold_level >= MAX_RECURSION_DEPTH
             || cap.input_witness_len == 0
-            || cap.physical_response_len == 0
-            || cap.fold_basis < 2
+            || cap.source_log_basis == 0
+            || cap.source_log_basis > MAX_I16_LOG_BASIS
+            || akita_challenges::selective_l2_challenge_config(cap.challenge_ring_dimension)
+                .is_none_or(|cfg| cfg.challenge_l2_sq_max() != cap.challenge_l2_sq)
+            || cap.fold_basis < 16
             || !cap.fold_basis.is_power_of_two()
             || cap.fold_digit_count == 0
             || cap.response_l2_sq_cap == 0;
         let invalid_order = index > 0 && caps[index - 1] >= *cap;
-        if invalid_geometry || invalid_order {
+        let duplicate_key = index > 0 && {
+            let previous = caps[index - 1];
+            previous.fold_level == cap.fold_level
+                && previous.input_witness_len == cap.input_witness_len
+                && previous.source_log_basis == cap.source_log_basis
+                && previous.challenge_ring_dimension == cap.challenge_ring_dimension
+                && previous.challenge_l2_sq == cap.challenge_l2_sq
+                && previous.physical_response_len == cap.physical_response_len
+                && previous.fold_basis == cap.fold_basis
+                && previous.fold_digit_count == cap.fold_digit_count
+        };
+        if invalid_geometry || invalid_order || duplicate_key {
             return Err(AkitaError::InvalidSetup(
-                "selective L2 caps must be valid, later-fold, strictly sorted exact candidates"
-                    .into(),
+                "selective L2 caps must be valid, later-fold, strictly sorted candidates".into(),
             ));
         }
     }
@@ -739,9 +852,12 @@ mod tests {
         SelectiveL2FoldCap {
             fold_level,
             input_witness_len,
+            source_log_basis: 1,
+            challenge_ring_dimension: 64,
+            challenge_l2_sq: 75,
             physical_response_len: 64,
-            fold_basis: 2,
-            fold_digit_count: 1,
+            fold_basis: 16,
+            fold_digit_count: 3,
             response_l2_sq_cap: 1,
         }
     }
@@ -791,6 +907,184 @@ mod tests {
         assert!(validate_selective_l2_caps(&[cap(4, 10), cap(7, 6)]).is_ok());
         assert!(validate_selective_l2_caps(&[cap(2, 10)]).is_err());
         assert!(validate_selective_l2_caps(&[cap(4, 10), cap(4, 10)]).is_err());
+    }
+
+    #[test]
+    fn selective_l2_caps_reject_unbound_model_sentinels() {
+        let valid = cap(4, 10);
+        for invalid in [
+            SelectiveL2FoldCap {
+                source_log_basis: 0,
+                ..valid
+            },
+            SelectiveL2FoldCap {
+                challenge_ring_dimension: 256,
+                ..valid
+            },
+            SelectiveL2FoldCap {
+                challenge_l2_sq: 31,
+                ..valid
+            },
+            SelectiveL2FoldCap {
+                fold_basis: 8,
+                ..valid
+            },
+        ] {
+            assert!(validate_selective_l2_caps(&[invalid]).is_err());
+        }
+
+        let mut duplicate_key = valid;
+        duplicate_key.response_l2_sq_cap = 2;
+        assert!(validate_selective_l2_caps(&[valid, duplicate_key]).is_err());
+    }
+
+    #[test]
+    fn source_energy_model_materializes_cap_and_matches_every_split() {
+        static MODEL: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap::from_source_energy_model(
+            3, 2_083_904, 3, 64, 16, 3, 9_441_218, 75, 1_060_000,
+        )];
+        assert_eq!(MODEL[0].physical_response_len, 0);
+        assert_eq!(MODEL[0].response_l2_sq_cap, 750_576_831);
+        assert!(validate_selective_l2_caps(&MODEL).is_ok());
+
+        let mut policy = adaptive_policy();
+        policy.selective_l2_fold_caps = &MODEL;
+        for physical_response_len in [32_768, 65_536, 131_072, 262_144] {
+            assert_eq!(
+                policy.selective_l2_cap_for_candidate(
+                    3,
+                    2_083_904,
+                    physical_response_len,
+                    3,
+                    64,
+                    16,
+                    3,
+                    75,
+                ),
+                Some(750_576_831),
+            );
+        }
+        assert_eq!(
+            policy.selective_l2_cap_for_candidate(3, 2_083_904, 65_536, 3, 64, 32, 3, 75),
+            Some(1_504_318_200),
+        );
+        for mismatched in [
+            policy.selective_l2_cap_for_candidate(3, 2_083_904, 65_536, 4, 64, 16, 3, 75),
+            policy.selective_l2_cap_for_candidate(3, 2_083_904, 65_536, 3, 128, 16, 3, 75),
+            policy.selective_l2_cap_for_candidate(3, 2_083_904, 65_536, 3, 64, 16, 3, 31),
+        ] {
+            assert_ne!(mismatched, Some(750_576_831));
+        }
+    }
+
+    #[test]
+    fn balanced_digit_model_covers_every_measured_field_profile_state() {
+        static OPT_IN: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap::from_source_energy_model(
+            3, 1, 3, 64, 16, 3, 1, 75, 1_000_000,
+        )];
+        let mut policy = adaptive_policy();
+        policy.selective_l2_fold_caps = &OPT_IN;
+        let measured_caps = [
+            (511_872, 5, 75, 2_493_100_682u128),
+            (2_083_904, 3, 75, 750_576_831),
+            (231_488, 6, 75, 3_898_932_413),
+            (144_384, 6, 75, 3_003_850_896),
+            (252_544, 6, 31, 2_982_511_152),
+            (130_816, 6, 31, 1_754_411_666),
+            (594_624, 3, 75, 304_965_657),
+            (223_744, 5, 75, 1_694_697_605),
+            (124_672, 6, 75, 3_572_946_399),
+        ];
+        for (input_witness_len, source_log_basis, challenge_l2_sq, measured_cap) in measured_caps {
+            let modeled = policy
+                .selective_l2_cap_for_candidate(
+                    99,
+                    input_witness_len,
+                    1,
+                    source_log_basis,
+                    64,
+                    16,
+                    3,
+                    challenge_l2_sq,
+                )
+                .expect("opted-in model row");
+            assert!(modeled >= measured_cap, "{modeled} < {measured_cap}");
+        }
+    }
+
+    #[test]
+    fn balanced_digit_model_keeps_empirical_margin_across_all_field_profiles() {
+        static OPT_IN: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap::from_source_energy_model(
+            3, 1, 3, 64, 16, 3, 1, 75, 1_000_000,
+        )];
+        let mut policy = adaptive_policy();
+        policy.selective_l2_fold_caps = &OPT_IN;
+        // Maxima from independent end-to-end profile transcripts after the
+        // modeled schedules reached their final fixed point. These cover every
+        // supported field profile and every selected source basis in the CI
+        // one-hot rows.
+        let measured_response_maxima = [
+            // fp32, nv30: L3, L4, terminal (five transcripts).
+            (550_400, 4, 31, 543_303_338u128),
+            (253_440, 4, 31, 237_644_475),
+            (125_568, 5, 31, 404_233_159),
+            // fp64, nv30: L3, L4, L5, terminal (three transcripts).
+            (707_264, 3, 75, 381_539_045),
+            (224_576, 5, 75, 1_627_247_429),
+            (113_408, 6, 75, 3_039_802_323),
+            (80_640, 6, 75, 2_428_004_762),
+            // fp128, nv36: L3, L4, L5, terminal (three transcripts).
+            (1_046_016, 4, 75, 1_466_514_925),
+            (396_800, 4, 75, 506_859_809),
+            (267_776, 4, 75, 353_853_006),
+            (184_320, 4, 75, 244_149_861),
+            // fp128 multi-group recursive, nv32/4 polys (one transcript).
+            (1_574_400, 4, 75, 1_944_140_528),
+            (488_960, 4, 75, 640_793_094),
+            (288_256, 4, 75, 384_556_280),
+            (226_816, 4, 75, 272_556_161),
+            // fp128 recursive W8R2 multi-group, nv32/4 polys (one transcript).
+            (800_256, 4, 75, 1_041_804_258),
+            (366_080, 4, 75, 451_575_010),
+            (257_536, 4, 75, 325_401_197),
+            (176_128, 4, 75, 226_971_740),
+            // fp128 direct W2R2, nv32 (one transcript).
+            (1_009_152, 4, 75, 1_410_227_575),
+            (396_800, 4, 75, 505_517_105),
+            (267_776, 4, 75, 343_828_764),
+            (184_320, 4, 75, 245_434_915),
+            // fp128 direct W4R2, nv32 (one transcript).
+            (380_800, 5, 75, 1_869_008_722),
+            (159_872, 6, 75, 3_180_422_664),
+            // fp128 direct W8R2, nv32 (one transcript).
+            (280_960, 5, 75, 1_247_240_235),
+            (160_320, 6, 75, 2_694_523_385),
+            // fp128 multi-group direct, nv32/4 polys (one transcript).
+            (1_031_232, 3, 75, 326_301_206),
+            (361_984, 4, 75, 409_562_093),
+            (257_536, 4, 75, 321_178_079),
+            (176_128, 4, 75, 228_249_358),
+        ];
+        for (input_witness_len, source_log_basis, challenge_l2_sq, measured_max) in
+            measured_response_maxima
+        {
+            let modeled = policy
+                .selective_l2_cap_for_candidate(
+                    99,
+                    input_witness_len,
+                    1,
+                    source_log_basis,
+                    64,
+                    16,
+                    3,
+                    challenge_l2_sq,
+                )
+                .expect("opted-in model row");
+            assert!(
+                modeled * 1_000_000 >= measured_max * 1_150_000,
+                "modeled cap {modeled} lacks 15% margin over measured max {measured_max}"
+            );
+        }
     }
 
     #[test]

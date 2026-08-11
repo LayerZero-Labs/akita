@@ -105,6 +105,34 @@ fn onehot_opening_at_point(poly: &OneHotPoly<SmallF, u8>, point: &[SmallE]) -> S
         .fold(SmallE::zero(), |sum, weight| sum + weight)
 }
 
+fn encode_test_golomb_rice(values: &[i64], rice_low_bits: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut bit_position = 0usize;
+    let mut write_bit = |bit: bool| {
+        let byte_index = bit_position / 8;
+        if byte_index == bytes.len() {
+            bytes.push(0);
+        }
+        if bit {
+            bytes[byte_index] |= 1 << (bit_position % 8);
+        }
+        bit_position += 1;
+    };
+    for &value in values {
+        let zigzag = ((value << 1) ^ (value >> 63)) as u64;
+        let quotient = zigzag >> rice_low_bits;
+        for _ in 0..quotient {
+            write_bit(true);
+        }
+        write_bit(false);
+        let remainder = zigzag & ((1u64 << rice_low_bits) - 1);
+        for bit in 0..rice_low_bits {
+            write_bit((remainder >> bit) & 1 == 1);
+        }
+    }
+    bytes
+}
+
 #[test]
 fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
     let opening_batch =
@@ -225,13 +253,13 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
 
 #[test]
 fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
-    const NUM_VARS: usize = 20;
+    const NUM_VARS: usize = 28;
     const LABEL: &[u8] = b"test/fp32-ext4-multiblock-l2-pcs";
-    type L2Cfg = crate::test_support::ForcedSmallFieldL2Config<SmallCfg>;
+    type L2Cfg = SmallCfg;
     type L2Scheme = AkitaCommitmentScheme<L2Cfg>;
 
     let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("L2 opening layout");
-    let schedule = L2Cfg::get_params_for_prove(&opening_layout).expect("forced L2 schedule");
+    let schedule = L2Cfg::get_params_for_prove(&opening_layout).expect("shipped L2 schedule");
     let l2_step = schedule
         .recursive_folds
         .iter()
@@ -242,6 +270,18 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             )
         })
         .expect("schedule-selected small-field L2 fold");
+    assert_eq!(l2_step.params.witness.d_a(), 128);
+    assert_eq!(
+        l2_step.params.witness.fold_challenge_config,
+        akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+    );
+    assert_eq!(
+        akita_challenges::selective_l2_operator_norm_rejection(
+            128,
+            &l2_step.params.witness.fold_challenge_config,
+        ),
+        Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
+    );
     let akita_types::InnerCommitSecurityRoute::L2 {
         norm_proof_shape, ..
     } = l2_step.params.witness.inner_commit_matrix.security_route()
@@ -252,7 +292,7 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
         norm_proof_shape
             .limb_gram_layout()
             .expect("checked LimbGram shape")
-            .expect("small-field fixture must use LimbGram")
+            .expect("shipped small-field route must use LimbGram")
             .block_count()
             > 1
     );
@@ -260,56 +300,6 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
     let poly = onehot_poly_for_num_vars(NUM_VARS, 3);
     let point = extension_point(NUM_VARS);
     let opening = onehot_opening_at_point(&poly, &point);
-
-    // Prove the same polynomial opening through the ordinary L-infinity
-    // schedule before exercising the synthetic L2 schedule below.
-    {
-        const LINF_LABEL: &[u8] = b"test/fp32-ext4-same-witness-linf";
-        let setup = SmallScheme::setup_prover(NUM_VARS, 1).expect("Linf prover setup");
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&setup)
-            .expect("prepared Linf setup");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("Linf prover stack");
-        let verifier_setup = SmallScheme::setup_verifier(&setup).expect("Linf verifier setup");
-        let (commitment, hint) = SmallScheme::commit(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("Linf commitment");
-        let poly_refs = [&poly];
-        let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            point.clone(),
-            vec![SmallE::zero()],
-            commitment.clone(),
-        )
-        .expect("Linf prover group")])
-        .expect("Linf prover claims");
-        let mut prover_transcript = AkitaTranscript::<SmallF>::new(LINF_LABEL);
-        let proof = SmallScheme::batched_prove(
-            &setup,
-            selected_prover_data::<SmallCfg, _>(prover_claims, vec![hint], vec![&poly_refs])
-                .expect("Linf prover data"),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("same-witness Linf proof");
-        assert!(proof
-            .recursive_folds
-            .iter()
-            .all(|fold| fold.stage1.norm_proof.is_none()));
-        let mut verifier_transcript = AkitaTranscript::<SmallF>::new(LINF_LABEL);
-        SmallScheme::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            small_verifier_statement(&point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
-        .expect("verify same-witness Linf proof");
-    }
 
     let setup = L2Scheme::setup_prover(NUM_VARS, 1).expect("L2 prover setup");
     let prepared = CpuBackend::DEFAULT
@@ -402,6 +392,10 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
         .virtual_evaluations[0] += SmallE::one();
     assert!(verify(&bad_virtual).is_err());
 
+    let mut bad_nonce = proof.clone();
+    bad_nonce.recursive_folds[l2_index].fold_grind_nonce += 1;
+    assert!(verify(&bad_nonce).is_err());
+
     let mut bad_stage2 = proof;
     bad_stage2.recursive_folds[l2_index]
         .stage2
@@ -409,6 +403,128 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
         .round_polys[0]
         .coeffs_except_linear_term[0] += SmallE::one();
     assert!(verify(&bad_stage2).is_err());
+}
+
+#[test]
+fn fp32_nv28_shipped_d128_terminal_l2_roundtrip_and_rejections() {
+    const NUM_VARS: usize = 28;
+    const LABEL: &[u8] = b"test/fp32-nv28-shipped-d128-terminal-l2";
+
+    let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("terminal L2 layout");
+    let schedule = SmallCfg::get_params_for_prove(&opening_layout).expect("shipped fp32 schedule");
+    let terminal_params = &schedule.terminal.params.witness;
+    let response_l2_sq_cap = terminal_params
+        .response_l2_sq_cap()
+        .expect("nv28 must ship a direct terminal L2 cap");
+    assert_eq!(terminal_params.d_a(), 128);
+    assert_eq!(
+        schedule.terminal.params.sparse_challenge_config,
+        akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+    );
+    assert_eq!(
+        akita_challenges::selective_l2_operator_norm_rejection(
+            terminal_params.d_a(),
+            &schedule.terminal.params.sparse_challenge_config,
+        ),
+        Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
+    );
+
+    let root_params = &schedule.root.params.final_group.commitment;
+    let poly = grouped_onehot_poly(root_params, 9);
+    let point = extension_point(NUM_VARS);
+    let opening = onehot_opening_at_point(&poly, &point);
+    let setup = SmallScheme::setup_prover(NUM_VARS, 1).expect("terminal L2 prover setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared terminal L2 setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("terminal L2 prover stack");
+    let verifier_setup = SmallScheme::setup_verifier(&setup).expect("terminal L2 verifier setup");
+    let (commitment, hint) = SmallScheme::commit(&setup, std::slice::from_ref(&poly), &stack)
+        .expect("terminal L2 commitment");
+    let poly_refs = [&poly];
+    let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+        point.clone(),
+        vec![SmallE::zero()],
+        commitment.clone(),
+    )
+    .expect("terminal L2 prover group")])
+    .expect("terminal L2 prover claims");
+    let mut prover_transcript = AkitaTranscript::<SmallF>::new(LABEL);
+    let proof = SmallScheme::batched_prove::<_, _, _>(
+        &setup,
+        selected_prover_data::<SmallCfg, _>(prover_claims, vec![hint], vec![&poly_refs])
+            .expect("terminal L2 prover data"),
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("shipped D128 terminal L2 proof");
+
+    let verify = |candidate: &AkitaBatchedProof<SmallF, SmallE>| {
+        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            point.clone(),
+            vec![opening],
+            &commitment,
+        )
+        .expect("terminal L2 verifier group")])
+        .expect("terminal L2 verifier claims");
+        let mut transcript = AkitaTranscript::<SmallF>::new(LABEL);
+        SmallScheme::batched_verify(
+            candidate,
+            &verifier_setup,
+            &mut transcript,
+            selected_statement::<SmallCfg>(claims).expect("terminal L2 verifier statement"),
+            BasisMode::Lagrange,
+        )
+    };
+    verify(&proof).expect("verify shipped D128 terminal L2 proof");
+
+    let mut bad_nonce = proof.clone();
+    bad_nonce.terminal.fold_grind_nonce = bad_nonce
+        .terminal
+        .fold_grind_nonce
+        .checked_add(1)
+        .expect("terminal nonce increment");
+    assert!(verify(&bad_nonce).is_err());
+
+    let mut over_cap = proof;
+    let group = *over_cap
+        .terminal
+        .terminal_response
+        .layout
+        .groups
+        .first()
+        .expect("single terminal group");
+    let payload = over_cap
+        .terminal
+        .terminal_response
+        .z_payloads
+        .first_mut()
+        .expect("terminal z payload");
+    let mut values = akita_types::decode_terminal_z_golomb_payload(payload, &group)
+        .expect("honest terminal z decode")
+        .into_iter()
+        .map(i64::from)
+        .collect::<Vec<_>>();
+    let coordinate = i64::try_from(group.z_admission_linf_cap).expect("i64 terminal cap");
+    let coordinate_sq = u128::try_from(coordinate * coordinate).expect("positive square");
+    let mut forced_l2_sq = 0u128;
+    for value in &mut values {
+        *value = coordinate;
+        forced_l2_sq += coordinate_sq;
+        if forced_l2_sq > response_l2_sq_cap {
+            break;
+        }
+    }
+    assert!(forced_l2_sq > response_l2_sq_cap);
+    *payload = encode_test_golomb_rice(&values, group.z_rice_low_bits);
+    assert!(payload.len() <= group.z_payload_bytes);
+    assert!(verify(&over_cap).is_err());
 }
 
 #[test]

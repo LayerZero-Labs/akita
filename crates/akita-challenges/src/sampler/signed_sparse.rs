@@ -81,4 +81,12 @@ impl SignedSparseScratch {
             coeffs: self.coeffs.iter().copied().collect(),
         }
     }
+
+    pub(crate) fn positions(&self) -> &[u32] {
+        &self.positions
+    }
+
+    pub(crate) fn coeffs(&self) -> &[i8] {
+        &self.coeffs
+    }
 }

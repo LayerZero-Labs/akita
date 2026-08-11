@@ -680,6 +680,9 @@ fn write_selective_l2_fold_caps(h: &mut Fnv64, caps: &[crate::SelectiveL2FoldCap
     for cap in caps {
         h.write_u64(cap.fold_level as u64);
         h.write_u64(cap.input_witness_len as u64);
+        h.write_u64(u64::from(cap.source_log_basis));
+        h.write_u64(cap.challenge_ring_dimension as u64);
+        h.write_bytes(&cap.challenge_l2_sq.to_le_bytes());
         h.write_u64(cap.physical_response_len as u64);
         h.write_u64(cap.fold_basis as u64);
         h.write_u64(cap.fold_digit_count as u64);
