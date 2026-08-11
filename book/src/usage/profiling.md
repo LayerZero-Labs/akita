@@ -191,14 +191,12 @@ Each measured sample performs these operations:
 7. Verify the claimed openings with the configured multi-threaded pool.
 8. Verify the same proof and claims again with one thread.
 
-Dense runs report the first step as `statement_prepare`. Its child spans split
-out evaluation generation and expected-opening computation. This is profile
-harness work, not PCS setup, commit, prove, or verify time. The Perfetto root
-span includes statement preparation and both verifier runs, so protocol
-comparisons should use the named phase spans instead of root wall time.
-The report requires this metric from the current binary. An interleaved merge
-base built before the metric was introduced may omit it; that baseline remains
-valid and renders the unavailable phase as an em dash.
+Dense runs expose the first step as `statement_prepare` in runtime logs and
+Perfetto. Its child spans split out evaluation generation and expected-opening
+computation. This is profile-harness work, not a PCS benchmark phase, so the CI
+report deliberately excludes it and begins at setup. The Perfetto root span
+includes statement preparation and both verifier runs, so protocol comparisons
+should use the named phase spans instead of root wall time.
 
 For extension-valued dense points, expected-opening preparation uses the same
 checked split-tensor contraction primitive as the dense backend. It streams the
@@ -236,8 +234,8 @@ witness or setup input, relation geometry, and proof components. Multi group
 rows repeat those blocks for each precommitment, final group, and setup offload
 instead of joining unrelated values in one line.
 
-The phase table reports dense statement preparation separately from PCS setup.
-It labels the existing verifier time as multi-threaded and adds a separate
+The phase table begins at PCS setup and excludes statement preparation. It
+labels the existing verifier time as multi-threaded and adds a separate
 single-threaded verifier column. Both runs use the same proof, claims, and
 verifier setup. The multi-threaded run comes first so comparisons with older
 merge bases preserve the old measurement order. Profile CI sets both configured

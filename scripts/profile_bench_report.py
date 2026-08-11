@@ -24,7 +24,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 8
+CASE_SCHEMA_VERSION = 7
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -627,16 +627,8 @@ def require_int(summary: dict[str, object], key: str) -> int:
     return int(value)
 
 
-def missing_required_run_metrics(
-    summary: dict[str, object], require_current_metrics: bool = True
-) -> list[str]:
+def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
     missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
-    if (
-        require_current_metrics
-        and str(summary.get("mode", "")).startswith("dense_")
-        and summary.get("statement_prepare_s") is None
-    ):
-        missing.append("statement_prepare_s")
     if (
         summary.get("verification_modes") == "multi_and_single"
         and summary.get("verify_single_total_s") is None
@@ -666,7 +658,6 @@ def missing_required_run_metrics(
 
 
 TIMING_SAMPLE_METRICS = (
-    "statement_prepare_s",
     "setup_s",
     "setup_expand_s",
     "backend_prepare_s",
@@ -861,8 +852,6 @@ def extract_summary(
             summary["max_i8_log_basis"] = int(kvs["max_i8_log_basis"])
             summary["balanced_digit_safe_width"] = int(kvs["balanced_digit_safe_width"])
             summary["raw_i8_safe_width"] = int(kvs["raw_i8_safe_width"])
-        elif is_info_event(line, "statement_prepare") and kvs.get("label") == mode:
-            summary["statement_prepare_s"] = float(kvs["elapsed_s"])
         elif is_info_event(line, "setup_expand") and kvs.get("label") == mode:
             summary["setup_expand_s"] = float(kvs["elapsed_s"])
         elif is_info_event(line, "backend_prepare") and kvs.get("label") == mode:
@@ -1134,7 +1123,6 @@ def run_benchmark_case(
     binary: str,
     output_dir: pathlib.Path,
     case: BenchmarkCaseSpec,
-    require_current_metrics: bool = True,
 ) -> tuple[dict[str, object], int]:
     env = os.environ.copy()
     env["AKITA_MODE"] = case.mode
@@ -1179,7 +1167,7 @@ def run_benchmark_case(
     }
 
     if return_code == 0:
-        missing = missing_required_run_metrics(summary, require_current_metrics)
+        missing = missing_required_run_metrics(summary)
         if missing:
             summary["error"] = (
                 "profile run exited successfully but did not emit required metrics: "
@@ -1198,7 +1186,6 @@ def run_benchmark_case(
 
 def infer_failure_phase(summary: dict[str, object], first_missing: str | None = None) -> str:
     phase_by_metric = {
-        "statement_prepare_s": "statement preparation",
         "setup_s": "setup",
         "commit_s": "commit",
         "prove_total_s": "prove",
@@ -1255,7 +1242,6 @@ SUMMARY_CSV_COLUMNS = (
     "num_vars",
     "num_polys",
     "runs",
-    "statement_prepare_s",
     "setup_s",
     "setup_expand_s",
     "backend_prepare_s",
@@ -1345,7 +1331,6 @@ class ScheduledRun:
     case: BenchmarkCaseSpec
     kind: str  # "warmup" or "measured"
     run_index: int  # 0 for warm-ups, 1..runs for measured
-    require_current_metrics: bool = True
 
 
 def plan_case_runs(
@@ -1354,7 +1339,6 @@ def plan_case_runs(
     case: BenchmarkCaseSpec,
     runs: int,
     warmups: int,
-    require_current_metrics: bool = True,
 ) -> list[ScheduledRun]:
     """All executions of one case for one binary, in execution order."""
     case_dir = summary_dir / case.case_id
@@ -1366,7 +1350,6 @@ def plan_case_runs(
             case,
             "warmup",
             0,
-            require_current_metrics,
         )
         for warmup_index in range(1, warmups + 1)
     ]
@@ -1380,7 +1363,6 @@ def plan_case_runs(
                 case,
                 "measured",
                 run_index,
-                require_current_metrics,
             )
         )
     return schedule
@@ -1404,9 +1386,7 @@ def execute_schedule(
     for run in schedule:
         if run.case.case_id in failed_cases:
             continue
-        summary, return_code = run_benchmark_case(
-            run.binary, run.run_dir, run.case, run.require_current_metrics
-        )
+        summary, return_code = run_benchmark_case(run.binary, run.run_dir, run.case)
         summary["run_index"] = run.run_index
         if return_code != 0:
             failed_cases.add(run.case.case_id)
@@ -1495,14 +1475,11 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     if bool(args.baseline_binary) != bool(args.baseline_output_dir):
         raise ValueError("--baseline-binary and --baseline-output-dir must be set together")
-    # The merge-base binary may predate metrics introduced by this report
-    # schema. Keep its older metrics comparable without weakening validation
-    # for the current binary.
-    binaries: list[tuple[str, pathlib.Path, bool]] = [(args.binary, output_dir, True)]
+    binaries: list[tuple[str, pathlib.Path]] = [(args.binary, output_dir)]
     if args.baseline_binary:
         baseline_dir = pathlib.Path(args.baseline_output_dir)
         baseline_dir.mkdir(parents=True, exist_ok=True)
-        binaries.append((args.baseline_binary, baseline_dir, False))
+        binaries.append((args.baseline_binary, baseline_dir))
 
     cases = configured_cases(args)
     schedule: list[ScheduledRun] = []
@@ -1514,9 +1491,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 case,
                 args.runs,
                 args.warmups,
-                require_current_metrics,
             )
-            for binary, summary_dir, require_current_metrics in binaries
+            for binary, summary_dir in binaries
         ]
         plan_lengths = {len(plan) for plan in plans}
         if len(plan_lengths) != 1:
@@ -1529,7 +1505,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     results, overall_return_code = execute_schedule(schedule)
     write_aggregate_summaries(
-        [summary_dir for _, summary_dir, _ in binaries],
+        [summary_dir for _, summary_dir in binaries],
         cases,
         results,
         args.warmups,
@@ -1747,7 +1723,6 @@ class Metric:
 
 
 MEASURED_METRICS = [
-    Metric("statement_prepare_s", "Statement preparation", "s", fmt_seconds),
     Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("setup_expand_s", "Setup expansion", "s", fmt_seconds),
     Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
@@ -2197,12 +2172,6 @@ def render_matrix_summary(
         (
             "Phase time",
             [
-                Metric(
-                    "statement_prepare_s",
-                    "Statement preparation",
-                    " s",
-                    fmt_seconds,
-                ),
                 Metric("setup_s", "Setup", " s", fmt_seconds),
                 Metric("commit_s", "Commit", " s", fmt_seconds),
                 Metric("prove_total_s", "Prove", " s", fmt_seconds),
@@ -3007,7 +2976,6 @@ def render_report(args: argparse.Namespace) -> int:
         if case_runs > 1:
             ranges = []
             for key, label in [
-                ("statement_prepare_s", "statement preparation"),
                 ("setup_s", "setup"),
                 ("commit_s", "commit"),
                 ("prove_total_s", "prove"),

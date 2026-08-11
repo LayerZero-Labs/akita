@@ -5,7 +5,6 @@ import json
 import pathlib
 import tempfile
 import unittest
-from unittest import mock
 
 
 class ProfileBenchReportTests(unittest.TestCase):
@@ -60,46 +59,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(schedule[0].run_dir, summary_dir / case.case_id / "warmup-1")
         self.assertEqual(schedule[1].run_dir, summary_dir / case.case_id / "run-1")
         self.assertEqual(schedule[2].run_dir, summary_dir / case.case_id / "run-2")
-        self.assertTrue(schedule[0].require_current_metrics)
-
-    def test_plan_case_runs_marks_merge_base_as_legacy(self) -> None:
-        from scripts.profile_bench_report import BenchmarkCaseSpec, plan_case_runs
-
-        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=26, num_polys=1)
-        schedule = plan_case_runs(
-            "/bin/base",
-            pathlib.Path("/tmp/base"),
-            case,
-            runs=1,
-            warmups=1,
-            require_current_metrics=False,
-        )
-
-        self.assertTrue(all(not run.require_current_metrics for run in schedule))
-
-    def test_execute_schedule_preserves_legacy_metric_policy(self) -> None:
-        from scripts.profile_bench_report import BenchmarkCaseSpec, ScheduledRun, execute_schedule
-
-        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=26, num_polys=1)
-        run = ScheduledRun(
-            "/bin/base",
-            pathlib.Path("/tmp/base"),
-            pathlib.Path("/tmp/base/run-1"),
-            case,
-            "measured",
-            1,
-            require_current_metrics=False,
-        )
-
-        with mock.patch(
-            "scripts.profile_bench_report.run_benchmark_case",
-            return_value=({"exit_code": 0}, 0),
-        ) as run_case:
-            results, return_code = execute_schedule([run])
-
-        self.assertEqual(return_code, 0)
-        self.assertEqual(len(results), 1)
-        run_case.assert_called_once_with(run.binary, run.run_dir, case, False)
 
     def test_interleaved_schedule_alternates_binaries(self) -> None:
         from scripts.profile_bench_report import BenchmarkCaseSpec, plan_case_runs
@@ -250,7 +209,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
     def test_timing_and_size_events_parse_inside_profile_root_span(self) -> None:
-        from scripts.profile_bench_report import extract_summary
+        from scripts.profile_bench_report import SUMMARY_CSV_COLUMNS, extract_summary
 
         log = "\n".join(
             [
@@ -267,7 +226,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary = extract_summary(log, "dense_fp128", 28, 1)
 
-        self.assertEqual(summary["statement_prepare_s"], 0.125)
+        self.assertNotIn("statement_prepare_s", summary)
+        self.assertNotIn("statement_prepare_s", SUMMARY_CSV_COLUMNS)
         self.assertEqual(summary["setup_expand_s"], 0.25)
         self.assertEqual(summary["backend_prepare_s"], 0.75)
         self.assertEqual(summary["setup_s"], 1.0)
@@ -351,23 +311,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary["verification_modes"] = "multi_and_single"
         self.assertIn("verify_single_total_s", missing_required_run_metrics(summary))
-
-    def test_dense_run_requires_statement_preparation_timing(self) -> None:
-        from scripts.profile_bench_report import extract_summary, missing_required_run_metrics
-
-        summary = extract_summary("", "dense_fp32", 26, 1)
-        self.assertIn("statement_prepare_s", missing_required_run_metrics(summary))
-        summary["statement_prepare_s"] = 0.125
-        self.assertNotIn("statement_prepare_s", missing_required_run_metrics(summary))
-
-    def test_legacy_dense_run_does_not_require_new_statement_timing(self) -> None:
-        from scripts.profile_bench_report import extract_summary, missing_required_run_metrics
-
-        summary = extract_summary("", "dense_fp32", 26, 1)
-        self.assertNotIn(
-            "statement_prepare_s",
-            missing_required_run_metrics(summary, require_current_metrics=False),
-        )
 
     def test_setup_size_converts_merge_base_ring_count_to_flat_fields(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -756,7 +699,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_vars": 32,
                 "num_polys": 1,
                 "exit_code": 0,
-                "statement_prepare_s": 1.0,
                 "setup_s": 2.0,
                 "setup_vector_bytes": 4 * 1024 * 1024,
                 "setup_ntt_cache_bytes": 8 * 1024 * 1024,
@@ -771,7 +713,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         )
         baseline = dict(current)
         for key in (
-            "statement_prepare_s",
             "setup_s",
             "setup_vector_bytes",
             "setup_ntt_cache_bytes",
@@ -789,7 +730,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             render_matrix_summary([current], {str(current["case_id"]): baseline})
         report = output.getvalue()
 
-        self.assertEqual(report.count("+100.0%"), 10)
+        self.assertEqual(report.count("+100.0%"), 9)
+        self.assertNotIn("Statement preparation", report)
         self.assertNotIn("vs base</sub>", report)
         self.assertNotIn("vs merge base</sub>", report)
         self.assertIn("### Phase time", report)
