@@ -646,70 +646,69 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let relation_lane_weights = &self.relation_lane_weights;
         let evaluation_trace = &self.evaluation_trace;
         let coeff_count = common_alpha_factor.len();
+        let tiles =
+            crate::protocol::sumcheck::ReductionTiles::new(coeff_count, live_pairs, block_size);
         debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..common_alpha_factor.len(),
+                tiles.work_items(),
                 || ([E::zero(); 2], [E::zero(); 3]),
-                |(mut virt, mut rel), coefficient| {
+                |(mut virt, mut rel), work_item| {
+                    let tile = tiles.decode(work_item);
+                    let coefficient = tile.outer;
+                    let blk = tile.inner.start;
                     let coefficient_start = coefficient * self.live_lane_count;
                     let coefficient_values = &folded_witness
                         [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
+                    let (j_high, blk_end) = stage2_eq_block(
+                        equality_address_base,
+                        blk,
+                        num_first,
+                        first_bits,
+                        tile.inner.len(),
+                        live_pairs,
+                    );
+                    let mut inner_virt = [E::zero(); 2];
 
-                    let mut blk = 0usize;
-                    while blk < live_pairs {
-                        let (j_high, blk_end) = stage2_eq_block(
-                            equality_address_base,
-                            blk,
-                            num_first,
-                            first_bits,
-                            block_size,
-                            live_pairs,
+                    for lane_pair in blk..blk_end {
+                        let j_low = (equality_address_base + lane_pair) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        let left = 2 * lane_pair;
+                        let w0 = coefficient_values[left];
+                        let w1 = if left + 1 < self.live_lane_count {
+                            coefficient_values[left + 1]
+                        } else {
+                            E::zero()
+                        };
+                        let dw = w1 - w0;
+
+                        inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+                        inner_virt[1] += e_in * (dw * dw);
+
+                        let lane_weight0 = relation_lane_weights[left];
+                        let lane_weight1 = relation_lane_weights[left + 1];
+                        let p0 = alpha_factor * lane_weight0;
+                        let p1 = alpha_factor * lane_weight1;
+                        accumulate_fused_partial_lane_relation(
+                            evaluation_trace,
+                            coeff_count,
+                            &mut rel,
+                            w0,
+                            dw,
+                            p0,
+                            p1,
+                            coefficient,
+                            left,
+                            self.live_lane_count,
                         );
-                        let mut inner_virt = [E::zero(); 2];
-
-                        for lane_pair in blk..blk_end {
-                            let j_low = (equality_address_base + lane_pair) & (num_first - 1);
-                            let e_in = e_first[j_low];
-                            let left = 2 * lane_pair;
-                            let w0 = coefficient_values[left];
-                            let w1 = if left + 1 < self.live_lane_count {
-                                coefficient_values[left + 1]
-                            } else {
-                                E::zero()
-                            };
-                            let dw = w1 - w0;
-
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                            inner_virt[1] += e_in * (dw * dw);
-
-                            let lane_weight0 = relation_lane_weights[left];
-                            let lane_weight1 = relation_lane_weights[left + 1];
-                            let p0 = alpha_factor * lane_weight0;
-                            let p1 = alpha_factor * lane_weight1;
-                            accumulate_fused_partial_lane_relation(
-                                evaluation_trace,
-                                coeff_count,
-                                &mut rel,
-                                w0,
-                                dw,
-                                p0,
-                                p1,
-                                coefficient,
-                                left,
-                                self.live_lane_count,
-                            );
-                        }
-
-                        let e_out = e_second[j_high];
-                        virt[0] += e_out * inner_virt[0];
-                        virt[1] += e_out * inner_virt[1];
-
-                        blk = blk_end;
                     }
+
+                    let e_out = e_second[j_high];
+                    virt[0] += e_out * inner_virt[0];
+                    virt[1] += e_out * inner_virt[1];
                     (virt, rel)
                 },
                 |(mut va, mut ra), (vb, rb)| {
@@ -725,69 +724,66 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
         } else {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..common_alpha_factor.len(),
+                tiles.work_items(),
                 || ([E::zero(); 3], [E::zero(); 3]),
-                |(mut virt, mut rel), coefficient| {
+                |(mut virt, mut rel), work_item| {
+                    let tile = tiles.decode(work_item);
+                    let coefficient = tile.outer;
+                    let blk = tile.inner.start;
                     let coefficient_start = coefficient * self.live_lane_count;
                     let coefficient_values = &folded_witness
                         [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
+                    let (j_high, blk_end) = stage2_eq_block(
+                        equality_address_base,
+                        blk,
+                        num_first,
+                        first_bits,
+                        tile.inner.len(),
+                        live_pairs,
+                    );
+                    let mut inner_virt = [E::zero(); 3];
 
-                    let mut blk = 0usize;
-                    while blk < live_pairs {
-                        let (j_high, blk_end) = stage2_eq_block(
-                            equality_address_base,
-                            blk,
-                            num_first,
-                            first_bits,
-                            block_size,
-                            live_pairs,
+                    for lane_pair in blk..blk_end {
+                        let j_low = (equality_address_base + lane_pair) & (num_first - 1);
+                        let e_in = e_first[j_low];
+                        let left = 2 * lane_pair;
+                        let w0 = coefficient_values[left];
+                        let w1 = if left + 1 < self.live_lane_count {
+                            coefficient_values[left + 1]
+                        } else {
+                            E::zero()
+                        };
+                        let dw = w1 - w0;
+                        let two_w0_plus_one = w0 + w0 + E::one();
+
+                        inner_virt[0] += e_in * (w0 * (w0 + E::one()));
+                        inner_virt[1] += e_in * (dw * two_w0_plus_one);
+                        inner_virt[2] += e_in * (dw * dw);
+
+                        let lane_weight0 = relation_lane_weights[left];
+                        let lane_weight1 = relation_lane_weights[left + 1];
+                        let p0 = alpha_factor * lane_weight0;
+                        let p1 = alpha_factor * lane_weight1;
+                        accumulate_fused_partial_lane_relation(
+                            evaluation_trace,
+                            coeff_count,
+                            &mut rel,
+                            w0,
+                            dw,
+                            p0,
+                            p1,
+                            coefficient,
+                            left,
+                            self.live_lane_count,
                         );
-                        let mut inner_virt = [E::zero(); 3];
-
-                        for lane_pair in blk..blk_end {
-                            let j_low = (equality_address_base + lane_pair) & (num_first - 1);
-                            let e_in = e_first[j_low];
-                            let left = 2 * lane_pair;
-                            let w0 = coefficient_values[left];
-                            let w1 = if left + 1 < self.live_lane_count {
-                                coefficient_values[left + 1]
-                            } else {
-                                E::zero()
-                            };
-                            let dw = w1 - w0;
-                            let two_w0_plus_one = w0 + w0 + E::one();
-
-                            inner_virt[0] += e_in * (w0 * (w0 + E::one()));
-                            inner_virt[1] += e_in * (dw * two_w0_plus_one);
-                            inner_virt[2] += e_in * (dw * dw);
-
-                            let lane_weight0 = relation_lane_weights[left];
-                            let lane_weight1 = relation_lane_weights[left + 1];
-                            let p0 = alpha_factor * lane_weight0;
-                            let p1 = alpha_factor * lane_weight1;
-                            accumulate_fused_partial_lane_relation(
-                                evaluation_trace,
-                                coeff_count,
-                                &mut rel,
-                                w0,
-                                dw,
-                                p0,
-                                p1,
-                                coefficient,
-                                left,
-                                self.live_lane_count,
-                            );
-                        }
-
-                        let e_out = e_second[j_high];
-                        virt[0] += e_out * inner_virt[0];
-                        virt[1] += e_out * inner_virt[1];
-                        virt[2] += e_out * inner_virt[2];
-
-                        blk = blk_end;
                     }
+
+                    let e_out = e_second[j_high];
+                    virt[0] += e_out * inner_virt[0];
+                    virt[1] += e_out * inner_virt[1];
+                    virt[2] += e_out * inner_virt[2];
                     (virt, rel)
                 },
                 |(mut va, mut ra), (vb, rb)| {

@@ -140,17 +140,9 @@ pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         }
     }
 
-    let centered_inf_norm = centered_coeffs
-        .iter()
-        .flat_map(|coeffs| coeffs.iter())
-        .map(|coeff| coeff.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-
     Ok(DecomposeFoldWitness::from_parts(
         z_folded_rings,
         centered_coeffs,
-        centered_inf_norm,
     ))
 }
 
@@ -695,7 +687,7 @@ impl RingRelationProver {
         let mut group_z = Vec::with_capacity(num_groups);
         for output in grind_outputs {
             group_challenges.push(output.challenges);
-            group_z.push((output.witness, output.centered_per_chunk));
+            group_z.push((output.witness, output.coefficients));
         }
         drop(fold_grind_span);
 
@@ -757,7 +749,7 @@ impl RingRelationProver {
                 .zip(group_openings)
                 .enumerate()
             {
-                let (z_folded_rings, z_folded_centered_per_chunk) = z_material;
+                let (z_folded_rings, z_folded_coefficients) = z_material;
                 let GroupOpeningMaterial { e_hat, e_folded } = opening;
                 let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
                 let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
@@ -768,7 +760,7 @@ impl RingRelationProver {
                 }
                 groups.push(RingRelationGroupWitness::from_parts(
                     z_folded_rings,
-                    z_folded_centered_per_chunk,
+                    z_folded_coefficients,
                     e_hat,
                     e_folded,
                     hint,
@@ -781,7 +773,7 @@ impl RingRelationProver {
                 return Err(AkitaError::InvalidProof);
             }
             let hint = hints.into_iter().next().ok_or(AkitaError::InvalidProof)?;
-            let (z_folded_rings, z_folded_centered_per_chunk) =
+            let (z_folded_rings, z_folded_coefficients) =
                 group_z.into_iter().next().ok_or(AkitaError::InvalidProof)?;
             let GroupOpeningMaterial { e_hat, e_folded } = group_openings
                 .into_iter()
@@ -789,7 +781,7 @@ impl RingRelationProver {
                 .ok_or(AkitaError::InvalidProof)?;
             RingRelationWitness::from_flat_parts(
                 z_folded_rings,
-                z_folded_centered_per_chunk,
+                z_folded_coefficients,
                 fold_grind_nonce,
                 e_hat,
                 e_folded,
