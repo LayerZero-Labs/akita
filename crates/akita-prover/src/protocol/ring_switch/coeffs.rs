@@ -7,7 +7,8 @@ use crate::protocol::ring_relation::{
 };
 use crate::protocol::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::validation::validate_i8_setup_log_basis;
-use akita_algebra::CyclotomicRing;
+use crate::DecomposeFoldWitness;
+use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
@@ -26,32 +27,6 @@ pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
     pub(crate) z_centered: Vec<i32>,
     pub(crate) z_inf: u32,
     pub(crate) z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
-}
-
-fn concat_digit_blocks<'a>(
-    blocks: impl IntoIterator<Item = &'a DigitBlocks>,
-) -> Result<DigitBlocks, AkitaError> {
-    let mut blocks = blocks.into_iter();
-    let Some(first) = blocks.next() else {
-        return Err(AkitaError::InvalidInput(
-            "multi-group ring-switch requires at least one digit group".to_string(),
-        ));
-    };
-    let stride = first.digit_stride();
-    let mut digits = Vec::with_capacity(first.digits().len());
-    let mut block_sizes = Vec::with_capacity(first.block_sizes().len());
-    digits.extend_from_slice(first.digits());
-    block_sizes.extend_from_slice(first.block_sizes());
-    for block in blocks {
-        if block.digit_stride() != stride {
-            return Err(AkitaError::InvalidInput(
-                "multi-group ring-switch digit groups have mixed ring dimensions".to_string(),
-            ));
-        }
-        digits.extend_from_slice(block.digits());
-        block_sizes.extend_from_slice(block.block_sizes());
-    }
-    DigitBlocks::new(digits, block_sizes, stride)
 }
 
 fn emit_packed_negative_binary(
@@ -245,6 +220,7 @@ where
     let RingRelationWitness {
         groups,
         fold_grind_nonce: _,
+        d_quotients,
         compression,
     } = witness;
     if groups.len() != opening_batch.num_groups() {
@@ -349,6 +325,11 @@ where
         }
         let recomposed_inner_rows =
             RingVec::from_coeffs_with_ring_dim(inner_coefficients, group_dims.d_a())?;
+        let z_inf = z_folded_rings.centered_inf_norm;
+        let DecomposeFoldWitness {
+            centered_coeffs_flat: z_centered,
+            ..
+        } = z_folded_rings;
         owned.push(PreparedRingSwitchGroup {
             params: group_lp,
             role_dims: group_dims,
@@ -356,8 +337,8 @@ where
             t_hat,
             recomposed_inner_rows,
             e_folded,
-            z_centered: z_folded_rings.centered_coeffs_flat().to_vec(),
-            z_inf: z_folded_rings.centered_inf_norm,
+            z_centered,
+            z_inf,
             z_folded_centered_per_chunk,
         });
     }
@@ -380,14 +361,6 @@ where
     // Relation quotient `r`: each group owns a native consistency/A/B
     // block, while the level owns the shared D tail. One trailing witness
     // segment carries all quotient rows in canonical relation order.
-    let e_hat_concat_storage;
-    let e_hat_concat = if let [group_index] = order.as_slice() {
-        &owned[*group_index].e_hat
-    } else {
-        e_hat_concat_storage =
-            concat_digit_blocks(order.iter().map(|&group_index| &owned[group_index].e_hat))?;
-        &e_hat_concat_storage
-    };
     let ring_multiplier_points = owned
         .iter()
         .enumerate()
@@ -400,7 +373,7 @@ where
         &owned,
         &ring_multiplier_points,
         instance.group_challenges(),
-        e_hat_concat,
+        &d_quotients,
         instance.rhs(),
         compression.as_ref(),
     )
@@ -523,53 +496,18 @@ fn emit_r_rows<F: CanonicalField>(
                 actual: row.ring_dim(),
             });
         }
-        let digits = match row.ring_dim() {
-            8 => decompose_r_row::<F, 8>(row.coeffs(), levels, &decompose_params)?,
-            16 => decompose_r_row::<F, 16>(row.coeffs(), levels, &decompose_params)?,
-            32 => decompose_r_row::<F, 32>(row.coeffs(), levels, &decompose_params)?,
-            64 => decompose_r_row::<F, 64>(row.coeffs(), levels, &decompose_params)?,
-            128 => decompose_r_row::<F, 128>(row.coeffs(), levels, &decompose_params)?,
-            256 => decompose_r_row::<F, 256>(row.coeffs(), levels, &decompose_params)?,
-            512 => decompose_r_row::<F, 512>(row.coeffs(), levels, &decompose_params)?,
-            1024 => decompose_r_row::<F, 1024>(row.coeffs(), levels, &decompose_params)?,
-            actual => {
-                return Err(AkitaError::InvalidSize {
-                    expected: 512,
-                    actual,
-                })
-            }
-        };
-        for digit in 0..levels {
-            let start = digit * row.ring_dim();
-            let end = start + row.ring_dim();
-            let destination = layout.r_coefficient_index(row_index, digit, 0)?;
-            let destination_end = destination
-                .checked_add(row.ring_dim())
-                .ok_or_else(|| AkitaError::InvalidSetup("R witness end overflow".into()))?;
-            let plane = out
-                .get_mut(destination..destination_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            plane.copy_from_slice(&digits[start..end]);
+        let expected_len = levels
+            .checked_mul(row.ring_dim())
+            .ok_or_else(|| AkitaError::InvalidSetup("R witness row length overflow".into()))?;
+        let range = row_layout.range();
+        if range.len() != expected_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_len,
+                actual: range.len(),
+            });
         }
+        let destination = out.get_mut(range).ok_or(AkitaError::InvalidProof)?;
+        balanced_decompose_coefficients_pow2_i8_into(row.coeffs(), destination, &decompose_params);
     }
     Ok(())
-}
-
-fn decompose_r_row<F: CanonicalField, const D: usize>(
-    coeffs: &[F],
-    levels: usize,
-    params: &BalancedDecomposePow2Params,
-) -> Result<Vec<i8>, AkitaError> {
-    let coeffs: [F; D] = coeffs.try_into().map_err(|_| AkitaError::InvalidSize {
-        expected: D,
-        actual: coeffs.len(),
-    })?;
-    let ring = CyclotomicRing::<F, D>::from_coefficients(coeffs);
-    let mut planes = vec![[0i8; D]; levels];
-    ring.balanced_decompose_pow2_i8_into_with_params(&mut planes, params);
-    let mut out = Vec::with_capacity(levels * D);
-    for plane in planes {
-        out.extend_from_slice(&plane);
-    }
-    Ok(out)
 }

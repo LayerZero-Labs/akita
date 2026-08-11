@@ -135,6 +135,14 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
+    /// Borrow the validated compact opening point, when this is a proper extension.
+    pub fn as_subfield(&self) -> Option<&SubfieldMultiplierOpeningPoint<F>> {
+        match self {
+            Self::Base(_) => None,
+            Self::Subfield(point) => Some(point),
+        }
+    }
+
     /// Materialize the position multipliers for a prover ring kernel.
     pub fn materialize_position_rings<const D: usize>(
         &self,
@@ -230,11 +238,36 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
-    /// Constant coefficient of `a[idx]`, if it is known to be constant.
-    pub fn position_constant_coeff(&self, idx: usize) -> Option<F> {
+    /// Add the high half of the ordinary polynomial product
+    /// `position[idx] * rhs` to `output` without expanding the multiplier.
+    ///
+    /// The returned coefficients are the terms of degrees `D..2D - 2`, shifted
+    /// down by `D`. Base-field multipliers are constant polynomials and hence
+    /// have no high-half contribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `idx` is out of range, `output.len() != D`, or the
+    /// stored subfield multiplier uses a different ring dimension.
+    pub fn accumulate_position_product_high_half<const D: usize>(
+        &self,
+        idx: usize,
+        rhs: &CyclotomicRing<F, D>,
+        output: &mut [F],
+    ) -> Result<(), AkitaError> {
+        if output.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: output.len(),
+            });
+        }
         match self {
-            Self::Base(point) => point.position_weights.get(idx).copied(),
-            Self::Subfield(point) => point.position_constant_coeff(idx),
+            Self::Base(point) => point
+                .position_weights
+                .get(idx)
+                .map(|_| ())
+                .ok_or(AkitaError::InvalidProof),
+            Self::Subfield(point) => point.accumulate_position_product_high_half(idx, rhs, output),
         }
     }
 
@@ -680,6 +713,9 @@ where
 }
 
 #[cfg(test)]
+mod high_half_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::SisModulusProfileId;
@@ -791,6 +827,25 @@ mod tests {
             .accumulate_position_product(0, &rhs, &mut actual)
             .expect("compact product");
         assert_eq!(actual, expected_ring * rhs);
+
+        let mut actual = CyclotomicRing::zero();
+        point
+            .as_subfield()
+            .expect("proper extension multipliers")
+            .accumulate_fold_product(0, &rhs, &mut actual)
+            .expect("compact fold product");
+        assert_eq!(actual, expected_ring * rhs);
+
+        let scale = F::from_u64(23);
+        for shift in [0, D / 2, D - 1] {
+            let mut actual = CyclotomicRing::zero();
+            point
+                .as_subfield()
+                .expect("proper extension multipliers")
+                .accumulate_position_monomial(0, shift, scale, &mut actual)
+                .expect("compact shifted monomial");
+            assert_eq!(actual, expected_ring.negacyclic_shift(shift).scale(&scale));
+        }
     }
 
     #[test]

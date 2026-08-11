@@ -104,7 +104,7 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
     Q: RootProverGroupOpening<F, E, O>,
     O: DigitRowsComputeBackend<F>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     C: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
 {
