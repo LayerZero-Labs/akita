@@ -1,7 +1,9 @@
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction or root-tensor-projection symbols in scope.
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
-use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack};
+use crate::compute::{
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
+};
 use crate::protocol::core::RootProverGroupOpening;
 use crate::{ProverOpeningData, ProverTranscriptGrind};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
@@ -48,7 +50,7 @@ where
     C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = block_claims
         .opening_claims()

@@ -7,11 +7,12 @@ use crate::compute::backend::ComputeBackendSetup;
 use crate::compute::requirements::NttOperationCluster;
 use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::kernels::linear::{
+    digit_relation_rows_cached_prover_bounds, digit_relation_rows_streamed_prover_bounds,
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
     fused_split_eq_quotients_streamed_prover_bounds,
 };
 use crate::AkitaProverSetup;
-use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
+use akita_field::{AkitaError, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
 use std::sync::atomic::Ordering;
 
@@ -102,6 +103,7 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
         .expect("streamed relation rows");
 
     assert_eq!(streamed, cached);
+    assert_eq!(cached.d_negacyclic.len(), plan.n_d);
     assert!(!cached_prepared
         .shared_ntt_cache_metrics()
         .unwrap()
@@ -110,6 +112,100 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
         .shared_ntt_cache_metrics()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn configured_ring_switch_routes_reject_malformed_active_roles() {
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let cached_backend = CpuBackend::with_resource_limits(
+        usize::MAX,
+        CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
+    )
+    .unwrap();
+    let streamed_backend =
+        CpuBackend::with_resource_limits(0, CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER)
+            .unwrap();
+    let cached_prepared = cached_backend.prepare_setup(&setup).unwrap();
+    let streamed_prepared = streamed_backend.prepare_setup(&setup).unwrap();
+    let digits = [[1i8; D]];
+    let centered = [[1i32; D]];
+
+    let malformed = [
+        (
+            RingSwitchRelationView {
+                e_hat: &[],
+                t_hat: &digits,
+                z_segment: &[],
+                z_folded_centered_inf_norm: 0,
+            },
+            RingSwitchRelationPlan {
+                n_d: 1,
+                n_b: 1,
+                n_a: 0,
+                log_basis_open: 2,
+                log_basis_outer: 2,
+            },
+        ),
+        (
+            RingSwitchRelationView {
+                e_hat: &digits,
+                t_hat: &[],
+                z_segment: &[],
+                z_folded_centered_inf_norm: 0,
+            },
+            RingSwitchRelationPlan {
+                n_d: 1,
+                n_b: 1,
+                n_a: 0,
+                log_basis_open: 2,
+                log_basis_outer: 2,
+            },
+        ),
+        (
+            RingSwitchRelationView {
+                e_hat: &digits,
+                t_hat: &[],
+                z_segment: &[],
+                z_folded_centered_inf_norm: 1,
+            },
+            RingSwitchRelationPlan {
+                n_d: 1,
+                n_b: 0,
+                n_a: 1,
+                log_basis_open: 2,
+                log_basis_outer: 2,
+            },
+        ),
+    ];
+
+    for (source, plan) in malformed {
+        let streamed = streamed_backend.relation_rows(&streamed_prepared, source, plan);
+        let cached = cached_backend.relation_rows(&cached_prepared, source, plan);
+        assert!(matches!(streamed, Err(AkitaError::InvalidInput(_))));
+        assert!(matches!(cached, Err(AkitaError::InvalidInput(_))));
+    }
+
+    let valid_a = RingSwitchRelationView {
+        e_hat: &digits,
+        t_hat: &digits,
+        z_segment: &centered,
+        z_folded_centered_inf_norm: 1,
+    };
+    let valid_plan = RingSwitchRelationPlan {
+        n_d: 1,
+        n_b: 0,
+        n_a: 1,
+        log_basis_open: 2,
+        log_basis_outer: 2,
+    };
+    assert_eq!(
+        streamed_backend
+            .relation_rows(&streamed_prepared, valid_a, valid_plan)
+            .unwrap(),
+        cached_backend
+            .relation_rows(&cached_prepared, valid_a, valid_plan)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -170,13 +266,9 @@ fn cached_and_streamed_routes_share_acceptance_across_crt_bounds() {
 #[test]
 fn streamed_relation_rows_match_cached_kernel() {
     let prepared = prepared();
-    let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
     let t_hat = vec![[-1i8; D], [3i8; D]];
     let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
-    let extent = 2usize
-        .saturating_mul(e_hat.len())
-        .max(2usize.saturating_mul(t_hat.len()))
-        .max(z_segment.len());
+    let extent = 2usize.saturating_mul(t_hat.len()).max(z_segment.len());
     let view = prepared
         .expanded
         .shared_matrix()
@@ -185,13 +277,10 @@ fn streamed_relation_rows_match_cached_kernel() {
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
         view.as_slice(),
         2,
-        2,
         1,
-        &e_hat,
         &t_hat,
         &z_segment,
         5,
-        2,
         3,
     )
     .expect("streamed rows");
@@ -202,13 +291,10 @@ fn streamed_relation_rows_match_cached_kernel() {
                     negacyclic_ntt,
                     cyclic_ntt,
                     2,
-                    2,
                     1,
-                    &e_hat,
                     &t_hat,
                     &z_segment,
                     5,
-                    2,
                     3,
                 )
             })
@@ -222,13 +308,9 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
     type F32 = Prime32Offset99;
     let setup = AkitaProverSetup::<F32>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
     let t_hat = vec![[-1i8; D], [3i8; D]];
     let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
-    let extent = 2usize
-        .saturating_mul(e_hat.len())
-        .max(2usize.saturating_mul(t_hat.len()))
-        .max(z_segment.len());
+    let extent = 2usize.saturating_mul(t_hat.len()).max(z_segment.len());
     let view = prepared
         .expanded
         .shared_matrix()
@@ -237,13 +319,10 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
         view.as_slice(),
         2,
-        2,
         1,
-        &e_hat,
         &t_hat,
         &z_segment,
         5,
-        2,
         3,
     )
     .expect("streamed rows");
@@ -254,13 +333,10 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
                     negacyclic_ntt,
                     cyclic_ntt,
                     2,
-                    2,
                     1,
-                    &e_hat,
                     &t_hat,
                     &z_segment,
                     5,
-                    2,
                     3,
                 )
             })
@@ -271,7 +347,7 @@ fn streamed_relation_rows_match_cached_q32_kernel() {
 
 #[test]
 fn cached_and_streamed_reject_the_same_short_matrix_shape() {
-    assert!(fused_quotient_matrix_extent(usize::MAX, 2, 0, 0, 0, 0).is_err());
+    assert!(fused_quotient_matrix_extent(usize::MAX, 2, 0, 0).is_err());
 
     let prepared = prepared();
     let e_hat = vec![[1i8; D], [-1i8; D]];
@@ -280,34 +356,11 @@ fn cached_and_streamed_reject_the_same_short_matrix_shape() {
         .shared_matrix()
         .ring_view::<D>(1, 1)
         .expect("one-element field view");
-    let streamed = fused_split_eq_quotients_streamed_prover_bounds(
-        view.as_slice(),
-        1,
-        0,
-        0,
-        &e_hat,
-        &[],
-        &[],
-        0,
-        2,
-        1,
-    );
+    let streamed = digit_relation_rows_streamed_prover_bounds(view.as_slice(), 1, &e_hat, 2);
     assert!(streamed.is_err());
 
     let cached = prepared.with_shared_ntt::<D, _>(cyclic_key(1), |cyclic_ntt| {
-        fused_split_eq_quotients_prover_bounds::<F, D>(
-            cyclic_ntt,
-            cyclic_ntt,
-            1,
-            0,
-            0,
-            &e_hat,
-            &[],
-            &[],
-            0,
-            2,
-            1,
-        )
+        digit_relation_rows_cached_prover_bounds::<F, D>(cyclic_ntt, cyclic_ntt, 1, &e_hat, 2)
     });
     assert!(cached.is_err());
 }
@@ -329,13 +382,10 @@ fn streamed_chunked_z_quotient_matches_cached_kernel() {
     let streamed = fused_split_eq_quotients_streamed_prover_bounds(
         view.as_slice(),
         0,
-        0,
         1,
-        &[][..],
         &[][..],
         &z_segment,
         z_bound,
-        1,
         1,
     )
     .expect("streamed rows");
@@ -346,13 +396,10 @@ fn streamed_chunked_z_quotient_matches_cached_kernel() {
                     negacyclic_ntt,
                     cyclic_ntt,
                     0,
-                    0,
                     1,
-                    &[][..],
                     &[][..],
                     &z_segment,
                     z_bound,
-                    1,
                     1,
                 )
             })
@@ -374,7 +421,6 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
     )
     .unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let e_hat = vec![[1i8; D128], [-1i8; D128], [1i8; D128]];
     let t_hat = vec![[1i8; D128]; T_LEN];
     let z_segment = vec![[1i32; D128], [-2i32; D128], [3i32; D128], [1i32; D128]];
     let view = prepared
@@ -386,12 +432,9 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
         view.as_slice(),
         1,
         1,
-        1,
-        &e_hat,
         &t_hat,
         &z_segment,
         3,
-        2,
         8,
     )
     .expect("streamed rows");
@@ -408,12 +451,9 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
                             cyclic_ntt,
                             1,
                             1,
-                            1,
-                            &e_hat,
                             &t_hat,
                             &z_segment,
                             3,
-                            2,
                             8,
                         )
                     },
