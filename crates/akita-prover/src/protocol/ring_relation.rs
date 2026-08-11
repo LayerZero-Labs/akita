@@ -4,7 +4,8 @@
 //! [`RingRelationProver`].
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, RootOpeningSource,
+    OpeningFoldKernel, OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel,
+    RingSwitchRelationPlan, RootOpeningSource, RuntimeRingSwitchProveBackend,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
@@ -27,6 +28,7 @@ use akita_types::{CommittedGroupParams, RingRelationInstance};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
+use crate::backend::RingSwitchRelationView;
 
 mod compression_witness;
 mod relation_quotient;
@@ -69,8 +71,11 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(e_hat)
 }
 
-fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError> {
-    let Some(first) = blocks.first() else {
+fn concat_digit_blocks<'a>(
+    blocks: impl IntoIterator<Item = &'a DigitBlocks>,
+) -> Result<DigitBlocks, AkitaError> {
+    let mut blocks = blocks.into_iter();
+    let Some(first) = blocks.next() else {
         return Err(AkitaError::InvalidInput(
             "multi-group digit concatenation requires at least one group".to_string(),
         ));
@@ -78,7 +83,7 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
     let stride = first.digit_stride();
     let mut digits = Vec::new();
     let mut block_sizes = Vec::new();
-    for block in blocks {
+    for block in std::iter::once(first).chain(blocks) {
         if block.digit_stride() != stride {
             return Err(AkitaError::InvalidInput(
                 "multi-group digit blocks have mixed ring dimensions".to_string(),
@@ -223,38 +228,25 @@ impl<F: FieldCore> IntoRingMultiplierOpeningPointVec<F> for Vec<RingMultiplierOp
     }
 }
 
-fn compute_v_rows<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup,
-    row_len: usize,
-    e_hat: &DigitBlocks,
-    log_basis: u32,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    B: DigitRowsComputeBackend<F>,
-{
-    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.typed_planes::<D>()?, log_basis)?;
-    if rows.len() != row_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(rows)
+struct RelationDRows<F: FieldCore, const D: usize> {
+    reduced: Vec<CyclotomicRing<F, D>>,
+    quotients: Vec<CyclotomicRing<F, D>>,
 }
 
-/// Compute the private D-block rows `v = D * e_hat`.
+/// Compute the private D-block rows `v = D * e_hat` and their relation quotients.
 ///
 /// D-role kernel: `d_row_len` is the D-matrix row count and `e_hat` carries
 /// the opening digits at the D-role ring dimension. Callers extract both from
 /// the schedule; this function must not read schedule types.
-fn compute_relation_v_rows<F, RB, const D: usize>(
+fn compute_relation_d_rows<F, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB>,
     d_row_len: usize,
     log_basis: u32,
     e_hat: &DigitBlocks,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+) -> Result<RelationDRows<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    RB: DigitRowsComputeBackend<F>,
+    F: FieldCore + CanonicalField + HalvingField,
+    RB: RingSwitchProveBackend<F, D>,
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
@@ -263,7 +255,42 @@ where
         e_hat_planes = e_hat.typed_planes::<D>()?.len()
     )
     .entered();
-    compute_v_rows(backend, prepared, d_row_len, e_hat, log_basis)
+    let rows = RingSwitchRelationKernel::relation_rows(
+        backend,
+        prepared,
+        RingSwitchRelationView {
+            e_hat: e_hat.typed_planes::<D>()?,
+            t_hat: &[],
+            z_segment: &[],
+            z_folded_centered_inf_norm: 0,
+        },
+        RingSwitchRelationPlan {
+            n_d: d_row_len,
+            n_b: 0,
+            n_a: 0,
+            log_basis_open: log_basis,
+            log_basis_outer: log_basis,
+        },
+    )?;
+    if rows.d_negacyclic.len() != d_row_len
+        || rows.d_cyclic.len() != d_row_len
+        || !rows.b_cyclic.is_empty()
+        || !rows.a_quotients.is_empty()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let quotients = rows
+        .d_cyclic
+        .iter()
+        .zip(&rows.d_negacyclic)
+        .map(|(cyclic, reduced)| {
+            relation_quotient::quotient_from_cyclic_and_reduced(cyclic, reduced)
+        })
+        .collect();
+    Ok(RelationDRows {
+        reduced: rows.d_negacyclic,
+        quotients,
+    })
 }
 
 /// Validate the chunked-witness configuration at the prover boundary (no-panic
@@ -350,7 +377,7 @@ impl RingRelationProver {
             + akita_serialization::AkitaSerialize,
         P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
         OB: DigitRowsComputeBackend<F>,
-        RB: DigitRowsComputeBackend<F>,
+        RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     {
         let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
         validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
@@ -524,28 +551,42 @@ impl RingRelationProver {
             group_e_folded.push(e_folded_g);
             offset = end;
         }
-        let e_hat = if lp.has_precommitted_groups() {
-            let ordered = opening_batch
-                .root_group_order()?
-                .into_iter()
-                .map(|group_index| group_e_hat[group_index].clone())
-                .collect::<Vec<_>>();
-            concat_digit_blocks(&ordered)?
+        let e_hat_concat = if lp.has_precommitted_groups() {
+            Some(concat_digit_blocks(
+                opening_batch
+                    .root_group_order()?
+                    .into_iter()
+                    .map(|group_index| &group_e_hat[group_index]),
+            )?)
         } else {
-            concat_digit_blocks(&group_e_hat)?
+            None
         };
-        let v = dispatch_for_field!(
+        let e_hat = e_hat_concat
+            .as_ref()
+            .or_else(|| group_e_hat.first())
+            .ok_or(AkitaError::InvalidProof)?;
+        let (v, d_quotients) = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             dims.d_d(),
             |D_D| {
-                let v_typed = compute_relation_v_rows::<F, RB, D_D>(
-                    ring_switch_ctx,
-                    d_row_len,
-                    d_log_basis,
-                    &e_hat,
-                )?;
-                Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
+                if d_row_len == 0 {
+                    Ok::<_, AkitaError>((
+                        RingVec::from_coeffs(Vec::new()),
+                        RingVec::from_coeffs(Vec::new()),
+                    ))
+                } else {
+                    let d_rows = compute_relation_d_rows::<F, RB, D_D>(
+                        ring_switch_ctx,
+                        d_row_len,
+                        d_log_basis,
+                        e_hat,
+                    )?;
+                    Ok::<_, AkitaError>((
+                        RingVec::from_ring_elems(&d_rows.reduced),
+                        RingVec::from_ring_elems(&d_rows.quotients),
+                    ))
+                }
             }
         )
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
@@ -612,19 +653,6 @@ impl RingRelationProver {
             v.append_flat_to_transcript(ABSORB_OPENING_PAYLOAD, dims.d_d(), transcript)?;
             None
         };
-        // Concatenated folded `e` rows in the same order as the terminal witness.
-        let e_folded_order = if lp.has_precommitted_groups() {
-            opening_batch.root_group_order()?
-        } else {
-            (0..group_e_folded.len()).collect()
-        };
-        let e_folded = RingVec::from_coeffs(
-            e_folded_order
-                .into_iter()
-                .map(|group_index| &group_e_folded[group_index])
-                .flat_map(|block| block.coeffs().iter().copied())
-                .collect(),
-        );
         drop(opening_rows_span);
 
         // Distributed-prover chunked layout: the grind emits one folded response
@@ -716,8 +744,15 @@ impl RingRelationProver {
             if hints.len() != num_groups {
                 return Err(AkitaError::InvalidProof);
             }
-            for (group_index, ((z_folded_rings, z_folded_centered_per_chunk), hint)) in
-                group_z.into_iter().zip(hints).enumerate()
+            let group_material = group_e_hat.into_iter().zip(group_e_folded);
+            for (
+                group_index,
+                (((z_folded_rings, z_folded_centered_per_chunk), hint), (e_hat, e_folded)),
+            ) in group_z
+                .into_iter()
+                .zip(hints)
+                .zip(group_material)
+                .enumerate()
             {
                 let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
                 let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
@@ -729,13 +764,13 @@ impl RingRelationProver {
                 groups.push(RingRelationGroupWitness::from_parts(
                     z_folded_rings,
                     z_folded_centered_per_chunk,
-                    group_e_hat[group_index].clone(),
-                    group_e_folded[group_index].clone(),
+                    e_hat,
+                    e_folded,
                     hint,
                     group_dims,
                 ));
             }
-            RingRelationWitness::from_groups(fold_grind_nonce, groups, compression)
+            RingRelationWitness::from_groups(fold_grind_nonce, groups, d_quotients, compression)
         } else {
             if hints.len() != 1 {
                 return Err(AkitaError::InvalidProof);
@@ -743,6 +778,14 @@ impl RingRelationProver {
             let hint = hints.into_iter().next().ok_or(AkitaError::InvalidProof)?;
             let (z_folded_rings, z_folded_centered_per_chunk) =
                 group_z.into_iter().next().ok_or(AkitaError::InvalidProof)?;
+            let e_hat = group_e_hat
+                .into_iter()
+                .next()
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_folded = group_e_folded
+                .into_iter()
+                .next()
+                .ok_or(AkitaError::InvalidProof)?;
             RingRelationWitness::from_flat_parts(
                 z_folded_rings,
                 z_folded_centered_per_chunk,
@@ -751,6 +794,7 @@ impl RingRelationProver {
                 e_folded,
                 hint,
                 dims,
+                d_quotients,
                 compression,
             )
         };

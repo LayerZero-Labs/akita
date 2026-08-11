@@ -9,6 +9,10 @@ const FUSED_L2_CACHE_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(not(target_arch = "aarch64"))]
 const FUSED_L2_CACHE_BYTES: usize = 1024 * 1024;
 
+/// Negacyclic reduced rows and cyclic rows produced by one D-role traversal.
+pub(crate) type DigitRelationRows<F, const D: usize> =
+    (Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>);
+
 #[derive(Clone, Copy)]
 struct CenteredRhsBounds {
     capacity: u64,
@@ -124,6 +128,23 @@ where
         Ok(())
     }
 
+    fn validate_digit_relation(&self, plan: FusedQuotientPlan) -> Result<(), AkitaError> {
+        self.validate(plan)?;
+        let required = plan.n_d.checked_mul(plan.witness_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("D-role negacyclic matrix extent overflow".into())
+        })?;
+        let available = match self {
+            Self::Cached { negacyclic, .. } => negacyclic.len(),
+            Self::Field(source) => source.len(),
+        };
+        if available < required {
+            return Err(AkitaError::InvalidSetup(format!(
+                "D-role negacyclic matrix needs {required} elements, got {available}"
+            )));
+        }
+        Ok(())
+    }
+
     #[inline(always)]
     fn with_cyclic<R>(
         &self,
@@ -181,6 +202,74 @@ pub(crate) fn fused_quotient_matrix_extent(
                 .map(|role_extent| extent.max(role_extent))
         })
         .ok_or_else(|| AkitaError::InvalidSetup("fused quotient matrix extent overflow".into()))
+}
+
+/// Stream the D-role matrix once and return both transform-domain products.
+///
+/// The digit and CRT bounds are identical to the ordinary fused relation
+/// kernel. Unlike two independent mat-vec calls, the field-form matrix entry is
+/// loaded once and transformed into both domains before either accumulator is
+/// updated.
+pub(crate) fn digit_relation_rows_streamed_prover_bounds<
+    F: FieldCore + CanonicalField + HalvingField,
+    const D: usize,
+>(
+    source: &[CyclotomicRing<F, D>],
+    n_d: usize,
+    e_hat: &[[i8; D]],
+    log_basis_open: u32,
+) -> Result<DigitRelationRows<F, D>, AkitaError> {
+    macro_rules! run {
+        ($params:expr) => {{
+            let params = $params;
+            let source = FusedMatrixSource::Field(source);
+            digit_relation_rows_with_params(source, n_d, e_hat, log_basis_open, &params)
+        }};
+    }
+    match select_crt_ntt_params::<F, D>()? {
+        ProtocolCrtNttParams::Q32(params) => run!(params),
+        ProtocolCrtNttParams::Q64(params) => run!(params),
+        ProtocolCrtNttParams::Q128(params) => run!(params),
+    }
+}
+
+fn digit_relation_rows_with_params<
+    F: FieldCore + CanonicalField + HalvingField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    source: FusedMatrixSource<'_, F, W, K, D>,
+    n_d: usize,
+    e_hat: &[[i8; D]],
+    log_basis_open: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<DigitRelationRows<F, D>, AkitaError> {
+    let (w_digit_abs_bound, t_digit_abs_bound) =
+        fused_quotient_digit_bounds(log_basis_open, log_basis_open)?;
+    let plan = plan_fused_quotients::<F, _, _, D>(
+        e_hat,
+        &[],
+        &[],
+        n_d,
+        0,
+        0,
+        0,
+        w_digit_abs_bound,
+        t_digit_abs_bound,
+        params,
+    )?;
+    source.validate_digit_relation(plan)?;
+    let chunk_width = plan.w_chunk_width.ok_or_else(|| {
+        AkitaError::InvalidSetup("CRT parameters cannot represent one D-role digit term".into())
+    })?;
+    Ok(accumulate_digit_relation_rows(
+        &source,
+        e_hat,
+        plan,
+        chunk_width,
+        params,
+    ))
 }
 
 fn fused_quotient_digit_bounds(
@@ -597,6 +686,77 @@ fn accumulate_cyclic_i8_rows<
                 *dst += src;
             }
             a
+        }
+    )
+}
+
+fn accumulate_digit_relation_rows<
+    F: FieldCore + CanonicalField + HalvingField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    source: &FusedMatrixSource<'_, F, W, K, D>,
+    rhs: &[[i8; D]],
+    plan: FusedQuotientPlan,
+    chunk_width: usize,
+    params: &CrtNttParamSet<W, K, D>,
+) -> (Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>) {
+    let (num_rows, rhs_len, rhs_abs_bound) = plan.digit_shape(DigitRole::Witness);
+    if num_rows == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    if rhs_len == 0 {
+        let zeros = vec![CyclotomicRing::<F, D>::zero(); num_rows];
+        return (zeros.clone(), zeros);
+    }
+
+    let num_chunks = rhs_len.div_ceil(chunk_width);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, rhs_abs_bound);
+
+    cfg_fold_reduce!(
+        0..num_chunks,
+        || (
+            vec![CyclotomicRing::<F, D>::zero(); num_rows],
+            vec![CyclotomicRing::<F, D>::zero(); num_rows],
+        ),
+        |mut out: (Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), chunk_idx| {
+            let chunk = FusedQuotientPlan::chunk_range(rhs_len, chunk_width, chunk_idx);
+            let mut neg_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
+            let mut cyc_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
+
+            for j in chunk {
+                if is_zero_plane(&rhs[j]) {
+                    continue;
+                }
+                let rhs_neg = CyclotomicCrtNtt::from_i8_with_lut(&rhs[j], params, &lut);
+                let rhs_cyc = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&rhs[j], params, &lut);
+                for (row, (neg_acc, cyc_acc)) in
+                    neg_accs.iter_mut().zip(cyc_accs.iter_mut()).enumerate()
+                {
+                    source.with_pair(plan.d_row(row).start + j, params, |neg, cyc| {
+                        accumulate_pointwise_product_into(neg_acc, neg, &rhs_neg, params);
+                        accumulate_pointwise_product_into(cyc_acc, cyc, &rhs_cyc, params);
+                    });
+                }
+            }
+
+            for (dst, acc) in out.0.iter_mut().zip(neg_accs) {
+                *dst += acc.to_ring(params);
+            }
+            for (dst, acc) in out.1.iter_mut().zip(cyc_accs) {
+                *dst += acc.to_ring_cyclic(params);
+            }
+            out
+        },
+        |mut left: (Vec<CyclotomicRing<F, D>>, Vec<CyclotomicRing<F, D>>), right| {
+            for (dst, src) in left.0.iter_mut().zip(right.0) {
+                *dst += src;
+            }
+            for (dst, src) in left.1.iter_mut().zip(right.1) {
+                *dst += src;
+            }
+            left
         }
     )
 }

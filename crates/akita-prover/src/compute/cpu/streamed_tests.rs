@@ -102,6 +102,7 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
         .expect("streamed relation rows");
 
     assert_eq!(streamed, cached);
+    assert_eq!(cached.d_negacyclic.len(), plan.n_d);
     assert!(!cached_prepared
         .shared_ntt_cache_metrics()
         .unwrap()

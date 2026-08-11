@@ -129,6 +129,14 @@ fn cpu_ring_switch_relation_rows_use_distinct_open_and_outer_bases() {
             },
         )
         .expect("direct fused split-eq rows");
+    let expected_d_negacyclic = prepared
+        .with_shared_ntt::<D, _>(
+            NttCacheKey::from_matrix_shape(D, 1, e_hat.len(), NttTransformDomain::Negacyclic)
+                .unwrap(),
+            |ntt| mat_vec_mul_ntt_single_i8(ntt, 1, e_hat.len(), &e_hat, 2),
+        )
+        .expect("direct D negacyclic rows");
+    assert_eq!(via_backend.d_negacyclic, expected_d_negacyclic);
     assert_eq!(
         (
             via_backend.d_cyclic,

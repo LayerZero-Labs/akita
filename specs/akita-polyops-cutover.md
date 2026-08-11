@@ -187,9 +187,9 @@ surface is exactly this built-in list.
 - [x] The public commitment compute boundary is source-typed. It is no longer
       limited to trait methods named only after Akita's built-in dense,
       one-hot, sparse-ring, and recursive-witness plan shapes.
-- [x] The public ring-switch compute boundary is source-typed. Relation/quotient
-      protocol code calls `RingSwitchRelationKernel` / `RingSwitchQuotientKernel`;
-      row plan helpers remain CPU implementation details behind kernels.
+- [x] The public ring-switch compute boundary is source-typed. Protocol code
+      calls `RingSwitchRelationKernel`; row plan helpers remain CPU
+      implementation details behind the kernel.
 - [x] Existing built-in commit/ring-switch plan structs either become standard
       view/helper types consumed by the CPU implementation or are replaced by
       equivalent source views. They must not remain the only public operation
@@ -556,17 +556,6 @@ pub trait RingSwitchRelationKernel<S, F: CanonicalField, const D: usize>:
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>;
 }
 
-pub trait RingSwitchQuotientKernel<S, F: CanonicalField, const D: usize>:
-    ComputeBackendSetup<F>
-{
-    fn quotient_rows(
-        &self,
-        prepared: &Self::PreparedSetup<D>,
-        source: S,
-        plan: RingSwitchQuotientPlan,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-}
-
 pub trait OpeningFoldKernel<S, F: FieldCore, const D: usize>:
     ComputeBackendSetup<F>
 where
@@ -697,9 +686,8 @@ for downstream users that can reduce their representation to an existing shape:
   recursive witnesses root polynomials.
 - `RingSwitchRelationView<'a, D>`: borrowed decomposed recursive witness rows,
   decomposed inner-commitment rows, one centered quotient segment, and its
-  infinity-norm metadata.
-- `RingSwitchQuotientView<'a, D>`: borrowed centered quotient segment and
-  infinity-norm metadata for additional public rows.
+  infinity-norm metadata. The relation result carries both D transform domains
+  so protocol code can derive its quotient without rerunning the backend.
 
 These standard views should live close to the backend representation modules
 that already own their invariants:
@@ -768,7 +756,6 @@ Current `AkitaPolyOps` method to new owner:
 | `sparse_ring_commit_rows` | standard sparse-ring-row helper below `RootCommitKernel`, not the public commit boundary |
 | `recursive_witness_commit_rows` | recursive witness commit kernel or standard helper below it |
 | `ring_switch_relation_rows` | `RingSwitchRelationKernel<RelationView, F, D>` |
-| `ring_switch_quotient_rows` | `RingSwitchQuotientKernel<QuotientView, F, D>` |
 
 Result enums such as `TensorPackedWitness::Dense(Vec<E>)` versus
 `TensorPackedWitness::Sparse(SparseExtensionOpeningWitness<E>)` are acceptable
@@ -903,9 +890,9 @@ Current implementation:
   reuse standard views or implement kernels for their own local view types.
 - Opening, folding, decomposition, and tensor work use the same source-typed
   backend shape as commitment.
-- Ring-switch work uses `RingSwitchRelationView` and
-  `RingSwitchQuotientView` directly through source-typed kernels. The former
-  fixed backend trait and data-bearing row plans are deleted.
+- Ring-switch work uses `RingSwitchRelationView` directly through a
+  source-typed kernel. The former fixed backend trait, separate quotient
+  operation, and data-bearing row plans are deleted.
 
 ### Interoperation Model
 
