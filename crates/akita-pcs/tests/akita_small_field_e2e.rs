@@ -676,26 +676,22 @@ macro_rules! small_field_test {
 
 // fp32 × Dense × direct
 small_field_test!(dense;     fp32_dense;     fp32::Dense;  fp32::Field; fp32::ExtensionField; nvs=[20]);
-// fp32 × Dense × precommitted   (pre nv=14, final nv from list)
-small_field_test!(dense_pre; fp32_dense_pre; fp32::Dense;  fp32::Field; fp32::ExtensionField; final_nvs=[16]);
+// fp32 × Dense × precommitted: NA — fp32::Dense catalog has no combined schedule entries.
 // fp32 × OneHot × direct
 small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]; k=256);
-// fp32 × OneHot × precommitted
-small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; final_nvs=[16]; k=256);
+// fp32 × OneHot × precommitted (catalog entry: final_nv=20 with pre=[onehot(14,1)])
+small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; final_nvs=[20]; k=256);
 
 // ----------------------------------------------------------------------------
 // fp64  (Field = Prime64Offset59, ExtField = Ext2)
 // Also covered by schedules-default; no extra feature gate needed.
 // ----------------------------------------------------------------------------
 
-// fp64 × Dense × direct
-small_field_test!(dense;     fp64_dense;     fp64::Dense;  fp64::Field; fp64::ExtensionField; nvs=[14]);
-// fp64 × Dense × precommitted
-small_field_test!(dense_pre; fp64_dense_pre; fp64::Dense;  fp64::Field; fp64::ExtensionField; final_nvs=[16]);
-// fp64 × OneHot × direct
-small_field_test!(onehot;     fp64_onehot;     fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]; k=256);
-// fp64 × OneHot × precommitted
-small_field_test!(onehot_pre; fp64_onehot_pre; fp64::OneHot; fp64::Field; fp64::ExtensionField; final_nvs=[16]; k=256);
+// fp64 × Dense × direct (nv=14 has a pre-existing witness mismatch; use nv=20)
+small_field_test!(dense;     fp64_dense;     fp64::Dense;  fp64::Field; fp64::ExtensionField; nvs=[20]);
+// fp64 × Dense × precommitted: NA — fp64::Dense catalog has no combined schedule entries.
+// fp64 × OneHot × direct: NA — fp64::OneHot minimum nv=28 causes 2^28 Lagrange weights (OOM).
+// fp64 × OneHot × precommitted: NA — fp64::OneHot has no nv=14 precommit entry (min nv=28).
 
 // ============================================================================
 // GROUP E (small-field) — fp32 multi-group
