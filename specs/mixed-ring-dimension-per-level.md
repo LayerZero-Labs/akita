@@ -116,7 +116,7 @@ uniform-D64 suffix.
 4. **Make setup-prefix dimensions edge-local.** A prefix is produced for a
    successor but committed as an input of that successor. Prefix derivation
    therefore receives the consuming candidate's exact A and B dimensions.
-   Prefix slot metadata, natural/padded length, SIS rows, and challenge config
+   Prefix slot metadata, natural support/full-prefix length, SIS rows, and challenge config
    all agree with those dimensions. This removes the old assumption that every
    recursive prefix uses `Cfg::D`.
 5. **Preserve enough information in the suffix frontier.** Two successor
@@ -493,7 +493,7 @@ max_setup_matrix_field_elements =
         every root/recursive B matrix,
         every root/recursive D matrix,
         every frozen precommit A/B matrix,
-        every materialized setup-prefix matrix and padded prefix
+        every materialized setup-prefix matrix and full prefix
     )
 ```
 

@@ -30,11 +30,11 @@ pub use helpers::suffix_opening_layout;
 
 /// Identity for one committed setup-prefix slot.
 ///
-/// `natural_len` distinguishes exact prefixes that share the padded commitment
-/// domain derived from `commitment_params`.
+/// `natural_len` distinguishes active setup-weight supports that share the
+/// full-prefix commitment domain derived from `commitment_params`.
 #[derive(Debug, Clone)]
 pub struct SetupPrefixSlotId {
-    /// Exact flat coefficient length represented before zero padding.
+    /// Active setup-weight support in flat field coefficients.
     pub natural_len: usize,
     /// Commitment parameters used to build the setup-prefix object.
     pub commitment_params: PrecommittedLevelParams,
@@ -58,7 +58,7 @@ impl SetupPrefixSlotId {
             .ring_dimension()
     }
 
-    /// Padded flat coefficient length committed for this slot.
+    /// Full power-of-two flat coefficient length committed for this slot.
     pub fn n_prefix(&self) -> Result<usize, AkitaError> {
         n_prefix_from_commitment_params(&self.commitment_params).map_err(|err| {
             AkitaError::InvalidSetup(format!("invalid setup-prefix commitment domain: {err}"))
@@ -720,7 +720,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
         let id_n_prefix = n_prefix_from_commitment_params(&self.id.commitment_params)?;
         if self.natural_len == 0 || self.natural_len > self.padded_len {
             return Err(SerializationError::InvalidData(
-                "setup prefix verifier slot natural_len must be in 1..=padded_len".to_string(),
+                "setup prefix verifier slot natural_len must be in 1..=full_prefix_len".to_string(),
             ));
         }
         if self.natural_len != self.id.natural_len {
@@ -730,7 +730,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
         }
         if self.padded_len != id_n_prefix {
             return Err(SerializationError::InvalidData(
-                "setup prefix verifier slot padded_len must match slot id".to_string(),
+                "setup prefix verifier slot full_prefix_len must match slot id".to_string(),
             ));
         }
         self.commitment.check()?;
@@ -832,7 +832,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
         let id_n_prefix = n_prefix_from_commitment_params(&self.id.commitment_params)?;
         if self.natural_len == 0 || self.natural_len > self.padded_len {
             return Err(SerializationError::InvalidData(
-                "setup prefix prover slot natural_len must be in 1..=padded_len".to_string(),
+                "setup prefix prover slot natural_len must be in 1..=full_prefix_len".to_string(),
             ));
         }
         if self.natural_len != self.id.natural_len {
@@ -842,7 +842,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
         }
         if self.padded_len != id_n_prefix {
             return Err(SerializationError::InvalidData(
-                "setup prefix prover slot padded_len must match slot id".to_string(),
+                "setup prefix prover slot full_prefix_len must match slot id".to_string(),
             ));
         }
         self.commitment.check()?;
@@ -1407,15 +1407,15 @@ pub fn setup_prefix_slot_id(
 /// Select a setup-prefix slot that covers one setup-product footprint.
 ///
 /// This centralizes the derivation shared by prover and verifier: setup seed
-/// digest, padded prefix length, prefix commitment parameters, slot id, natural
-/// source coverage, and the producer-ring evaluation length used for setup
+/// digest, full-prefix length, prefix commitment parameters, slot id, active
+/// source support, and the producer-ring evaluation length used for setup
 /// MLEs. The slot's commitment dimension is independent of that producer view.
 ///
-/// `shared_matrix_field_elements` is `Some` when the natural source prefix must
+/// `shared_matrix_field_elements` is `Some` when the full source prefix must
 /// be resident in the shared matrix, as in the prover. It is `None` when the
 /// source is represented by the registered setup-prefix commitment, as in the
-/// schedule-scoped verifier. In both cases the slot's exact natural and padded
-/// lengths are checked.
+/// schedule-scoped verifier. In both cases the slot's active support and
+/// full-prefix lengths are checked.
 pub fn select_setup_prefix_slot<'a, Slot, Lookup>(
     shared_matrix_field_elements: Option<usize>,
     lookup_slot: Lookup,
@@ -1442,7 +1442,7 @@ where
     let template_n_prefix = template.n_prefix()?;
     if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
         return Err(AkitaError::InvalidSetup(format!(
-            "{coverage_error}: planned natural/padded lengths are {}/{template_n_prefix}, \
+            "{coverage_error}: planned natural/full-prefix lengths are {}/{template_n_prefix}, \
              active lengths are {natural_field_len}/{n_prefix}",
             template.natural_len,
         )));
@@ -1455,14 +1455,13 @@ where
     };
     if slot_natural_len != natural_field_len || slot_padded_len != n_prefix {
         return Err(AkitaError::InvalidSetup(format!(
-            "{coverage_error}: slot natural/padded lengths are {slot_natural_len}/{slot_padded_len}, \
+            "{coverage_error}: slot natural/full-prefix lengths are {slot_natural_len}/{slot_padded_len}, \
              active lengths are {natural_field_len}/{n_prefix}",
         )));
     }
     if source_ring_dimension == 0 || !template_n_prefix.is_multiple_of(source_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix padded length must be divisible by the producer ring dimension"
-                .to_string(),
+            "setup prefix full length must be divisible by the producer ring dimension".to_string(),
         ));
     }
     let setup_eval_len = template_n_prefix / source_ring_dimension;

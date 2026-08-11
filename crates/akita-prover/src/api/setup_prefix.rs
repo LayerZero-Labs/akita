@@ -48,7 +48,7 @@ where
             "setup prefix length must be a power-of-two multiple of D".to_string(),
         ));
     }
-    let padded_ring_slots = n_prefix / D;
+    let full_prefix_ring_slots = n_prefix / D;
     let witness_ring_slots = level_params
         .layout
         .num_live_blocks
@@ -56,9 +56,9 @@ where
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
-    if witness_ring_slots != padded_ring_slots {
+    if witness_ring_slots != full_prefix_ring_slots {
         return Err(AkitaError::InvalidSetup(format!(
-            "level params witness shape {witness_ring_slots} ring slots does not match padded prefix {padded_ring_slots}"
+            "level params witness shape {witness_ring_slots} ring slots does not match full setup prefix {full_prefix_ring_slots}"
         )));
     }
 
@@ -69,7 +69,7 @@ where
         ));
     }
 
-    let ring_elems = extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots)?;
+    let ring_elems = extract_setup_prefix_ring_elems::<F, D>(expanded, full_prefix_ring_slots)?;
     let dense = DensePoly::from_ring_coeffs::<D>(ring_elems);
     let view = <DensePoly<F> as RootCommitSource<F, D>>::commit_view(&dense)?;
     let witnesses = backend.commit_inner_group(
@@ -180,22 +180,22 @@ where
 
 fn extract_setup_prefix_ring_elems<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    padded_ring_slots: usize,
+    full_prefix_ring_slots: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore,
 {
     let fields = expanded.shared_matrix().as_field_slice();
-    let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup prefix padded field length overflow".to_string())
+    let full_prefix_field_len = full_prefix_ring_slots.checked_mul(D).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix full field length overflow".to_string())
     })?;
-    if padded_field_len > fields.len() {
+    if full_prefix_field_len > fields.len() {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length exceeds shared matrix capacity".to_string(),
         ));
     }
 
-    fields[..padded_field_len]
+    fields[..full_prefix_field_len]
         .chunks_exact(D)
         .map(|coeffs| {
             let mut ring = CyclotomicRing::zero();
