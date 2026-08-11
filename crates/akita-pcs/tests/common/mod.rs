@@ -10,20 +10,23 @@ use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSourc
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::SelectedProverOpeningData;
+use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
+use akita_types::{
+    dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
+    LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout, SetupPrefixProverRegistry,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
+};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PriorGroupProfiles,
 };
-use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupBatchStatement,
-    LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout, SetupSumcheckProof,
-};
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 #[cfg(feature = "logging-transcript")]
 use akita_transcript::TranscriptEvent;
@@ -413,6 +416,83 @@ fn first_stage3_proof_mut(
         .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
 }
 
+fn first_setup_prefix_slot(schedule: &FoldSchedule) -> &SetupPrefixSlotId {
+    schedule
+        .recursive_folds
+        .iter()
+        .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+        .expect("recursive profile must carry a setup prefix")
+}
+
+fn verifier_setup_with_alternate_full_prefix(
+    setup: &AkitaProverSetup<F>,
+    verifier_setup: &AkitaVerifierSetup<F>,
+    slot_id: &SetupPrefixSlotId,
+) -> AkitaVerifierSetup<F> {
+    let natural_len = slot_id.natural_len;
+    let n_prefix = slot_id.n_prefix().expect("prefix length");
+    assert!(
+        natural_len < n_prefix,
+        "adversarial fixture requires a non-empty setup tail"
+    );
+
+    let original = setup.expanded.shared_matrix().as_field_slice();
+    let mut altered = original.to_vec();
+    altered[natural_len] += F::one();
+    assert_eq!(&altered[..natural_len], &original[..natural_len]);
+    assert_ne!(
+        &altered[natural_len..n_prefix],
+        &original[natural_len..n_prefix]
+    );
+
+    let seed = setup.expanded.seed().clone();
+    let setup_seed = seed.setup_seed.clone();
+    let altered_expanded = Arc::new(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            seed,
+            FlatMatrix::from_flat_data(altered),
+        ),
+    );
+    let altered_setup = AkitaProverSetup {
+        expanded: altered_expanded,
+        prefix_slots: SetupPrefixProverRegistry::new(setup_seed.clone()),
+    };
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend
+        .prepare_setup(&altered_setup)
+        .expect("prepare altered setup");
+    let altered_slot = dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        F,
+        slot_id.d_setup(),
+        |D| {
+            commit_setup_prefix::<F, D, _>(
+                &altered_setup.expanded,
+                &backend,
+                &prepared,
+                &slot_id.commitment_params,
+                n_prefix,
+                natural_len,
+            )
+        }
+    )
+    .expect("commit altered full setup prefix");
+
+    let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed);
+    for (id, slot) in verifier_setup.prefix_slots.iter() {
+        let replacement = if id == slot_id {
+            altered_slot.verifier_slot()
+        } else {
+            slot.clone()
+        };
+        prefix_slots
+            .insert(replacement)
+            .expect("insert verifier slot");
+    }
+    AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
+        .expect("alternate verifier setup")
+}
+
 /// Drives the shared recursive setup-offload profile end to end: two precommitted
 /// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
 /// main group at `nv=32`, a recursive proof that offloads the setup contribution,
@@ -631,6 +711,24 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         )
         .expect("generated-profile recursive verify");
 
+        let alternate_verifier_setup = verifier_setup_with_alternate_full_prefix(
+            &setup,
+            &verifier_setup,
+            first_setup_prefix_slot(&schedule),
+        );
+        let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        let alternate_result = Recursive::<BaseCfg>::batched_verify(
+            &proof,
+            &alternate_verifier_setup,
+            &mut alternate_transcript,
+            verify_claims(final_openings.clone()),
+            BasisMode::Lagrange,
+        );
+        assert!(
+            alternate_result.is_err(),
+            "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
+        );
+
         let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
             let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
             let result = Recursive::<BaseCfg>::batched_verify(
@@ -640,7 +738,10 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
             );
-            assert!(result.is_err(), "{label} must reject without panicking");
+            assert!(
+                result.is_err(),
+                "{label} must be rejected without panicking, got {result:?}"
+            );
         };
 
         let mut tampered_claim = proof.clone();

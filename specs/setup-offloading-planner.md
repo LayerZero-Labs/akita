@@ -863,7 +863,7 @@ For each fold it:
 2. If a recursive fold has `incoming_setup_prefix`, reconstructs that prefix
    group's own inner and outer commitment matrices. It must not clone the
    ordinary witness group's matrix parameters.
-3. Recomputes the predecessor's `natural_len` and padded prefix length and
+3. Recomputes the predecessor's `natural_len` and full-prefix length and
    validates them against the stored input.
 4. Recomputes and validates the shared opening-matrix rank, relation rows,
    complete next-witness length, Stage 3 bytes, and total proof bytes.
@@ -958,7 +958,7 @@ Reject:
 - an incoming setup prefix outside the capabilities bound by the selected
   catalog family, including unsupported ring-dimension or witness-partition
   combinations;
-- an incoming setup prefix whose natural or padded length differs from the
+- an incoming setup prefix whose natural support or full-prefix length differs from the
   predecessor's active setup envelope;
 - an incoming setup prefix whose commitment params or group geometry are
   incompatible with the successor;
@@ -1183,7 +1183,7 @@ The first implementation used a deliberately rigid rule:
 
 ```text
 eligible fold levels = 0 and 1
-mandatory offload when padded prefix > 2^10
+mandatory offload when full prefix > 2^10
 fold levels >= 2 are always direct
 ```
 
@@ -1238,7 +1238,7 @@ two search domains from sharing a catalog identity.
 
 ### Generic carried-opening object
 
-Rejected. Folded-witness state has no natural or padded prefix length.
+Rejected. Folded-witness state has no natural support or full-prefix length.
 Setup-prefix metadata already lives in `SetupPrefixSlot`; the existing opening
 batch APIs can combine it with the witness claim.
 
