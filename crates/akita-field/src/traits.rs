@@ -69,7 +69,16 @@ pub trait Invertible: RingCore {
 }
 
 /// Core field capability: a ring that is also invertible.
-pub trait FieldCore: RingCore + Invertible {}
+pub trait FieldCore: RingCore + Invertible {
+    /// Multiply and add, equivalent to `self * rhs + addend`.
+    ///
+    /// The default preserves the ordinary field-operation semantics. Fields
+    /// with a cheaper combined reduction may override it.
+    #[inline]
+    fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        self * rhs + addend
+    }
+}
 
 /// Embed primitive integer values into a scalar object.
 ///
