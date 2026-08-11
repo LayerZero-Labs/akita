@@ -176,7 +176,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-    let pre_descriptor = ProofCfg::select_schedule_for_opening(
+    let pre_descriptor = Cfg::select_schedule_for_opening(
         &OpeningClaimsLayout::new(pre_key.num_vars(), pre_key.num_polynomials())
             .expect("opening layout"),
     )
@@ -268,7 +268,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             let akita_prover::CommitOutput {
                 committed_group: commitment,
                 hint,
-            } = AkitaCommitmentScheme::<ProofCfg>::commit(
+            } = AkitaCommitmentScheme::<Cfg>::commit(
                 &setup,
                 &polys,
                 &stack,
