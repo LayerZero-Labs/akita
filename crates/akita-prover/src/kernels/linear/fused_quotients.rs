@@ -16,7 +16,7 @@ struct CenteredRhsBounds {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FusedBARows<F: FieldCore, const D: usize> {
+pub(crate) struct FusedQuotientRows<F: FieldCore, const D: usize> {
     pub(crate) b_cyclic: Vec<CyclotomicRing<F, D>>,
     pub(crate) a_quotients: Vec<CyclotomicRing<F, D>>,
 }
@@ -238,10 +238,10 @@ fn fused_split_eq_quotients_with_params<
     z_folded_rings: &[[i32; D]],
     plan: FusedQuotientPlan,
     params: &CrtNttParamSet<W, K, D>,
-) -> Result<FusedBARows<F, D>, AkitaError> {
+) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     source.validate(plan)?;
     if plan.max_col == 0 {
-        return Ok(FusedBARows {
+        return Ok(FusedQuotientRows {
             b_cyclic: vec![CyclotomicRing::<F, D>::zero(); plan.n_b],
             a_quotients: vec![CyclotomicRing::<F, D>::zero(); plan.n_a],
         });
@@ -263,7 +263,7 @@ fn fused_split_eq_quotients_with_params<
     let b_result = accumulate_cyclic_i8_rows(&source, t_hat, plan, t_chunk_width, params);
     let a_result = accumulate_centered_quotient_rows(&source, z_folded_rings, plan, params);
 
-    Ok(FusedBARows {
+    Ok(FusedQuotientRows {
         b_cyclic: b_result,
         a_quotients: a_result,
     })
@@ -280,7 +280,7 @@ fn fused_split_eq_quotients_one_shot<
     z_folded_rings: &[[i32; D]],
     plan: FusedQuotientPlan,
     params: &CrtNttParamSet<W, K, D>,
-) -> FusedBARows<F, D> {
+) -> FusedQuotientRows<F, D> {
     let digit_lut = (plan.t_len != 0)
         .then(|| DigitMontLut::<W, K>::new_with_digit_bound(params, plan.t_digit_abs_bound));
     let centered_lut = (plan.z_len != 0 && plan.z_bounds.lut <= u64::from(CENTERED_LUT_MAX_ABS))
@@ -374,7 +374,7 @@ fn fused_split_eq_quotients_one_shot<
         })
         .collect();
 
-    FusedBARows {
+    FusedQuotientRows {
         b_cyclic: b_result,
         a_quotients: a_result,
     }
@@ -399,7 +399,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
     log_basis_outer: u32,
-) -> Result<FusedBARows<F, D>, AkitaError> {
+) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     let t_digit_abs_bound = fused_quotient_digit_bound(log_basis_outer)?;
     macro_rules! run {
         ($params:expr) => {{
@@ -826,7 +826,7 @@ pub(crate) fn fused_split_eq_quotients<
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
-) -> Result<FusedBARows<F, D>, AkitaError> {
+) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     fused_split_eq_quotients_with_digit_bound(
         slot,
         slot,
@@ -852,7 +852,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
     log_basis_outer: u32,
-) -> Result<FusedBARows<F, D>, AkitaError> {
+) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     let t_digit_abs_bound = fused_quotient_digit_bound(log_basis_outer)?;
     fused_split_eq_quotients_with_digit_bound(
         negacyclic_slot,
@@ -879,7 +879,7 @@ fn fused_split_eq_quotients_with_digit_bound<
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
     t_digit_abs_bound: u64,
-) -> Result<FusedBARows<F, D>, AkitaError> {
+) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     macro_rules! run {
         ($neg_base:expr, $cyc_base:expr) => {{
             let (neg_base, cyc_base) = ($neg_base, $cyc_base);

@@ -8,9 +8,8 @@ use crate::kernels::linear::{
     centered_quotient_rows_with_i16_tail, digit_relation_matrix_extent,
     digit_relation_rows_cached_prover_bounds, digit_relation_rows_streamed_prover_bounds,
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
-    fused_split_eq_quotients_streamed_prover_bounds, DigitRelationRows, FusedBARows,
+    fused_split_eq_quotients_streamed_prover_bounds, DigitRelationRows, FusedQuotientRows,
 };
-use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{centered_quotient_requires_i16_tail_for_field, NttCacheKey, NttTransformDomain};
 
@@ -32,16 +31,11 @@ fn validate_role_shape(role: &str, rows: usize, width: usize) -> Result<(), Akit
     Ok(())
 }
 
-struct BARelationRows<F: FieldCore, const D: usize> {
-    cyclic: Vec<CyclotomicRing<F, D>>,
-    quotients: Vec<CyclotomicRing<F, D>>,
-}
-
 fn cached_b_a_rows<F: FieldCore + CanonicalField + HalvingField, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     source: RingSwitchRelationView<'_, D>,
     plan: RingSwitchRelationPlan,
-) -> Result<BARelationRows<F, D>, AkitaError> {
+) -> Result<FusedQuotientRows<F, D>, AkitaError> {
     let mut cyclic_requirement: Option<NttCacheKey> = None;
     for (rows, width) in [
         (plan.n_b, source.t_hat.len()),
@@ -71,10 +65,7 @@ fn cached_b_a_rows<F: FieldCore + CanonicalField + HalvingField, const D: usize>
                 0,
                 plan.log_basis_outer,
             )?;
-            return Ok(BARelationRows {
-                cyclic: rows.b_cyclic,
-                quotients: rows.a_quotients,
-            });
+            return Ok(rows);
         }
         let negacyclic_requirement = NttCacheKey::from_matrix_shape(
             D,
@@ -112,9 +103,9 @@ fn cached_b_a_rows<F: FieldCore + CanonicalField + HalvingField, const D: usize>
                         source.z_segment,
                         source.z_folded_centered_inf_norm,
                     )?;
-                    Ok(BARelationRows {
-                        cyclic: b_rows.b_cyclic,
-                        quotients: a_quotients,
+                    Ok(FusedQuotientRows {
+                        b_cyclic: b_rows.b_cyclic,
+                        a_quotients,
                     })
                 });
             }
@@ -128,10 +119,7 @@ fn cached_b_a_rows<F: FieldCore + CanonicalField + HalvingField, const D: usize>
                 source.z_folded_centered_inf_norm,
                 plan.log_basis_outer,
             )?;
-            Ok(BARelationRows {
-                cyclic: rows.b_cyclic,
-                quotients: rows.a_quotients,
-            })
+            Ok(rows)
         })
     })
 }
@@ -179,7 +167,7 @@ where
                 )?
             };
             let rows = if b_a_extent == 0 {
-                FusedBARows {
+                FusedQuotientRows {
                     b_cyclic: Vec::new(),
                     a_quotients: Vec::new(),
                 }
@@ -237,7 +225,7 @@ where
             (Vec::new(), Vec::new())
         } else {
             let rows = cached_b_a_rows(prepared, source, plan)?;
-            (rows.cyclic, rows.quotients)
+            (rows.b_cyclic, rows.a_quotients)
         };
         Ok(RingSwitchRelationRows {
             d_negacyclic: d_rows.negacyclic,
