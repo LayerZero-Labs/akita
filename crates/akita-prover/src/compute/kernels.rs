@@ -89,7 +89,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError>;
 
     /// Decompose + challenge-fold step.

@@ -243,7 +243,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {

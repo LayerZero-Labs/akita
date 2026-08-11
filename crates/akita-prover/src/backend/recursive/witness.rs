@@ -381,22 +381,19 @@ where
                     else {
                         break;
                     };
-                    for (coeff, &d) in acc.iter_mut().zip(ring.iter()) {
-                        if d != 0 {
-                            *coeff += scalar * F::from_i8(d);
+                    for (coeff, &digit) in acc.iter_mut().zip(ring.iter()) {
+                        if digit != 0 {
+                            *coeff += scalar * F::from_i8(digit);
                         }
                     }
                 }
                 CyclotomicRing::from_coefficients(acc)
             })
             .collect::<Vec<_>>();
-        let eval = folded
-            .iter()
-            .zip(live_block_weights.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
-                acc + f_i.scale(s_i)
-            });
-        Ok((eval, folded))
+        Ok(crate::backend::poly_helpers::fused_evaluate_and_fold_base(
+            folded,
+            live_block_weights,
+        ))
     }
 
     pub(crate) fn evaluate_and_fold_ring(
@@ -426,13 +423,26 @@ where
                 acc
             })
             .collect::<Vec<_>>();
-        let eval = folded
-            .iter()
-            .zip(live_block_weights.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
-                acc + (*f_i * *s_i)
-            });
-        Ok((eval, folded))
+        Ok(
+            crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
+                folded,
+                live_block_weights,
+            ),
+        )
+    }
+
+    pub(crate) fn evaluate_and_fold_subfield(
+        &self,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
+        num_positions_per_block: usize,
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        let position_weights = multipliers.materialize_position_rings::<D>()?;
+        let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
+        self.evaluate_and_fold_ring(
+            &live_block_weights,
+            &position_weights,
+            num_positions_per_block,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "SuffixWitnessView::decompose_fold")]
@@ -638,7 +648,7 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         let num_positions_per_block = plan.num_positions_per_block();
         if num_positions_per_block == 0 {
@@ -647,7 +657,7 @@ where
             ));
         }
         let num_live_blocks = source.num_live_blocks(num_positions_per_block)?;
-        plan.validate(num_live_blocks)?;
+        plan.validate::<D>(num_live_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -658,15 +668,10 @@ where
                 position_weights,
                 num_positions_per_block,
             )?,
-            OpeningFoldPlan::Ring {
-                live_block_weights,
-                position_weights,
+            OpeningFoldPlan::Subfield {
+                multipliers,
                 num_positions_per_block,
-            } => source.evaluate_and_fold_ring(
-                live_block_weights,
-                position_weights,
-                num_positions_per_block,
-            )?,
+            } => source.evaluate_and_fold_subfield(multipliers, num_positions_per_block)?,
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
