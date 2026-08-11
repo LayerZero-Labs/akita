@@ -14,15 +14,16 @@ let output = AkitaCommitmentScheme::<Cfg>::commit(
     &setup,
     &polynomials,
     &stack,
-    GroupPosition::Sole,
+    GroupPosition::Independent,
 )?;
 ```
 
-`GroupPosition::Sole` selects the scalar S row for a one-group batch.
-`GroupPosition::Prior` selects a standalone P profile for a group that will
-precede another group. `GroupPosition::Final { prior_group_profiles: &prior }`
-selects the exact grouped G row. Polynomials inside one group must have the
-same `num_vars`; separate groups may have different arities.
+`GroupPosition::Independent` selects the scalar S row. The resulting committed
+group may be opened alone or retained as a prior group for a later grouped
+opening; both uses have exactly the same parameters. `GroupPosition::Final {
+prior_group_profiles: &prior }` selects the exact grouped G row. Polynomials
+inside one group must have the same `num_vars`; separate groups may have
+different arities.
 
 For a grouped lifecycle, construct one ordered `PriorGroupProfiles`, borrow it
 for the final commit, then move that same owner into atomic prover assembly:

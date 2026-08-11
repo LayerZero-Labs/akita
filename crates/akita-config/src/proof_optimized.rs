@@ -152,36 +152,8 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             .max(entry_envelope.num_field_elements);
     }
 
-    // Generated multi-group rows carry exact frozen precommit descriptors.
-    // Size those schedules from their canonical keys: synthesizing an opening
-    // layout at `max_num_vars` can miss a finite-catalog precommit arity.
+    // Generated multi-group rows can exceed every scalar row's matrix envelope.
     if let Some(catalog) = Cfg::schedule_catalog() {
-        let policy = crate::policy_of::<Cfg>();
-        for &row in catalog.precommitted_profiles {
-            let profile = row.expand_to_committed_profile(&policy)?;
-            if profile.group.num_vars() > max_num_vars
-                || profile.group.num_polynomials() > max_num_batched_polys
-            {
-                continue;
-            }
-            let a_coeff_len = matrix_coefficient_len(
-                profile.inner_commit_matrix.output_rank(),
-                profile.inner_commit_matrix.input_width(),
-                profile.inner_commit_matrix.ring_dimension(),
-                "precommit A",
-            )?;
-            let b_coeff_len = matrix_coefficient_len(
-                profile.outer_commit_matrix.output_rank(),
-                profile.outer_commit_matrix.input_width(),
-                profile.outer_commit_matrix.ring_dimension(),
-                "precommit B",
-            )?;
-            saw_supported_shape = true;
-            envelope.num_field_elements = envelope
-                .num_field_elements
-                .max(a_coeff_len)
-                .max(b_coeff_len);
-        }
         for entry in catalog.entries {
             if entry.root.precommitted_groups.is_empty() {
                 continue;

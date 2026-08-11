@@ -98,7 +98,6 @@ macro_rules! impl_multi_chunk_companion {
     };
 }
 
-pub mod precommitted_commitment;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -107,7 +106,6 @@ pub mod setup_prefix_slots;
 pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use precommitted_commitment::resolve_prior_group_profile;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
@@ -720,30 +718,35 @@ mod fp128_policy_tests {
 }
 
 #[cfg(test)]
-mod precommit_tests {
+mod independent_commitment_tests {
     use super::proof_optimized::fp128;
     use super::*;
 
     #[test]
-    fn exact_precommit_params_freeze_standalone_metadata() {
+    fn independent_profile_comes_from_the_scalar_s_row() {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let precommitted = resolve_prior_group_profile::<fp128::OneHot>(&group)
-            .expect("precommitted group profile");
+        let profile = fp128::OneHot::select_schedule_for_opening(
+            &OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())
+                .expect("opening layout"),
+        )
+        .expect("independent schedule")
+        .profiles()
+        .final_group;
         assert_eq!(
-            precommitted.inner_commit_matrix.ring_dimension(),
-            64,
-            "adaptive precommits use the uniform suffix dimension for A"
+            profile.inner_commit_matrix.ring_dimension(),
+            256,
+            "the independent commitment uses the scalar S row's A dimension"
         );
         assert_eq!(
-            precommitted.outer_commit_matrix.ring_dimension(),
+            profile.outer_commit_matrix.ring_dimension(),
             64,
-            "adaptive precommits use the uniform suffix dimension for B"
+            "the independent commitment uses the scalar S row's B dimension"
         );
         let root_basis = fp128::OneHot::opening_basis_range().0;
-        assert_eq!(precommitted.log_basis_inner, root_basis);
-        assert_eq!(precommitted.log_basis_outer, root_basis);
-        assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
-        assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
+        assert_eq!(profile.log_basis_inner, root_basis);
+        assert_eq!(profile.log_basis_outer, root_basis);
+        assert_ne!(profile.inner_commit_matrix.output_rank(), 0);
+        assert_ne!(profile.outer_commit_matrix.output_rank(), 0);
     }
 }

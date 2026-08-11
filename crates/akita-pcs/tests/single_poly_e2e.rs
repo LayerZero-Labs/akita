@@ -77,7 +77,7 @@ fn run_single_onehot(nv: usize) {
             &setup,
             commit_input,
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("commit");
 
@@ -175,7 +175,7 @@ fn run_single_dense(nv: usize) {
             &setup,
             commit_input,
             &commit_stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("commit");
 
@@ -361,7 +361,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &setup,
             commit_input,
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("commit with oversized setup");
 

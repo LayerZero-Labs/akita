@@ -24,8 +24,8 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, PolynomialGroupLayout,
-    SetupContributionMode,
+    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, SetupContributionMode,
 };
 use common::*;
 
@@ -34,8 +34,13 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted = akita_config::resolve_prior_group_profile::<W8R2Cfg>(&pre_group)
-        .expect("precommit profile");
+    let precommitted = fp128::OneHotMultiChunk::select_schedule_for_opening(
+        &OpeningClaimsLayout::new(pre_group.num_vars(), pre_group.num_polynomials())
+            .expect("opening layout"),
+    )
+    .expect("independent schedule")
+    .profiles()
+    .final_group;
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         prior_group_profiles: vec![precommitted, precommitted],
@@ -47,13 +52,14 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let key = w8r2_profiling_key();
     let root_layout = key.opening_layout().expect("root layout");
     let schedule = W8R2Cfg::select_schedule_for_key(&key).expect("W8R2 schedule");
-    assert_w8r2_profile_shape(&schedule);
-    let prover = setup_matrix_capacity_for_schedule(&schedule).expect("prover capacity");
-    let verifier = verifier_setup_matrix_capacity_for_schedule(&schedule, &root_layout)
+    assert_w8r2_profile_shape(schedule.schedule());
+    let prover = setup_matrix_capacity_for_schedule(schedule.schedule()).expect("prover capacity");
+    let verifier = verifier_setup_matrix_capacity_for_schedule(schedule.schedule(), &root_layout)
         .expect("verifier capacity");
     let setup_for_two = W8R2Cfg::setup_matrix_capacity(32, 2).expect("setup capacity for K=2");
     let setup_for_four = W8R2Cfg::setup_matrix_capacity(32, 4).expect("setup capacity for K=4");
     let incoming_prefixes = schedule
+        .schedule()
         .recursive_folds
         .iter()
         .map(|fold| {
@@ -97,7 +103,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         CommitmentRingDims {
             inner: 256,
             outer: 128,
-            opening: 64,
+            opening: 128,
         },
         "level 0 must retain the shipped adaptive A/B/D role dimensions"
     );
@@ -106,7 +112,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         CommitmentRingDims {
             inner: 256,
             outer: 128,
-            opening: 64,
+            opening: 128,
         },
         "level 1 must retain the shipped adaptive A/B/D role dimensions"
     );

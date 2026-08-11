@@ -115,7 +115,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .unwrap();
         let commitments = [commitment];

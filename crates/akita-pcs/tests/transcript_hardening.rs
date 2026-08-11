@@ -76,12 +76,12 @@ fn event_stream_equality_small() {
         let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint: hint,
+            hint,
         } = Scheme::commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("commit");
 
@@ -331,12 +331,12 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint: hint,
+            hint,
         } = Scheme::commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("commit");
 
@@ -403,16 +403,6 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
-        let layout = OneHotCfg::select_schedule_for_opening(
-            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
-        )
-        .expect("layout")
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
@@ -426,12 +416,12 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         .expect("stack");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint: hint,
+            hint,
         } = Scheme::commit(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("commit");
 

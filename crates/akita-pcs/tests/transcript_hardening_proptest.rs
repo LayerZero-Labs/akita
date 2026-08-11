@@ -58,7 +58,13 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit(&setup, &polys, &stack, akita_prover::GroupPosition::Sole).expect("commit");
+    } = Scheme::commit(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupPosition::Independent,
+    )
+    .expect("commit");
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = Scheme::batched_prove(

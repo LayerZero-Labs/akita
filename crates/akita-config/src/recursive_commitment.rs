@@ -120,13 +120,11 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
 mod adaptive_precommit_tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use akita_types::PolynomialGroupLayout;
+    use akita_types::OpeningClaimsLayout;
 
     fn assert_nv16_precommit<Cfg: CommitmentConfig>() {
-        crate::resolve_prior_group_profile::<RecursiveCommitmentConfig<Cfg>>(
-            &PolynomialGroupLayout::new(16, 1),
-        )
-        .expect("adaptive recursive catalog must expose its base precommit profile");
+        Cfg::select_schedule_for_opening(&OpeningClaimsLayout::new(16, 1).expect("opening layout"))
+            .expect("base catalog must expose its independent profile");
     }
 
     #[cfg(feature = "schedules-fp128-onehot-recursive")]
@@ -146,7 +144,7 @@ mod adaptive_precommit_tests {
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+    use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 
     #[test]
     fn prove_layout_uses_the_recursive_catalogs_frozen_precommit_params() {
@@ -154,16 +152,22 @@ mod tests {
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
         let final_group = PolynomialGroupLayout::new(32, 2);
-        let expected = crate::resolve_prior_group_profile::<Cfg>(&precommitted)
-            .expect("recursive-catalog precommit profile");
+        let expected = fp128::OneHot::select_schedule_for_opening(
+            &OpeningClaimsLayout::new(precommitted.num_vars(), precommitted.num_polynomials())
+                .expect("opening layout"),
+        )
+        .expect("independent schedule")
+        .profiles()
+        .final_group;
         let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey {
             final_group,
             prior_group_profiles: vec![expected, expected],
         })
         .expect("recursive schedule");
 
-        assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
+        assert_eq!(schedule.schedule().root.params.precommitted_groups.len(), 2);
         assert!(schedule
+            .schedule()
             .root
             .params
             .precommitted_groups
@@ -179,8 +183,14 @@ mod tests {
         ))
         .expect("scalar recursive schedule");
 
-        assert!(schedule.root.params.precommitted_groups.is_empty());
         assert!(schedule
+            .schedule()
+            .root
+            .params
+            .precommitted_groups
+            .is_empty());
+        assert!(schedule
+            .schedule()
             .recursive_folds
             .iter()
             .any(|fold| fold.params.incoming_setup_prefix.is_some()));

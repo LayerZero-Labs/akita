@@ -1,8 +1,8 @@
 use akita_config::{
     policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
-use akita_planner::{find_schedule, plan_standalone_precommit};
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_planner::find_schedule;
+use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 
 fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     let schedule = &planned.schedule;
@@ -108,14 +108,17 @@ fn main() -> Result<(), akita_field::AkitaError> {
     );
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let descriptor = plan_standalone_precommit(
-        precommit_layout,
-        &direct_policy,
+    let independent = find_schedule(
+        &AkitaScheduleLookupKey::single(precommit_layout),
         OneHot::root_honest_fold_policy(),
+        &[],
+        &direct_policy,
         OneHot::ring_challenge_config,
-    )?
-    .selected
-    .profile;
+    )?;
+    let descriptor = CommittedGroupProfile::from_params(
+        precommit_layout,
+        &independent.schedule.root.params.final_group.commitment,
+    );
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         prior_group_profiles: vec![descriptor, descriptor],

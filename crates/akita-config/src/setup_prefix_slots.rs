@@ -158,8 +158,13 @@ mod tests {
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
-        let precommitted =
-            crate::resolve_prior_group_profile::<SetupCfg>(&pre).expect("precommit profile");
+        let precommitted = fp128::OneHot::select_schedule_for_opening(
+            &akita_types::OpeningClaimsLayout::new(pre.num_vars(), pre.num_polynomials())
+                .expect("opening layout"),
+        )
+        .expect("independent schedule")
+        .profiles()
+        .final_group;
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             prior_group_profiles: vec![precommitted, precommitted],
@@ -264,7 +269,7 @@ mod tests {
         let key = profiling_recursive_key();
         let schedule = SetupCfg::select_schedule_for_key(&key).expect("recursive schedule");
         let ids = extract_setup_prefix_slot_ids_from_schedule(
-            &schedule,
+            schedule.schedule(),
             &key.opening_layout().expect("layout"),
         )
         .expect("slot ids");

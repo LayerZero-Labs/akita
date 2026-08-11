@@ -34,10 +34,9 @@ pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 /// Position of this commitment in the opening batch that will contain it.
 #[derive(Debug, Clone, Copy)]
 pub enum GroupPosition<'a> {
-    /// The only group in its opening batch. Selects the scalar S row.
-    Sole,
-    /// A non-final group in a multi-group batch. Selects the standalone P profile.
-    Prior,
+    /// An ordinary group that may be opened alone or used before a later final
+    /// group. Selects the canonical scalar S row.
+    Independent,
     /// The final group after these exact ordered prior profiles. Selects a G row.
     Final {
         /// Exact prior profiles in opening-claim and transcript order.
@@ -86,22 +85,6 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
             log_basis_outer: params.log_basis_outer,
             num_digits_outer: params.num_digits_outer,
             outer_matrix: &params.outer_commit_matrix,
-        }
-    }
-}
-
-impl<'a> From<&'a CommittedGroupProfile> for CommitmentGeometry<'a> {
-    fn from(profile: &'a CommittedGroupProfile) -> Self {
-        Self {
-            context: "precommit profile",
-            num_positions_per_block: profile.num_positions_per_block,
-            num_live_blocks: profile.num_live_blocks,
-            log_basis_inner: profile.log_basis_inner,
-            num_digits_inner: profile.num_digits_inner,
-            inner_matrix: &profile.inner_commit_matrix,
-            log_basis_outer: profile.log_basis_outer,
-            num_digits_outer: profile.num_digits_outer,
-            outer_matrix: &profile.outer_commit_matrix,
         }
     }
 }
@@ -237,17 +220,6 @@ where
     // participates in the selected opening schedule. Charging D here would
     // reject a setup that exactly fits the standalone commitment profile.
     Ok(())
-}
-
-fn validate_commit_profile<F>(
-    profile: &CommittedGroupProfile,
-    setup: &AkitaExpandedSetup<F>,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    profile.validate_frozen_precommit(F::modulus_bits())?;
-    validate_commitment_geometry::<F>(profile.into(), setup)
 }
 
 pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<(), AkitaError> {
@@ -501,30 +473,6 @@ where
     commit_with_validated_geometry::<F, P, B>(polys, ctx, params.into())
 }
 
-// Keep the resolved row inline: boxing this short-lived role authority would
-// add a heap allocation to every Sole and Final commitment.
-#[allow(clippy::large_enum_variant)]
-enum SelectedCommitmentParameters {
-    Schedule(akita_config::ResolvedScheduleRow),
-    Prior(CommittedGroupProfile),
-}
-
-impl SelectedCommitmentParameters {
-    fn geometry(&self) -> CommitmentGeometry<'_> {
-        match self {
-            Self::Schedule(row) => (&row.schedule().root.params.final_group.commitment).into(),
-            Self::Prior(profile) => profile.into(),
-        }
-    }
-
-    fn profile(&self) -> CommittedGroupProfile {
-        match self {
-            Self::Schedule(row) => row.profiles().final_group,
-            Self::Prior(profile) => *profile,
-        }
-    }
-}
-
 /// Commit one homogeneous polynomial group at its explicit batch position.
 ///
 /// Only role-specific S/P/G parameter resolution branches. Geometry
@@ -559,7 +507,7 @@ where
     let group_layout = opening_layout.root_final_group_layout()?;
 
     let selected = match position {
-        GroupPosition::Sole => {
+        GroupPosition::Independent => {
             let row = Cfg::select_schedule_for_opening(&opening_layout)?;
             let params = &row.schedule().root.params.final_group.commitment;
             validate_commit_level_params::<Cfg::Field>(params, expanded)?;
@@ -568,16 +516,11 @@ where
                 || row_profile != CommittedGroupProfile::from_params(group_layout, params)
             {
                 return Err(AkitaError::InvalidSetup(
-                    "sole-group row profile does not match its requested layout and root parameters"
+                    "independent row profile does not match its requested layout and root parameters"
                         .to_string(),
                 ));
             }
-            SelectedCommitmentParameters::Schedule(row)
-        }
-        GroupPosition::Prior => {
-            let profile = akita_config::resolve_prior_group_profile::<Cfg>(&group_layout)?;
-            validate_commit_profile::<Cfg::Field>(&profile, expanded)?;
-            SelectedCommitmentParameters::Prior(profile)
+            row
         }
         GroupPosition::Final {
             prior_group_profiles,
@@ -601,11 +544,12 @@ where
                 &row.schedule().root.params.final_group.commitment,
                 expanded,
             )?;
-            SelectedCommitmentParameters::Schedule(row)
+            row
         }
     };
 
-    let geometry = selected.geometry();
+    let geometry: CommitmentGeometry<'_> =
+        (&selected.schedule().root.params.final_group.commitment).into();
     let transform_ring_d = geometry.inner_matrix.ring_dimension();
     let (commitment, hint) = if root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         transform_ring_d,
@@ -626,7 +570,7 @@ where
     };
 
     Ok(CommitOutput {
-        committed_group: CommittedGroup::new(selected.profile(), commitment),
+        committed_group: CommittedGroup::new(selected.profiles().final_group, commitment),
         hint,
     })
 }

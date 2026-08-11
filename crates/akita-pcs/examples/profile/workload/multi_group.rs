@@ -24,7 +24,7 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     dispatch_for_field, BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
+    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -176,8 +176,13 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-    let pre_descriptor =
-        akita_config::resolve_prior_group_profile::<ProofCfg>(&pre_key).expect("precommit profile");
+    let pre_descriptor = ProofCfg::select_schedule_for_opening(
+        &OpeningClaimsLayout::new(pre_key.num_vars(), pre_key.num_polynomials())
+            .expect("opening layout"),
+    )
+    .expect("independent schedule")
+    .profiles()
+    .final_group;
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group,
@@ -267,7 +272,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 &setup,
                 &polys,
                 &stack,
-                akita_prover::GroupPosition::Prior,
+                akita_prover::GroupPosition::Independent,
             )
             .expect("precommit");
             pre_keys.push(pre_key);

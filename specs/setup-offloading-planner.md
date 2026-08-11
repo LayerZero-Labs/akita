@@ -13,9 +13,10 @@
 > **Commit-API update (2026-08-10).** References below to `commit_group` or
 > other pre-consolidation commitment entry points describe the implementation
 > available when this planner design landed. The current public flow uses
-> `AkitaCommitmentScheme::commit` with `GroupPosition::Prior` and
-> `GroupPosition::Final`; the recursive planning and setup-offloading contracts
-> in this document are unchanged.
+> `AkitaCommitmentScheme::commit` with `GroupPosition::Independent` for each
+> early S commitment and `GroupPosition::Final` for the grouped final
+> commitment; the recursive planning and setup-offloading contracts in this
+> document are unchanged.
 
 ## Revision authority
 

@@ -37,6 +37,18 @@ const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
+
+fn independent_profile<C: CommitmentConfig>(
+    group: akita_types::PolynomialGroupLayout,
+) -> akita_types::CommittedGroupProfile {
+    C::select_schedule_for_opening(
+        &OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())
+            .expect("opening layout"),
+    )
+    .expect("independent schedule")
+    .profiles()
+    .final_group
+}
 type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
@@ -296,7 +308,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .unwrap();
 

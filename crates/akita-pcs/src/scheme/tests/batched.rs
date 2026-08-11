@@ -23,7 +23,12 @@ fn batched_commit_matches_individual_commits() {
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
         .map(|group| {
-            Scheme::commit::<_, _>(&setup, group, &stack, akita_prover::GroupPosition::Sole)
+            Scheme::commit::<_, _>(
+                &setup,
+                group,
+                &stack,
+                akita_prover::GroupPosition::Independent,
+            )
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
@@ -37,7 +42,7 @@ fn batched_commit_matches_individual_commits() {
         &setup,
         std::slice::from_ref(&poly_a),
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .unwrap();
     let akita_prover::CommitOutput {
@@ -47,7 +52,7 @@ fn batched_commit_matches_individual_commits() {
         &setup,
         std::slice::from_ref(&poly_b),
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .unwrap();
 
@@ -89,7 +94,7 @@ fn commit_rejects_empty_final_prefix_and_mixed_group_arity() {
         &setup,
         &[poly, smaller],
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .expect_err("one committed group must be homogeneous");
     assert!(matches!(error, AkitaError::InvalidInput(_)));
@@ -122,7 +127,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &setup,
         &[poly_a.clone(), poly_b.clone()],
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .unwrap();
     let commitments = [commitment];

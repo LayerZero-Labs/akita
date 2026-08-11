@@ -42,7 +42,8 @@ use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
-    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
+    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule,
+    PolynomialGroupLayout,
 };
 
 type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>);
@@ -52,8 +53,7 @@ use akita_config::policy_of;
 use akita_schedules::generated::{table_entry, table_entry_range};
 #[cfg(feature = "all-schedules")]
 use akita_schedules::{
-    catalog_entries_sorted_for_lookup, precommitted_profiles_digest,
-    resolve_generated_precommitted_group_profile, schedule_from_entry, validate_catalog_identity,
+    catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
     validate_generated_schedule_table,
 };
 
@@ -74,12 +74,22 @@ fn every_grouped_prior_descriptor_has_a_generated_producer() {
     let produced = ALL_GENERATED_FAMILIES
         .iter()
         .flat_map(|family| {
-            (family.precommitted_profiles)().unwrap_or_else(|error| {
-                panic!(
-                    "{} prior-profile generation failed: {error}",
-                    family.module_name
-                )
-            })
+            emitted_scalar_keys(family)
+                .unwrap_or_else(|error| {
+                    panic!("{} S-key enumeration failed: {error}", family.module_name)
+                })
+                .into_iter()
+                .map(|group| {
+                    let schedule =
+                        (family.select_schedule_for_key)(AkitaScheduleLookupKey::single(group))
+                            .unwrap_or_else(|error| {
+                                panic!("{} S-row lookup failed: {error}", family.module_name)
+                            });
+                    CommittedGroupProfile::from_params(
+                        group,
+                        &schedule.root.params.final_group.commitment,
+                    )
+                })
         })
         .collect::<Vec<_>>();
 
@@ -90,7 +100,7 @@ fn every_grouped_prior_descriptor_has_a_generated_producer() {
             for group in entry.root.precommitted_groups {
                 assert!(
                     produced.contains(&group.descriptor),
-                    "family {} embeds a grouped prior descriptor without an exact generated P producer: {:?}",
+                    "family {} embeds a grouped prior descriptor without an exact generated S producer: {:?}",
                     family.module_name,
                     group.descriptor.group
                 );
@@ -132,69 +142,7 @@ fn prepare_family_catalog(
         "family {module_name} catalog entries must be sorted for binary lookup"
     );
     assert_table_hit(module_name, &catalog, keys);
-    assert_precommit_registry(family, &catalog);
     catalog
-}
-
-#[cfg(feature = "all-schedules")]
-fn assert_precommit_registry(
-    family: &GeneratedFamily,
-    catalog: &akita_schedules::GeneratedScheduleTable,
-) {
-    let expected = (family.precommitted_profiles)().unwrap_or_else(|e| {
-        panic!(
-            "{} precommit registry regen failed: {e}",
-            family.module_name
-        )
-    });
-    for expected_profile in expected {
-        let found = catalog
-            .precommitted_profiles
-            .iter()
-            .copied()
-            .map(|row| row.expand_to_committed_profile(&(family.policy)()))
-            .any(|profile| {
-                profile.unwrap_or_else(|e| {
-                    panic!("{} generated precommit row failed: {e}", family.module_name)
-                }) == expected_profile
-            });
-        assert!(
-            found,
-            "family {} generated precommit registry is missing {:?}",
-            family.module_name, expected_profile.group
-        );
-    }
-    for &row in catalog.precommitted_profiles {
-        let profile = row
-            .expand_to_committed_profile(&(family.policy)())
-            .unwrap_or_else(|e| {
-                panic!("{} generated precommit row failed: {e}", family.module_name)
-            });
-        let runtime = (family.runtime_precommitted_profile)(&profile.group).unwrap_or_else(|e| {
-            panic!(
-                "{} runtime precommit lookup failed: {e}",
-                family.module_name
-            )
-        });
-        assert_eq!(
-            runtime, profile,
-            "family {} runtime precommit profile must match generated registry exactly",
-            family.module_name
-        );
-    }
-    for entry in catalog.entries {
-        for group in entry.root.precommitted_groups {
-            group
-                .descriptor
-                .validate((family.policy)().sis_modulus_profile.field_bits())
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "{} schedule row references an invalid precommit descriptor: {e}",
-                        family.module_name
-                    )
-                });
-        }
-    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -242,66 +190,12 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn prior_registry_validation_is_separate_and_binds_the_live_array() {
-    let policy = policy_of::<fp128::Dense>();
-    let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
-    let mut swapped = catalog.precommitted_profiles.to_vec();
-    swapped.swap(0, 1);
-    let swapped = Box::leak(swapped.into_boxed_slice());
-    let rewired = akita_schedules::GeneratedScheduleTable {
-        entries: catalog.entries,
-        precommitted_profiles: swapped,
-        identity: catalog.identity,
-    };
-
-    validate_catalog_identity(&rewired, &policy, fp128::Dense::ring_challenge_config)
-        .expect("S/G identity validation must not traverse the live P registry");
-    let error = resolve_generated_precommitted_group_profile(
-        &swapped[0].group,
-        &policy,
-        fp128::Dense::ring_challenge_config,
-        Some(rewired),
-    )
-    .expect_err("P lookup must reject a differently ordered live registry");
-    assert!(error.to_string().contains("digest does not match identity"));
-}
-
-#[cfg(feature = "all-schedules")]
-#[test]
-fn prior_registry_rejects_duplicate_layout_even_with_matching_identity_metadata() {
-    let policy = policy_of::<fp128::Dense>();
-    let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
-    let mut duplicated = catalog.precommitted_profiles.to_vec();
-    duplicated.push(duplicated[0]);
-    let duplicated = Box::leak(duplicated.into_boxed_slice());
-    let mut identity = catalog.identity;
-    identity.precommitted_profile_count = duplicated.len();
-    identity.precommitted_profile_digest = precommitted_profiles_digest(duplicated);
-    let rewired = akita_schedules::GeneratedScheduleTable {
-        entries: catalog.entries,
-        precommitted_profiles: duplicated,
-        identity,
-    };
-
-    let error = resolve_generated_precommitted_group_profile(
-        &duplicated[0].group,
-        &policy,
-        fp128::Dense::ring_challenge_config,
-        Some(rewired),
-    )
-    .expect_err("duplicate P layout must reject even when descriptor bytes match");
-    assert!(error.to_string().contains("duplicate layout"));
-}
-
-#[cfg(feature = "all-schedules")]
-#[test]
 fn equal_lookup_keys_form_one_contiguous_candidate_range() {
     let catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
     let entry = *catalog.entries.first().expect("nonempty generated catalog");
     let entries = Box::leak(vec![entry, entry].into_boxed_slice());
     let duplicate_table = akita_schedules::GeneratedScheduleTable {
         entries,
-        precommitted_profiles: catalog.precommitted_profiles,
         identity: catalog.identity,
     };
     let key = entry.to_runtime_lookup_key();
@@ -368,7 +262,6 @@ fn adaptive_catalog_identity_rejects_terminal_dimension_growth() {
 
     let mutated = akita_schedules::GeneratedScheduleTable {
         entries: Box::leak(vec![entry].into_boxed_slice()),
-        precommitted_profiles: catalog.precommitted_profiles,
         identity: catalog.identity,
     };
     let error = validate_catalog_identity(&mutated, &policy, fp32::Dense::ring_challenge_config)

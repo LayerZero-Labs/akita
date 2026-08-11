@@ -136,8 +136,13 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = SmallScheme::commit(&setup, &polys, &stack, akita_prover::GroupPosition::Sole)
-        .expect("fp32 batched commitment");
+    } = SmallScheme::commit(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupPosition::Independent,
+    )
+    .expect("fp32 batched commitment");
 
     let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.clone(),
@@ -263,7 +268,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &pre_setup,
         std::slice::from_ref(&pre_poly),
         &pre_stack,
-        akita_prover::GroupPosition::Prior,
+        akita_prover::GroupPosition::Independent,
     )
     .expect("precommit");
 
@@ -284,14 +289,14 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
             .group_role_dims(&grouped_layout, 0)
             .expect("pre group dims")
             .d_a(),
-        128
+        pre_commitment.profile.inner_commit_matrix.ring_dimension()
     );
     assert_eq!(
         root_params
             .group_role_dims(&grouped_layout, 1)
             .expect("final group dims")
             .d_a(),
-        256
+        root_params.inner_commit_matrix.ring_dimension()
     );
     let final_poly = grouped_onehot_poly(root_params, 2);
 

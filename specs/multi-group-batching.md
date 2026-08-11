@@ -59,7 +59,8 @@ Generated profile lookup is strict. An unlisted layout returns
 The current staggered flow is:
 
 1. Commit each early group with the unified `commit` method and
-   `GroupPosition::Prior`; this resolves its exact generated P profile.
+   `GroupPosition::Independent`; this resolves its exact scalar S row. Retain
+   the resulting committed group/profile for use as a prior group.
 2. Build one ordered `PriorGroupProfiles` owner from those committed groups.
 3. Commit the last group with `GroupPosition::Final`, borrowing that owner.
 4. Build the self-describing `OpeningClaims`, then pass the same owner to
@@ -67,20 +68,20 @@ The current staggered flow is:
    the exact generated G row before profiles are stripped.
 5. Prove with that selected row and verify against its explicit row identity.
 
-`GroupPosition::Sole` commits the only group in an opening batch under its
-scalar S row. Multiple homogeneous polynomials may still belong to that one
-group.
+`GroupPosition::Independent` commits a group under its scalar S row. The same
+commitment may be opened alone or used before a later final group. Multiple
+homogeneous polynomials may still belong to one group.
 
 The commitment and opening claims must use the same ordered group profiles.
 Malformed, missing, reordered, or altered profiles return `AkitaError`.
 
 ## Planning and runtime ownership
 
-`akita-planner` owns standalone profile search and grouped root search.
+`akita-planner` owns scalar S-row search and grouped root search.
 `akita-schedules` owns generated catalogs, catalog identity checks, expansion,
 and strict runtime resolution. Verifier crates do not depend on the planner.
 
-Generated families carry both standalone profiles and selected grouped rows.
+Generated families carry scalar S rows and selected grouped rows.
 Generation holds a typed planning request with its key and honest fold policies
 through one materialization pass. Unsupported requests are omitted. Runtime
 table misses remain unsupported.
@@ -98,9 +99,10 @@ from unchecked lengths, or invoke the planner.
 
 ## Acceptance criteria
 
-- Standalone generation emits exact profiles for every supported layout.
+- Scalar generation emits exact S profiles for every supported layout.
 - Profile descriptor changes alter lookup and effective schedule identity.
-- `GroupPosition::Prior` uses the exact generated standalone P profile.
+- `GroupPosition::Independent` always uses the exact generated scalar S profile,
+  including when that commitment later becomes a prior group.
 - `GroupPosition::Final` selects from the exact ordered profiles supplied by
   the caller and rejects an empty prefix.
 - Batch assembly consumes the same `PriorGroupProfiles` allocation borrowed by

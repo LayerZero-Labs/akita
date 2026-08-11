@@ -236,7 +236,7 @@ where
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .unwrap();
 
@@ -394,12 +394,12 @@ fn chunked_multi_chunk_prove_verify() {
         .expect("stack");
         let akita_prover::CommitOutput {
             committed_group: commitment,
-            hint: hint,
+            hint,
         } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .unwrap();
 
@@ -489,7 +489,7 @@ fn adaptive_dense_prove_verify() {
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .unwrap();
 
@@ -699,7 +699,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .unwrap();
         let commitments = [commitment];
@@ -906,7 +906,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &setup,
             std::slice::from_ref(&onehot_poly),
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .unwrap();
 
@@ -1044,7 +1044,7 @@ fn batched_onehot_same_point_round_trip() {
             &setup,
             &commit,
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .unwrap();
         let commitments = [commitment];
@@ -1172,7 +1172,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupPosition::Sole,
+            akita_prover::GroupPosition::Independent,
         )
         .unwrap();
         let commitments = [commitment];

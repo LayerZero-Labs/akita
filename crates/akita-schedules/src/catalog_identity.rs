@@ -16,8 +16,8 @@ use akita_types::{CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayo
 
 use crate::generated::{
     generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
-    GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix, GeneratedPrecommittedProfile,
-    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedWitnessPartition,
+    GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleTable, GeneratedWitnessPartition,
 };
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
@@ -106,8 +106,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.ring_challenge_config_digest);
     h.write_u64(identity.key_count as u64);
     h.write_u64(identity.key_digest);
-    h.write_u64(identity.precommitted_profile_count as u64);
-    h.write_u64(identity.precommitted_profile_digest);
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
     out
@@ -242,7 +240,6 @@ pub fn expected_catalog_identity(
     family_name: &'static str,
     policy: &PlannerPolicy,
     entries: &[GeneratedFoldScheduleEntry],
-    precommitted_profiles: &[GeneratedPrecommittedProfile],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
     let expected =
@@ -274,55 +271,7 @@ pub fn expected_catalog_identity(
         ring_challenge_config_digest: expected.ring_challenge_config_digest,
         key_count: expected.key_count,
         key_digest: expected.key_digest,
-        precommitted_profile_count: precommitted_profiles.len(),
-        precommitted_profile_digest: precommitted_profiles_digest(precommitted_profiles),
     })
-}
-
-/// Deterministic digest of every compact standalone-prior record field.
-///
-/// This is a catalog wiring guard, not a cryptographic hash.
-pub fn precommitted_profiles_digest(profiles: &[GeneratedPrecommittedProfile]) -> u64 {
-    let mut digest = PrecommittedProfilesDigest::new(profiles.len());
-    for profile in profiles {
-        digest.update(profile);
-    }
-    digest.finish()
-}
-
-pub(crate) struct PrecommittedProfilesDigest(Fnv64);
-
-impl PrecommittedProfilesDigest {
-    pub(crate) fn new(len: usize) -> Self {
-        let mut h = Fnv64::new();
-        h.write_u64(len as u64);
-        Self(h)
-    }
-
-    pub(crate) fn update(&mut self, profile: &GeneratedPrecommittedProfile) {
-        let h = &mut self.0;
-        h.write_u64(profile.group.num_vars() as u64);
-        h.write_u64(profile.group.num_polynomials() as u64);
-        let commitment = profile.commitment;
-        h.write_u64(commitment.geometry.live_ring_elements_per_claim);
-        h.write_u64(commitment.geometry.positions_per_block);
-        h.write_u64(commitment.geometry.live_blocks);
-        h.write_u64(u64::from(commitment.inner_commit_matrix.ring_dimension));
-        h.write_u64(u64::from(commitment.inner_commit_matrix.log_basis));
-        h.write_u64(u64::from(commitment.outer_commit_matrix.ring_dimension));
-        h.write_u64(u64::from(commitment.outer_commit_matrix.log_basis));
-        h.write_u64(u64::from(commitment.outer_commit_matrix.slice_count));
-        h.write_u64(u64::from(profile.num_digits_inner));
-        h.write_u64(profile.inner_output_rank as u64);
-        h.write_bytes(&profile.inner_coeff_linf_bound.to_le_bytes());
-        h.write_u64(u64::from(profile.num_digits_outer));
-        h.write_u64(profile.outer_output_rank as u64);
-        h.write_bytes(&profile.outer_coeff_linf_bound.to_le_bytes());
-    }
-
-    pub(crate) fn finish(self) -> u64 {
-        self.0.finish()
-    }
 }
 
 /// Validate that `catalog`'s embedded identity matches the runtime policy and hooks.

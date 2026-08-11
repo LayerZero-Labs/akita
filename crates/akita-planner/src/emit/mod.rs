@@ -23,9 +23,9 @@ use akita_schedules::expected_catalog_identity;
 use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
     GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
-    GeneratedPrecommittedProfile, GeneratedRecursiveFold, GeneratedRootFinalGroup,
-    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity,
-    GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition,
+    GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
+    GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
+    GeneratedTerminalFold, GeneratedWitnessPartition,
 };
 pub use publish::publish_generated_outputs;
 pub use render::{render_generated_outputs, GeneratedOutput};
@@ -45,7 +45,6 @@ pub struct EmitSpec {
     pub regen_group_batch:
         fn(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>) -> Result<FoldSchedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    pub precommitted_profiles: Vec<CommittedGroupProfile>,
     pub generator_command: &'static str,
 }
 
@@ -343,69 +342,6 @@ fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
     )
 }
 
-fn precommitted_profiles_const_name(spec: &EmitSpec) -> String {
-    format!("{}_PRECOMMITTED_PROFILES", spec.const_name)
-}
-
-fn precommitted_profiles_module_name(spec: &EmitSpec) -> String {
-    format!("{}_precommitted", spec.module_name)
-}
-
-fn emit_generated_precommitted_profile(profile: &CommittedGroupProfile) -> String {
-    format!(
-        "GeneratedPrecommittedProfile {{ group: {}, commitment: {}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, num_digits_outer: {}, outer_output_rank: {}, outer_coeff_linf_bound: {} }}",
-        emit_key(profile.group),
-        emit_generated_committed_profile_group(profile),
-        profile.num_digits_inner,
-        profile.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.coeff_linf_bound(),
-        profile.num_digits_outer,
-        profile.outer_commit_matrix.output_rank(),
-        profile.outer_commit_matrix.coeff_linf_bound(),
-    )
-}
-
-fn generated_precommitted_profile(profile: &CommittedGroupProfile) -> GeneratedPrecommittedProfile {
-    GeneratedPrecommittedProfile {
-        group: profile.group,
-        commitment: GeneratedCommittedGroup {
-            geometry: GeneratedBlockGeometry {
-                live_ring_elements_per_claim: profile.num_live_ring_elements_per_claim as u64,
-                positions_per_block: profile.num_positions_per_block as u64,
-                live_blocks: profile.num_live_blocks as u64,
-            },
-            inner_commit_matrix: GeneratedInnerCommitMatrix {
-                ring_dimension: profile.inner_commit_matrix.ring_dimension() as u32,
-                log_basis: profile.log_basis_inner,
-            },
-            outer_commit_matrix: GeneratedOuterCommitMatrix {
-                ring_dimension: profile.outer_commit_matrix.ring_dimension() as u32,
-                log_basis: profile.log_basis_outer,
-                slice_count: 1,
-            },
-        },
-        num_digits_inner: profile.num_digits_inner as u32,
-        inner_output_rank: profile.inner_commit_matrix.output_rank() as u32,
-        inner_coeff_linf_bound: profile.inner_commit_matrix.coeff_linf_bound(),
-        num_digits_outer: profile.num_digits_outer as u32,
-        outer_output_rank: profile.outer_commit_matrix.output_rank() as u32,
-        outer_coeff_linf_bound: profile.outer_commit_matrix.coeff_linf_bound(),
-    }
-}
-
-fn emit_generated_committed_profile_group(profile: &CommittedGroupProfile) -> String {
-    format!(
-        "GeneratedCommittedGroup {{ geometry: GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: 1 }} }}",
-        profile.num_live_ring_elements_per_claim,
-        profile.num_positions_per_block,
-        profile.num_live_blocks,
-        profile.inner_commit_matrix.ring_dimension(),
-        profile.log_basis_inner,
-        profile.outer_commit_matrix.ring_dimension(),
-        profile.log_basis_outer,
-    )
-}
-
 fn emit_profile_matrix(
     type_name: &str,
     output_rank: usize,
@@ -675,8 +611,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
             "    key_count: {key_count},\n",
             "    key_digest: {key_digest},\n",
-            "    precommitted_profile_count: {precommitted_profile_count},\n",
-            "    precommitted_profile_digest: {precommitted_profile_digest},\n",
             "}};\n",
         ),
         ring_dimension_policy_statics = ring_dimension_policy_statics,
@@ -710,8 +644,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ring_challenge_config_digest = identity.ring_challenge_config_digest,
         key_count = identity.key_count,
         key_digest = identity.key_digest,
-        precommitted_profile_count = identity.precommitted_profile_count,
-        precommitted_profile_digest = identity.precommitted_profile_digest,
     )
 }
 
@@ -820,50 +752,14 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(out, "];").map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;
 
-    let compact_precommitted_profiles = spec
-        .precommitted_profiles
-        .iter()
-        .map(generated_precommitted_profile)
-        .collect::<Vec<_>>();
     let identity = expected_catalog_identity(
         spec.family_name,
         &spec.policy,
         &memory_entries,
-        &compact_precommitted_profiles,
         spec.ring_challenge_config,
     )
     .map_err(|e| format!("{}: catalog identity: {e}", spec.module_name))?;
     out.push_str(&emit_identity_const(&identity));
 
-    Ok(out)
-}
-
-/// Emit the compact standalone precommit registry module for one family.
-pub fn emit_precommitted_profiles_module(spec: &EmitSpec) -> Result<String, String> {
-    let mut out = String::new();
-    let precommitted_profiles_const = precommitted_profiles_const_name(spec);
-    writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
-    if spec.precommitted_profiles.is_empty() {
-        writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
-    }
-    writeln!(
-        out,
-        "use super::{{\n    GeneratedBlockGeometry, GeneratedCommittedGroup, \
-         GeneratedInnerCommitMatrix, GeneratedOuterCommitMatrix, \
-         GeneratedPrecommittedProfile, PolynomialGroupLayout,\n}};"
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(out).map_err(|e| e.to_string())?;
-    writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
-    writeln!(
-        out,
-        "pub(crate) static {precommitted_profiles_const}: &[GeneratedPrecommittedProfile] = &["
-    )
-    .map_err(|e| e.to_string())?;
-    for profile in &spec.precommitted_profiles {
-        writeln!(out, "    {},", emit_generated_precommitted_profile(profile))
-            .map_err(|e| e.to_string())?;
-    }
-    writeln!(out, "];").map_err(|e| e.to_string())?;
     Ok(out)
 }

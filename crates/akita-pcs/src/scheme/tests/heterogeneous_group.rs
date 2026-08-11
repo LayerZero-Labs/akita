@@ -62,7 +62,7 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
         &setup,
         std::slice::from_ref(&onehot_pre),
         &stack,
-        akita_prover::GroupPosition::Prior,
+        akita_prover::GroupPosition::Independent,
     )
     .expect("K=16 precommit");
     let akita_prover::CommitOutput {
@@ -72,7 +72,7 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
         &setup,
         &dense_polys,
         &stack,
-        akita_prover::GroupPosition::Prior,
+        akita_prover::GroupPosition::Independent,
     )
     .expect("dense precommit");
     let prior_group_profiles = akita_types::PriorGroupProfiles::from_profiles(vec![
@@ -166,7 +166,6 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
         BasisMode::Lagrange,
     )
     .expect("heterogeneous proof");
-
     let verifier_setup = OneHotScheme::setup_verifier(&setup).expect("verifier setup");
     let verifier_claims = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::new(

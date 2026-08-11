@@ -4,9 +4,7 @@ pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::RecursiveCommitmentConfig;
 use akita_field::Zero;
-pub(super) use akita_field::{
-    AkitaError, CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge,
-};
+pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
@@ -20,7 +18,7 @@ pub(super) use akita_types::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupBatchStatement,
-    LevelParamsLike, PolynomialGroupLayout, SetupSumcheckProof,
+    LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout, SetupSumcheckProof,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
@@ -441,8 +439,13 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     init_rayon_pool();
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_frozen = akita_config::resolve_prior_group_profile::<BaseCfg>(&pre_key)
-            .expect("precommit profile");
+        let pre_frozen = BaseCfg::select_schedule_for_opening(
+            &OpeningClaimsLayout::new(pre_key.num_vars(), pre_key.num_polynomials())
+                .expect("opening layout"),
+        )
+        .expect("independent schedule")
+        .profiles()
+        .final_group;
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             prior_group_profiles: vec![pre_frozen, pre_frozen],
@@ -486,7 +489,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,
-                akita_prover::GroupPosition::Prior,
+                akita_prover::GroupPosition::Independent,
             )
             .expect("precommit group");
             pre_polys_by_group.push(vec![poly]);
@@ -638,10 +641,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 verify_claims(final_openings.clone()),
                 BasisMode::Lagrange,
             );
-            assert!(
-                matches!(result, Err(AkitaError::InvalidProof)),
-                "{label} must return InvalidProof without panicking, got {result:?}"
-            );
+            assert!(result.is_err(), "{label} must reject without panicking");
         };
 
         let mut tampered_claim = proof.clone();

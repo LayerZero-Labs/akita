@@ -4,7 +4,7 @@
 |---------------|-------------------------|
 | Author(s)     |                         |
 | Created       | 2026-08-10              |
-| Status        | proposed                |
+| Status        | implemented             |
 | PR            |                         |
 | Supersedes    |                         |
 | Superseded-by |                         |
@@ -12,25 +12,21 @@
 
 ## Summary
 
-Akita currently exposes four scheme-level commitment methods:
+Before this cutover Akita exposed four scheme-level commitment methods:
 `commit`, `batched_commit`, `commit_group`, and
 `commit_final_group`. They all commit one polynomial group, but their names
 also encode validation history and the group's future position in an opening
 batch.
 
-The target API has one public `commit` method and one explicit
-`GroupPosition` input. The position distinguishes the three protocol roles
-that exist today:
+The implemented API has one public `commit` method and one explicit
+`GroupPosition` input. `Independent` selects the scalar S row; that commitment
+may be opened alone or retained as a prior group. `Final` selects the grouped G
+row from the exact ordered prior profiles. The precommitted/multi-group case
+therefore remains protocol-visible without owning a second P parameter source.
 
-- the sole group in its opening batch;
-- a non-final group that will be prior to a later final group; and
-- the final group selected using the exact ordered profiles of every prior
-  group.
-
-The role is not merely API metadata. Today those three roles select parameters
-from three different generated domains. Preserving that distinction is
-required to keep commitments, schedule selections, transcripts, proof bytes,
-and proof sizes identical.
+The role-preserving design discussion in the main body records the first
+cutover and its baseline constraints. Appendix A is authoritative for the
+subsequent S-only parameter-authority implementation.
 
 This is a source-API breaking refactor. No compatibility wrappers, aliases, or
 deprecated entry points are required. The freedom to break the Rust API does
@@ -1329,3 +1325,233 @@ implemented and folded into the book, archive this spec according to
 - `specs/mixed-ring-dimension-per-level.md`
 - `specs/multi-group-batching.md`
 - `book/src/usage/commitment-api.md`
+
+## Appendix A: Proposed S-only commitment authority
+
+### Status and relationship to this specification
+
+This appendix records the implemented follow-on simplification: P is no longer
+a runtime commitment-parameter authority. Every ordinary commitment uses its
+scalar S profile, whether the group is opened alone or retained for use before
+a later final group.
+
+The precommitted/multi-group protocol case is not removed. Earlier commitments,
+their ordered profiles, G-row selection, setup-prefix handling, and grouped
+verification remain. Only the second parameter source is removed: an earlier
+group is now committed as `GroupPosition::Independent` with S and that exact S
+profile is supplied to `GroupPosition::Final`.
+
+The desired end state is:
+
+```text
+one ordinary commitment authority C(layout) = existing S(layout)
+
+ordinary/independent group  -> commit with S
+grouped final               -> select G by exact ordered S profiles
+```
+
+The old caller-visible sole/prior positions are collapsed into
+`GroupPosition::Independent`. `Final { prior_group_profiles }` remains distinct
+because it still needs the exact ordered prefix to select the complete grouped
+row.
+
+### Implementation and measurement result
+
+The generated P registry, resolver, validation cache, emitter output, and
+catalog count/digest fields have been removed. Every former P profile consumed
+by a shipped G row or lifecycle was mapped to an existing S row or gained the
+required scalar S key (notably fp128 Dense `(15,2)` and fp128 OneHotMultiChunk
+`(16,1)`). Registry-only P shapes that had no grouped consumer are not carried
+forward as a second standalone domain. No grouped/precommitted lifecycle was
+removed. Grouped rows are regenerated from exact ordered S profiles. The
+generated diff contains no deletion of a scalar row with
+`precommitted_groups: &[]`; existing scalar S row payloads are byte-for-byte
+unchanged. Permanent catalog coverage also checks that every grouped prior
+descriptor has an exact generated scalar S producer.
+
+The temporary measurement prints were removed after recording these compressed
+proof sizes. Baselines use P-keyed G rows; candidates use S-keyed G rows. Every
+honest commit/prove/verify path below succeeded.
+
+| Case | Ordered layouts (prior(s) → final) | P/G bytes | S/G bytes | Delta | Delta % |
+| --- | --- | ---: | ---: | ---: | ---: |
+| fp32 extension-field | `(14,1) → (20,1)` | 72,599 | 72,748 | +149 | +0.21% |
+| heterogeneous OneHot/Dense | `(14,1), (15,2) → (16,1)` | 77,812 | 78,932 | +1,120 | +1.44% |
+| OneHot prior smaller, final batch | `(14,1) → (20,2)` | 77,829 | 77,842 | +13 | +0.02% |
+| OneHot prior larger | `(20,1) → (14,1)` | 75,283 | 77,840 | +2,557 | +3.40% |
+| OneHot two-polynomial prior | `(14,2) → (20,1)` | 77,816 | 77,804 | -12 | -0.02% |
+| multi-chunk W2R2 | `(14,1) → (14,1)` | 75,192 | 75,265 | +73 | +0.10% |
+| recursive setup offload | `2 × (16,1) → (32,2)` | 87,051 | 87,057 | +6 | +0.01% |
+| distributed W8R2 setup offload | `2 × (16,1) → (32,2)` | unavailable¹ | 88,527 | — | — |
+
+¹ The baseline distributed fixture did not compile because it still passed a
+`ResolvedScheduleRow` where `&FoldSchedule` was required. The API-stale fixture
+was repaired during this cutover; its S/G honest lifecycle now runs and
+verifies. This is not represented as a zero delta.
+
+Across comparable cases the largest increase is 2,557 bytes (3.40%); six of
+seven changes are at most 1.44%, and one is a 12-byte improvement. The global
+instance-descriptor version remains unchanged because bumping it would alter
+the scalar S transcripts that this appendix requires to preserve. Changed G
+rows already receive new row/key digests and old P-profile selections are not
+accepted by the S-only catalogs.
+
+### Non-negotiable S preservation
+
+Existing S behavior is the fixed side of this experiment. For every currently
+generated S key, the migration must preserve exactly:
+
+- the compact generated S row payload;
+- expanded root, recursive, and terminal parameters;
+- the root-final `CommittedGroupProfile` and its canonical bytes;
+- tensor-projection choice and role dimension;
+- setup matrix capacity and setup-prefix requirements;
+- commitment and hint bytes for deterministic fixtures;
+- `OpeningScheduleSelection` and row digest;
+- transcript events, serialized proof bytes, and proof length; and
+- commit/prove/verify acceptance behavior.
+
+Existing S rows are inputs to the migration, not planner candidates. Generation
+must pin and reuse their current root commitment profiles rather than replan or
+reselect them. A generated S-row payload diff is a hard failure even if the new
+row has equal cost.
+
+Temporary differential tests should snapshot every current S row and the
+tractable deterministic S lifecycles before changing P/G generation. These
+tests compare the pre-migration and candidate branches structurally and by
+canonical bytes. After the measurements are accepted and the migration is
+complete, remove the temporary branch-comparison tests, printing code, test
+counters, and any test-only production hooks. Retain the repository's ordinary
+functional, drift, and protocol regression tests in their final S-only form.
+
+### Complete current-P inventory
+
+Before modifying the planner, derive the complete ordered P domain from every
+generated family. Do not use a prose-maintained list. Partition it into:
+
+```text
+P ∩ S  layouts with an existing S row
+P \ S  layouts currently supported only as prior commitments
+```
+
+For `P ∩ S`, the candidate prior profile is the existing S row's exact
+root-final profile. For `P \ S` consumed by a shipped grouped row or lifecycle,
+"always use S" requires extending the S authority: generate a scalar S-style
+row/profile under the existing S objective without changing any existing S
+row. P-registry-only shapes with no grouped consumer are removed with that
+role-specific registry; this repository provides no backward-compatibility
+guarantee for unused standalone parameter lookups.
+
+The inventory must also map every current G prior descriptor to its P producer
+and replacement S profile. This includes cross-configuration and recursive
+cases, especially the existing fp128 Dense `(15, 2)` prior used by a OneHot
+grouped row.
+
+### Candidate G generation
+
+Current G rows are keyed by exact P descriptor bytes, so merely changing the
+commit call from P to S will make those rows unselectable. The experiment must
+generate a separate candidate G catalog whose ordered prior descriptors are
+the replacement S profiles.
+
+For each current supported grouped request:
+
+1. preserve the final group layout and prior-group order;
+2. substitute each exact P descriptor with its canonical S replacement;
+3. re-run grouped planning under the same policy and security bounds;
+4. require the candidate row to pass all structure, SIS, setup, and verifier
+   audits; and
+5. record unsupported candidates as migration blockers rather than silently
+   dropping them.
+
+The baseline P/G catalogs and candidate S/G catalogs must coexist only in the
+measurement harness. Production catalog replacement happens atomically after
+approval; runtime selection must never guess between old and new descriptor
+domains.
+
+### Required end-to-end measurements
+
+Run every existing lifecycle that currently commits at least one
+`GroupPosition::Prior` twice with identical fields, polynomials, points, setup
+seeds, transcript labels, backends, and feature graph:
+
+```text
+baseline:  prior groups use P; final selection uses current G
+candidate: prior groups use S; final selection uses candidate G
+```
+
+At minimum this includes:
+
+- same-family OneHot prior/final flows;
+- same-family Dense prior/final flows;
+- the P-only fp128 Dense `(15, 2)` case;
+- heterogeneous Dense-prior/OneHot-final flows;
+- fp32 extension-field grouped flows;
+- recursive setup-offloading grouped flows;
+- distributed/multi-chunk grouped flows; and
+- every additional P-using test, example, benchmark, or profile workload found
+  by a repository-wide caller inventory.
+
+Both variants must commit, prove, and verify successfully. For each case, print
+one stable report row containing:
+
+| Field | Meaning |
+| --- | --- |
+| case | Stable fixture name |
+| configuration | Exact `Cfg`/generated family |
+| group layouts | Ordered prior layouts followed by the final layout |
+| baseline profile source | P profile identities used by the current flow |
+| candidate profile source | Replacement S profile identities |
+| baseline proof bytes | Serialized current P/G proof length |
+| candidate proof bytes | Serialized candidate S/G proof length |
+| delta bytes | `candidate - baseline` |
+| delta percent | `(candidate - baseline) / baseline * 100` |
+| baseline setup fields | Current full setup envelope |
+| candidate setup fields | Candidate full setup envelope |
+| status | commit/prove/verify result for both variants |
+
+Also print component-level proof-size estimates or serialized segment lengths
+when available so a total-size change can be attributed to the root,
+recursive, or terminal portion. Report negative deltas as improvements rather
+than hiding them behind an absolute value.
+
+The measurement output must be deterministic and checked into a reviewable
+report or pasted into the change record before the temporary printing harness
+is removed. "Not noticeable" is not an implicit numerical waiver: every
+nonzero proof-size or setup-envelope delta must be shown, and the acceptable
+absolute/percentage budget must be explicitly approved after reviewing the
+table. No candidate is accepted solely because it passes verification.
+
+### Temporary-test cleanup gate
+
+The measurement implementation may use temporary differential tests, parallel
+baseline/candidate catalogs, counters, and diagnostic printing. Before the
+final production commit:
+
+- preserve the measurement report;
+- remove all temporary baseline/candidate comparison tests;
+- remove diagnostic `println!`/`dbg!` output and test-only counters/hooks;
+- remove temporary dual-catalog wiring and feature flags;
+- regenerate the production catalogs from the accepted S-only authority; and
+- run the normal repository and CI suites against only the final design.
+
+Tests that express permanent behavior are not temporary: ordinary groups use
+S, grouped rows accept exact ordered S profiles, all formerly supported P
+lifecycles still run, and existing S outputs remain frozen.
+
+### Completed production cutover
+
+The production catalog now uses S for every ordinary commitment, includes
+former `P \ S` layouts as scalar rows, and keys replanned G rows by the exact S
+profiles. The caller surface is `GroupPosition::{Independent, Final}`. The P
+registry, resolver, validation cache, identity fields, emitter output, and
+obsolete registry tests are removed. Book and active multi-group documentation
+describe the S-only authority.
+
+The global instance-descriptor epoch was deliberately not bumped: it is shared
+by scalar S transcripts, and changing it would violate the fixed-S requirement.
+Changed grouped rows are already separated by their exact row/key digests.
+
+No compatibility shim retains P selection. Commitments made with old P
+profiles are not assumed to be openable under the S-only G catalog; any need to
+support them requires an explicit versioned verifier/migration design.

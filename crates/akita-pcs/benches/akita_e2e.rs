@@ -136,7 +136,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     &setup,
                     black_box(std::slice::from_ref(&poly)),
                     &stack,
-                    akita_prover::GroupPosition::Sole,
+                    akita_prover::GroupPosition::Independent,
                 )
                 .unwrap(),
             )
@@ -150,7 +150,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .unwrap();
 
@@ -238,7 +238,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,
-                akita_prover::GroupPosition::Sole,
+                akita_prover::GroupPosition::Independent,
             )
             .unwrap();
             let cms = [cm];
@@ -327,7 +327,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                     &setup,
                     black_box(std::slice::from_ref(&onehot_poly)),
                     &stack,
-                    akita_prover::GroupPosition::Sole,
+                    akita_prover::GroupPosition::Independent,
                 )
                 .unwrap(),
             )
@@ -341,7 +341,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         &setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
-        akita_prover::GroupPosition::Sole,
+        akita_prover::GroupPosition::Independent,
     )
     .unwrap();
 
@@ -429,7 +429,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 &setup,
                 std::slice::from_ref(&onehot_poly),
                 &stack,
-                akita_prover::GroupPosition::Sole,
+                akita_prover::GroupPosition::Independent,
             )
             .unwrap();
             let cms = [cm];

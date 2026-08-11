@@ -312,12 +312,6 @@ fn push_unique_name(names: &mut Vec<String>, name: &str) {
     }
 }
 
-fn push_unique_profile(profiles: &mut Vec<CommittedGroupProfile>, profile: CommittedGroupProfile) {
-    if !profiles.contains(&profile) {
-        profiles.push(profile);
-    }
-}
-
 fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: PolynomialGroupLayout) {
     if !layouts.contains(&layout) {
         layouts.push(layout);
@@ -416,7 +410,6 @@ fn emit_spec_with_overrides(
         .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
     spec.keys.clear();
     spec.group_batch_keys.clear();
-    spec.precommitted_profiles.clear();
     let final_layouts = final_group.layouts();
 
     if explicit_rows.precommitted_groups.is_empty() {
@@ -439,9 +432,6 @@ fn emit_spec_with_overrides(
     );
 
     for (prior_group_profiles, precommitted_honest_fold_policies) in precommitted_combinations {
-        for profile in &prior_group_profiles {
-            push_unique_profile(&mut spec.precommitted_profiles, *profile);
-        }
         for final_layout in &final_layouts {
             push_unique_group_batch_key(
                 &mut spec.group_batch_keys,
@@ -455,8 +445,6 @@ fn emit_spec_with_overrides(
             );
         }
     }
-    spec.precommitted_profiles
-        .sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
     Ok(spec)
 }
 
@@ -542,7 +530,6 @@ mod tests {
 
         assert_eq!(spec.keys, vec![PolynomialGroupLayout::singleton(14)]);
         assert!(spec.group_batch_keys.is_empty());
-        assert!(spec.precommitted_profiles.is_empty());
         assert_eq!(spec.generator_command, "generator command");
     }
 

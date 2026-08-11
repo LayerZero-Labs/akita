@@ -6,8 +6,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
-    let profile =
-        akita_config::resolve_prior_group_profile::<OneHotCfg>(&key).expect("precommit profile");
+    let profile = independent_profile::<OneHotCfg>(key);
     let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
@@ -27,8 +26,13 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = OneHotScheme::commit(&setup, &polys, &stack, akita_prover::GroupPosition::Prior)
-        .expect("precommit");
+    } = OneHotScheme::commit(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupPosition::Independent,
+    )
+    .expect("precommit");
     let frozen_layout = commitment.profile;
 
     assert_eq!(frozen_layout.group, key);
@@ -91,10 +95,8 @@ fn profile_native_commit_group_allows_independent_groups() {
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
-    let pre_a_profile = akita_config::resolve_prior_group_profile::<OneHotCfg>(&pre_a_key)
-        .expect("precommit A profile");
-    let pre_b_profile = akita_config::resolve_prior_group_profile::<OneHotCfg>(&pre_b_key)
-        .expect("precommit B profile");
+    let pre_a_profile = independent_profile::<OneHotCfg>(pre_a_key);
+    let pre_b_profile = independent_profile::<OneHotCfg>(pre_b_key);
     let pre_a_polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_1001)];
     let pre_b_polys = [
         debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_2001),
@@ -109,7 +111,7 @@ fn profile_native_commit_group_allows_independent_groups() {
             setup,
             &pre_a_polys,
             stack,
-            akita_prover::GroupPosition::Prior,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("precommit A");
         let akita_prover::CommitOutput {
@@ -119,7 +121,7 @@ fn profile_native_commit_group_allows_independent_groups() {
             setup,
             &pre_b_polys,
             stack,
-            akita_prover::GroupPosition::Prior,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("precommit B");
         let pre_a_frozen = pre_a_commitment.profile;
@@ -153,12 +155,9 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
     let pre_c_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
-    let pre_a_frozen = akita_config::resolve_prior_group_profile::<OneHotCfg>(&pre_a_key)
-        .expect("precommit A profile");
-    let pre_b_frozen = akita_config::resolve_prior_group_profile::<OneHotCfg>(&pre_b_key)
-        .expect("precommit B profile");
-    let pre_c_frozen = akita_config::resolve_prior_group_profile::<OneHotCfg>(&pre_c_key)
-        .expect("precommit C profile");
+    let pre_a_frozen = independent_profile::<OneHotCfg>(pre_a_key);
+    let pre_b_frozen = independent_profile::<OneHotCfg>(pre_b_key);
+    let pre_c_frozen = independent_profile::<OneHotCfg>(pre_c_key);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         prior_group_profiles: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
@@ -203,10 +202,8 @@ fn group_batch_commits_independent_arity_prior_groups() {
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
-    let pre_a_frozen = akita_config::resolve_prior_group_profile::<OneHotCfg>(&pre_a_key)
-        .expect("precommit A profile");
-    let pre_b_frozen = akita_config::resolve_prior_group_profile::<OneHotCfg>(&pre_b_key)
-        .expect("precommit B profile");
+    let pre_a_frozen = independent_profile::<OneHotCfg>(pre_a_key);
+    let pre_b_frozen = independent_profile::<OneHotCfg>(pre_b_key);
     let pre_a_polys = [debug_make_onehot_poly(
         PRE_NV,
         ONEHOT_D,
@@ -235,7 +232,7 @@ fn group_batch_commits_independent_arity_prior_groups() {
         &setup,
         &pre_a_polys,
         &stack,
-        akita_prover::GroupPosition::Prior,
+        akita_prover::GroupPosition::Independent,
     )
     .expect("precommit A");
     let akita_prover::CommitOutput {
@@ -245,7 +242,7 @@ fn group_batch_commits_independent_arity_prior_groups() {
         &setup,
         &pre_b_polys,
         &stack,
-        akita_prover::GroupPosition::Prior,
+        akita_prover::GroupPosition::Independent,
     )
     .expect("precommit B");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
@@ -321,8 +318,7 @@ fn commit_group_returns_frozen_exact_layout() {
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
-    let profile =
-        akita_config::resolve_prior_group_profile::<OneHotCfg>(&key).expect("group commit profile");
+    let profile = independent_profile::<OneHotCfg>(key);
     let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
@@ -342,8 +338,13 @@ fn commit_group_returns_frozen_exact_layout() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = OneHotScheme::commit(&setup, &polys, &stack, akita_prover::GroupPosition::Prior)
-        .expect("commit group");
+    } = OneHotScheme::commit(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupPosition::Independent,
+    )
+    .expect("commit group");
     let frozen_layout = commitment.profile;
 
     assert_eq!(frozen_layout.group, key);
@@ -406,8 +407,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
     for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
         let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
-        let profile = akita_config::resolve_prior_group_profile::<ProtocolCfg>(&key)
-            .expect("precommit profile");
+        let profile = independent_profile::<ProtocolCfg>(key);
         let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..num_polynomials)
             .map(|poly_idx| {
                 debug_make_onehot_poly(
@@ -424,7 +424,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupPosition::Prior,
+            akita_prover::GroupPosition::Independent,
         )
         .expect("precommit");
         pre_frozen.push(commitment.profile);
@@ -782,8 +782,13 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = OneHotScheme::commit::<_, _>(&setup, &polys, &stack, akita_prover::GroupPosition::Sole)
-        .expect("batched onehot commit");
+    } = OneHotScheme::commit::<_, _>(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupPosition::Independent,
+    )
+    .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
 

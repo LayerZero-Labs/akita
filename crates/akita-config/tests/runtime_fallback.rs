@@ -20,8 +20,18 @@ use akita_schedules::{
     PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, OpeningClaimsLayout,
+    PolynomialGroupLayout,
 };
+
+fn independent_profile<Cfg: CommitmentConfig>(
+    group: PolynomialGroupLayout,
+) -> Result<CommittedGroupProfile, akita_field::AkitaError> {
+    let layout = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+    Ok(Cfg::select_schedule_for_opening(&layout)?
+        .profiles()
+        .final_group)
+}
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
 /// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
@@ -296,9 +306,8 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 )))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
-    let descriptor =
-        akita_config::resolve_prior_group_profile::<fp128::OneHot>(&precommitted_group)
-            .expect("base OneHot precommit profile");
+    let descriptor = independent_profile::<fp128::OneHot>(precommitted_group)
+        .expect("base OneHot precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         prior_group_profiles: vec![descriptor, descriptor],
@@ -380,8 +389,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
     const FINAL_NV: usize = 20;
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
-    let pre_profile = akita_config::resolve_prior_group_profile::<Cfg>(&pre_group)
-        .expect("dense precommit profile");
+    let pre_profile = independent_profile::<Cfg>(pre_group).expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
         prior_group_profiles: vec![pre_profile],
@@ -448,8 +456,7 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
-    akita_config::resolve_prior_group_profile::<Cfg>(&group)
-        .expect("heterogeneous group must resolve")
+    independent_profile::<Cfg>(group).expect("heterogeneous group must resolve")
 }
 
 #[test]

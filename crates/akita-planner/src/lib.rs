@@ -38,7 +38,4 @@ pub use akita_schedules::{
 pub use emit::{publish_generated_outputs, render_generated_outputs, EmitSpec, GeneratedOutput};
 pub use planner::find_schedule;
 pub use policy::InnerBasisSource;
-pub use schedule_params::{
-    plan_standalone_precommit, suffix_opening_layout, StandalonePrecommitCandidate,
-    StandalonePrecommitPlan,
-};
+pub use schedule_params::suffix_opening_layout;

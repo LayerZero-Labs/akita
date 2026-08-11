@@ -4,7 +4,7 @@
 //! never compile it.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_config::{policy_of, resolve_prior_group_profile, CommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
@@ -161,9 +161,10 @@ where
         for final_polys in 1..max_num_batched_polys {
             let pre_polys = max_num_batched_polys - final_polys;
             for pre_num_vars in [14usize, 15, 16].into_iter().filter(|&n| n <= max_num_vars) {
-                let Ok(precommitted) = resolve_prior_group_profile::<Self>(
-                    &PolynomialGroupLayout::new(pre_num_vars, pre_polys),
-                ) else {
+                let Ok(precommitted) = OpeningClaimsLayout::new(pre_num_vars, pre_polys)
+                    .and_then(|layout| Self::select_schedule_for_opening(&layout))
+                    .map(|row| row.profiles().final_group)
+                else {
                     continue;
                 };
                 let Ok(schedule) = Self::select_schedule_for_key(&AkitaScheduleLookupKey {
