@@ -70,11 +70,11 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
     /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
     centered_coeffs_flat: Vec<i32>,
     /// Infinity norm of the flat centered coefficient storage above.
-    pub centered_inf_norm: u32,
+    centered_inf_norm: u32,
     /// Smallest signed centered coefficient.
-    pub centered_min: i32,
+    centered_min: i32,
     /// Largest signed centered coefficient.
-    pub centered_max: i32,
+    centered_max: i32,
     /// Ring dimension (field coefficients per ring element), fixed at construction.
     ring_dim: usize,
 }
@@ -168,6 +168,16 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
     /// Borrow the centered coefficients as row-major flat storage (D-free).
     pub fn centered_coeffs_flat(&self) -> &[i32] {
         &self.centered_coeffs_flat
+    }
+
+    /// Infinity norm derived from the centered coefficient buffer.
+    pub fn centered_inf_norm(&self) -> u32 {
+        self.centered_inf_norm
+    }
+
+    /// Signed extrema derived from the centered coefficient buffer.
+    pub fn centered_signed_extrema(&self) -> (i32, i32) {
+        (self.centered_min, self.centered_max)
     }
 
     /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].

@@ -81,7 +81,10 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
             let (min, max) = chunk.signed_extrema();
             accepts(min, max)
         }),
-        None => accepts(witness.centered_min, witness.centered_max),
+        None => {
+            let (min, max) = witness.centered_signed_extrema();
+            accepts(min, max)
+        }
     }
 }
 
@@ -560,9 +563,8 @@ mod tests {
             vec![[-2_080, 17, 0, 2_015], [-3, 4, 9, -11]],
         );
 
-        assert_eq!(witness.centered_min, -2_080);
-        assert_eq!(witness.centered_max, 2_015);
-        assert_eq!(witness.centered_inf_norm, 2_080);
+        assert_eq!(witness.centered_signed_extrema(), (-2_080, 2_015));
+        assert_eq!(witness.centered_inf_norm(), 2_080);
 
         let acceptance = fold_grind_acceptance_ctx(2_080, 2_015);
         assert!(accepts_fold_witness_flat(&acceptance, &witness, None));

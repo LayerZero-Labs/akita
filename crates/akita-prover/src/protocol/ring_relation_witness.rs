@@ -17,10 +17,11 @@ impl CenteredFoldChunk {
     /// Retain one chunk's centered coefficients and the extrema computed by
     /// its canonical fold-witness constructor.
     pub(crate) fn from_witness<F: FieldCore>(witness: &DecomposeFoldWitness<F>) -> Self {
+        let (min, max) = witness.centered_signed_extrema();
         Self {
             coefficients: witness.centered_coeffs_flat().to_vec(),
-            min: witness.centered_min,
-            max: witness.centered_max,
+            min,
+            max,
         }
     }
 

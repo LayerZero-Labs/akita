@@ -353,7 +353,7 @@ where
         }
         let recomposed_inner_rows =
             RingVec::from_coeffs_with_ring_dim(inner_coefficients, group_dims.d_a())?;
-        let z_inf = z_folded_rings.centered_inf_norm;
+        let z_inf = z_folded_rings.centered_inf_norm();
         let DecomposeFoldWitness {
             centered_coeffs_flat: z_centered,
             ..
