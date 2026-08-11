@@ -30,6 +30,28 @@ use akita_types::{
 /// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
 macro_rules! impl_multi_chunk_companion {
     ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident) => {
+        impl_multi_chunk_companion!(
+            @core
+            $cfg,
+            $base,
+            $profile,
+            $feat,
+            $table,
+            <$base as $crate::CommitmentConfig>::SELECTIVE_L2_FOLD_CAPS
+        );
+    };
+    ($cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident, selective_l2_caps = $selective_l2_caps:expr) => {
+        impl_multi_chunk_companion!(
+            @core
+            $cfg,
+            $base,
+            $profile,
+            $feat,
+            $table,
+            $selective_l2_caps
+        );
+    };
+    (@core $cfg:ty, $base:ty, $profile:expr, $feat:literal, $table:ident, $selective_l2_caps:expr) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
@@ -38,7 +60,7 @@ macro_rules! impl_multi_chunk_companion {
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
             const SELECTIVE_L2_FOLD_CAPS: &'static [akita_schedules::SelectiveL2FoldCap] =
-                <$base as $crate::CommitmentConfig>::SELECTIVE_L2_FOLD_CAPS;
+                $selective_l2_caps;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()

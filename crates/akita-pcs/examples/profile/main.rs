@@ -10,6 +10,7 @@
         feature = "profile-ci-multi-group-recursive",
         feature = "profile-ci-multi-group-recursive-w8r2",
         feature = "profile-ci-distributed",
+        feature = "profile-ci-dense-distributed",
     ))
 ))]
 compile_error!("profile-bench-selected is internal; enable one profile-ci-* group instead");

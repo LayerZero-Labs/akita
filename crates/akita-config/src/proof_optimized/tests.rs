@@ -189,12 +189,81 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
+fn terminal_l2_preserves_its_own_fold_geometry() {
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(28));
+    let catalog = fp128::Dense::schedule_catalog().expect("fp128 dense catalog");
+    let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
+    assert_eq!(
+        (
+            entry.terminal.fold_log_basis,
+            entry.terminal.fold_digit_count
+        ),
+        (5, 2)
+    );
+
+    let schedule = fp128::Dense::runtime_schedule(key).expect("generated dense schedule");
+    let predecessor = &schedule
+        .recursive_folds
+        .last()
+        .expect("recursive predecessor")
+        .params
+        .witness;
+    assert_eq!(
+        (predecessor.log_basis_open, predecessor.num_digits_fold),
+        (4, 3)
+    );
+    assert_eq!(
+        (
+            schedule.terminal.params.witness.fold_log_basis,
+            schedule.terminal.params.witness.fold_digit_count,
+        ),
+        (5, 2)
+    );
+    assert!(matches!(
+        schedule
+            .terminal
+            .params
+            .witness
+            .inner_commit_matrix
+            .security_route(),
+        akita_types::InnerCommitSecurityRoute::L2 { .. }
+    ));
+}
+
+#[cfg(feature = "schedules-default")]
+#[test]
 fn response_model_reduces_planned_payload_in_every_field_profile() {
     fn compare<Cfg: CommitmentConfig>(num_vars: usize) -> (usize, usize) {
+        assert!(
+            !Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
+            "{} must opt into L2 planning",
+            std::any::type_name::<Cfg>()
+        );
         let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
         let catalog = Cfg::schedule_catalog().expect("generated catalog");
         let entry =
             akita_schedules::generated::table_entry(catalog, &key).expect("generated schedule row");
+        let schedule = Cfg::runtime_schedule(key.clone()).expect("generated runtime schedule");
+        let recursive_l2 = schedule.recursive_folds.iter().any(|step| {
+            matches!(
+                step.params.witness.inner_commit_matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 { .. }
+            )
+        });
+        let terminal_l2 = matches!(
+            schedule
+                .terminal
+                .params
+                .witness
+                .inner_commit_matrix
+                .security_route(),
+            akita_types::InnerCommitSecurityRoute::L2 { .. }
+        );
+        assert!(
+            recursive_l2 || terminal_l2,
+            "{} must ship at least one selected L2 route",
+            std::any::type_name::<Cfg>()
+        );
         let modeled = akita_schedules::estimate_proof_bytes(
             entry,
             &key,
@@ -219,10 +288,70 @@ fn response_model_reduces_planned_payload_in_every_field_profile() {
         (modeled, linf)
     }
 
-    let fp32 = compare::<fp32::OneHot>(30);
-    let fp64 = compare::<fp64::OneHot>(30);
-    let fp128 = compare::<fp128::OneHot>(36);
-    eprintln!("planned response-model/Linf bytes: fp32={fp32:?}, fp64={fp64:?}, fp128={fp128:?}");
+    let fp32_onehot = compare::<fp32::OneHot>(30);
+    let fp32_dense = compare::<fp32::Dense>(26);
+    let fp64_onehot = compare::<fp64::OneHot>(30);
+    let fp64_dense = compare::<fp64::Dense>(26);
+    let fp128_onehot = compare::<fp128::OneHot>(36);
+    let fp128_dense = compare::<fp128::Dense>(28);
+    eprintln!(
+        "planned response-model/Linf bytes: fp32 onehot={fp32_onehot:?}, fp32 dense={fp32_dense:?}, fp64 onehot={fp64_onehot:?}, fp64 dense={fp64_dense:?}, fp128 onehot={fp128_onehot:?}, fp128 dense={fp128_dense:?}"
+    );
+
+    #[cfg(feature = "all-schedules")]
+    {
+        let fp128_dense_w8r2 = compare::<fp128::DenseMultiChunk>(16);
+        eprintln!("planned response-model/Linf bytes: fp128 dense W8R2={fp128_dense_w8r2:?}");
+    }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn every_generated_profile_opts_in_and_ships_an_l2_route() {
+    fn assert_profile<Cfg: CommitmentConfig>() {
+        assert!(
+            !Cfg::SELECTIVE_L2_FOLD_CAPS.is_empty(),
+            "{} must opt into L2 planning",
+            std::any::type_name::<Cfg>()
+        );
+        let catalog = Cfg::schedule_catalog().expect("generated catalog");
+        let has_l2 = catalog.entries.iter().any(|entry| {
+            let schedule = Cfg::runtime_schedule(entry.to_runtime_lookup_key())
+                .expect("generated schedule must expand");
+            schedule.recursive_folds.iter().any(|step| {
+                matches!(
+                    step.params.witness.inner_commit_matrix.security_route(),
+                    akita_types::InnerCommitSecurityRoute::L2 { .. }
+                )
+            }) || matches!(
+                schedule
+                    .terminal
+                    .params
+                    .witness
+                    .inner_commit_matrix
+                    .security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 { .. }
+            )
+        });
+        assert!(
+            has_l2,
+            "{} must ship at least one selected L2 route",
+            std::any::type_name::<Cfg>()
+        );
+    }
+
+    assert_profile::<fp32::Dense>();
+    assert_profile::<fp32::OneHot>();
+    assert_profile::<fp64::Dense>();
+    assert_profile::<fp64::OneHot>();
+    assert_profile::<fp128::Dense>();
+    assert_profile::<fp128::OneHot>();
+    assert_profile::<fp128::DenseMultiChunk>();
+    assert_profile::<fp128::OneHotMultiChunk>();
+    assert_profile::<fp128::OneHotMultiChunkW2R2>();
+    assert_profile::<fp128::OneHotMultiChunkW4R2>();
+    assert_profile::<crate::RecursiveCommitmentConfig<fp128::OneHot>>();
+    assert_profile::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
 }
 
 #[cfg(feature = "schedules-default")]

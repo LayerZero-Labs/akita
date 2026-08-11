@@ -78,21 +78,21 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     assert_eq!(
         fp64,
         Snapshot {
-            inner_basis: 6,
+            inner_basis: 10,
             opening_basis: 3,
             positions: 512,
             blocks: 256,
-            inner_digits: 11,
+            inner_digits: 7,
             n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 2_883_584,
+            a_input_raw: 1_835_008,
             a_output_raw: 1_024,
             b_input_raw: 5_767_168,
             b_output_raw: 256,
             d_input_raw: 2_883_584,
             d_output_raw: 256,
-            next_witness: 23_152_896,
+            next_witness: 19_745_024,
         }
     );
 

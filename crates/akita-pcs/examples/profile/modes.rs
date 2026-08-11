@@ -192,6 +192,11 @@ const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
         name: "dense_fp128",
         run: run_profile_dense_fp128,
     },
+    #[cfg(feature = "profile-ci-dense-distributed")]
+    ProfileMode {
+        name: "dense_fp128_multi_chunk_w8r2",
+        run: run_profile_dense_fp128_multi_chunk_w8r2,
+    },
     #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp128-base"))]
     ProfileMode {
         name: "onehot_fp128",
@@ -259,6 +264,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_dense_fp128,
     },
     ProfileMode {
+        name: "dense_fp128_multi_chunk_w8r2",
+        run: run_profile_dense_fp128_multi_chunk_w8r2,
+    },
+    ProfileMode {
         name: "onehot_fp128",
         run: run_profile_onehot_fp128,
     },
@@ -319,6 +328,7 @@ fn profile_modes() -> &'static [ProfileMode] {
 /// Modes registered for explicit `AKITA_MODE=…` runs but omitted from `all`.
 #[cfg(not(feature = "profile-onehot-fp128"))]
 const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
+    "dense_fp128_multi_chunk_w8r2",
     "onehot_fp128_multi_group",
     "onehot_fp128_multi_chunk_w2r2",
     "onehot_fp128_multi_chunk_w4r2",
@@ -369,6 +379,20 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     run_dense_mode::<{ Cfg::D }, Cfg>(
         "dense_fp128",
         &format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ==="),
+        nv,
+    );
+}
+
+fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
+    type Cfg = fp128::DenseMultiChunk;
+    assert_eq!(nv, 16, "dense W8R2 profiles nv=16");
+    assert_singleton_mode("dense_fp128_multi_chunk_w8r2", num_polys);
+    let prime = fp128_prime_label();
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        "dense_fp128_multi_chunk_w8r2",
+        &format!(
+            "=== dense_fp128_multi_chunk_w8r2 (fp128, {prime}, adaptive ring dimensions, distributed chunked relation, num_chunks=8 x 2 leading levels) ==="
+        ),
         nv,
     );
 }

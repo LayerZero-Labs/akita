@@ -547,12 +547,17 @@ impl RecursiveFoldParams {
 
 /// Exact terminal committed-witness parameters.
 ///
-/// The terminal relation binds only the source decomposition through the
-/// inner commitment matrix. It has no outer/open commitment matrix and no
-/// outer/open response decomposition.
+/// The terminal relation binds the source decomposition through the inner
+/// commitment matrix. It also retains the terminal fold basis and digit count
+/// needed to audit a calibrated L2 route. It has no outer/open commitment
+/// matrix and no outer/open response decomposition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalCommittedGroupParams {
     pub log_basis_inner: u32,
+    /// Response basis used by the planner for this terminal fold.
+    pub fold_log_basis: u32,
+    /// Number of response digits used by the planner for this terminal fold.
+    pub fold_digit_count: usize,
     pub inner_commit_matrix: InnerCommitMatrixParams,
     pub num_live_ring_elements_per_claim: usize,
     pub num_positions_per_block: usize,
@@ -579,6 +584,8 @@ impl TerminalCommittedGroupParams {
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
             log_basis_inner: params.log_basis_inner,
+            fold_log_basis: params.log_basis_open,
+            fold_digit_count: params.num_digits_fold,
             inner_commit_matrix: params.inner_commit_matrix,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
@@ -689,6 +696,8 @@ impl TerminalCommittedGroupParams {
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_u32(bytes, self.log_basis_inner);
+        push_u32(bytes, self.fold_log_basis);
+        push_usize(bytes, self.fold_digit_count);
         self.inner_commit_matrix.append_descriptor_bytes(bytes);
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);

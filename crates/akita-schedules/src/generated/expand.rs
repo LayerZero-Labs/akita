@@ -896,8 +896,6 @@ impl GeneratedTerminalFold {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
         input_witness_len: usize,
-        source_fold_log_basis: u32,
-        source_fold_digit_count: usize,
     ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
         if ring_dimension == 0 {
@@ -938,6 +936,16 @@ impl GeneratedTerminalFold {
                 "generated terminal inner digit depth must be nonzero".into(),
             ));
         }
+        let fold_digit_count = usize::try_from(self.fold_digit_count).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated terminal fold digit count does not fit the target platform".into(),
+            )
+        })?;
+        if self.fold_log_basis == 0 || fold_digit_count == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal fold basis and digit count must be nonzero".into(),
+            ));
+        }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal A width overflow".to_string()))?;
         let sparse = if self.response_l2_sq_cap.is_some() {
@@ -963,7 +971,7 @@ impl GeneratedTerminalFold {
         }
         let inner_commit_matrix = if let Some(response_l2_sq_cap) = self.response_l2_sq_cap {
             let fold_basis = 1usize
-                .checked_shl(source_fold_log_basis)
+                .checked_shl(self.fold_log_basis)
                 .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
             let matrix = selective_l2_inner_matrix(
                 policy,
@@ -976,7 +984,7 @@ impl GeneratedTerminalFold {
                     ring_dimension,
                     source_log_basis: log_basis_inner,
                     fold_basis,
-                    fold_digit_count: source_fold_digit_count,
+                    fold_digit_count,
                     fold_challenge_config: &sparse,
                     norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
                         physical_response_len: inner_width.checked_mul(ring_dimension).ok_or_else(
@@ -1020,6 +1028,8 @@ impl GeneratedTerminalFold {
         };
         let terminal = TerminalCommittedGroupParams {
             log_basis_inner,
+            fold_log_basis: self.fold_log_basis,
+            fold_digit_count,
             inner_commit_matrix,
             num_live_ring_elements_per_claim,
             num_positions_per_block,

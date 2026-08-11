@@ -57,6 +57,64 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
 /// buckets. This is an honest-prover completeness input only.
 const EXACT_SOURCE_RESPONSE_HEADROOM_PPM: u128 = 1_250_000;
 
+const fn dense_source_calibrations(
+    fold_level: usize,
+    input_witness_len: usize,
+    source_log_basis: u32,
+    challenge_ring_dimension: usize,
+    source_l2_sq: u128,
+    challenge_l2_sq: u128,
+) -> [akita_schedules::SelectiveL2FoldCap; 3] {
+    [
+        akita_schedules::SelectiveL2FoldCap::from_source_energy_model(
+            fold_level,
+            input_witness_len,
+            source_log_basis,
+            challenge_ring_dimension,
+            16,
+            3,
+            source_l2_sq,
+            challenge_l2_sq,
+            EXACT_SOURCE_RESPONSE_HEADROOM_PPM,
+        ),
+        akita_schedules::SelectiveL2FoldCap::from_source_energy_model(
+            fold_level,
+            input_witness_len,
+            source_log_basis,
+            challenge_ring_dimension,
+            32,
+            2,
+            source_l2_sq,
+            challenge_l2_sq,
+            EXACT_SOURCE_RESPONSE_HEADROOM_PPM,
+        ),
+        akita_schedules::SelectiveL2FoldCap::from_source_energy_model(
+            fold_level,
+            input_witness_len,
+            source_log_basis,
+            challenge_ring_dimension,
+            64,
+            2,
+            source_l2_sq,
+            challenge_l2_sq,
+            EXACT_SOURCE_RESPONSE_HEADROOM_PPM,
+        ),
+    ]
+}
+
+// Dense roots remain on L-infinity. These calibrations bind the first
+// L2-eligible recursive digit state measured from three independent transcript
+// labels per family. Their zero physical length also enables the common
+// post-root balanced-digit fallback for later planner-selected states.
+const FP32_DENSE_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] =
+    &dense_source_calibrations(3, 735_488, 3, 128, 5_591_104, 31);
+const FP64_DENSE_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] =
+    &dense_source_calibrations(3, 509_440, 4, 64, 13_745_702, 75);
+const FP128_DENSE_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] =
+    &dense_source_calibrations(3, 690_816, 5, 64, 35_914_632, 75);
+const FP128_DENSE_MULTI_CHUNK_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] =
+    &dense_source_calibrations(3, 375_104, 6, 64, 96_791_982, 75);
+
 const FP128_ONEHOT_L2_CAPS: &[akita_schedules::SelectiveL2FoldCap] = &[
     // Six nv32 samples bound the source energy at 31,359,757 for this state.
     // Bind every useful opening basis at this measured state. The zero response

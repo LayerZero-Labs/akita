@@ -682,7 +682,13 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn dense_small_field_nv26_cache_plan_matches_adaptive_geometry() {
-        for (schedule, expected_root_d, expected_root_basis, expected_root_cache_len) in [
+        for (
+            schedule,
+            expected_root_d,
+            expected_root_basis,
+            expected_root_cache_len,
+            expects_i16_tail,
+        ) in [
             (
                 fp32::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
@@ -691,6 +697,7 @@ mod tests {
                 1024,
                 8,
                 4096,
+                false,
             ),
             (
                 fp64::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
@@ -698,8 +705,9 @@ mod tests {
                 ))
                 .expect("generated fp64 dense schedule"),
                 512,
-                6,
-                11_264,
+                10,
+                7_168,
+                true,
             ),
         ] {
             let root = &schedule.root.params.final_group.commitment;
@@ -708,16 +716,28 @@ mod tests {
 
             let requirements = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule)
                 .expect("compile complete small-field NTT requirements");
-            assert!(requirements.entries().iter().all(|entry| matches!(
-                entry.key.domain,
-                NttTransformDomain::Negacyclic | NttTransformDomain::Cyclic
-            )));
+            let has_i16_tail = requirements.entries().iter().any(|entry| {
+                matches!(
+                    entry.key.domain,
+                    NttTransformDomain::I16TailBothTransforms
+                        | NttTransformDomain::ExactNegacyclicI16 { .. }
+                )
+            });
+            assert_eq!(has_i16_tail, expects_i16_tail);
             assert!(requirements.entries().iter().any(|entry| {
+                let expected_commit_domain = if expects_i16_tail {
+                    matches!(
+                        entry.key.domain,
+                        NttTransformDomain::ExactNegacyclicI16 { .. }
+                    )
+                } else {
+                    entry.key.domain == NttTransformDomain::Negacyclic
+                };
                 entry.fold_level == 0
                     && entry.cluster == NttOperationCluster::Commit
                     && entry.key.ring_d == expected_root_d
                     && entry.key.num_ring_elements == expected_root_cache_len
-                    && entry.key.domain == NttTransformDomain::Negacyclic
+                    && expected_commit_domain
             }));
         }
     }

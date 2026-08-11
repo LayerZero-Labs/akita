@@ -287,7 +287,7 @@ claims are present and how many values to read.
 ### Candidate eligibility
 
 The planner always emits an L infinity candidate. It may emit an L2 candidate
-only when a calibrated one-hot profile enables the response model and the
+only when a calibrated production profile enables the response model and the
 canonical derivation supplies `S_max` and the norm proof shape for that
 physical response domain.
 
@@ -464,10 +464,12 @@ multiplier.
 
 For an uncalibrated state, the modeled cap is the balanced-digit second moment
 `input_len * (B^2 + 2) / 12`, times the fixed challenge squared energy and a
-1.75 empirical multiplier. End-to-end samples cover fp32, fp64, and fp128. The
-recorded maxima retain at least 15 percent cap margin. This is a completeness
-model, not a soundness assumption. The selected concrete cap is frozen into
-the schedule and remains the verifier-enforced SIS input.
+1.75 empirical multiplier. End-to-end samples cover fp32, fp64, and fp128
+dense and one-hot families, including direct, recursive, multi-group, and
+multi-chunk profiles. The recorded maxima retain at least 15 percent cap
+margin. This is a completeness model, not a soundness assumption. The selected
+concrete cap is frozen into the schedule and remains the verifier-enforced SIS
+input.
 
 The existing suffix search prices the ordinary L infinity candidate and the
 modeled L2 candidate. This comparison includes the different A rank, T width,
@@ -522,7 +524,8 @@ infinity correction to the new norm proof.
 * [x] At each calibrated suffix state, the planner prices the ordinary L
       infinity candidate and at most one L2 alternative for its canonical
       split.
-* [x] Root, early, and terminal levels carry no L2 proof.
+* [x] Root and early levels carry no L2 proof; a terminal level carries one
+      only when the complete suffix comparison selects it.
 * [x] Tampering with the norm, cap, route, subclaim, virtual evaluation, nonce,
       or proof shape causes verification to fail.
 * [x] Small field tests cover positive and negative limb inner products,

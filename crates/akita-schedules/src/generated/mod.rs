@@ -88,6 +88,8 @@ pub struct GeneratedTerminalFold {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
     pub num_digits_inner: u32,
+    pub fold_log_basis: u32,
+    pub fold_digit_count: u32,
     pub inner_output_rank: u32,
     pub inner_coeff_linf_bound: u128,
     pub response_l2_sq_cap: Option<u128>,

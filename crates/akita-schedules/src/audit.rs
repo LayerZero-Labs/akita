@@ -326,18 +326,16 @@ fn audit_committed_params(
 }
 
 #[derive(Clone, Copy)]
-struct TerminalSourceGeometry {
+struct TerminalL2ModelState {
     fold_level: usize,
     input_witness_len: usize,
-    fold_log_basis: u32,
-    fold_digit_count: usize,
 }
 
 fn audit_terminal(
     params: &TerminalCommittedGroupParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     response_shape: &TerminalResponseShape,
-    source: TerminalSourceGeometry,
+    model_state: TerminalL2ModelState,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let label = "terminal fold";
@@ -345,7 +343,9 @@ fn audit_terminal(
     sparse
         .validate_for_ring_dim(params.d_a())
         .map_err(|message| invalid(label, message))?;
-    if params.num_live_ring_elements_per_claim == 0
+    if params.fold_log_basis == 0
+        || params.fold_digit_count == 0
+        || params.num_live_ring_elements_per_claim == 0
         || params.num_positions_per_block == 0
         || !params.num_positions_per_block.is_power_of_two()
         || params.num_live_blocks
@@ -353,7 +353,7 @@ fn audit_terminal(
                 .num_live_ring_elements_per_claim
                 .div_ceil(params.num_positions_per_block)
     {
-        return Err(invalid(label, "invalid terminal block geometry"));
+        return Err(invalid(label, "invalid terminal fold or block geometry"));
     }
 
     let expected_digits = num_digits_inner(
@@ -407,20 +407,20 @@ fn audit_terminal(
             return Err(invalid(label, "terminal L2 challenge is not certified"));
         }
         let fold_basis = 1usize
-            .checked_shl(source.fold_log_basis)
+            .checked_shl(params.fold_log_basis)
             .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
         let expected = selective_l2_inner_matrix(
             policy,
             SelectiveL2CandidateGeometry {
-                fold_level: source.fold_level,
-                input_witness_len: source.input_witness_len,
+                fold_level: model_state.fold_level,
+                input_witness_len: model_state.input_witness_len,
                 num_claims: 1,
                 num_chunks: 1,
                 inner_width: expected_width,
                 ring_dimension: d,
                 source_log_basis: params.log_basis_inner,
                 fold_basis,
-                fold_digit_count: source.fold_digit_count,
+                fold_digit_count: params.fold_digit_count,
                 fold_challenge_config: sparse,
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
                     physical_response_len: expected_z_coords,
@@ -545,20 +545,13 @@ pub(crate) fn audit_resolved_schedule(
             ));
         }
     }
-    let terminal_source = schedule
-        .recursive_folds
-        .last()
-        .map(|step| &step.params.witness)
-        .unwrap_or(final_params);
     audit_terminal(
         &schedule.terminal.params.witness,
         &schedule.terminal.params.sparse_challenge_config,
         &schedule.terminal.params.response_shape,
-        TerminalSourceGeometry {
+        TerminalL2ModelState {
             fold_level: schedule.recursive_folds.len() + 1,
             input_witness_len: schedule.terminal.input_witness_len,
-            fold_log_basis: terminal_source.log_basis_open,
-            fold_digit_count: terminal_source.num_digits_fold,
         },
         policy,
     )
@@ -625,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_l2_expansion_and_audit_bind_predecessor_fold_digits() {
+    fn terminal_l2_expansion_and_audit_bind_stored_fold_geometry() {
         let policy = policy();
         let sparse = akita_challenges::selective_l2_challenge_config(64)
             .expect("certified D64 L2 challenge");
@@ -660,6 +653,8 @@ mod tests {
                 log_basis: 4,
             },
             num_digits_inner: 1,
+            fold_log_basis: 4,
+            fold_digit_count: 3,
             inner_output_rank: expected.output_rank() as u32,
             inner_coeff_linf_bound: 0,
             response_l2_sq_cap: Some(RESPONSE_CAP),
@@ -668,20 +663,24 @@ mod tests {
             z_payload_bytes: 1,
         };
         let mut terminal = generated
-            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN, 4, 3)
-            .expect("terminal must use the predecessor's fold digit count");
-        assert!(generated
-            .expand_to_level_params(
-                &policy,
-                |_| Ok(sparse),
-                3,
-                INPUT_WITNESS_LEN,
-                4,
-                num_digits_open(DecompositionParams {
-                    log_basis: 4,
-                    ..policy.decomposition
-                }),
-            )
+            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
+            .expect("terminal must use its stored fold geometry");
+        let wrong_fold_digits = GeneratedTerminalFold {
+            fold_digit_count: num_digits_open(DecompositionParams {
+                log_basis: 4,
+                ..policy.decomposition
+            }) as u32,
+            ..generated
+        };
+        assert!(wrong_fold_digits
+            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
+            .is_err());
+        let wrong_fold_basis = GeneratedTerminalFold {
+            fold_log_basis: 3,
+            ..generated
+        };
+        assert!(wrong_fold_basis
+            .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
             .is_err());
 
         let response_shape =
@@ -690,11 +689,9 @@ mod tests {
             &terminal,
             &sparse,
             &response_shape,
-            TerminalSourceGeometry {
+            TerminalL2ModelState {
                 fold_level: 3,
                 input_witness_len: INPUT_WITNESS_LEN,
-                fold_log_basis: 4,
-                fold_digit_count: 3,
             },
             &policy,
         )
@@ -719,11 +716,9 @@ mod tests {
             &terminal,
             &sparse,
             &response_shape,
-            TerminalSourceGeometry {
+            TerminalL2ModelState {
                 fold_level: 3,
                 input_witness_len: INPUT_WITNESS_LEN,
-                fold_log_basis: 4,
-                fold_digit_count: 3,
             },
             &policy,
         )

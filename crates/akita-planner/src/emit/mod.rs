@@ -296,6 +296,8 @@ fn generated_entry(
                 log_basis: schedule.terminal.params.witness.log_basis_inner,
             },
             num_digits_inner: schedule.terminal.params.witness.num_digits_inner as u32,
+            fold_log_basis: schedule.terminal.params.witness.fold_log_basis,
+            fold_digit_count: schedule.terminal.params.witness.fold_digit_count as u32,
             inner_output_rank: schedule
                 .terminal
                 .params
@@ -540,11 +542,13 @@ fn emit_schedule_entry(
     }
     writeln!(
         out,
-        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, fold_log_basis: {}, fold_digit_count: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
         emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
         entry.terminal.num_digits_inner,
+        entry.terminal.fold_log_basis,
+        entry.terminal.fold_digit_count,
         entry.terminal.inner_output_rank,
         entry.terminal.inner_coeff_linf_bound,
         entry.terminal.response_l2_sq_cap.map_or_else(

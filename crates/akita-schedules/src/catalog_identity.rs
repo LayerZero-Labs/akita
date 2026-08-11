@@ -563,6 +563,8 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
         write_generated_geometry(&mut h, entry.terminal.geometry);
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.log_basis));
+        h.write_u64(u64::from(entry.terminal.fold_log_basis));
+        h.write_u64(u64::from(entry.terminal.fold_digit_count));
     }
     h.finish()
 }

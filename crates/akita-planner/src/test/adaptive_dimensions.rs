@@ -87,8 +87,8 @@ fn fp32_dense_nv14_uses_corrected_physical_a_bound() {
         root.inner_commit_matrix.security_route(),
         InnerCommitSecurityRoute::Linf(_)
     ));
-    assert!(planned.schedule.recursive_folds.iter().all(|step| matches!(
+    assert!(planned.schedule.recursive_folds.iter().any(|step| matches!(
         step.params.witness.inner_commit_matrix.security_route(),
-        InnerCommitSecurityRoute::Linf(_)
+        InnerCommitSecurityRoute::L2 { .. }
     )));
 }

@@ -58,8 +58,10 @@ owns shipped table data. The verifier-reachable proof-size formula.
 
 ### Selective physical L2 candidates
 
-The coefficient `L∞` route remains available at every fold. A one-hot preset
-may also supply empirical calibration rows for physical `L2` response planning.
+The coefficient `L∞` route remains available at every fold. A production
+preset may also supply empirical calibration rows for physical `L2` response
+planning. The shipped fp32, fp64, and fp128 dense and one-hot families all opt
+in, including their generated multi-chunk and recursive companions.
 A row with a physical response length of zero opts the family into the
 balanced-digit response model. An exact row binds the fold level, incoming
 witness length, source digit basis, challenge ring dimension, challenge
@@ -87,7 +89,8 @@ ceil(input_len * (B^2 + 2) / 12 * challenge_l2_sq * 1.75),
 
 where `B` is the source digit basis. The balanced-digit second moment supplies
 the base estimate. The 1.75 multiplier covers the largest source-energy and
-response deviations seen in end-to-end fp32, fp64, and fp128 samples, with at
+response deviations seen in end-to-end fp32, fp64, and fp128 dense and one-hot
+samples, with at
 least 15 percent remaining margin over every recorded response maximum.
 
 The suffix comparison includes the norm proof, A payload, next witness, later

@@ -1013,7 +1013,7 @@ mod tests {
     }
 
     #[test]
-    fn balanced_digit_model_keeps_empirical_margin_across_all_field_profiles() {
+    fn balanced_digit_model_keeps_empirical_margin_across_all_calibrated_profiles() {
         static OPT_IN: [SelectiveL2FoldCap; 1] = [SelectiveL2FoldCap::from_source_energy_model(
             3, 1, 3, 64, 16, 3, 1, 75, 1_000_000,
         )];
@@ -1021,8 +1021,8 @@ mod tests {
         policy.selective_l2_fold_caps = &OPT_IN;
         // Maxima from independent end-to-end profile transcripts after the
         // modeled schedules reached their final fixed point. These cover every
-        // supported field profile and every selected source basis in the CI
-        // one-hot rows.
+        // supported field profile, dense and one-hot witness families, and
+        // every selected source basis in the CI rows.
         let measured_response_maxima = [
             // fp32, nv30: L3, L4, terminal (five transcripts).
             (550_400, 4, 31, 543_303_338u128),
@@ -1064,6 +1064,22 @@ mod tests {
             (361_984, 4, 75, 409_562_093),
             (257_536, 4, 75, 321_178_079),
             (176_128, 4, 75, 228_249_358),
+            // fp32 dense, nv26 (four transcripts).
+            (550_400, 4, 31, 529_173_246),
+            (253_440, 4, 31, 233_433_991),
+            (125_568, 5, 31, 406_864_610),
+            // fp64 dense, nv26 (four transcripts).
+            (488_960, 4, 75, 990_837_236),
+            (255_488, 4, 75, 495_567_628),
+            (112_704, 6, 75, 2_976_911_626),
+            (80_640, 6, 75, 2_416_267_258),
+            // fp128 dense, nv28 (four transcripts).
+            (1_097_280, 3, 75, 368_452_280),
+            (407_040, 4, 75, 498_875_502),
+            (267_776, 4, 75, 352_749_212),
+            (184_320, 4, 75, 253_707_961),
+            // fp128 dense W8R2, nv16 (four transcripts).
+            (157_504, 6, 75, 2_643_733_056),
         ];
         for (input_witness_len, source_log_basis, challenge_l2_sq, measured_max) in
             measured_response_maxima

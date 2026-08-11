@@ -29,7 +29,7 @@ pub(crate) static FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES: &[GeneratedFoldSchedu
             GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Raw, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 5950, positions_per_block: 512, live_blocks: 12 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 5 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 } }, num_digits_fold: 2, response_l2_sq_cap: Some(4273290000), open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
             GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Raw, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 2498, positions_per_block: 512, live_blocks: 5 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 6 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 } }, num_digits_fold: 2, response_l2_sq_cap: Some(7165762800), open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 64, log_basis: 6, slice_count: 1 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
         ],
-        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1728, positions_per_block: 256, live_blocks: 7 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 6 }, num_digits_inner: 1, inner_output_rank: 4, inner_coeff_linf_bound: 1048575, response_l2_sq_cap: None, z_admission_linf_cap: 2570, z_rice_low_bits: 9, z_payload_bytes: 26624 },
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1728, positions_per_block: 256, live_blocks: 7 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 6 }, num_digits_inner: 1, fold_log_basis: 6, fold_digit_count: 2, inner_output_rank: 4, inner_coeff_linf_bound: 1048575, response_l2_sq_cap: None, z_admission_linf_cap: 2570, z_rice_low_bits: 9, z_payload_bytes: 26624 },
     },
 ];
 
@@ -72,5 +72,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 3458533356553718245,
     key_count: 1,
-    key_digest: 7420046217124503621,
+    key_digest: 9927666875562370241,
 };
