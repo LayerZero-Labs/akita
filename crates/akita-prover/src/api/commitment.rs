@@ -20,7 +20,6 @@ use akita_types::{
     CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
     OuterCommitMatrixParams, PriorGroupProfiles, RingVec,
 };
-use std::borrow::Cow;
 
 mod inner;
 use inner::prepare_inner_commit_group;
@@ -602,7 +601,8 @@ where
     let opening_layout = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let group_layout = opening_layout.root_final_group_layout()?;
 
-    let (params, profile): (Cow<'_, CommittedGroupParams>, CommittedGroupProfile) =
+    let scheduled_params;
+    let (params, profile): (&CommittedGroupParams, CommittedGroupProfile) =
         match (context.prior_groups, context.parameter_source) {
             (PriorGroupContext::NoPriorGroups, GroupParameterSource::Scheduler) => {
                 let row = Cfg::select_schedule_for_opening(&opening_layout)?;
@@ -617,10 +617,8 @@ where
                         .to_string(),
                 ));
                 }
-                (
-                    Cow::Owned(row.into_schedule().root.params.final_group.commitment),
-                    row_profile,
-                )
+                scheduled_params = row.into_schedule().root.params.final_group.commitment;
+                (&scheduled_params, row_profile)
             }
             (
                 PriorGroupContext::WithPriorGroups(prior_group_profiles),
@@ -639,10 +637,8 @@ where
                 let params = &row.schedule().root.params.final_group.commitment;
                 validate_commit_level_params::<Cfg::Field>(params, expanded)?;
                 let row_profile = row.profiles().final_group;
-                (
-                    Cow::Owned(row.into_schedule().root.params.final_group.commitment),
-                    row_profile,
-                )
+                scheduled_params = row.into_schedule().root.params.final_group.commitment;
+                (&scheduled_params, row_profile)
             }
             (prior_groups, GroupParameterSource::Explicit(params)) => {
                 let profile = validate_explicit_context::<Cfg::Field>(
@@ -651,11 +647,11 @@ where
                     params,
                     expanded,
                 )?;
-                (Cow::Borrowed(params), profile)
+                (params, profile)
             }
         };
 
-    let geometry: CommitmentGeometry<'_> = params.as_ref().into();
+    let geometry: CommitmentGeometry<'_> = params.into();
     let transform_ring_d = geometry.inner_matrix.ring_dimension();
     let (commitment, hint) = if root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         transform_ring_d,
