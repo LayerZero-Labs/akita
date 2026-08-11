@@ -204,7 +204,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         AkitaError::InvalidSetup("direct setup scan weights are missing".into())
                     })?;
                     let (e_eq_slice, t_eq_slice, z_eq_slice) =
-                        (&direct.e[..], &direct.b_setup[..], &direct.z[..]);
+                        (&direct.e[..], &direct.t[..], &direct.z[..]);
                     let first = group.segments.partition_point(|segment| segment.hi <= lo);
                     for segment in group.segments.iter().skip(first) {
                         if segment.lo >= hi {

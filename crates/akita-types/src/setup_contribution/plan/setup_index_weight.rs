@@ -80,29 +80,33 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .groups
             .iter()
             .map(|group| -> Result<_, AkitaError> {
+                let column_weights = [
+                    self.materialize_role_tensor_weights(
+                        group.a_ratio,
+                        &group.a_tensors,
+                        group.z_cols,
+                        alpha,
+                    )?,
+                    self.materialize_role_tensor_weights(
+                        group.b_ratio,
+                        &group.physical_b.relation_tensors,
+                        group.physical_b.logical_input_width(),
+                        alpha,
+                    )?,
+                    self.materialize_role_tensor_weights(
+                        group.d_ratio,
+                        &group.d_tensors,
+                        group.d_col_range.len(),
+                        alpha,
+                    )?,
+                ];
+                let physical_b_weights = group
+                    .physical_b
+                    .contract_logical_column_weights(&column_weights[1])?;
                 Ok(GroupSetupIndexWeights {
                     projection_scales: self.group_projection_scales(group, alpha)?,
-                    column_weights: [
-                        self.materialize_role_tensor_weights(
-                            group.a_ratio,
-                            &group.a_tensors,
-                            group.z_cols,
-                            alpha,
-                        )?,
-                        self.materialize_role_tensor_weights(
-                            group.b_ratio,
-                            &group.physical_b.relation_tensors,
-                            group.physical_b.logical_input_width(),
-                            alpha,
-                        )?,
-                        self.materialize_role_tensor_weights(
-                            group.d_ratio,
-                            &group.d_tensors,
-                            group.d_col_range.len(),
-                            alpha,
-                        )?,
-                    ],
-                    physical_b_weights: self.materialize_physical_b_weights(group, alpha)?,
+                    column_weights,
+                    physical_b_weights,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -362,24 +366,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         if group.physical_b.physical_rows == 0 {
             return Ok(());
         }
-        for tensor in group.physical_b.setup_tensors.iter().cloned() {
+        let tensors = if group.physical_b.geometry().slice_count().is_sliced() {
+            group.physical_b.setup_tensors.clone()
+        } else {
+            compact_affine_unit_families(group.physical_b.setup_tensors.clone(), group.num_claims)?
+        };
+        for tensor in tensors {
             push_projected_tensor(batches, group.b_ratio, tensor)?;
         }
         Ok(())
-    }
-
-    pub(super) fn materialize_physical_b_weights(
-        &self,
-        group: &SetupContributionGroupPlan<E>,
-        alpha: E,
-    ) -> Result<Vec<E>, AkitaError> {
-        let output_len = group.physical_b.physical_footprint()?;
-        self.materialize_role_tensor_weights(
-            group.b_ratio,
-            &group.physical_b.setup_tensors,
-            output_len,
-            alpha,
-        )
     }
 
     fn append_a_tensors(

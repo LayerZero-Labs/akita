@@ -33,6 +33,7 @@ pub(crate) use types::validate_setup_inputs;
 pub(crate) use types::{
     DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan, SetupUnitRange,
 };
+pub(super) use types::{PhysicalBWeightSegment, PhysicalBWeightTerm};
 pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;

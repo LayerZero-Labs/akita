@@ -64,18 +64,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 group.physical_b.physical_input_width(),
                 d_b,
             )?;
-            let b_setup_weights = &group
+            let direct = group
                 .direct_scan_weights
                 .as_ref()
-                .ok_or(AkitaError::InvalidProof)?
-                .b_setup;
+                .ok_or(AkitaError::InvalidProof)?;
+            let b_setup_weights = group
+                .physical_b
+                .contract_logical_column_weights(&direct.t)?;
             for row_idx in 0..group.physical_b.physical_rows() {
                 let row = b_view.row_flat(row_idx)?;
                 acc += evaluate_weighted_setup_row::<F, E>(
                     row,
                     0,
                     checked_slice(
-                        b_setup_weights,
+                        &b_setup_weights,
                         row_idx * group.physical_b.physical_input_width(),
                         group.physical_b.physical_input_width(),
                         "physical B setup weights",

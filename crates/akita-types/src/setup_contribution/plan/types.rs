@@ -352,8 +352,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 pub(crate) struct DirectScanWeights<E> {
     pub(crate) e: Vec<E>,
     pub(crate) t: Vec<E>,
-    pub(crate) b_setup: Vec<E>,
     pub(crate) z: Vec<E>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PhysicalBWeightTerm<E> {
+    pub(super) logical_start: usize,
+    pub(super) row_weight: E,
+}
+
+#[derive(Clone)]
+pub(crate) struct PhysicalBWeightSegment<E> {
+    pub(super) physical_start: usize,
+    pub(super) len: usize,
+    pub(super) terms: Arc<[PhysicalBWeightTerm<E>]>,
 }
 
 /// One canonical owner for the physical B matrix and its logical sliced image.
@@ -361,6 +373,7 @@ pub(crate) struct PhysicalBSetupPlan<E: FieldCore> {
     pub(super) geometry: CommitmentSliceGeometry,
     pub(super) physical_rows: usize,
     pub(super) logical_row_weights: Arc<[E]>,
+    pub(super) weight_segments: Arc<[PhysicalBWeightSegment<E>]>,
     pub(super) relation_tensors: Vec<EqPairTensorFamily<E>>,
     pub(super) setup_tensors: Vec<EqPairTensorFamily<E>>,
 }
@@ -377,10 +390,16 @@ impl<E: FieldCore> PhysicalBSetupPlan<E> {
                 "logical B row weights disagree with slice geometry".into(),
             ));
         }
+        let weight_segments = super::physical_b::build_physical_b_weight_segments(
+            &geometry,
+            physical_rows,
+            &logical_row_weights,
+        )?;
         Ok(Self {
             geometry,
             physical_rows,
             logical_row_weights,
+            weight_segments: weight_segments.into(),
             relation_tensors: Vec::new(),
             setup_tensors: Vec::new(),
         })
@@ -400,6 +419,10 @@ impl<E: FieldCore> PhysicalBSetupPlan<E> {
 
     pub(crate) fn logical_row_weights(&self) -> &[E] {
         &self.logical_row_weights
+    }
+
+    pub(super) fn weight_segments(&self) -> &[PhysicalBWeightSegment<E>] {
+        &self.weight_segments
     }
 
     pub(crate) fn logical_input_width(&self) -> usize {

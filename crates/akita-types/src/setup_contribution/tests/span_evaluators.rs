@@ -26,10 +26,20 @@ fn projected_setup_weight_reference(
     b_scales: &[F],
     d_scales: &[F],
 ) -> F {
+    let materialized_b = plan
+        .groups
+        .iter()
+        .map(|group| {
+            group
+                .physical_b
+                .contract_logical_column_weights(&group.direct_scan_weights.as_ref().unwrap().t)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     let mut acc = F::zero();
     for base_idx in 0..required {
         let mut weight = F::zero();
-        for group in &plan.groups {
+        for (group_index, group) in plan.groups.iter().enumerate() {
             let (e_eq_slice, _t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
             let d_idx = base_idx / d_ratio;
             if d_idx < plan.d_rows * plan.d_physical_cols {
@@ -43,8 +53,7 @@ fn projected_setup_weight_reference(
             }
             let b_idx = base_idx / b_ratio;
             if b_idx < group.physical_b.physical_footprint().unwrap() {
-                let physical_b = physical_b_override
-                    .unwrap_or(&group.direct_scan_weights.as_ref().unwrap().b_setup);
+                let physical_b = physical_b_override.unwrap_or(&materialized_b[group_index]);
                 weight += b_scales[base_idx % b_ratio] * physical_b[b_idx];
             }
             let a_idx = base_idx / a_ratio;
@@ -286,12 +295,47 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
         );
         let group = &plan.groups[0];
         let expected = naive_sliced_physical_b_weights(group);
+        let direct = group.direct_scan_weights.as_ref().unwrap();
         assert_eq!(
-            group.direct_scan_weights.as_ref().unwrap().b_setup,
+            group
+                .physical_b
+                .contract_logical_column_weights(&direct.t)
+                .unwrap(),
             expected
         );
 
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: plan.required() * role_dims.d_a(),
+                setup_seed: [0u8; 32].into(),
+            },
+            FlatMatrix::from_flat_data(
+                (0..plan.required() * role_dims.d_a())
+                    .map(|index| test_scalar(1_201 + index as u128))
+                    .collect(),
+            ),
+        );
         let alpha = test_scalar(3);
+        let alpha_pows_a = scalar_powers(alpha, role_dims.d_a());
+        let alpha_pows_b = scalar_powers(alpha, role_dims.d_b());
+        let alpha_pows_d = scalar_powers(alpha, role_dims.d_d());
+        assert_eq!(
+            plan.evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+                .unwrap(),
+            plan.evaluate_direct_by_rows::<F>(
+                &setup,
+                &alpha_pows_a,
+                &alpha_pows_b,
+                &alpha_pows_d,
+                role_dims.d_a(),
+            )
+            .unwrap(),
+            "factorized direct B scan mismatch for S={}",
+            slice_count.get(),
+        );
+
         let rho = rho_for_required(plan.required());
         assert_eq!(
             plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),

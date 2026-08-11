@@ -275,7 +275,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             {
                 continue;
             }
-            let (e, t, b_setup, z) = {
+            let (e, t, z) = {
                 let group = self
                     .groups
                     .get(group_index)
@@ -298,11 +298,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         alpha,
                     )?
                 };
-                let b_setup = {
-                    let _span =
-                        tracing::info_span!("setup_materialize_physical_b_weights").entered();
-                    self.materialize_physical_b_weights(group, alpha)?
-                };
                 let z = {
                     let _span = tracing::info_span!("setup_materialize_z_weights").entered();
                     self.materialize_role_tensor_weights(
@@ -312,13 +307,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         alpha,
                     )?
                 };
-                (e, t, b_setup, z)
+                (e, t, z)
             };
             let group = self
                 .groups
                 .get_mut(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            group.direct_scan_weights = Some(DirectScanWeights { e, t, b_setup, z });
+            group.direct_scan_weights = Some(DirectScanWeights { e, t, z });
             {
                 let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
                 group.refresh_segments(

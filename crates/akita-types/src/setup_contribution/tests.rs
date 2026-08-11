@@ -419,10 +419,6 @@ fn test_group_plan(
     a_row_weights: Vec<F>,
     b_weights: Vec<F>,
 ) -> SetupContributionGroupPlan<F> {
-    let b_setup = b_weights
-        .iter()
-        .flat_map(|&row| t_eq_slice.iter().map(move |&col| row * col))
-        .collect();
     let physical_b = PhysicalBSetupPlan::new(
         crate::CommitmentSliceGeometry::try_new(
             crate::CommitmentSliceCount::ONE,
@@ -465,7 +461,6 @@ fn test_group_plan(
         direct_scan_weights: Some(DirectScanWeights {
             e: e_eq_slice,
             t: t_eq_slice,
-            b_setup,
             z: z_eq_slice,
         }),
         active_unit_ranges: Vec::new().into(),
