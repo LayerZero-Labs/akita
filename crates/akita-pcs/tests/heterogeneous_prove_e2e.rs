@@ -88,7 +88,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         std::slice::from_ref(&poly),
         setup.expanded.as_ref(),
         &commit_stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect("commit");
 

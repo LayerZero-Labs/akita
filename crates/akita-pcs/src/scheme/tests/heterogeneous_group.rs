@@ -62,7 +62,7 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
         &setup,
         std::slice::from_ref(&onehot_pre),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect("K=16 precommit");
     let akita_prover::CommitOutput {
@@ -72,7 +72,7 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
         &setup,
         &dense_polys,
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect("dense precommit");
     let prior_group_profiles = akita_types::PriorGroupProfiles::from_profiles(vec![
@@ -86,11 +86,53 @@ fn heterogeneous_polynomial_groups_round_trip_with_group_local_points() {
         &setup,
         &final_group,
         &stack,
-        akita_prover::GroupPosition::Final {
-            prior_group_profiles: &prior_group_profiles,
-        },
+        akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
+            .expect("nonempty prior group context"),
     )
     .expect("heterogeneous final commit");
+
+    let grouped_key = akita_types::AkitaScheduleLookupKey {
+        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, final_group.len()),
+        prior_group_profiles: prior_group_profiles.as_slice().to_vec(),
+    };
+    let grouped_selection =
+        OneHotCfg::select_schedule_for_key(&grouped_key).expect("heterogeneous grouped schedule");
+    let grouped_params = &grouped_selection
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment;
+    let explicit_output = OneHotScheme::commit(
+        &setup,
+        &final_group,
+        &stack,
+        akita_prover::GroupContext::explicit_with_prior_groups(
+            &prior_group_profiles,
+            grouped_params,
+        )
+        .expect("nonempty explicit heterogeneous context"),
+    )
+    .expect("explicit heterogeneous final commit");
+    assert_eq!(explicit_output.committed_group, final_commitment);
+    assert_eq!(explicit_output.hint, final_hint);
+
+    let reordered_prior_group_profiles = akita_types::PriorGroupProfiles::from_profiles(vec![
+        dense_commitment.profile,
+        onehot_pre_commitment.profile,
+    ]);
+    let error = OneHotScheme::commit(
+        &setup,
+        &final_group,
+        &stack,
+        akita_prover::GroupContext::explicit_with_prior_groups(
+            &reordered_prior_group_profiles,
+            grouped_params,
+        )
+        .expect("nonempty reordered heterogeneous context"),
+    )
+    .expect_err("explicit grouped params must bind prior-profile order");
+    assert!(matches!(error, AkitaError::InvalidSetup(_)));
 
     let onehot_pre_profile = onehot_pre_commitment.profile;
     let final_profile = final_commitment.profile;

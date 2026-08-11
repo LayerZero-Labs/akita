@@ -27,7 +27,7 @@ fn batched_commit_matches_individual_commits() {
                 &setup,
                 group,
                 &stack,
-                akita_prover::GroupPosition::Independent,
+                akita_prover::GroupContext::scheduler_without_prior_groups(),
             )
         })
         .collect::<Result<Vec<_>, _>>()
@@ -42,7 +42,7 @@ fn batched_commit_matches_individual_commits() {
         &setup,
         std::slice::from_ref(&poly_a),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .unwrap();
     let akita_prover::CommitOutput {
@@ -52,7 +52,7 @@ fn batched_commit_matches_individual_commits() {
         &setup,
         std::slice::from_ref(&poly_b),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .unwrap();
 
@@ -79,22 +79,19 @@ fn commit_rejects_empty_final_prefix_and_mixed_group_arity() {
     .expect("stack");
 
     let empty = PriorGroupProfiles::default();
-    let error = Scheme::commit(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupPosition::Final {
-            prior_group_profiles: &empty,
-        },
-    )
-    .expect_err("an empty Final prefix must reject");
+    let error = akita_prover::GroupContext::scheduler_with_prior_groups(&empty)
+        .expect_err("an empty prior-group context must reject");
+    assert!(matches!(error, AkitaError::InvalidInput(_)));
+    let params = singleton_layout::<Cfg>(num_vars);
+    let error = akita_prover::GroupContext::explicit_with_prior_groups(&empty, &params)
+        .expect_err("an empty explicit prior-group context must reject");
     assert!(matches!(error, AkitaError::InvalidInput(_)));
 
     let error = Scheme::commit(
         &setup,
         &[poly, smaller],
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect_err("one committed group must be homogeneous");
     assert!(matches!(error, AkitaError::InvalidInput(_)));
@@ -127,7 +124,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         &setup,
         &[poly_a.clone(), poly_b.clone()],
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .unwrap();
     let commitments = [commitment];

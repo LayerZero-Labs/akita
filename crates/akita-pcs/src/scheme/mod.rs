@@ -13,7 +13,7 @@ use akita_prover::compute::{
     SuffixTensorProveBackend, UniformProverStack,
 };
 use akita_prover::ProverTranscriptGrind;
-use akita_prover::{AkitaProverSetup, CommitOutput, GroupPosition};
+use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
 use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -127,18 +127,19 @@ where
         Ok(ring_d)
     }
 
-    /// Commit one polynomial group at its explicit opening-batch position.
+    /// Commit one polynomial group in its complete parameter context.
     ///
     /// # Errors
     ///
-    /// Returns an error when the group is malformed, its exact S/P/G role is
-    /// unsupported, setup capacity is insufficient, or commitment execution fails.
+    /// Returns an error when the group is malformed, its scheduled S/G or
+    /// explicit parameters are unsupported, setup capacity is insufficient,
+    /// or commitment execution fails.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
     pub fn commit<P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-        position: GroupPosition<'_>,
+        context: GroupContext<'_>,
     ) -> Result<CommitOutput<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -147,7 +148,7 @@ where
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
         Self::validate_cfg_ring_policy()?;
-        akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, position)
+        akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, context)
     }
 
     /// Produce a fused batched opening proof over ordered commitment groups.

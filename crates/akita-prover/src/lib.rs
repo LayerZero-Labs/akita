@@ -17,8 +17,9 @@ use akita_field::{AkitaError, FieldCore};
 use akita_types::RingVec;
 
 pub use api::{
-    commit, commit_setup_prefix, commit_with_params, prepare_commit_inputs, AkitaProverSetup,
-    CommitOutput, CommitmentWithHint, GroupPosition, PreparedGroupProveOps, PreparedProverGroup,
+    commit, commit_setup_prefix, prepare_commit_inputs, AkitaProverSetup, CommitOutput,
+    GroupContext, GroupParameterSource, PreparedGroupProveOps, PreparedProverGroup,
+    PriorGroupContext,
 };
 
 pub use backend::{

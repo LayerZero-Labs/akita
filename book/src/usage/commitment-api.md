@@ -7,21 +7,22 @@ verify, plus the setup and transcript objects those calls thread through.
 
 The `commit`, `batched_prove`, and `batched_verify` entry points operate on
 ordered commitment groups. Every commit call creates exactly one homogeneous
-polynomial group and names its future batch position explicitly:
+polynomial group and supplies its complete parameter context:
 
 ```rust
 let output = AkitaCommitmentScheme::<Cfg>::commit(
     &setup,
     &polynomials,
     &stack,
-    GroupPosition::Independent,
+    GroupContext::scheduler_without_prior_groups(),
 )?;
 ```
 
-`GroupPosition::Independent` selects the scalar S row. The resulting committed
+`GroupContext::scheduler_without_prior_groups()` selects the scalar S row. The resulting committed
 group may be opened alone or retained as a prior group for a later grouped
-opening; both uses have exactly the same parameters. `GroupPosition::Final {
-prior_group_profiles: &prior }` selects the exact grouped G row. Polynomials
+opening; both uses have exactly the same parameters.
+`GroupContext::scheduler_with_prior_groups(&prior)?` selects the exact grouped
+G row. Polynomials
 inside one group must have the same `num_vars`; separate groups may have
 different arities.
 
@@ -34,9 +35,7 @@ let final_output = AkitaCommitmentScheme::<Cfg>::commit(
     &setup,
     &final_polynomials,
     &stack,
-    GroupPosition::Final {
-        prior_group_profiles: &prior,
-    },
+    GroupContext::scheduler_with_prior_groups(&prior)?,
 )?;
 
 let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
@@ -51,6 +50,13 @@ let selection = prover_data.selection();
 The constructor derives the exact batch profile and selects its schedule before
 stripping commitment profiles from prover-owned opening data. The same
 `selection` is placed in `GroupBatchStatement` for verification.
+
+Callers that already own audited root parameters use the same `commit` method
+with `GroupContext::explicit_without_prior_groups(&params)` or
+`GroupContext::explicit_with_prior_groups(&prior, &params)?`. Explicit mode
+does not select a catalog row. It validates the supplied parameters, while
+tensor projection follows the same field/root-geometry predicate as scheduler
+mode.
 
 Every `PolynomialGroupClaims` owns one complete opening point, its evaluations,
 and its commitment.
@@ -90,7 +96,7 @@ coordinate-routing object.
 **Sources to fold in**
 
 - `crates/akita-pcs/src/scheme/mod.rs`.
-- `crates/akita-prover/src/api/commitment.rs` (`GroupPosition`, `CommitOutput`).
+- `crates/akita-prover/src/api/commitment.rs` (`GroupContext`, `CommitOutput`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
 - `crates/akita-types/src/opening_claims.rs` (`OpeningClaims`, `OpeningClaimsLayout`).
 - `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`,

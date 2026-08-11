@@ -272,7 +272,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 &setup,
                 &polys,
                 &stack,
-                akita_prover::GroupPosition::Independent,
+                akita_prover::GroupContext::scheduler_without_prior_groups(),
             )
             .expect("precommit");
             pre_keys.push(pre_key);
@@ -305,9 +305,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupPosition::Final {
-                prior_group_profiles: &prior_group_profiles,
-            },
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
+                .expect("nonempty prior group context"),
         )
         .expect("final multi-group commitment");
         report_timing(label, "commit", t_commit.elapsed().as_secs_f64());

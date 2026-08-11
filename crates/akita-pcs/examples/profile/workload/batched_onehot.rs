@@ -115,7 +115,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupPosition::Independent,
+            akita_prover::GroupContext::scheduler_without_prior_groups(),
         )
         .unwrap();
         let commitments = [commitment];

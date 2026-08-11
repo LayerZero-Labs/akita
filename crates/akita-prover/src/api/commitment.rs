@@ -20,6 +20,7 @@ use akita_types::{
     CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
     OuterCommitMatrixParams, PriorGroupProfiles, RingVec,
 };
+use std::borrow::Cow;
 
 mod inner;
 use inner::prepare_inner_commit_group;
@@ -29,19 +30,89 @@ pub(crate) use inner::validate_commit_inner_shape;
 ///
 /// D-free protocol storage: a flat [`Commitment`] plus the semantic A-native
 /// inner rows needed when the commitment is opened.
-pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
+pub(crate) type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
-/// Position of this commitment in the opening batch that will contain it.
+/// Ordered groups committed before the current group.
 #[derive(Debug, Clone, Copy)]
-pub enum GroupPosition<'a> {
-    /// An ordinary group that may be opened alone or used before a later final
-    /// group. Selects the canonical scalar S row.
-    Independent,
-    /// The final group after these exact ordered prior profiles. Selects a G row.
-    Final {
-        /// Exact prior profiles in opening-claim and transcript order.
+pub enum PriorGroupContext<'a> {
+    /// The current group has no earlier groups in its opening batch.
+    NoPriorGroups,
+    /// Exact prior profiles in opening-claim and transcript order.
+    WithPriorGroups(&'a PriorGroupProfiles),
+}
+
+/// Authority for the current group's commitment parameters.
+#[derive(Debug, Clone, Copy)]
+pub enum GroupParameterSource<'a> {
+    /// Select an existing S or G row from the configured generated catalog.
+    Scheduler,
+    /// Use caller-supplied root parameters without catalog selection.
+    Explicit(&'a CommittedGroupParams),
+}
+
+/// Complete context for committing one polynomial group.
+#[derive(Debug, Clone, Copy)]
+pub struct GroupContext<'a> {
+    prior_groups: PriorGroupContext<'a>,
+    parameter_source: GroupParameterSource<'a>,
+}
+
+impl<'a> GroupContext<'a> {
+    /// Select the scalar S row for a group with no prior groups.
+    #[must_use]
+    pub const fn scheduler_without_prior_groups() -> Self {
+        Self {
+            prior_groups: PriorGroupContext::NoPriorGroups,
+            parameter_source: GroupParameterSource::Scheduler,
+        }
+    }
+
+    /// Select the grouped G row for a group after exact ordered prior profiles.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `prior_group_profiles` is empty.
+    pub fn scheduler_with_prior_groups(
         prior_group_profiles: &'a PriorGroupProfiles,
-    },
+    ) -> Result<Self, AkitaError> {
+        Self::with_prior_groups(prior_group_profiles, GroupParameterSource::Scheduler)
+    }
+
+    /// Use explicit scalar root parameters for a group with no prior groups.
+    #[must_use]
+    pub const fn explicit_without_prior_groups(params: &'a CommittedGroupParams) -> Self {
+        Self {
+            prior_groups: PriorGroupContext::NoPriorGroups,
+            parameter_source: GroupParameterSource::Explicit(params),
+        }
+    }
+
+    /// Use explicit grouped root parameters after exact ordered prior profiles.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `prior_group_profiles` is empty.
+    pub fn explicit_with_prior_groups(
+        prior_group_profiles: &'a PriorGroupProfiles,
+        params: &'a CommittedGroupParams,
+    ) -> Result<Self, AkitaError> {
+        Self::with_prior_groups(prior_group_profiles, GroupParameterSource::Explicit(params))
+    }
+
+    fn with_prior_groups(
+        prior_group_profiles: &'a PriorGroupProfiles,
+        parameter_source: GroupParameterSource<'a>,
+    ) -> Result<Self, AkitaError> {
+        if prior_group_profiles.as_slice().is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "group context requires at least one prior group profile".to_string(),
+            ));
+        }
+        Ok(Self {
+            prior_groups: PriorGroupContext::WithPriorGroups(prior_group_profiles),
+            parameter_source,
+        })
+    }
 }
 
 /// Result of committing one polynomial group.
@@ -441,43 +512,68 @@ where
     Ok((commitment, hint))
 }
 
-/// Commit a group of polynomials using already-selected level parameters.
-///
-/// Config/schedule policy chooses `params`; this function owns only the
-/// prover-side matrix work for the supplied concrete layout.
-///
-/// # Errors
-///
-/// Returns an error if input validation, inner witness commitment, or hint
-/// allocation fails.
-pub fn commit_with_params<F, P, B>(
-    polys: &[P],
-    expanded: &AkitaExpandedSetup<F>,
-    ctx: &OperationCtx<'_, F, B>,
+fn validate_explicit_context<F>(
+    group_layout: akita_types::PolynomialGroupLayout,
+    prior_groups: PriorGroupContext<'_>,
     params: &CommittedGroupParams,
-) -> Result<CommitmentWithHint<F>, AkitaError>
+    expanded: &AkitaExpandedSetup<F>,
+) -> Result<CommittedGroupProfile, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RuntimeCommitSource<F>,
-    B: RuntimeCommitBackendFor<F, P>,
+    F: FieldCore + CanonicalField,
 {
-    prepare_commit_inputs::<F, P>(polys, expanded)?;
     validate_commit_level_params::<F>(params, expanded)?;
-    commit_with_validated_geometry::<F, P, B>(polys, ctx, params.into())
+
+    match prior_groups {
+        PriorGroupContext::NoPriorGroups => {
+            params.require_scalar_level("explicit commitment")?;
+        }
+        PriorGroupContext::WithPriorGroups(prior_group_profiles) => {
+            if params.setup_prefix.is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "explicit grouped root params must not contain a setup-prefix group"
+                        .to_string(),
+                ));
+            }
+            let profiles = prior_group_profiles.as_slice();
+            if params.precommitted_groups.len() != profiles.len() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "explicit grouped root params contain {} prior groups, expected {}",
+                    params.precommitted_groups.len(),
+                    profiles.len(),
+                )));
+            }
+            for (index, (group, profile)) in
+                params.precommitted_groups.iter().zip(profiles).enumerate()
+            {
+                if group.layout != *profile {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "explicit grouped root prior profile {index} does not match its params"
+                    )));
+                }
+            }
+            let prior_layouts = profiles
+                .iter()
+                .map(|profile| profile.group)
+                .collect::<Vec<_>>();
+            let opening_layout =
+                OpeningClaimsLayout::from_root_groups(&prior_layouts, group_layout)?;
+            params.validate_opening_batch(&opening_layout)?;
+        }
+    }
+
+    let profile = CommittedGroupProfile::from_params(group_layout, params);
+    profile.validate(F::modulus_bits())?;
+    profile.validate_root_geometry()?;
+    Ok(profile)
 }
 
-/// Commit one homogeneous polynomial group at its explicit batch position.
+/// Commit one homogeneous polynomial group in its complete parameter context.
 ///
-/// Only role-specific S/P/G parameter resolution branches. Geometry
-/// validation, tensor projection, commitment arithmetic, and result assembly
-/// are shared by every position.
+/// Scheduler contexts select an existing S or G catalog row. Explicit
+/// contexts validate caller-supplied root parameters without catalog lookup.
+/// Tensor projection is determined solely from field/root geometry. Geometry
+/// validation, commitment arithmetic, and result assembly are shared by every
+/// context.
 ///
 /// # Errors
 ///
@@ -487,7 +583,7 @@ pub fn commit<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-    position: GroupPosition<'_>,
+    context: GroupContext<'_>,
 ) -> Result<CommitOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -506,50 +602,60 @@ where
     let opening_layout = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let group_layout = opening_layout.root_final_group_layout()?;
 
-    let selected = match position {
-        GroupPosition::Independent => {
-            let row = Cfg::select_schedule_for_opening(&opening_layout)?;
-            let params = &row.schedule().root.params.final_group.commitment;
-            validate_commit_level_params::<Cfg::Field>(params, expanded)?;
-            let row_profile = row.profiles().final_group;
-            if row_profile.group != group_layout
-                || row_profile != CommittedGroupProfile::from_params(group_layout, params)
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "independent row profile does not match its requested layout and root parameters"
+    let (params, profile): (Cow<'_, CommittedGroupParams>, CommittedGroupProfile) =
+        match (context.prior_groups, context.parameter_source) {
+            (PriorGroupContext::NoPriorGroups, GroupParameterSource::Scheduler) => {
+                let row = Cfg::select_schedule_for_opening(&opening_layout)?;
+                let params = &row.schedule().root.params.final_group.commitment;
+                validate_commit_level_params::<Cfg::Field>(params, expanded)?;
+                let row_profile = row.profiles().final_group;
+                if row_profile.group != group_layout
+                    || row_profile != CommittedGroupProfile::from_params(group_layout, params)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                    "scalar S row profile does not match its requested layout and root parameters"
                         .to_string(),
                 ));
+                }
+                (
+                    Cow::Owned(row.into_schedule().root.params.final_group.commitment),
+                    row_profile,
+                )
             }
-            row
-        }
-        GroupPosition::Final {
-            prior_group_profiles,
-        } => {
-            if prior_group_profiles.as_slice().is_empty() {
-                return Err(AkitaError::InvalidInput(
-                    "final group commitment requires at least one prior group profile".to_string(),
-                ));
+            (
+                PriorGroupContext::WithPriorGroups(prior_group_profiles),
+                GroupParameterSource::Scheduler,
+            ) => {
+                let key = AkitaScheduleLookupKey {
+                    final_group: group_layout,
+                    prior_group_profiles: prior_group_profiles.as_slice().to_vec(),
+                };
+                let row = Cfg::select_schedule_for_key(&key)?;
+                ensure_prover_schedule_fits_setup::<Cfg>(
+                    expanded,
+                    row.schedule(),
+                    &key.opening_layout()?,
+                )?;
+                let params = &row.schedule().root.params.final_group.commitment;
+                validate_commit_level_params::<Cfg::Field>(params, expanded)?;
+                let row_profile = row.profiles().final_group;
+                (
+                    Cow::Owned(row.into_schedule().root.params.final_group.commitment),
+                    row_profile,
+                )
             }
-            let key = AkitaScheduleLookupKey {
-                final_group: group_layout,
-                prior_group_profiles: prior_group_profiles.as_slice().to_vec(),
-            };
-            let row = Cfg::select_schedule_for_key(&key)?;
-            ensure_prover_schedule_fits_setup::<Cfg>(
-                expanded,
-                row.schedule(),
-                &key.opening_layout()?,
-            )?;
-            validate_commit_level_params::<Cfg::Field>(
-                &row.schedule().root.params.final_group.commitment,
-                expanded,
-            )?;
-            row
-        }
-    };
+            (prior_groups, GroupParameterSource::Explicit(params)) => {
+                let profile = validate_explicit_context::<Cfg::Field>(
+                    group_layout,
+                    prior_groups,
+                    params,
+                    expanded,
+                )?;
+                (Cow::Borrowed(params), profile)
+            }
+        };
 
-    let geometry: CommitmentGeometry<'_> =
-        (&selected.schedule().root.params.final_group.commitment).into();
+    let geometry: CommitmentGeometry<'_> = params.as_ref().into();
     let transform_ring_d = geometry.inner_matrix.ring_dimension();
     let (commitment, hint) = if root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         transform_ring_d,
@@ -570,7 +676,7 @@ where
     };
 
     Ok(CommitOutput {
-        committed_group: CommittedGroup::new(selected.profiles().final_group, commitment),
+        committed_group: CommittedGroup::new(profile, commitment),
         hint,
     })
 }

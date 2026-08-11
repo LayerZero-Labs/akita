@@ -68,7 +68,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect("commit");
 
@@ -233,7 +233,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupPosition::Independent,
+            akita_prover::GroupContext::scheduler_without_prior_groups(),
         )
         .expect("commit");
 

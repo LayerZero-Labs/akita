@@ -18,23 +18,25 @@ Before this cutover Akita exposed four scheme-level commitment methods:
 also encode validation history and the group's future position in an opening
 batch.
 
-The implemented API has one public `commit` method and one explicit
-`GroupPosition` input. `Independent` selects the scalar S row; that commitment
-may be opened alone or retained as a prior group. `Final` selects the grouped G
-row from the exact ordered prior profiles. The precommitted/multi-group case
-therefore remains protocol-visible without owning a second P parameter source.
+The implemented API has one public `commit` method and one `GroupContext`
+input. Its prior-group axis distinguishes no prior groups from exact ordered
+prior profiles; its parameter-source axis selects either the generated S/G
+catalog or caller-supplied explicit parameters. The precommitted/multi-group
+case therefore remains protocol-visible without owning a second P parameter
+source or a separate public commitment function.
 
 The role-preserving design discussion in the main body records the first
 cutover and its baseline constraints. Appendix A is authoritative for the
-subsequent S-only parameter-authority implementation.
+subsequent S-only parameter-authority implementation. Appendix B is
+authoritative for the final `GroupContext` and single-function public API.
 
 This is a source-API breaking refactor. No compatibility wrappers, aliases, or
 deprecated entry points are required. The freedom to break the Rust API does
 not permit a protocol-output change: current generated parameter payloads and
 all deterministic commitment/proof outputs are frozen by this spec.
 
-No implementation work begins until this spec is explicitly approved and
-coding is requested.
+Implementation began only after this spec was explicitly approved and coding
+was requested.
 
 ## Hard constraints
 
@@ -1543,10 +1545,11 @@ lifecycles still run, and existing S outputs remain frozen.
 
 The production catalog now uses S for every ordinary commitment, includes
 former `P \ S` layouts as scalar rows, and keys replanned G rows by the exact S
-profiles. The caller surface is `GroupPosition::{Independent, Final}`. The P
-registry, resolver, validation cache, identity fields, emitter output, and
-obsolete registry tests are removed. Book and active multi-group documentation
-describe the S-only authority.
+profiles. The current caller surface is `GroupContext`; the earlier
+`GroupPosition::{Independent, Final}` surface recorded in this appendix was
+subsequently removed by Appendix B. The P registry, resolver, validation cache,
+identity fields, emitter output, and obsolete registry tests are removed. Book
+and active multi-group documentation describe the S-only authority.
 
 The global instance-descriptor epoch was deliberately not bumped: it is shared
 by scalar S transcripts, and changing it would violate the fixed-S requirement.
@@ -1555,3 +1558,96 @@ Changed grouped rows are already separated by their exact row/key digests.
 No compatibility shim retains P selection. Commitments made with old P
 profiles are not assumed to be openable under the S-only G catalog; any need to
 support them requires an explicit versioned verifier/migration design.
+
+## Appendix B: Implemented `GroupContext` and parameter-source consolidation
+
+### Status and public types
+
+The public cutover was completed on 2026-08-11. `GroupPosition` is replaced by
+two independent axes carried by a private-field context:
+
+```rust
+pub struct GroupContext<'a> {
+    prior_groups: PriorGroupContext<'a>,
+    parameter_source: GroupParameterSource<'a>,
+}
+
+pub enum PriorGroupContext<'a> {
+    NoPriorGroups,
+    WithPriorGroups(&'a PriorGroupProfiles),
+}
+
+pub enum GroupParameterSource<'a> {
+    Scheduler,
+    Explicit(&'a CommittedGroupParams),
+}
+```
+
+The four supported combinations are exposed through named constructors:
+
+```text
+scheduler_without_prior_groups()
+scheduler_with_prior_groups(&PriorGroupProfiles)
+explicit_without_prior_groups(&CommittedGroupParams)
+explicit_with_prior_groups(&PriorGroupProfiles, &CommittedGroupParams)
+```
+
+Both constructors with prior groups reject an empty owner. Borrowing preserves
+the caller's ability to move that same `PriorGroupProfiles` allocation into
+`SelectedProverOpeningData` after the final commitment.
+
+### Semantic matrix
+
+| Prior context | Parameter source | Behavior |
+| --- | --- | --- |
+| `NoPriorGroups` | `Scheduler` | Select and validate the exact scalar S row. |
+| `WithPriorGroups` | `Scheduler` | Select the exact G row keyed by ordered prior profiles and perform full-schedule setup admission. |
+| `NoPriorGroups` | `Explicit(params)` | Require validated scalar root params without catalog lookup. |
+| `WithPriorGroups` | `Explicit(params)` | Require grouped root params whose embedded prior descriptors exactly match the supplied profiles in count and order. |
+
+`Scheduler` means selection from an already-generated catalog; commitment
+never runs the offline planner. Explicit grouped params reject setup-prefix
+metadata, missing profiles, reordered profiles, and any descriptor mismatch.
+
+### One commitment operation
+
+The prover and PCS facade expose only:
+
+```rust
+pub fn commit<Cfg, P, B>(
+    polys: &[P],
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
+    stack: &UniformProverStack<'_, Cfg::Field, B>,
+    context: GroupContext<'_>,
+) -> Result<CommitOutput<Cfg::Field>, AkitaError>;
+```
+
+`commit_with_params`, public `CommitmentWithHint`, and `GroupPosition` are
+removed without aliases or forwarding wrappers. Match arms normalize to one
+owned-or-borrowed parameter value plus one profile. Projection, commitment
+arithmetic, and `CommitOutput` assembly then occur once inline in `commit`.
+
+Tensor projection has one authority only:
+`root_tensor_projection_enabled(field, extension, A ring dimension,
+source num_vars)`. There is no secondary Boolean or parameter-source override.
+Consequently explicit parameters bypass catalog selection, but do not bypass
+canonical tensor projection. Already-projected sources cannot use explicit
+mode as a public projection bypass because the projected representation retains
+the original `num_vars`.
+
+### Validation and outcome
+
+Permanent tests establish:
+
+- scheduled S and G behavior remains unchanged;
+- explicit scalar output matches the built-in backend oracle;
+- explicit grouped output matches the scheduled grouped commitment for the
+  same generated parameters;
+- empty, missing, and reordered prior profiles reject;
+- malformed explicit params reject before commitment arithmetic; and
+- the tensor kernel runs exactly when the canonical geometry predicate enables
+  it.
+
+The PCS facade, examples, benches, tests, recursion artifact, and book use
+`GroupContext`. The generated schedule catalogs are unchanged by this API-only
+refactor.

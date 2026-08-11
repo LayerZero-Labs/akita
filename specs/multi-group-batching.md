@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | Status | active |
-| Updated | 2026-08-09 |
+| Updated | 2026-08-11 |
 | PR | #355 |
 | Historical record | `archive/2026-Q3/multi-group-batching-legacy.md` |
 
@@ -59,18 +59,20 @@ Generated profile lookup is strict. An unlisted layout returns
 The current staggered flow is:
 
 1. Commit each early group with the unified `commit` method and
-   `GroupPosition::Independent`; this resolves its exact scalar S row. Retain
-   the resulting committed group/profile for use as a prior group.
+   `GroupContext::scheduler_without_prior_groups()`; this resolves its exact
+   scalar S row. Retain the resulting committed group/profile for use as a
+   prior group.
 2. Build one ordered `PriorGroupProfiles` owner from those committed groups.
-3. Commit the last group with `GroupPosition::Final`, borrowing that owner.
+3. Commit the last group with
+   `GroupContext::scheduler_with_prior_groups(&prior)?`, borrowing that owner.
 4. Build the self-describing `OpeningClaims`, then pass the same owner to
    `SelectedProverOpeningData::from_committed_claims`; batch assembly selects
    the exact generated G row before profiles are stripped.
 5. Prove with that selected row and verify against its explicit row identity.
 
-`GroupPosition::Independent` commits a group under its scalar S row. The same
-commitment may be opened alone or used before a later final group. Multiple
-homogeneous polynomials may still belong to one group.
+The scheduler-without-priors context commits a group under its scalar S row.
+The same commitment may be opened alone or used before a later final group.
+Multiple homogeneous polynomials may still belong to one group.
 
 The commitment and opening claims must use the same ordered group profiles.
 Malformed, missing, reordered, or altered profiles return `AkitaError`.
@@ -101,10 +103,11 @@ from unchecked lengths, or invoke the planner.
 
 - Scalar generation emits exact S profiles for every supported layout.
 - Profile descriptor changes alter lookup and effective schedule identity.
-- `GroupPosition::Independent` always uses the exact generated scalar S profile,
-  including when that commitment later becomes a prior group.
-- `GroupPosition::Final` selects from the exact ordered profiles supplied by
-  the caller and rejects an empty prefix.
+- `GroupContext::scheduler_without_prior_groups()` always uses the exact
+  generated scalar S profile, including when that commitment later becomes a
+  prior group.
+- `GroupContext::scheduler_with_prior_groups` selects from the exact ordered
+  profiles supplied by the caller and rejects an empty prefix.
 - Batch assembly consumes the same `PriorGroupProfiles` allocation borrowed by
   final commitment and checks it against the ordered committed claims.
 - Reordered, altered, unknown, or undersized profiles reject.

@@ -30,7 +30,7 @@ fn dense_group_commit_freezes_scalar_s_profile() {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect("dense group commit");
 

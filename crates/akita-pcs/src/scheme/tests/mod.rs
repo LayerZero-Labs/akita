@@ -308,7 +308,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .unwrap();
 

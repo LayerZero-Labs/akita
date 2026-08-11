@@ -25,7 +25,7 @@ fn verify_passes_for_consistent_opening() {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .unwrap();
 
@@ -87,7 +87,7 @@ fn verify_rejects_wrong_opening() {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .unwrap();
 
@@ -257,7 +257,7 @@ fn monomial_basis_prove_verify_round_trip() {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .unwrap();
 

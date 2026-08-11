@@ -489,7 +489,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,
-                akita_prover::GroupPosition::Independent,
+                akita_prover::GroupContext::scheduler_without_prior_groups(),
             )
             .expect("precommit group");
             pre_polys_by_group.push(vec![poly]);
@@ -508,9 +508,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupPosition::Final {
-                prior_group_profiles: &prior_group_profiles,
-            },
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
+                .expect("nonempty prior group context"),
         )
         .expect("final generated-profile commitment");
 

@@ -85,7 +85,7 @@ mod non_zk_aggregated_cases {
                 &setup,
                 &polys,
                 &stack,
-                akita_prover::GroupPosition::Independent,
+                akita_prover::GroupContext::scheduler_without_prior_groups(),
             )
             .expect("grouped commit");
             let commitments = [commitment];
@@ -181,10 +181,10 @@ mod non_zk_aggregated_cases {
                 &setup,
                 &polys,
                 &stack,
-                akita_prover::GroupPosition::Independent,
+                akita_prover::GroupContext::scheduler_without_prior_groups(),
             )
             .expect("grouped commit");
-            let commitments = vec![output.committed_group];
+            let commitments = [output.committed_group];
             let hints = vec![output.hint];
 
             assert_eq!(
@@ -314,7 +314,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupPosition::Independent,
+            akita_prover::GroupContext::scheduler_without_prior_groups(),
         )
         .expect("mixed aggregated commit");
         let commitments = [commitment];

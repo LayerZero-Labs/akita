@@ -22,7 +22,7 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    CommitOutput, ComputeBackendSetup, CpuBackend, GroupPosition, OneHotIndex, OneHotPoly,
+    CommitOutput, ComputeBackendSetup, CpuBackend, GroupContext, OneHotIndex, OneHotPoly,
     SelectedProverOpeningData,
 };
 use akita_recursion_glue::AkitaJoltInputs;
@@ -245,7 +245,8 @@ fn run() -> Result<(), String> {
 
     let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout: CommittedGroupParams =
-        <Cfg as CommitmentConfig>::select_schedule_for_opening(&opening_layout).map(|row| row.schedule().root.params.final_group.commitment.clone())
+        <Cfg as CommitmentConfig>::select_schedule_for_opening(&opening_layout)
+            .map(|row| row.schedule().root.params.final_group.commitment.clone())
             .expect("layout");
     let schedule = Cfg::select_schedule_for_opening(&opening_layout).expect("proof schedule");
     let alpha_bits = D.trailing_zeros() as usize;
@@ -312,7 +313,7 @@ fn run() -> Result<(), String> {
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
-        GroupPosition::Independent,
+        GroupContext::scheduler_without_prior_groups(),
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");

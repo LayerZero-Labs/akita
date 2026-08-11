@@ -140,7 +140,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         &setup,
         &polys,
         &stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect("fp32 batched commitment");
 
@@ -268,7 +268,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &pre_setup,
         std::slice::from_ref(&pre_poly),
         &pre_stack,
-        akita_prover::GroupPosition::Independent,
+        akita_prover::GroupContext::scheduler_without_prior_groups(),
     )
     .expect("precommit");
 
@@ -319,9 +319,8 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &setup,
         std::slice::from_ref(&final_poly),
         &stack,
-        akita_prover::GroupPosition::Final {
-            prior_group_profiles: &prior_group_profiles,
-        },
+        akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
+            .expect("nonempty prior group context"),
     )
     .expect("final commitment");
 

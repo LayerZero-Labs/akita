@@ -100,7 +100,7 @@ fn run_prove<
             setup,
             std::slice::from_ref(poly),
             stack,
-            akita_prover::GroupPosition::Independent,
+            akita_prover::GroupContext::scheduler_without_prior_groups(),
         )
         .unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
