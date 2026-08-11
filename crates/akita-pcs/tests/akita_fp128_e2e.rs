@@ -58,8 +58,8 @@ use akita_prover::{
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 use common::*;
 
@@ -563,8 +563,12 @@ fn fp128_dense_monomial_basis() {
         let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let poly = make_dense_poly(NV, 0xb0b0_0000);
         let pt = random_point(NV, 0xc0de_0000);
-        let expected_opening =
-            opening_from_poly_with_basis::<{ DENSE_D }, _>(&poly, &pt, &layout, BasisMode::Monomial);
+        let expected_opening = opening_from_poly_with_basis::<{ DENSE_D }, _>(
+            &poly,
+            &pt,
+            &layout,
+            BasisMode::Monomial,
+        );
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -690,13 +694,21 @@ fn heterogeneous_group_types() {
         // Dense descriptor in catalog entry {final_nv=16, pre=[onehot(14,1), dense(15,2)]}.
         let dense_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_prover(DENSE_PRE_NV, 2).expect("dense setup");
-        let dense_prepared = CpuBackend::DEFAULT.prepare_setup(&dense_setup).expect("dense prepared");
-        let dense_stack =
-            UniformProverStack::uniform(&CpuBackend::DEFAULT, &dense_prepared, dense_setup.expanded.as_ref())
-                .expect("dense stack");
-        let (dense_commitment, dense_hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit_group(&dense_setup, &dense_polys, &dense_stack)
-                .expect("dense precommit");
+        let dense_prepared = CpuBackend::DEFAULT
+            .prepare_setup(&dense_setup)
+            .expect("dense prepared");
+        let dense_stack = UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &dense_prepared,
+            dense_setup.expanded.as_ref(),
+        )
+        .expect("dense stack");
+        let (dense_commitment, dense_hint) = AkitaCommitmentScheme::<DenseCfg>::commit_group(
+            &dense_setup,
+            &dense_polys,
+            &dense_stack,
+        )
+        .expect("dense precommit");
 
         let (final_commitment, final_hint, selection) =
             AkitaCommitmentScheme::<OneHotCfg>::commit_final_group(
