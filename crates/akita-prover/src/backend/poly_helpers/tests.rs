@@ -3,14 +3,130 @@ use super::rotated_accum::{
 };
 use super::{
     balanced_ring_decompose_fold_partitioned, decompose_ring_interleaved, fill_rotated_challenge,
-    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_scalar, sparse_mul_acc_scalar,
-    DecomposeParams,
+    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar,
+    sparse_mul_acc_pm1, sparse_mul_acc_scalar, DecomposeParams,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::CanonicalField;
 use akita_field::{Fp64, Prime128Offset275};
 use akita_types::sis::compute_num_digits_field_width;
+
+#[test]
+fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
+    use crate::backend::{DensePoly, OneHotPoly, RecursiveWitnessFlat, SparseRingPoly};
+    use akita_field::{ExtField, FpExt4, Prime32Offset99};
+    use akita_types::{prepare_opening_point, BasisMode};
+
+    type F = Prime32Offset99;
+    type E = FpExt4<F>;
+    const D: usize = 32;
+    const POSITIONS: usize = 4;
+
+    let mut point = vec![E::zero(); 8];
+    for (index, coordinate) in point[5..].iter_mut().enumerate() {
+        *coordinate = E::from_base_slice(&[
+            F::from_u64(index as u64 + 2),
+            F::from_u64(3 * index as u64 + 5),
+            F::from_u64(5 * index as u64 + 7),
+            F::from_u64(7 * index as u64 + 11),
+        ]);
+    }
+    let prepared = prepare_opening_point::<F, E, D>(
+        &point,
+        BasisMode::Lagrange,
+        POSITIONS,
+        2,
+        D.trailing_zeros() as usize,
+    )
+    .expect("valid compact opening point");
+    let multipliers = &prepared.ring_multiplier_point;
+    let subfield_multipliers = multipliers
+        .as_subfield()
+        .expect("proper extension multipliers");
+    let position_rings = multipliers
+        .materialize_position_rings::<D>()
+        .expect("valid ring dimension")
+        .expect("proper extension multipliers");
+    let fold_rings = multipliers
+        .materialize_fold_rings::<D>()
+        .expect("valid ring dimension")
+        .expect("proper extension multipliers");
+
+    let assert_output = |actual: (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>),
+                         expected_folded: Vec<CyclotomicRing<F, D>>| {
+        let expected_eval = expected_folded
+            .iter()
+            .zip(&fold_rings)
+            .fold(CyclotomicRing::zero(), |acc, (folded, weight)| {
+                acc + *folded * *weight
+            });
+        assert_eq!(actual.1, expected_folded);
+        assert_eq!(actual.0, expected_eval);
+    };
+
+    let dense = DensePoly::from_ring_coeffs::<D>(
+        (0..8)
+            .map(|ring| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                    F::from_u64((ring * D + coefficient + 1) as u64)
+                }))
+            })
+            .collect(),
+    );
+    assert_output(
+        dense
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("dense compact fold"),
+        dense.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+
+    let onehot = OneHotPoly::<F>::new(
+        D,
+        D,
+        vec![
+            Some(0),
+            Some(31),
+            None,
+            Some(5),
+            Some(17),
+            None,
+            Some(9),
+            Some(23),
+        ],
+    )
+    .expect("one-hot source");
+    assert_output(
+        onehot
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("one-hot compact fold"),
+        onehot.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+
+    let sparse = SparseRingPoly::<F>::from_signed_coeffs(
+        8,
+        D,
+        8,
+        vec![(0, 1, 1), (2, 30, -1), (4, 17, 1), (7, 31, -1)],
+    )
+    .expect("sparse-ring source");
+    assert_output(
+        sparse
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("sparse-ring compact fold"),
+        sparse.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+
+    let digits = (0..8 * D).map(|index| (index % 7) as i8 - 3).collect();
+    let witness = RecursiveWitnessFlat::from_i8_digits(digits);
+    let suffix = witness.view::<F, D>().expect("suffix source");
+    assert_output(
+        suffix
+            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
+            .expect("suffix compact fold"),
+        suffix.fold_blocks_ring(&position_rings, POSITIONS),
+    );
+}
 
 /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
 /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /
@@ -75,6 +191,33 @@ fn sparse_mul_acc_i16_simd_matches_scalar() {
 }
 
 #[test]
+fn prepared_pm1_kernels_match_generic_sparse_accumulation() {
+    const D: usize = 256;
+    let positive = vec![0, 17, 61, 128, 251];
+    let negative = vec![3, 29, 97, 191, 255];
+    let challenge = SparseChallenge {
+        positions: positive.iter().chain(&negative).copied().collect(),
+        coeffs: std::iter::repeat_n(1, positive.len())
+            .chain(std::iter::repeat_n(-1, negative.len()))
+            .collect(),
+    };
+
+    let i8_plane = std::array::from_fn(|index| ((index * 17) % 127) as i8 - 63);
+    let mut expected_i8 = [0i32; D];
+    sparse_mul_acc(&i8_plane, &challenge, &mut expected_i8);
+    let mut actual_i8 = [0i32; D];
+    sparse_mul_acc_pm1(&i8_plane, &positive, &negative, &mut actual_i8);
+    assert_eq!(actual_i8, expected_i8);
+
+    let i16_plane = std::array::from_fn(|index| ((index * 509) % 1024) as i16 - 512);
+    let mut expected_i16 = [0i32; D];
+    sparse_mul_acc_i16(&i16_plane, &challenge, &mut expected_i16);
+    let mut actual_i16 = [0i32; D];
+    sparse_mul_acc_i16_pm1(&i16_plane, &positive, &negative, &mut actual_i16);
+    assert_eq!(actual_i16, expected_i16);
+}
+
+#[test]
 #[should_panic]
 fn sparse_mul_acc_rejects_out_of_range_challenge_before_dispatch() {
     const D: usize = 64;
@@ -107,6 +250,76 @@ fn large_basis_partitioned_fold_preserves_i16_digits() {
         SparseChallenge {
             positions: vec![3, 19, 91].into(),
             coeffs: vec![-1, 2, 1].into(),
+        },
+    ];
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let threshold =
+        akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
+    let params = DecomposeParams {
+        threshold,
+        q,
+        mask: (1i128 << log_basis) - 1,
+        half_b: 1i128 << (log_basis - 1),
+        b_val: 1i128 << log_basis,
+        log_basis,
+        overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+    };
+
+    let actual = balanced_ring_decompose_fold_partitioned(
+        &rings,
+        &challenges,
+        POSITIONS,
+        num_digits,
+        &params,
+    );
+    let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
+    for (block, challenge) in challenges.iter().enumerate() {
+        for position in 0..POSITIONS {
+            let digits = rings[block * POSITIONS + position]
+                .balanced_decompose_pow2_i16(num_digits, log_basis);
+            for digit in 0..num_digits {
+                sparse_mul_acc_i16_scalar(
+                    &digits[digit],
+                    challenge,
+                    &mut expected[position * num_digits + digit],
+                );
+            }
+        }
+    }
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn large_basis_d64_chunks_ring_and_falls_back_for_oversized_term() {
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    const POSITIONS: usize = 2;
+    let log_basis = 11;
+    let num_digits = compute_num_digits_field_width(128, log_basis);
+    let rings = (0..4)
+        .map(|ring| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                F::from_canonical_u128_reduced(((ring * D + coefficient) as u128 + 1) * 2053)
+            }))
+        })
+        .collect::<Vec<_>>();
+    let challenges = vec![
+        SparseChallenge {
+            positions: (0..41).map(|index| ((index * 13) % D) as u32).collect(),
+            coeffs: (0usize..41)
+                .map(|index| {
+                    let magnitude = if index < 31 { 1 } else { 2 };
+                    if index.is_multiple_of(2) {
+                        magnitude
+                    } else {
+                        -magnitude
+                    }
+                })
+                .collect(),
+        },
+        SparseChallenge {
+            positions: vec![7].into(),
+            coeffs: vec![127].into(),
         },
     ];
     let q = (-F::one()).to_canonical_u128() + 1;

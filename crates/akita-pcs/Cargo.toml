@@ -174,6 +174,10 @@ name = "root_kernels"
 harness = false
 
 [[bench]]
+name = "decompose_fold"
+harness = false
+
+[[bench]]
 name = "digit_range"
 harness = false
 

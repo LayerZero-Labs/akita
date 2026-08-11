@@ -172,10 +172,10 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
-        plan.validate(blocks.num_live_blocks())?;
+        plan.validate::<D>(blocks.num_live_blocks())?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -186,15 +186,12 @@ where
                 position_weights,
                 num_positions_per_block,
             ),
-            OpeningFoldPlan::Ring {
-                live_block_weights,
-                position_weights,
+            OpeningFoldPlan::Subfield {
+                multipliers,
                 num_positions_per_block,
-            } => source.poly.evaluate_and_fold_ring::<D>(
-                live_block_weights,
-                position_weights,
-                num_positions_per_block,
-            ),
+            } => source
+                .poly
+                .evaluate_and_fold_subfield::<D>(multipliers, num_positions_per_block)?,
         };
         Ok(OpeningFoldOutput { eval, folded })
     }

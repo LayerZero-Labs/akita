@@ -46,6 +46,7 @@ pub use batch::{
     folded_root_supports_opening_shape, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
     validate_batched_inputs, PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    SubfieldMultiplierOpeningPoint,
 };
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,

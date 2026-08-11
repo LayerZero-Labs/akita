@@ -1,14 +1,14 @@
 use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
 use super::kernels::{
-    OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
-    RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel, RootCommitKernel,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use super::runtime_capabilities::{
     RootProveFlowBackend, RuntimeOpeningProveBackendFor, RuntimeRecursiveWitnessProveBackend,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
-use crate::backend::{RecursiveFoldSource, RingSwitchQuotientView, RingSwitchRelationView};
+use crate::backend::{RecursiveFoldSource, RingSwitchRelationView};
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
@@ -225,10 +225,9 @@ where
 {
 }
 
-/// Ring-switch cluster capability: row mat-vecs plus source-typed relation/quotient kernels.
+/// Ring-switch cluster capability for the source-typed relation kernel.
 pub trait RingSwitchProveBackend<F, const D: usize>:
     for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
-    + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>
 where
     F: FieldCore + CanonicalField,
 {
@@ -237,8 +236,7 @@ where
 impl<F, const D: usize, B> RingSwitchProveBackend<F, D> for B
 where
     F: FieldCore + CanonicalField,
-    B: for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>
-        + for<'a> RingSwitchQuotientKernel<RingSwitchQuotientView<'a, D>, F, D>,
+    B: for<'a> RingSwitchRelationKernel<RingSwitchRelationView<'a, D>, F, D>,
 {
 }
 

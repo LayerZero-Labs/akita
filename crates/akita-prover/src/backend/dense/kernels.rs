@@ -52,7 +52,7 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         let num_positions_per_block = plan.num_positions_per_block();
         if num_positions_per_block == 0 {
@@ -65,7 +65,7 @@ where
             .ring_coeffs::<D>()?
             .len()
             .div_ceil(num_positions_per_block);
-        plan.validate(num_live_blocks)?;
+        plan.validate::<D>(num_live_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -76,15 +76,12 @@ where
                 position_weights,
                 num_positions_per_block,
             ),
-            OpeningFoldPlan::Ring {
-                live_block_weights,
-                position_weights,
+            OpeningFoldPlan::Subfield {
+                multipliers,
                 num_positions_per_block,
-            } => source.poly.evaluate_and_fold_ring(
-                live_block_weights,
-                position_weights,
-                num_positions_per_block,
-            ),
+            } => source
+                .poly
+                .evaluate_and_fold_subfield(multipliers, num_positions_per_block)?,
         };
         Ok(OpeningFoldOutput { eval, folded })
     }

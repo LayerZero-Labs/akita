@@ -2,12 +2,11 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::backend::ComputeBackendSetup;
 use crate::compute::operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchQuotientPlan, RingSwitchRelationPlan,
+    RingSwitchRelationPlan,
 };
 use crate::compute::plans::RingSwitchRelationRows;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
-use akita_algebra::CyclotomicRing;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
@@ -66,29 +65,13 @@ pub trait RingSwitchRelationKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
-    /// Fused D/B cyclic rows plus A-side quotient rows.
+    /// Fused D rows in both domains, B cyclic rows, and A-side quotient rows.
     fn relation_rows(
         &self,
         prepared: &Self::PreparedSetup,
         source: S,
         plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField;
-}
-
-/// Additional public-row quotient kernel over a borrowed quotient view `S`.
-pub trait RingSwitchQuotientKernel<S, F, const D: usize>: ComputeBackendSetup<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// A-side quotient rows for one additional public-row segment.
-    fn quotient_rows(
-        &self,
-        prepared: &Self::PreparedSetup,
-        source: S,
-        plan: RingSwitchQuotientPlan,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
     where
         F: HalvingField;
 }
@@ -106,7 +89,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError>;
 
     /// Decompose + challenge-fold step.
