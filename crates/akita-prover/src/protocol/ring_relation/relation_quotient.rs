@@ -1,8 +1,8 @@
 use super::*;
-use crate::backend::{RingSwitchQuotientView, RingSwitchRelationView};
+use crate::backend::RingSwitchRelationView;
 use crate::compute::{
-    OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
-    RingSwitchRelationKernel, RingSwitchRelationPlan, RuntimeRingSwitchProveBackend,
+    OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel, RingSwitchRelationPlan,
+    RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::ring_relation::{CompressionSourceId, CompressionWitnessMaterialization};
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
@@ -137,7 +137,7 @@ fn ring_from_flat_y<F: FieldCore, const D: usize>(
     Ok(CyclotomicRing::from_coefficients(coeffs))
 }
 
-fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
+pub(super) fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     reduced: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -227,15 +227,13 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let mut z_segments = z_centered.chunks(inner_width);
-    let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
     let relation_rows = RingSwitchRelationKernel::relation_rows(
         backend,
         prepared,
         RingSwitchRelationView {
             e_hat: &[],
             t_hat: &[],
-            z_segment: first_z_segment,
+            z_segment: z_centered,
             z_folded_centered_inf_norm: group.z_inf,
         },
         RingSwitchRelationPlan {
@@ -247,30 +245,14 @@ where
         },
     )
     .map_err(|err| AkitaError::InvalidInput(format!("A quotient rows failed: {err:?}")))?;
-    if !relation_rows.d_cyclic.is_empty()
+    if !relation_rows.d_negacyclic.is_empty()
+        || !relation_rows.d_cyclic.is_empty()
         || !relation_rows.b_cyclic.is_empty()
         || relation_rows.a_quotients.len() != n_a
     {
         return Err(AkitaError::InvalidProof);
     }
-    let mut a_quotients = relation_rows.a_quotients;
-    for z_segment in z_segments {
-        let segment_rows = RingSwitchQuotientKernel::quotient_rows(
-            backend,
-            prepared,
-            RingSwitchQuotientView {
-                z_segment,
-                z_folded_centered_inf_norm: group.z_inf,
-            },
-            RingSwitchQuotientPlan { n_a },
-        )?;
-        if segment_rows.len() != n_a {
-            return Err(AkitaError::InvalidProof);
-        }
-        for (dst, src) in a_quotients.iter_mut().zip(segment_rows) {
-            *dst += src;
-        }
-    }
+    let a_quotients = relation_rows.a_quotients;
 
     let consistency_z_quotient = if ring_multiplier_point.is_constant() {
         CyclotomicRing::<F, D>::zero()
@@ -321,7 +303,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B>(
     groups: &[PreparedRingSwitchGroup<'_, F>],
     group_ring_multiplier_points: &[&RingMultiplierOpeningPoint<F>],
     group_challenges: &[Challenges],
-    e_hat_concat: &DigitBlocks,
+    d_quotients: &RingVec<F>,
     y: &RingVec<F>,
     compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<RelationQuotientOutput<F>, AkitaError>
@@ -586,6 +568,7 @@ where
                     AkitaError::InvalidInput(format!("B quotient rows failed: {err:?}"))
                 })?;
                 if b_rows.b_cyclic.len() != n_b
+                    || !b_rows.d_negacyclic.is_empty()
                     || !b_rows.d_cyclic.is_empty()
                     || !b_rows.a_quotients.is_empty()
                 {
@@ -616,61 +599,18 @@ where
         let d_end = y_offset
             .checked_add(d_coeff_len)
             .ok_or(AkitaError::InvalidProof)?;
-        let recomposed_d = if let Some(compression) = compression {
-            RingVec::from_coeffs(
-                compression
-                    .source(CompressionSourceId::Opening)?
-                    .witness
-                    .stages()
-                    .first()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .recompose::<F>()?,
-            )
-        } else {
-            RingVec::from_coeffs(
-                y.coeffs()
-                    .get(y_offset..d_end)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .to_vec(),
-            )
-        };
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             rhs_layout.opening_ring_dim,
             |D_D| {
-                let d_rows = RingSwitchRelationKernel::relation_rows(
-                    backend,
-                    prepared,
-                    RingSwitchRelationView {
-                        e_hat: e_hat_concat.typed_planes::<D_D>()?,
-                        t_hat: &[],
-                        z_segment: &[],
-                        z_folded_centered_inf_norm: 0,
-                    },
-                    RingSwitchRelationPlan {
-                        n_d: n_d_active,
-                        n_b: 0,
-                        n_a: 0,
-                        log_basis_open: lp.shared_d_digit_log_basis(),
-                        log_basis_outer: lp.shared_d_digit_log_basis(),
-                    },
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!("D quotient rows failed: {err:?}"))
-                })?;
-                if d_rows.d_cyclic.len() != n_d_active
-                    || !d_rows.b_cyclic.is_empty()
-                    || !d_rows.a_quotients.is_empty()
-                {
+                let d_rows = d_quotients.as_ring_slice::<D_D>()?;
+                if d_rows.len() != n_d_active {
                     return Err(AkitaError::InvalidProof);
                 }
-                for (d_idx, cyclic) in d_rows.d_cyclic.iter().enumerate() {
+                for (d_idx, quotient) in d_rows.iter().enumerate() {
                     let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
-                    let reduced = ring_from_flat_y::<F, D_D>(&recomposed_d, d_idx * D_D)?;
-                    result[row_idx] = Some(RelationQuotientOutput::row_from_ring(
-                        quotient_from_cyclic_and_reduced(cyclic, &reduced),
-                    ));
+                    result[row_idx] = Some(RelationQuotientOutput::row_from_ring(*quotient));
                 }
                 Ok::<(), AkitaError>(())
             }

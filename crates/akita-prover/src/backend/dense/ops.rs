@@ -19,7 +19,10 @@ use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_types::{embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding};
+use akita_types::{
+    embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding,
+    SubfieldMultiplierOpeningPoint,
+};
 
 impl<F> DensePoly<F>
 where
@@ -42,7 +45,7 @@ where
                 let block = &coeffs[start..end];
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (b_j, &a_j) in block.iter().zip(scalars.iter()) {
-                    acc += b_j.scale(&a_j);
+                    b_j.scale_accumulate_into(&mut acc, a_j);
                 }
                 acc
             })
@@ -85,15 +88,18 @@ where
         )
     }
 
-    pub(crate) fn evaluate_and_fold_ring<const D: usize>(
+    pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        live_block_weights: &[CyclotomicRing<F, D>],
-        position_weights: &[CyclotomicRing<F, D>],
+        multipliers: &SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(position_weights, num_positions_per_block),
-            live_block_weights,
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        let position_weights = multipliers.materialize_position_rings::<D>()?;
+        let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
+        Ok(
+            crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
+                self.fold_blocks_ring(&position_weights, num_positions_per_block),
+                &live_block_weights,
+            ),
         )
     }
 
@@ -271,11 +277,12 @@ where
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                cached_digit_decompose_fold_partitioned::<D>(
+                cached_digit_decompose_fold_partitioned::<F, D>(
                     digit_planes,
                     challenges,
                     num_positions_per_block,
                     num_digits,
+                    log_basis,
                 )
             };
             let modulus = (-F::one()).to_canonical_u128() + 1;

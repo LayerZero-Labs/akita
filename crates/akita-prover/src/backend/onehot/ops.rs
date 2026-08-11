@@ -1,4 +1,6 @@
-use super::fold::{fold_onehot_block, fold_onehot_block_ring};
+#[cfg(test)]
+use super::fold::fold_onehot_block_ring;
+use super::fold::{fold_onehot_block, fold_onehot_block_subfield};
 use super::*;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
@@ -234,14 +236,14 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotView<'_, F, D, I>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         // Count-only validation: building (and caching) every block here
         // would defeat the lazy per-block folds below.
         let num_live_blocks = source
             .poly
             .num_live_blocks_for(D, plan.num_positions_per_block())?;
-        plan.validate(num_live_blocks)?;
+        plan.validate::<D>(num_live_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -252,15 +254,12 @@ where
                 position_weights,
                 num_positions_per_block,
             ),
-            OpeningFoldPlan::Ring {
-                live_block_weights,
-                position_weights,
+            OpeningFoldPlan::Subfield {
+                multipliers,
                 num_positions_per_block,
-            } => source.poly.evaluate_and_fold_ring::<D>(
-                live_block_weights,
-                position_weights,
-                num_positions_per_block,
-            ),
+            } => source
+                .poly
+                .evaluate_and_fold_subfield::<D>(multipliers, num_positions_per_block)?,
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -405,6 +404,7 @@ where
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
@@ -413,6 +413,26 @@ where
         for_each_block_source!(self, num_positions_per_block, |entries| {
             fold_onehot_block_ring(entries, scalars, num_positions_per_block)
         })
+    }
+
+    pub(crate) fn fold_blocks_subfield<const D: usize>(
+        &self,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
+        num_positions_per_block: usize,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let (num_rings, num_live_blocks) = self.view_layout(D, num_positions_per_block)?;
+        cfg_into_iter!(0..num_live_blocks)
+            .map(|block_idx| {
+                let ring_start = block_idx * num_positions_per_block;
+                let ring_end = (ring_start + num_positions_per_block).min(num_rings);
+                fold_onehot_block_subfield(
+                    self.onehot_k,
+                    &self.indices,
+                    ring_start..ring_end,
+                    multipliers,
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
@@ -427,15 +447,14 @@ where
         )
     }
 
-    pub(crate) fn evaluate_and_fold_ring<const D: usize>(
+    pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        live_block_weights: &[CyclotomicRing<F, D>],
-        position_weights: &[CyclotomicRing<F, D>],
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(position_weights, num_positions_per_block),
-            live_block_weights,
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_subfield(
+            self.fold_blocks_subfield::<D>(multipliers, num_positions_per_block)?,
+            multipliers,
         )
     }
 

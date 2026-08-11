@@ -70,12 +70,13 @@ where
                 "rectangular setup-product dimensions are invalid".into(),
             ));
         }
-        let required_source_len = required_rows
+        let source_len = index_factor
+            .len()
             .checked_mul(coefficient_factor.len())
             .ok_or_else(|| AkitaError::InvalidSetup("setup source length overflow".into()))?;
-        if setup.len() < required_source_len {
+        if setup.len() < source_len {
             return Err(AkitaError::InvalidSize {
-                expected: required_source_len,
+                expected: source_len,
                 actual: setup.len(),
             });
         }
@@ -253,9 +254,6 @@ where
         .entered();
         self.index_table = Some(
             EvaluationTable::from_multilinear_evaluation_fn(self.row_capacity, |setup_index| {
-                if setup_index >= self.required_rows {
-                    return E::zero();
-                }
                 let start = setup_index * self.coefficient_len;
                 eval_flat_ring_at_pows_fast(
                     &self.setup[start..start + self.coefficient_len],
@@ -376,24 +374,24 @@ mod tests {
 
     fn dense_term(
         setup: &[F],
-        required_rows: usize,
+        _required_rows: usize,
         row_capacity: usize,
         coefficient_len: usize,
         index_factor: Vec<F>,
         coefficient_factor: Vec<F>,
     ) -> FactoredProductTerm<F> {
         let mut table = vec![F::zero(); row_capacity * coefficient_len];
-        table[..required_rows * coefficient_len]
-            .copy_from_slice(&setup[..required_rows * coefficient_len]);
+        table.copy_from_slice(&setup[..row_capacity * coefficient_len]);
         FactoredProductTerm::new_dense(table, index_factor, coefficient_factor)
             .expect("dense setup product")
     }
 
     fn assert_round_parity(required_rows: usize, row_capacity: usize, coefficient_len: usize) {
-        let setup = setup_source(required_rows, coefficient_len);
-        let index_factor = (0..row_capacity)
+        let setup = setup_source(row_capacity, coefficient_len);
+        let mut index_factor = (0..row_capacity)
             .map(|index| scalar((index * 13 + 3) as u64))
             .collect::<Vec<_>>();
+        index_factor[required_rows..].fill(F::zero());
         let coefficient_factor = scalar_powers(scalar(7), coefficient_len).to_vec();
         let mut dense = dense_term(
             &setup,
@@ -464,12 +462,13 @@ mod tests {
         let required_rows = 13;
         let row_capacity = 16;
         let coefficient_len = 128;
-        let setup = (0..required_rows * coefficient_len)
+        let setup = (0..row_capacity * coefficient_len)
             .map(|index| Base::from_u64(((index * 17 + index / coefficient_len * 5) % 251) as u64))
             .collect::<Vec<_>>();
-        let index_factor = (0..row_capacity)
+        let mut index_factor = (0..row_capacity)
             .map(|index| ext((index * 13 + 3) as u64))
             .collect::<Vec<_>>();
+        index_factor[required_rows..].fill(Ext::zero());
         let coefficient_factor = scalar_powers(ext(7), coefficient_len).to_vec();
         let mut dense_table = vec![Ext::zero(); row_capacity * coefficient_len];
         for (destination, &source) in dense_table.iter_mut().zip(&setup) {

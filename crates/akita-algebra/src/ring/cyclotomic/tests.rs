@@ -80,6 +80,18 @@ fn shift_scale_accumulate_into_matches_scaled_negacyclic_shift() {
 }
 
 #[test]
+fn scale_accumulate_into_matches_separate_scale_and_add() {
+    let mut rng = StdRng::seed_from_u64(0x1357_2468);
+    let source = CyclotomicRing::<F128, D>::random(&mut rng);
+    let initial = CyclotomicRing::<F128, D>::random(&mut rng);
+    for scale in [F128::zero(), F128::one(), -F128::one(), F128::from_u64(19)] {
+        let mut actual = initial;
+        source.scale_accumulate_into(&mut actual, scale);
+        assert_eq!(actual, initial + source.scale(&scale));
+    }
+}
+
+#[test]
 fn wide_shift_accumulate_matches_narrow_fp64() {
     let mut rng = StdRng::seed_from_u64(0x1234);
     let src = CyclotomicRing::<F64, D>::random(&mut rng);

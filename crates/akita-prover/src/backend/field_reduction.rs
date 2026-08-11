@@ -243,7 +243,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
@@ -560,7 +560,7 @@ mod tests {
             DensePoly::from_field_evals(
                 7,
                 D,
-                &(0..128)
+                (0..128)
                     .map(|i| F::from_canonical_u128_reduced(i + 1))
                     .collect::<Vec<_>>(),
             )
@@ -568,7 +568,7 @@ mod tests {
             DensePoly::from_field_evals(
                 7,
                 D,
-                &(0..128)
+                (0..128)
                     .map(|i| F::from_canonical_u128_reduced(3 * i + 7))
                     .collect::<Vec<_>>(),
             )

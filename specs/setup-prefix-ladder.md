@@ -126,18 +126,13 @@ opening integration PRs.
 
 ### Design Note: Prefix Contents and Cache Reuse
 
-There are two different setup-prefix commitment policies with different cache
-behavior. A reusable ladder commits full power-of-two prefixes
-`S[0..N_prefix]`, so one artifact can serve any active footprint up to that
-prefix size. An exact selected-slot policy commits `S[0..natural_len]` followed
-by zeros up to `N_prefix`; that object is cheaper only if the commitment/opening
-backend exploits the zero tail, and it is specific to `natural_len`.
-
-The current CPU path commits the padded dense block shape, so zero-padding is a
-semantic choice, not a preprocessing speedup. Exact zero-padded selected slots
-must include `natural_len` in the slot identity and transcript binding. A
-reusable `FullLadder` should instead commit full power-of-two setup prefixes and
-make inactive coordinates contribute zero through setup-product weights.
+The old exact selected-slot policy committed `S[0..natural_len]` followed by
+zeros up to `N_prefix`. That policy is superseded by
+[`full-setup-prefix-compact-tail-weights.md`](full-setup-prefix-compact-tail-weights.md).
+Selected slots now commit the actual full power-of-two prefix
+`S[0..N_prefix]`; `natural_len` remains in the slot identity because it defines
+the active setup-index weight support. Inactive coordinates contribute zero
+through setup-product weights, not through synthesized commitment contents.
 
 ## Design
 
@@ -195,8 +190,8 @@ and two-group suffix transition are specified in
 
 Setup construction only materializes slots for compatible folds. Stage-3 prover
 and verifier both recompute the same candidate id from the same setup seed,
-`D_setup`, padded prefix length, and prefix commitment params digest. If the
-slot exists and covers the natural length, they use the padded prefix evaluation
+`D_setup`, full-prefix length, and prefix commitment params digest. If the
+slot exists and covers the active support, they use the full-prefix evaluation
 length. Otherwise they use the full setup matrix length.
 
 This fallback is intentionally permissive for this PR because the planner does

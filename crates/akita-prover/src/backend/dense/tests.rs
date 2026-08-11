@@ -69,3 +69,12 @@ fn dense_tensor_opening_methods_match_flat_reference() {
     let got_packed = poly.tensor_packed_extension_evals::<E, D>().unwrap();
     assert_eq!(got_packed, expected_packed);
 }
+
+#[test]
+fn dense_constructor_reuses_owned_evaluation_buffer() {
+    const D: usize = 64;
+    let evals = (0..256).map(F::from_u64).collect::<Vec<_>>();
+    let allocation = evals.as_ptr();
+    let poly = DensePoly::<F>::from_field_evals(8, D, evals).unwrap();
+    assert_eq!(poly.field_coeffs().as_ptr(), allocation);
+}

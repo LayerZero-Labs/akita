@@ -312,6 +312,17 @@ def parse_kvs(line: str) -> dict[str, str]:
     return out
 
 
+def is_info_event(line: str, event: str) -> bool:
+    """Match an INFO event with or without tracing span prefixes."""
+    return (
+        re.search(
+            rf"\bINFO\s+(?:[^:]+:\s*)*{re.escape(event)}(?:\s|$)",
+            line,
+        )
+        is not None
+    )
+
+
 def parse_witness_groups(value: str | None) -> list[dict[str, object]]:
     if not value:
         return []
@@ -810,7 +821,7 @@ def extract_summary(
         elif "profile verification start" in line and kvs.get("label") == mode:
             active_verify_mode = kvs["verify_mode"].replace("_", " ")
             summary["verification_modes"] = "multi_and_single"
-        elif " INFO setup sizes" in line and kvs.get("label") == mode:
+        elif is_info_event(line, "setup sizes") and kvs.get("label") == mode:
             setup_vector_bytes = int(kvs["setup_vector_bytes"])
             summary["setup_vector_bytes"] = setup_vector_bytes
             if "num_setup_field_elements" in kvs:
@@ -829,7 +840,7 @@ def extract_summary(
                 num_setup_field_elements = setup_vector_bytes // field_bytes
             summary["num_setup_field_elements"] = num_setup_field_elements
             summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
-        elif " INFO verifier NTT cache size" in line and kvs.get("label") == mode:
+        elif is_info_event(line, "verifier NTT cache size") and kvs.get("label") == mode:
             summary["verifier_ntt_cache_bytes"] = int(kvs["verifier_ntt_cache_bytes"])
         elif "CRT NTT profile" in line and kvs.get("label") == mode:
             summary["crt_profile"] = kvs["crt_profile"]
@@ -841,13 +852,13 @@ def extract_summary(
             summary["max_i8_log_basis"] = int(kvs["max_i8_log_basis"])
             summary["balanced_digit_safe_width"] = int(kvs["balanced_digit_safe_width"])
             summary["raw_i8_safe_width"] = int(kvs["raw_i8_safe_width"])
-        elif " INFO setup_expand" in line and kvs.get("label") == mode:
+        elif is_info_event(line, "setup_expand") and kvs.get("label") == mode:
             summary["setup_expand_s"] = float(kvs["elapsed_s"])
-        elif " INFO backend_prepare" in line and kvs.get("label") == mode:
+        elif is_info_event(line, "backend_prepare") and kvs.get("label") == mode:
             summary["backend_prepare_s"] = float(kvs["elapsed_s"])
-        elif " INFO setup" in line and kvs.get("label") == mode:
+        elif is_info_event(line, "setup") and kvs.get("label") == mode:
             summary["setup_s"] = float(kvs["elapsed_s"])
-        elif " INFO commit" in line and kvs.get("label") == mode:
+        elif is_info_event(line, "commit") and kvs.get("label") == mode:
             summary["commit_s"] = float(kvs["elapsed_s"])
         elif "one hot commit schedule" in line:
             onehot_commit_schedules.append(
@@ -868,7 +879,7 @@ def extract_summary(
             summary["prove_akita_s"] = float(kvs["elapsed_s"])
             if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
-        elif " INFO prove" in line and kvs.get("label") == mode:
+        elif is_info_event(line, "prove") and kvs.get("label") == mode:
             summary["prove_total_s"] = float(kvs["elapsed_s"])
         elif "akita verify complete" in line or "akita batched verify complete" in line:
             key = (

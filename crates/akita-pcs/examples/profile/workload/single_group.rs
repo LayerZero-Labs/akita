@@ -12,6 +12,7 @@ use crate::report::{
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::CommitmentConfig;
+use akita_field::parallel::*;
 use akita_field::unreduced::{
     HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo,
 };
@@ -34,7 +35,7 @@ use akita_types::{
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use std::time::Instant;
 
 #[allow(clippy::too_many_arguments)]
@@ -263,17 +264,34 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let len = 1usize << nv;
     let decomp = Cfg::decomposition();
     let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
-    let evals: Vec<FF> = if decomp.log_commit_bound >= 128 {
-        (0..len)
-            .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect()
-    } else {
-        (0..len)
-            .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
-            .collect()
+    let evals: Vec<FF> = {
+        let _span = tracing::info_span!("profile_dense_generate_evals", len).entered();
+        if decomp.log_commit_bound >= 128 {
+            cfg_into_iter!(0..len)
+                .map(|index| {
+                    let lo = splitmix64(0xbeef_cafe_u64.wrapping_add(2 * index as u64));
+                    let hi = splitmix64(0xbeef_cafe_u64.wrapping_add(2 * index as u64 + 1));
+                    FF::from_canonical_u128_reduced(u128::from(lo) | (u128::from(hi) << 64))
+                })
+                .collect()
+        } else {
+            let mask = (2 * half_bound - 1) as u64;
+            cfg_into_iter!(0..len)
+                .map(|index| {
+                    let sampled = (splitmix64(0xbeef_cafe_u64.wrapping_add(index as u64)) & mask)
+                        as i64
+                        - half_bound;
+                    FF::from_i64(sampled)
+                })
+                .collect()
+        }
     };
-    let poly = DensePoly::<FF>::from_field_evals(nv, D, &evals).unwrap();
-    let opening =
+    let poly = {
+        let _span = tracing::info_span!("profile_dense_construct_poly").entered();
+        DensePoly::<FF>::from_field_evals(nv, D, evals).unwrap()
+    };
+    let opening = {
+        let _span = tracing::info_span!("profile_dense_compute_opening").entered();
         if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&original_pt) {
             Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
                 &poly,
@@ -282,8 +300,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
                 BasisMode::Lagrange,
             ))
         } else {
-            dense_lagrange_opening_from_evals::<FF, Cfg::ExtField>(&evals, &original_pt)
-        };
+            dense_lagrange_opening_from_evals::<FF, Cfg::ExtField>(
+                &poly.field_coeffs()[..len],
+                &original_pt,
+            )
+        }
+    };
     let t0 = Instant::now();
     let setup =
         AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
@@ -333,6 +355,14 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         .shared_ntt_cache_metrics()
         .expect("post-execution setup NTT cache metrics");
     assert_profile_ntt_cache_did_not_grow(&prepared_ntt_metrics, &post_execution_ntt_metrics);
+}
+
+#[inline]
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
