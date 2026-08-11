@@ -196,6 +196,9 @@ out evaluation generation and expected-opening computation. This is profile
 harness work, not PCS setup, commit, prove, or verify time. The Perfetto root
 span includes statement preparation and both verifier runs, so protocol
 comparisons should use the named phase spans instead of root wall time.
+The report requires this metric from the current binary. An interleaved merge
+base built before the metric was introduced may omit it; that baseline remains
+valid and renders the unavailable phase as an em dash.
 
 For extension-valued dense points, expected-opening preparation uses the same
 checked split-tensor contraction primitive as the dense backend. It streams the

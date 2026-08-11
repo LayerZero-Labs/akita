@@ -627,11 +627,15 @@ def require_int(summary: dict[str, object], key: str) -> int:
     return int(value)
 
 
-def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
+def missing_required_run_metrics(
+    summary: dict[str, object], require_current_metrics: bool = True
+) -> list[str]:
     missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
-    if str(summary.get("mode", "")).startswith("dense_") and summary.get(
-        "statement_prepare_s"
-    ) is None:
+    if (
+        require_current_metrics
+        and str(summary.get("mode", "")).startswith("dense_")
+        and summary.get("statement_prepare_s") is None
+    ):
         missing.append("statement_prepare_s")
     if (
         summary.get("verification_modes") == "multi_and_single"
@@ -1127,7 +1131,10 @@ def extract_summary(
 
 
 def run_benchmark_case(
-    binary: str, output_dir: pathlib.Path, case: BenchmarkCaseSpec
+    binary: str,
+    output_dir: pathlib.Path,
+    case: BenchmarkCaseSpec,
+    require_current_metrics: bool = True,
 ) -> tuple[dict[str, object], int]:
     env = os.environ.copy()
     env["AKITA_MODE"] = case.mode
@@ -1172,7 +1179,7 @@ def run_benchmark_case(
     }
 
     if return_code == 0:
-        missing = missing_required_run_metrics(summary)
+        missing = missing_required_run_metrics(summary, require_current_metrics)
         if missing:
             summary["error"] = (
                 "profile run exited successfully but did not emit required metrics: "
@@ -1338,6 +1345,7 @@ class ScheduledRun:
     case: BenchmarkCaseSpec
     kind: str  # "warmup" or "measured"
     run_index: int  # 0 for warm-ups, 1..runs for measured
+    require_current_metrics: bool = True
 
 
 def plan_case_runs(
@@ -1346,18 +1354,35 @@ def plan_case_runs(
     case: BenchmarkCaseSpec,
     runs: int,
     warmups: int,
+    require_current_metrics: bool = True,
 ) -> list[ScheduledRun]:
     """All executions of one case for one binary, in execution order."""
     case_dir = summary_dir / case.case_id
     schedule = [
         ScheduledRun(
-            binary, summary_dir, case_dir / f"warmup-{warmup_index}", case, "warmup", 0
+            binary,
+            summary_dir,
+            case_dir / f"warmup-{warmup_index}",
+            case,
+            "warmup",
+            0,
+            require_current_metrics,
         )
         for warmup_index in range(1, warmups + 1)
     ]
     for run_index in range(1, runs + 1):
         run_dir = case_dir if runs == 1 else case_dir / f"run-{run_index}"
-        schedule.append(ScheduledRun(binary, summary_dir, run_dir, case, "measured", run_index))
+        schedule.append(
+            ScheduledRun(
+                binary,
+                summary_dir,
+                run_dir,
+                case,
+                "measured",
+                run_index,
+                require_current_metrics,
+            )
+        )
     return schedule
 
 
@@ -1379,7 +1404,9 @@ def execute_schedule(
     for run in schedule:
         if run.case.case_id in failed_cases:
             continue
-        summary, return_code = run_benchmark_case(run.binary, run.run_dir, run.case)
+        summary, return_code = run_benchmark_case(
+            run.binary, run.run_dir, run.case, run.require_current_metrics
+        )
         summary["run_index"] = run.run_index
         if return_code != 0:
             failed_cases.add(run.case.case_id)
@@ -1468,18 +1495,28 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     if bool(args.baseline_binary) != bool(args.baseline_output_dir):
         raise ValueError("--baseline-binary and --baseline-output-dir must be set together")
-    binaries: list[tuple[str, pathlib.Path]] = [(args.binary, output_dir)]
+    # The merge-base binary may predate metrics introduced by this report
+    # schema. Keep its older metrics comparable without weakening validation
+    # for the current binary.
+    binaries: list[tuple[str, pathlib.Path, bool]] = [(args.binary, output_dir, True)]
     if args.baseline_binary:
         baseline_dir = pathlib.Path(args.baseline_output_dir)
         baseline_dir.mkdir(parents=True, exist_ok=True)
-        binaries.append((args.baseline_binary, baseline_dir))
+        binaries.append((args.baseline_binary, baseline_dir, False))
 
     cases = configured_cases(args)
     schedule: list[ScheduledRun] = []
     for case in cases:
         plans = [
-            plan_case_runs(binary, summary_dir, case, args.runs, args.warmups)
-            for binary, summary_dir in binaries
+            plan_case_runs(
+                binary,
+                summary_dir,
+                case,
+                args.runs,
+                args.warmups,
+                require_current_metrics,
+            )
+            for binary, summary_dir, require_current_metrics in binaries
         ]
         plan_lengths = {len(plan) for plan in plans}
         if len(plan_lengths) != 1:
@@ -1492,7 +1529,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     results, overall_return_code = execute_schedule(schedule)
     write_aggregate_summaries(
-        [summary_dir for _, summary_dir in binaries],
+        [summary_dir for _, summary_dir, _ in binaries],
         cases,
         results,
         args.warmups,
