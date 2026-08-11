@@ -19,23 +19,29 @@
 //! the test is fast once compiled), ign-only (default tables, but nv is too large for CI), or
 //! both (large tables AND large nv).
 //!
+//! All `pre` cells use a 14-variable pre-group. Every ✓ cell below runs and is
+//! backed by a real generated catalog row — there are no `#[ignore]`d
+//! placeholders for missing catalog entries in this file.
+//!
 //! ```text
-//! ╔══════════╦══════════╦══════════════════════════════════╦══════════════════════════════════╗
-//! ║          ║          ║      single-chunk (sc)           ║      multi-chunk (mc)            ║
-//! ║ poly     ║ rec?     ╠══════════════╦═══════════════════╬══════════════╦═══════════════════╣
-//! ║          ║          ║    direct    ║        pre        ║    direct    ║        pre        ║
-//! ╠══════════╬══════════╬══════════════╬═══════════════════╬══════════════╬═══════════════════╣
-//! ║ Dense    ║ nonrec   ║ ✓ [14,16,  ║  NA (no combined  ║  ✓cfg [16]  ║  NA (no combined  ║
-//! ║          ║          ║   24,26]   ║  Dense schedule)  ║             ║  Dense schedule)  ║
-//! ║ Dense    ║ rec      ║      NA      ║  NA               ║      NA      ║  NA               ║
-//! ╠══════════╬══════════╬══════════════╬═══════════════════╬══════════════╬═══════════════════╣
-//! ║ OneHot   ║ nonrec   ║ ✓ [12,15,  ║  NA (no 1-poly/   ║  cfg+ign    ║  cfg+ign          ║
-//! ║          ║          ║  20,28]    ║  1-pre entry)     ║             ║                   ║
-//! ║ OneHot   ║ rec      ║  cfg+ign    ║  cfg+ign           ║  cfg+ign    ║  cfg+ign          ║
-//! ╚══════════╩══════════╩══════════════╩═══════════════════╩══════════════╩═══════════════════╝
+//! ╔══════════╦══════════╦═══════════════════════════════╦═══════════════════════════════╗
+//! ║          ║          ║      single-chunk (sc)        ║      multi-chunk (mc)         ║
+//! ║ poly     ║ rec?     ╠═══════════════╦═══════════════╬═══════════════╦═══════════════╣
+//! ║          ║          ║    direct     ║      pre      ║    direct     ║      pre      ║
+//! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
+//! ║ Dense    ║ nonrec   ║ ✓ [14,16,     ║ ✓ final=16    ║ ✓cfg [16]     ║ ✓cfg          ║
+//! ║          ║          ║    24,26]     ║               ║               ║   final=20    ║
+//! ║ Dense    ║ rec      ║      NA       ║      NA       ║      NA       ║      NA       ║
+//! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
+//! ║ OneHot   ║ nonrec   ║ ✓ [12,15,     ║ ✓ final=      ║   cfg+ign     ║   cfg+ign     ║
+//! ║          ║          ║    20,28]     ║   [16,20]     ║               ║               ║
+//! ║ OneHot   ║ rec      ║   cfg+ign     ║   cfg+ign     ║   cfg+ign     ║   cfg+ign     ║
+//! ╚══════════╩══════════╩═══════════════╩═══════════════╩═══════════════╩═══════════════╝
 //! ```
 //!
 //! Dense + recursive: no production schedule exists; those cells are permanently NA.
+//! Dense mc pre uses final_nv=20: at nv=16 the multi-chunk DP finds no
+//! multi-group schedule with the required two folds.
 //! OneHot mc nonrec:  cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
 //! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
@@ -48,6 +54,7 @@
 #![cfg(feature = "schedules-default")]
 
 mod common;
+mod matrix_drivers;
 
 use akita_config::proof_optimized::fp128;
 use akita_pcs::AkitaCommitmentScheme;
@@ -62,6 +69,7 @@ use akita_types::{
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
 use common::*;
+use matrix_drivers::*;
 
 // ============================================================================
 // matrix_test! — generic driver for fp128 (Field = ExtField = F)
@@ -159,9 +167,8 @@ macro_rules! matrix_test {
 matrix_test!(dense; fp128_dense; fp128::Dense; nvs=[14, 16, 24, 26]);
 
 // Dense × single-chunk × precommitted × non-recursive    [16]
-// Ignored: fp128::Dense catalog has no combined-schedule entries; regenerate
-// catalog with the planner to enable.
-matrix_test!(#[ignore = "no catalog entry for fp128::Dense precommitted; regenerate catalog to enable"] dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
+// Catalog row: final=(16,1) <- pre=[(14,1)].
+matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 
 // ----------------------------------------------------------------------------
 // Dense × multi-chunk × direct × non-recursive    [16]  (feature-gated)
@@ -172,8 +179,10 @@ matrix_test!(dense; fp128_dense_mc; fp128::DenseMultiChunk; nvs=[16]);
 // ----------------------------------------------------------------------------
 // Dense × multi-chunk × precommitted × non-recursive    [16]  (feature-gated)
 // ----------------------------------------------------------------------------
+// Catalog row: final=(20,1) <- pre=[(14,1)]. nv=16 has no multi-group
+// multi-chunk schedule with the required two folds, so this cell uses nv=20.
 #[cfg(feature = "schedules-fp128-dense-multi-chunk")]
-matrix_test!(dense_pre; fp128_dense_mc_pre; fp128::DenseMultiChunk; final_nvs=[16]);
+matrix_test!(dense_pre; fp128_dense_mc_pre; fp128::DenseMultiChunk; final_nvs=[20]);
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × direct × non-recursive    [12, 15, 20, 28]
@@ -181,9 +190,8 @@ matrix_test!(dense_pre; fp128_dense_mc_pre; fp128::DenseMultiChunk; final_nvs=[1
 matrix_test!(onehot; fp128_onehot; fp128::OneHot; nvs=[12, 15, 20, 28]; k=256);
 
 // OneHot × single-chunk × precommitted × non-recursive    [16, 20]
-// Ignored: catalog has no entry for a single 1-poly pre-group + 1-poly
-// final-group; all combined OneHot entries involve heterogeneous configs.
-matrix_test!(#[ignore = "no catalog entry for fp128::OneHot single-config precommitted; regenerate catalog to enable"] onehot_pre; fp128_onehot_pre; fp128::OneHot; final_nvs=[16, 20]; k=256);
+// Catalog rows: final=(16,1) and final=(20,1), both <- pre=[(14,1)].
+matrix_test!(onehot_pre; fp128_onehot_pre; fp128::OneHot; final_nvs=[16, 20]; k=256);
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × direct × recursive    (production-sized, ignored)
@@ -260,15 +268,13 @@ fn fp128_onehot_mc_pre() {
 #[test]
 fn fp128_onehot_batched() {
     fn run(nv: usize, batch_size: usize) {
-        let opening_batch = OpeningClaimsLayout::new(nv, batch_size).expect("opening batch");
-        let layout = OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let polys: Vec<_> = (0..batch_size)
             .map(|i| make_onehot_poly(nv, 0xa66e_0000 + nv as u64 * 100 + i as u64))
             .collect();
         let pt = random_point(nv, 0xf00d_0000 + nv as u64);
         let openings: Vec<F> = polys
             .iter()
-            .map(|p| opening_from_poly_for_layout(p, &pt, &layout))
+            .map(|p| onehot_opening_lagrange(p, &pt))
             .collect();
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
@@ -324,15 +330,20 @@ fn fp128_onehot_batched() {
 #[test]
 fn fp128_dense_batched() {
     fn run(nv: usize, batch_size: usize) {
-        let opening_batch = OpeningClaimsLayout::new(nv, batch_size).expect("opening batch");
-        let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-        let polys: Vec<_> = (0..batch_size)
-            .map(|i| make_dense_poly(nv, 0xd3e5_0000 + nv as u64 * 100 + i as u64))
+        let seeds: Vec<u64> = (0..batch_size)
+            .map(|i| 0xd3e5_0000 + nv as u64 * 100 + i as u64)
+            .collect();
+        let evals: Vec<Vec<F>> = seeds.iter().map(|&s| dense_field_evals(nv, s)).collect();
+        let polys: Vec<_> = evals
+            .iter()
+            .map(|e| {
+                akita_prover::DensePoly::<F>::from_field_evals(nv, DENSE_D, e).expect("dense poly")
+            })
             .collect();
         let pt = random_point(nv, 0xaaaa_0000 + nv as u64);
-        let openings: Vec<F> = polys
+        let openings: Vec<F> = evals
             .iter()
-            .map(|p| opening_from_poly_for_layout(p, &pt, &layout))
+            .map(|e| dense_opening_lagrange(e, &pt))
             .collect();
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
@@ -407,10 +418,24 @@ fn fp128_mixed_batched() {
                 .expect("mixed onehot poly")
         };
 
-        let dense_a = make_dense_poly(NV, 0x4d10_0001);
-        let dense_b = make_dense_poly(NV, 0x4d10_0002);
+        let evals_a = dense_field_evals(NV, 0x4d10_0001);
+        let evals_b = dense_field_evals(NV, 0x4d10_0002);
+        let dense_a =
+            akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals_a).expect("dense a");
+        let dense_b =
+            akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals_b).expect("dense b");
         let onehot_a = make_mixed_onehot(0x4d10_1001);
         let onehot_b = make_mixed_onehot(0x4d10_1002);
+
+        let pt = random_point(NV, 0x4d10_ffff);
+        // Independent oracles, per variant, before the polynomials are erased
+        // into `MultilinearPolynomial`.
+        let openings: Vec<F> = vec![
+            dense_opening_lagrange(&evals_a, &pt),
+            onehot_opening_lagrange(&onehot_a, &pt),
+            dense_opening_lagrange(&evals_b, &pt),
+            onehot_opening_lagrange(&onehot_b, &pt),
+        ];
 
         let polys = [
             MultilinearPolynomial::dense(dense_a),
@@ -418,11 +443,6 @@ fn fp128_mixed_batched() {
             MultilinearPolynomial::dense(dense_b),
             MultilinearPolynomial::onehot(onehot_b),
         ];
-        let pt = random_point(NV, 0x4d10_ffff);
-        let openings: Vec<F> = polys
-            .iter()
-            .map(|p| opening_from_poly_for_layout(p, &pt, &layout))
-            .collect();
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -494,7 +514,7 @@ fn fp128_onehot_oversized_setup() {
             akita_prover::OneHotPoly::<F, u8>::new(ONEHOT_K, d, indices).expect("onehot poly");
 
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
+        let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -559,16 +579,11 @@ fn fp128_dense_monomial_basis() {
     init_rayon_pool();
     run_on_large_stack(|| {
         const NV: usize = 14;
-        let opening_batch = OpeningClaimsLayout::new(NV, 1).expect("opening batch");
-        let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-        let poly = make_dense_poly(NV, 0xb0b0_0000);
+        let evals = dense_field_evals(NV, 0xb0b0_0000);
+        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals)
+            .expect("dense poly");
         let pt = random_point(NV, 0xc0de_0000);
-        let expected_opening = opening_from_poly_with_basis::<{ DENSE_D }, _>(
-            &poly,
-            &pt,
-            &layout,
-            BasisMode::Monomial,
-        );
+        let expected_opening = dense_opening_monomial(&evals, &pt);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -719,15 +734,19 @@ fn heterogeneous_group_types() {
             )
             .expect("final commit");
 
+        // The openings below come from independent oracles, so the resolved
+        // schedule is no longer needed to project them. Keep the resolution as
+        // a structural check that the heterogeneous selection binds to the
+        // two-precommit catalog entry.
         let schedule = OneHotCfg::resolve_schedule_selection(selection)
             .expect("heterogeneous schedule")
             .schedule()
             .clone();
-        let final_params = &schedule.root.params.final_group.commitment;
-        // Pre-group opening layouts come from the combined schedule so the
-        // evaluation projection matches the committed geometry exactly.
-        let onehot_pre_params = &schedule.root.params.precommitted_groups[0].commitment;
-        let dense_pre_params = &schedule.root.params.precommitted_groups[1].commitment;
+        assert_eq!(
+            schedule.root.params.precommitted_groups.len(),
+            2,
+            "heterogeneous selection must resolve to the two-precommit entry"
+        );
 
         let onehot_pre_point: Vec<F> = (0..ONEHOT_PRE_NV)
             .map(|i| F::from_u64((i + 2) as u64))
@@ -739,13 +758,11 @@ fn heterogeneous_group_types() {
             .map(|i| F::from_u64((i + 71) as u64))
             .collect();
 
-        let onehot_pre_opening =
-            opening_from_poly_for_layout(&onehot_pre, &onehot_pre_point, onehot_pre_params);
-        let dense_opening_a =
-            opening_from_poly_for_layout(&dense_a, &dense_point, dense_pre_params);
-        let dense_opening_b =
-            opening_from_poly_for_layout(&dense_b, &dense_point, dense_pre_params);
-        let final_opening = opening_from_poly_for_layout(&final_onehot, &final_point, final_params);
+        // Independent oracles for every group in the heterogeneous batch.
+        let onehot_pre_opening = onehot_opening_lagrange(&onehot_pre, &onehot_pre_point);
+        let dense_opening_a = dense_opening_lagrange(&dense_evals_a, &dense_point);
+        let dense_opening_b = dense_opening_lagrange(&dense_evals_b, &dense_point);
+        let final_opening = onehot_opening_lagrange(&final_onehot, &final_point);
 
         let onehot_pre_refs = [&MultilinearPolynomial::onehot(onehot_pre.clone())];
         let dense_refs = [
@@ -846,8 +863,6 @@ fn heterogeneous_compute_backends() {
         type Cfg = fp128::Dense;
         type Scheme = AkitaCommitmentScheme<Cfg>;
 
-        let opening_batch = OpeningClaimsLayout::new(NV, 1).expect("opening batch");
-        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
         let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals).unwrap();
 
@@ -880,7 +895,7 @@ fn heterogeneous_compute_backends() {
             .expect("commit");
 
         let pt: Vec<F> = (0..NV).map(|i| F::from_u64((i + 2) as u64)).collect();
-        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
+        let expected_opening = dense_opening_lagrange(&evals, &pt);
 
         let poly_refs = [&poly];
         let commitments = [commitment];

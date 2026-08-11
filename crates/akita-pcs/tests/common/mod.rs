@@ -20,7 +20,7 @@ pub(super) use akita_types::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupBatchStatement,
-    LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout, SetupSumcheckProof,
+    LevelParamsLike, PolynomialGroupLayout, SetupSumcheckProof,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
@@ -363,6 +363,102 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
+// ============================================================================
+// Independent opening oracles.
+//
+// These deliberately share no code with the prover.  `opening_from_poly*`
+// above reaches `OpeningFoldKernel::evaluate_and_fold` — the exact call the
+// prover uses to build its root openings — so a shared bug in point layout,
+// fold order, or the kernel itself would move the proof and the "expected"
+// value together and the round trip would still pass.
+//
+// The oracles below evaluate the multilinear extension directly from the raw
+// coefficients, with no layout, no fold plan, and no backend.  They are what
+// makes the correctness matrix a correctness matrix rather than a
+// prover/verifier agreement check.
+// ============================================================================
+
+/// Lagrange weight at a single Boolean index, straight from the definition:
+/// `w(index) = ∏_i (bit_i(index) ? point[i] : 1 - point[i])`, little-endian to
+/// match [`akita_types::lagrange_weights`].
+pub(super) fn lagrange_weight_at(point: &[F], index: usize) -> F {
+    point
+        .iter()
+        .enumerate()
+        .fold(F::one(), |acc, (bit, &coordinate)| {
+            if (index >> bit) & 1 == 1 {
+                acc * coordinate
+            } else {
+                acc * (F::one() - coordinate)
+            }
+        })
+}
+
+/// Dense multilinear opening `Σ_x eq(point, x) · evals[x]`, evaluated by
+/// folding one variable at a time.
+///
+/// Deliberately streaming rather than `Σ w_i · e_i` over a materialized
+/// `lagrange_weights` table: that table is capped at `DEFAULT_MAX_SEQUENCE_LEN`
+/// (`2^25`), which would exclude the nv=26 matrix cell outright.  Folding needs
+/// only the evaluation vector the test already owns and is exact at any nv.
+pub(super) fn dense_opening_lagrange(evals: &[F], point: &[F]) -> F {
+    assert_eq!(
+        evals.len(),
+        1usize << point.len(),
+        "dense evaluation count must be 2^|point|"
+    );
+    // Variable i occupies bit i of the index, so fold point[0] first over
+    // adjacent pairs and halve on each step.
+    let mut current = evals.to_vec();
+    for &coordinate in point {
+        let half = current.len() / 2;
+        for j in 0..half {
+            let low = current[2 * j];
+            let high = current[2 * j + 1];
+            current[j] = low + (high - low) * coordinate;
+        }
+        current.truncate(half);
+    }
+    current[0]
+}
+
+/// Dense opening in the monomial basis: `Σ_j (∏_{i ∈ bits(j)} point[i]) · e_j`.
+///
+/// Uses the tensor product directly rather than any fold plan.
+pub(super) fn dense_opening_monomial(evals: &[F], point: &[F]) -> F {
+    assert_eq!(
+        evals.len(),
+        1usize << point.len(),
+        "dense evaluation count must be 2^|point|"
+    );
+    evals
+        .iter()
+        .enumerate()
+        .fold(F::zero(), |acc, (index, &eval)| {
+            let weight = point
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| (index >> bit) & 1 == 1)
+                .fold(F::one(), |product, (_, &coordinate)| product * coordinate);
+            acc + weight * eval
+        })
+}
+
+/// One-hot multilinear opening: the sum of the Lagrange weights sitting at the
+/// hot index of each chunk.  A one-hot polynomial has coefficient 1 at
+/// `chunk * k + hot` and 0 everywhere else, so its opening collapses to a
+/// selection of weights, each computed on demand.
+pub(super) fn onehot_opening_lagrange(poly: &OneHotPoly<F, u8>, point: &[F]) -> F {
+    let k = poly.onehot_k();
+    poly.indices()
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk, hot)| {
+            hot.map(|idx| lagrange_weight_at(point, chunk * k + usize::from(idx)))
+        })
+        .fold(F::zero(), |acc, weight| acc + weight)
+}
+
 pub(super) fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
@@ -399,18 +495,18 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     out
 }
 
-fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
+pub(super) fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
     &schedule.root.params.final_group.commitment
 }
 
-fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
+pub(super) fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
     schedule
         .recursive_folds
         .iter()
         .any(|fold| fold.params.incoming_setup_prefix.is_some())
 }
 
-fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
+pub(super) fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
     proof.root.stage3_sumcheck_proof.is_some()
         || proof
             .recursive_folds
@@ -418,7 +514,7 @@ fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
             .any(|step| step.stage3_sumcheck_proof.is_some())
 }
 
-fn first_stage3_proof_mut(
+pub(super) fn first_stage3_proof_mut(
     proof: &mut AkitaBatchedProof<F, F>,
 ) -> Option<&mut SetupSumcheckProof<F>> {
     if let Some(stage3) = proof.root.stage3_sumcheck_proof.as_mut() {
@@ -428,121 +524,6 @@ fn first_stage3_proof_mut(
         .recursive_folds
         .iter_mut()
         .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
-}
-
-/// Drives the shared recursive setup-offload profile end to end: two precommitted
-/// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
-/// main group at `nv=32`, a recursive proof that offloads the setup contribution,
-/// a serialization round-trip, an honest verify, and a tampered-opening rejection.
-///
-/// Single-group recursive roundtrip: one final group, no user precommitted polynomials.
-/// Uses `RecursiveCommitmentConfig<BaseCfg>` so the proof carries a stage-3 recursive
-/// setup-sumcheck, but there are no external precommit groups in the opening claims.
-pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(transcript_domain: &'static [u8])
-where
-    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
-{
-    type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
-
-    const FINAL_NV: usize = 32;
-    const FINAL_GROUP_SIZE: usize = 2;
-
-    init_rayon_pool();
-    run_on_large_stack(move || {
-        let schedule_key =
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
-        let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule = RecursiveCommitmentConfig::<BaseCfg>::runtime_schedule(schedule_key)
-            .expect("recursive direct schedule");
-        assert!(
-            schedule_uses_setup_prefix(&schedule),
-            "recursive schedule must carry setup-prefix metadata"
-        );
-        let root_params = multi_group_root_params(&schedule);
-
-        let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, FINAL_GROUP_SIZE)
-            .expect("recursive direct setup");
-        assert!(
-            !setup.prefix_slots.is_empty(),
-            "recursive setup must precompute prefix slots"
-        );
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-
-        let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
-            .map(|i| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
-            .collect();
-        let (commitment, hint) = Recursive::<BaseCfg>::commit::<_, _>(&setup, &final_polys, &stack)
-            .expect("recursive direct commit");
-
-        let point = random_point(FINAL_NV, 0xcafe_2027_0001);
-        let openings: Vec<F> = final_polys
-            .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &point, root_params))
-            .collect();
-
-        let poly_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
-        let prover_data = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>, _>(
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                point.clone(),
-                openings.clone(),
-                commitment.clone(),
-            )
-            .expect("prover group")])
-            .expect("prover claims"),
-            vec![hint],
-            vec![&poly_refs[..]],
-        );
-        let selection = prover_data.0;
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let proof = Recursive::<BaseCfg>::batched_prove(
-            &setup,
-            prover_data,
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("recursive direct prove");
-        assert!(
-            proof_has_recursive_setup_sumcheck(&proof),
-            "recursive proof must carry stage-3 setup sumcheck evidence"
-        );
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let verifier_setup =
-            Recursive::<BaseCfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
-                .expect("verifier setup");
-        let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            point,
-            openings,
-            &commitment,
-        )
-        .expect("verifier group")])
-        .expect("verifier claims");
-        let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        Recursive::<BaseCfg>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
-        )
-        .expect("recursive direct verify");
-    });
 }
 
 /// Multi-group recursive roundtrip: two user precommitted groups plus one final group.
@@ -581,7 +562,6 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             "recursive profile must carry setup-prefix metadata"
         );
         on_schedule(&schedule);
-        let root_params = multi_group_root_params(&schedule);
 
         let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
             .expect("recursive setup");
@@ -627,21 +607,19 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         .expect("final generated-profile commitment");
 
         let point = random_point(FINAL_NV, 0xcafe_2026_0001);
+        // Independent oracles: sums of Lagrange weights at the hot indices.
         let pre_openings: Vec<Vec<F>> = pre_polys_by_group
             .iter()
             .map(|polys| {
                 polys
                     .iter()
-                    .map(|poly| {
-                        let pre_params = &root_params.precommitted_groups[0];
-                        opening_from_poly_for_layout(poly, &point[..PRE_NV], pre_params)
-                    })
+                    .map(|poly| onehot_opening_lagrange(poly, &point[..PRE_NV]))
                     .collect()
             })
             .collect();
         let final_openings: Vec<F> = final_polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &point, root_params))
+            .map(|poly| onehot_opening_lagrange(poly, &point))
             .collect();
 
         let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
@@ -801,400 +779,18 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     });
 }
 
-fn make_onehot_poly_with_d_and_k(nv: usize, d: usize, k: usize, seed: u64) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly_with_d_and_k(
+    nv: usize,
+    d: usize,
+    k: usize,
+    seed: u64,
+) -> OneHotPoly<F, u8> {
     let total_chunks = (1usize << nv) / k;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..k) as u8))
         .collect();
     OneHotPoly::<F, u8>::new(k, d, indices).expect("onehot poly")
-}
-
-pub(super) fn prove_verify_dense_roundtrip<Cfg>(nv_values: &[usize], label: &[u8])
-where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
-{
-    for &nv in nv_values {
-        let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-        let seed = 0x7e57_0000_u64 ^ nv as u64;
-        let poly = make_dense_poly(nv, seed);
-        let pt = random_point(nv, seed ^ 0xcafe_0000);
-        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
-
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
-
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .unwrap();
-        let poly_refs = [&poly];
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<Cfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let openings = [expected_opening];
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<Cfg>(&pt[..], &openings[..], &commitment),
-            BasisMode::Lagrange,
-        )
-        .unwrap_or_else(|e| panic!("verify dense nv={nv}: {e:?}"));
-    }
-}
-
-pub(super) fn prove_verify_onehot_roundtrip<Cfg>(nv_values: &[usize], k: usize, label: &[u8])
-where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
-{
-    for &nv in nv_values {
-        let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-        let d = layout.d_a();
-        let seed = 0x0bee_0000_u64 ^ nv as u64;
-        let poly = make_onehot_poly_with_d_and_k(nv, d, k, seed);
-        let pt = random_point(nv, seed ^ 0xcafe_0000);
-        let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
-
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
-
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-        )
-        .unwrap();
-        let poly_refs = [&poly];
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<Cfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let openings = [expected_opening];
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<Cfg>(&pt[..], &openings[..], &commitment),
-            BasisMode::Lagrange,
-        )
-        .unwrap_or_else(|e| panic!("verify onehot nv={nv}: {e:?}"));
-    }
-}
-
-// Pre-commit nv used by both precommitted drivers. Must exist in the precommit catalog.
-const PRE_NV: usize = 14;
-
-pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(final_nvs: &[usize], label: &[u8])
-where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
-{
-    for &final_nv in final_nvs {
-        let pre_params: CommittedGroupParams = Cfg::runtime_schedule(
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(PRE_NV, 1)),
-        )
-        .expect("pre single-group schedule")
-        .root
-        .params
-        .final_group
-        .commitment;
-
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
-
-        let pre_poly = make_dense_poly(PRE_NV, 0xd0d0_0000_u64 ^ PRE_NV as u64);
-        let (pre_commitment, pre_hint) = AkitaCommitmentScheme::<Cfg>::commit_group(
-            &setup,
-            std::slice::from_ref(&pre_poly),
-            &stack,
-        )
-        .expect("precommit");
-
-        let final_poly = make_dense_poly(final_nv, 0xd1d1_0000_u64 ^ final_nv as u64);
-        let (final_commitment, final_hint, _sel) =
-            AkitaCommitmentScheme::<Cfg>::commit_final_group(
-                &setup,
-                std::slice::from_ref(&final_poly),
-                &stack,
-                vec![pre_commitment.profile],
-            )
-            .expect("final commit");
-
-        let schedule_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(final_nv, 1),
-            precommitteds: vec![pre_commitment.profile],
-        };
-        let schedule = Cfg::runtime_schedule(schedule_key).expect("schedule");
-        let final_group_params = multi_group_root_params(&schedule);
-        let point = random_point(final_nv.max(PRE_NV), 0xcafe_0000_u64 ^ final_nv as u64);
-
-        let pre_opening = opening_from_poly_for_layout(&pre_poly, &point[..PRE_NV], &pre_params);
-        let final_opening =
-            opening_from_poly_for_layout(&final_poly, &point[..final_nv], final_group_params);
-
-        let prover_groups = vec![
-            PolynomialGroupClaims::new(
-                point[..PRE_NV].to_vec(),
-                vec![pre_opening],
-                pre_commitment.clone(),
-            )
-            .expect("pre prover group"),
-            PolynomialGroupClaims::new(
-                point[..final_nv].to_vec(),
-                vec![final_opening],
-                final_commitment.clone(),
-            )
-            .expect("final prover group"),
-        ];
-        let pre_refs = [&pre_poly];
-        let final_refs = [&final_poly];
-        let prover_data = selected_prover_data::<Cfg, _>(
-            OpeningClaims::from_groups(prover_groups).expect("prover claims"),
-            vec![pre_hint, final_hint],
-            vec![&pre_refs[..], &final_refs[..]],
-        );
-        let selection = prover_data.0;
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prover_data,
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let verifier_groups = vec![
-            PolynomialGroupClaims::new(
-                point[..PRE_NV].to_vec(),
-                vec![pre_opening],
-                &pre_commitment,
-            )
-            .expect("pre verifier group"),
-            PolynomialGroupClaims::new(
-                point[..final_nv].to_vec(),
-                vec![final_opening],
-                &final_commitment,
-            )
-            .expect("final verifier group"),
-        ];
-        let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
-        )
-        .unwrap_or_else(|e| {
-            panic!("dense precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
-        });
-    }
-}
-
-pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
-    final_nvs: &[usize],
-    k: usize,
-    label: &[u8],
-) where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
-{
-    for &final_nv in final_nvs {
-        let pre_params: CommittedGroupParams = Cfg::runtime_schedule(
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(PRE_NV, 1)),
-        )
-        .expect("pre single-group schedule")
-        .root
-        .params
-        .final_group
-        .commitment;
-        let pre_d = pre_params.d_a();
-
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
-
-        let pre_poly =
-            make_onehot_poly_with_d_and_k(PRE_NV, pre_d, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
-        let (pre_commitment, pre_hint) = AkitaCommitmentScheme::<Cfg>::commit_group(
-            &setup,
-            std::slice::from_ref(&pre_poly),
-            &stack,
-        )
-        .expect("precommit");
-
-        let schedule_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(final_nv, 1),
-            precommitteds: vec![pre_commitment.profile],
-        };
-        let schedule = Cfg::runtime_schedule(schedule_key).expect("schedule");
-        let final_group_params = multi_group_root_params(&schedule);
-        let final_d = final_group_params.d_a();
-
-        let final_poly =
-            make_onehot_poly_with_d_and_k(final_nv, final_d, k, 0x0bee_f001_u64 ^ final_nv as u64);
-        let (final_commitment, final_hint, _sel) =
-            AkitaCommitmentScheme::<Cfg>::commit_final_group(
-                &setup,
-                std::slice::from_ref(&final_poly),
-                &stack,
-                vec![pre_commitment.profile],
-            )
-            .expect("final commit");
-
-        let point = random_point(final_nv.max(PRE_NV), 0xcafe_babe_u64 ^ final_nv as u64);
-        let pre_opening = opening_from_poly_for_layout(&pre_poly, &point[..PRE_NV], &pre_params);
-        let final_opening =
-            opening_from_poly_for_layout(&final_poly, &point[..final_nv], final_group_params);
-
-        let prover_groups = vec![
-            PolynomialGroupClaims::new(
-                point[..PRE_NV].to_vec(),
-                vec![pre_opening],
-                pre_commitment.clone(),
-            )
-            .expect("pre prover group"),
-            PolynomialGroupClaims::new(
-                point[..final_nv].to_vec(),
-                vec![final_opening],
-                final_commitment.clone(),
-            )
-            .expect("final prover group"),
-        ];
-        let pre_refs = [&pre_poly];
-        let final_refs = [&final_poly];
-        let prover_data = selected_prover_data::<Cfg, _>(
-            OpeningClaims::from_groups(prover_groups).expect("prover claims"),
-            vec![pre_hint, final_hint],
-            vec![&pre_refs[..], &final_refs[..]],
-        );
-        let selection = prover_data.0;
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prover_data,
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let verifier_groups = vec![
-            PolynomialGroupClaims::new(
-                point[..PRE_NV].to_vec(),
-                vec![pre_opening],
-                &pre_commitment,
-            )
-            .expect("pre verifier group"),
-            PolynomialGroupClaims::new(
-                point[..final_nv].to_vec(),
-                vec![final_opening],
-                &final_commitment,
-            )
-            .expect("final verifier group"),
-        ];
-        let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-        let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
-        )
-        .unwrap_or_else(|e| {
-            panic!("onehot precommitted pre_nv={PRE_NV} final_nv={final_nv}: {e:?}")
-        });
-    }
 }
 
 #[cfg(feature = "logging-transcript")]

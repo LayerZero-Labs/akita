@@ -16,7 +16,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{ProverOpeningData, SelectedProverOpeningData};
-use akita_serialization::{AkitaSerialize, Valid};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
@@ -593,6 +593,433 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         assert!(
             result.is_err(),
             "tampered batched root stage1 range_image_evaluation must be rejected"
+        );
+    });
+}
+
+// ============================================================================
+// Public-boundary rejection tests preserved from the pre-consolidation suite.
+//
+// These were previously in `src/scheme/tests/{fp32_ext4,batched}.rs` and
+// `tests/akita_e2e.rs`. The correctness matrix replaced their *positive*
+// round trips, but a passing round trip does not establish that the verifier
+// rejects a malformed proof — that is what these cover.
+// ============================================================================
+
+const EXT4_NV: usize = 16;
+const EXT4_BATCH: usize = 2;
+
+fn ext4_onehot_poly(seed: usize) -> OneHotPoly<fp32::Field, u8> {
+    let onehot_k = 256usize;
+    let num_chunks = (1usize << EXT4_NV) / onehot_k;
+    let indices = (0..num_chunks)
+        .map(|chunk| Some(((chunk * 29 + seed * 41 + 7) % onehot_k) as u8))
+        .collect();
+    OneHotPoly::new(onehot_k, fp32::OneHot::D, indices).expect("fp32 one-hot polynomial")
+}
+
+fn ext4_point() -> Vec<fp32::ExtensionField> {
+    (0..EXT4_NV)
+        .map(|c| {
+            <fp32::ExtensionField as ExtField<fp32::Field>>::from_base_slice(&[
+                fp32::Field::from_u64((c * 5 + 1) as u64),
+                fp32::Field::from_u64((c * 5 + 2) as u64),
+                fp32::Field::from_u64((c * 5 + 3) as u64),
+                fp32::Field::from_u64((c * 5 + 4) as u64),
+            ])
+        })
+        .collect()
+}
+
+/// The fp32 extension-opening reduction (EOR) is a required part of the proof
+/// when claims live in a strict extension of the commitment field. Tampering
+/// with it — or dropping it — must be rejected at the public PCS boundary.
+#[test]
+fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp32::OneHot;
+        type SF = fp32::Field;
+        type SE = fp32::ExtensionField;
+        const LABEL: &[u8] = b"soundness/fp32-ext4-eor";
+
+        let polys = [ext4_onehot_poly(0), ext4_onehot_poly(1)];
+        let poly_refs: Vec<_> = polys.iter().collect();
+        let point = ext4_point();
+        let weights = lagrange_weights::<SE>(&point).expect("extension Lagrange weights");
+        let openings: Vec<SE> = polys
+            .iter()
+            .map(|poly| {
+                let k = poly.onehot_k();
+                poly.indices()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(chunk, hot)| hot.map(|i| weights[chunk * k + usize::from(i)]))
+                    .fold(SE::zero(), |a, b| a + b)
+            })
+            .collect();
+
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(EXT4_NV, EXT4_BATCH)
+            .expect("fp32 prover setup");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).expect("commit");
+        let selection = selection_for::<Cfg>(&commitment);
+
+        let mut prover_transcript = AkitaTranscript::<SF>::new(LABEL);
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+            &setup,
+            prove_input::<Cfg, _>(selection, &point[..], &poly_refs[..], &commitment, hint),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("fp32 extension proof");
+        assert!(
+            proof.root.extension_opening_reduction.is_some(),
+            "non-base fp32 claims must carry a root extension-opening reduction"
+        );
+
+        // Baseline: the honest proof verifies.
+        let mut vt = AkitaTranscript::<SF>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("honest fp32 extension proof must verify");
+
+        // (1) A wrong second opening must be rejected.
+        let mut wrong = openings.clone();
+        wrong[1] += SE::one();
+        let mut vt = AkitaTranscript::<SF>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &point[..], &wrong[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("wrong batched extension opening must reject");
+
+        // (2) A tampered EOR partial evaluation must be rejected.
+        let mut tampered = proof.clone();
+        *tampered
+            .root
+            .extension_opening_reduction
+            .as_mut()
+            .expect("root EOR payload")
+            .partials
+            .first_mut()
+            .expect("root EOR must carry a partial evaluation") += SE::one();
+        let mut vt = AkitaTranscript::<SF>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &tampered,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("tampered extension-opening reduction partial must reject");
+
+        // (3) Omitting the required EOR entirely must be rejected.
+        let mut stripped = proof.clone();
+        stripped.root.extension_opening_reduction = None;
+        let mut vt = AkitaTranscript::<SF>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &stripped,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("omitting the required root extension-opening reduction must reject");
+    });
+}
+
+/// A two-polynomial batched proof must reject both a wrong second opening and
+/// an opening payload padded beyond the committed geometry.
+#[test]
+fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::Dense;
+        const NV: usize = 16;
+        const LABEL: &[u8] = b"soundness/batched-dense-payload";
+
+        let layout = akita_batched_root_layout::<Cfg>(NV, 2).expect("layout");
+        let d = layout.d_a();
+        let len = 1usize << NV;
+        let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
+        let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
+        let poly_a = DensePoly::<F>::from_field_evals(NV, d, &evals_a).expect("poly a");
+        let poly_b = DensePoly::<F>::from_field_evals(NV, d, &evals_b).expect("poly b");
+
+        let point = random_point::<F>(NV);
+        let openings = [
+            dense_lagrange_opening_from_evals(&evals_a, &point),
+            dense_lagrange_opening_from_evals(&evals_b, &point),
+        ];
+
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).expect("setup");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, &[poly_a.clone(), poly_b.clone()], &stack)
+                .expect("commit");
+        let selection = selection_for::<Cfg>(&commitment);
+        let poly_group = [&poly_a, &poly_b];
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+            &setup,
+            prove_input::<Cfg, _>(selection, &point[..], &poly_group[..], &commitment, hint),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
+
+        let mut vt = AkitaTranscript::<F>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("batched verify must accept consistent openings");
+
+        // (1) Wrong second opening.
+        let mut wrong = openings;
+        wrong[1] += F::one();
+        let mut vt = AkitaTranscript::<F>::new(LABEL);
+        assert_invalid_proof(
+            "wrong second batched opening",
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut vt,
+                verify_input::<Cfg>(selection, &point[..], &wrong[..], &commitment),
+                BasisMode::Lagrange,
+            ),
+        );
+
+        // (2) Opening payload padded past the committed geometry, with a
+        // matching extra claim, must not be accepted.
+        let mut oversized = proof.clone();
+        let mut coeffs = oversized.root.opening_payload.coeffs().to_vec();
+        coeffs.extend(vec![F::zero(); Cfg::D]);
+        oversized.root.opening_payload = akita_types::RingVec::from_coeffs(coeffs);
+
+        let mut oversized_openings = openings.to_vec();
+        oversized_openings.push(F::zero());
+        let mut vt = AkitaTranscript::<F>::new(LABEL);
+        assert_invalid_proof(
+            "oversized opening payload",
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                &oversized,
+                &verifier_setup,
+                &mut vt,
+                verify_input::<Cfg>(selection, &point[..], &oversized_openings[..], &commitment),
+                BasisMode::Lagrange,
+            ),
+        );
+    });
+}
+
+/// The batched one-hot proof at a schedule that crosses a partial final fold
+/// row must expose a canonical terminal witness, and must be rejected when a
+/// scheduled recursive fold is dropped from the suffix.
+#[test]
+fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::OneHot;
+        // NV=20 is large enough for the two-claim schedule to carry a
+        // recursive suffix.
+        const NV: usize = 20;
+        const LABEL: &[u8] = b"soundness/batched-onehot-terminal";
+
+        let layout = akita_batched_root_layout::<Cfg>(NV, 2).expect("layout");
+        let root_d = layout.d_a();
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(NV),
+        ))
+        .expect("runtime schedule");
+        let fold_params = std::iter::once(&plan.root.params.final_group.commitment)
+            .chain(plan.recursive_folds.iter().map(|step| &step.params.witness))
+            .collect::<Vec<_>>();
+        assert!(
+            fold_params.iter().any(|params| {
+                params.num_live_ring_elements_per_claim % params.num_positions_per_block != 0
+                    && params.num_live_blocks
+                        == params
+                            .num_live_ring_elements_per_claim
+                            .div_ceil(params.num_positions_per_block)
+            }),
+            "fixture must cross a production fold with an exact partial final row"
+        );
+
+        let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
+            .checked_mul(root_d)
+            .expect("total field size overflow");
+        let total_chunks = total_field / ONEHOT_K;
+        assert_eq!(total_chunks * ONEHOT_K, total_field);
+
+        let polys: Vec<OneHotPoly<F>> = [0x1234_5678u64, 0x8765_4321u64]
+            .into_iter()
+            .map(|seed| {
+                let mut rng = StdRng::seed_from_u64(seed);
+                let indices: Vec<Option<usize>> = (0..total_chunks)
+                    .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
+                    .collect();
+                OneHotPoly::<F>::new(ONEHOT_K, root_d, indices).expect("onehot poly")
+            })
+            .collect();
+        let poly_group: Vec<&OneHotPoly<F>> = polys.iter().collect();
+
+        let pt = random_point::<F>(NV);
+        let openings: Vec<F> = polys
+            .iter()
+            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
+            .collect();
+
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).expect("setup");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let verifier_setup =
+            AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+        let (commitment, hint) =
+            AkitaCommitmentScheme::<Cfg>::commit(&setup, &polys, &stack).expect("commit");
+        let selection = selection_for::<Cfg>(&commitment);
+
+        let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
+        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+            &setup,
+            prove_input::<Cfg, _>(selection, &pt[..], &poly_group[..], &commitment, hint),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
+
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
+        proof.serialize_compressed(&mut bytes).expect("serialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
+
+        // Terminal witness structure survives the serialization round trip.
+        let terminal = decoded.terminal_response();
+        assert_eq!(
+            terminal.layout.groups.len(),
+            1,
+            "terminal consumer must retain one canonical scalar group"
+        );
+        terminal
+            .terminal_transcript_parts()
+            .expect("terminal witness must split into canonical transcript segments");
+
+        let mut vt = AkitaTranscript::<F>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &pt[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("batched onehot verification must pass");
+
+        // Dropping a scheduled recursive fold must be rejected.
+        assert!(
+            !decoded.recursive_folds.is_empty(),
+            "fixture must carry a recursive suffix"
+        );
+        let mut truncated = decoded.clone();
+        truncated.recursive_folds.remove(0);
+        let mut vt = AkitaTranscript::<F>::new(LABEL);
+        assert!(
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                &truncated,
+                &verifier_setup,
+                &mut vt,
+                verify_input::<Cfg>(selection, &pt[..], &openings[..], &commitment),
+                BasisMode::Lagrange,
+            )
+            .is_err(),
+            "proof with a truncated scheduled recursive suffix must be rejected"
+        );
+    });
+}
+
+/// The verifier must bind the proof to the committed group's geometry: a
+/// statement carrying a commitment whose profile has been altered must not
+/// verify against a proof produced for the real geometry.
+#[test]
+fn dense_rejects_mismatched_committed_group_profile_geometry() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type Cfg = fp128::Dense;
+        const D: usize = Cfg::D;
+        const LABEL: &[u8] = b"soundness/profile-geometry";
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
+            make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, LABEL);
+        let openings = [opening];
+
+        // Sanity: the honest statement verifies.
+        let mut vt = AkitaTranscript::<F>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &opening_point[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("honest dense proof must verify");
+
+        let mut mismatched = commitment.clone();
+        mismatched.profile.num_live_blocks = mismatched.profile.num_live_blocks.saturating_add(1);
+        let mut vt = AkitaTranscript::<F>::new(LABEL);
+        assert_invalid_proof(
+            "mismatched committed-group profile geometry",
+            AkitaCommitmentScheme::<Cfg>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut vt,
+                verify_input::<Cfg>(selection, &opening_point[..], &openings[..], &mismatched),
+                BasisMode::Lagrange,
+            ),
         );
     });
 }
