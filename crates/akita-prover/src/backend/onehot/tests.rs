@@ -913,5 +913,6 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
     );
 }
 
+mod decompose_fold;
 mod layout_and_ownership;
 mod optimized_commit;
