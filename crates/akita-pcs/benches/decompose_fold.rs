@@ -106,6 +106,7 @@ fn suffix_case<const D: usize>(c: &mut Criterion) {
                 black_box(&rings),
                 black_box(&challenges),
                 POSITIONS_PER_BLOCK,
+                Some(3),
             ))
         });
     });
@@ -126,6 +127,8 @@ fn bench_decompose_fold(c: &mut Criterion) {
     dense_case::<Prime64Offset59, 512>(c, "fp64", 64, 6);
     dense_case::<Prime64Offset59, 1024>(c, "fp64", 64, 6);
     dense_case::<Prime64Offset59, 2048>(c, "fp64", 64, 6);
+    dense_case::<Prime64Offset59, 128>(c, "fp64", 64, 10);
+    dense_case::<Prime64Offset59, 512>(c, "fp64", 64, 11);
 
     dense_case::<Prime128OffsetA7F7, 64>(c, "fp128", 128, 9);
     dense_case::<Prime128OffsetA7F7, 128>(c, "fp128", 128, 9);
@@ -133,6 +136,7 @@ fn bench_decompose_fold(c: &mut Criterion) {
     dense_case::<Prime128OffsetA7F7, 512>(c, "fp128", 128, 9);
     dense_case::<Prime128OffsetA7F7, 1024>(c, "fp128", 128, 9);
     dense_case::<Prime128OffsetA7F7, 2048>(c, "fp128", 128, 9);
+    dense_case::<Prime128OffsetA7F7, 64>(c, "fp128", 128, 11);
 
     suffix_case::<64>(c);
     suffix_case::<128>(c);

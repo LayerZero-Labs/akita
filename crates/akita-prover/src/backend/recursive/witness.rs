@@ -458,8 +458,12 @@ where
 
         let q = (-F::one()).to_canonical_u128() + 1;
         let coeffs = self.coeffs;
-        let coeff_accum =
-            balanced_tight_digit_fold_partitioned::<D>(coeffs, challenges, num_positions_per_block);
+        let coeff_accum = balanced_tight_digit_fold_partitioned::<D>(
+            coeffs,
+            challenges,
+            num_positions_per_block,
+            self.known_balanced_log_basis,
+        );
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
 }

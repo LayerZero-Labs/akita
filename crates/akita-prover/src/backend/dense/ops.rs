@@ -256,6 +256,7 @@ where
                     challenges,
                     num_positions_per_block,
                     num_digits,
+                    log_basis,
                 )
             };
             let modulus = (-F::one()).to_canonical_u128() + 1;
