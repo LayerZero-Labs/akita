@@ -36,7 +36,6 @@ use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
-mod accumulate;
 mod blocks;
 mod column_sweep;
 mod decompose_fold;
