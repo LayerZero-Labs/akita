@@ -106,6 +106,9 @@ schedules-fp128-onehot-multi-chunk = [
 schedules-fp128-onehot-recursive = [
   "akita-config/schedules-fp128-onehot-recursive",
 ]
+schedules-fp128-onehot-recursive-multi-chunk = [
+  "akita-config/schedules-fp128-onehot-recursive-multi-chunk-w8r2",
+]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",

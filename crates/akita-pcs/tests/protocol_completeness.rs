@@ -51,7 +51,7 @@
 //! ║ Dense    ║ rec      ║      NA      ║  NA               ║      NA      ║  NA               ║
 //! ╠══════════╬══════════╬══════════════╬═══════════════════╬══════════════╬═══════════════════╣
 //! ║ OneHot   ║ nonrec   ║  ✓ [12,15]  ║  ✓ [16,20]        ║  cfg+ign    ║  cfg+ign          ║
-//! ║ OneHot   ║ rec      ║  cfg+ign    ║  cfg+ign           ║      NA      ║  NA               ║
+//! ║ OneHot   ║ rec      ║  cfg+ign    ║  cfg+ign           ║  cfg+ign    ║  cfg+ign          ║
 //! ╚══════════╩══════════╩══════════════╩═══════════════════╩══════════════╩═══════════════════╝
 //! ```
 //!
@@ -59,7 +59,10 @@
 //! OneHot mc nonrec:  cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
 //! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
-//!   pre    = RecursiveCommitmentConfig + user precommitted group (fp128_onehot_recursive_precommitted.rs).
+//!   pre    = RecursiveCommitmentConfig + user precommit (fp128_onehot_recursive_precommitted.rs).
+//! OneHot mc rec:     cfg=schedules-fp128-onehot-recursive-multi-chunk; nv=32 is production-sized (ign).
+//!   direct = RecursiveCommitmentConfig<OneHotMultiChunk> (fp128_onehot_recursive_multi_chunk_w8r2.rs).
+//!   pre    = same + user precommit (fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs).
 
 #![allow(missing_docs)]
 #![cfg(feature = "schedules-default")]
@@ -871,6 +874,21 @@ matrix_test!(recursive_direct; fp128_onehot_rec; fp128::OneHot);
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-onehot-recursive")]
 matrix_test!(recursive_pre; fp128_onehot_rec_pre; fp128::OneHot);
+
+// ----------------------------------------------------------------------------
+// OneHot × multi-chunk × direct × recursive    (production-sized, ignored)
+// RecursiveCommitmentConfig<OneHotMultiChunk>; uses fp128_onehot_recursive_multi_chunk_w8r2.rs.
+// ----------------------------------------------------------------------------
+#[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk")]
+matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunk);
+
+// ----------------------------------------------------------------------------
+// OneHot × multi-chunk × precommitted × recursive    (production-sized, ignored)
+// RecursiveCommitmentConfig<OneHotMultiChunk> + user precommit;
+// profiles from fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs.
+// ----------------------------------------------------------------------------
+#[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk")]
+matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × direct × non-recursive    [32]
