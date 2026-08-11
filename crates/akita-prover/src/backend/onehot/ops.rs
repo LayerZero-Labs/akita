@@ -805,14 +805,20 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
-        let (_, num_blocks) = self
-            .view_layout(D, num_positions_per_block)
+        self.view_layout(D, num_positions_per_block)
             .expect("OneHotPoly::decompose_fold: invalid block layout");
-        let active_blocks = challenges.len().min(num_blocks);
-        let blocks = self
-            .materialize_block_range(D, num_positions_per_block, 0..active_blocks)
-            .expect("OneHotPoly::decompose_fold: valid active block range");
-        self.decompose_fold_onehot::<D>(&blocks, challenges, num_positions_per_block, num_digits)
+        Self::decompose_fold_batched_onehot::<D>(
+            &[self],
+            challenges,
+            num_positions_per_block,
+            num_digits,
+        )
+        .unwrap_or_else(|| {
+            super::decompose_fold::finish_decompose_fold(
+                vec![[0i32; D]; num_positions_per_block],
+                num_digits,
+            )
+        })
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
