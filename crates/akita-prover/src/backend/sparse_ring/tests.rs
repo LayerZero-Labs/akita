@@ -59,6 +59,33 @@ fn sparse_ring_fold_matches_dense_reference() {
 }
 
 #[test]
+fn sparse_ring_q128_base_evaluation_matches_separate_oracle() {
+    const D: usize = 8;
+    let sparse = SparseRingPoly::<F>::from_signed_coeffs(
+        5,
+        D,
+        4,
+        vec![(0, 1, 1), (1, 3, -1), (3, 2, 1), (3, 7, -1)],
+    )
+    .unwrap();
+    let position_weights = (2..10).map(F::from_u64).collect::<Vec<_>>();
+    let live_block_weights = [F::from_u64(7)];
+    let expected_folded = sparse.fold_blocks::<D>(&position_weights, 8);
+    let expected_eval = expected_folded
+        .iter()
+        .zip(live_block_weights)
+        .fold(CyclotomicRing::zero(), |acc, (ring, weight)| {
+            acc + ring.scale(&weight)
+        });
+
+    let (actual_eval, actual_folded) =
+        sparse.evaluate_and_fold::<D>(&live_block_weights, &position_weights, 8);
+
+    assert_eq!(actual_folded, expected_folded);
+    assert_eq!(actual_eval, expected_eval);
+}
+
+#[test]
 fn sparse_ring_fold_matches_dense_for_partial_final_slice() {
     const D: usize = 8;
     let sparse =

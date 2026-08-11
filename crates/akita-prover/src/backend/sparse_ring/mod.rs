@@ -432,6 +432,7 @@ where
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
@@ -447,6 +448,23 @@ where
             .collect()
     }
 
+    pub(crate) fn fold_blocks_subfield<const D: usize>(
+        &self,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
+        num_positions_per_block: usize,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let blocks = self.blocks_for(D, num_positions_per_block)?;
+        cfg_into_iter!(0..blocks.num_live_blocks())
+            .map(|block_idx| {
+                fold_sparse_block_subfield(
+                    blocks.block(block_idx),
+                    multipliers,
+                    num_positions_per_block,
+                )
+            })
+            .collect()
+    }
+
     pub(crate) fn evaluate_and_fold<const D: usize>(
         &self,
         live_block_weights: &[F],
@@ -454,27 +472,18 @@ where
         num_positions_per_block: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         let folded = self.fold_blocks::<D>(position_weights, num_positions_per_block);
-        let eval = folded
-            .iter()
-            .zip(live_block_weights.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
-                acc + f_i.scale(s_i)
-            });
-        (eval, folded)
+        crate::backend::poly_helpers::fused_evaluate_and_fold_base(folded, live_block_weights)
     }
 
-    pub(crate) fn evaluate_and_fold_ring<const D: usize>(
+    pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        live_block_weights: &[CyclotomicRing<F, D>],
-        position_weights: &[CyclotomicRing<F, D>],
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let folded = self.fold_blocks_ring::<D>(position_weights, num_positions_per_block);
-        let mut eval = CyclotomicRing::<F, D>::zero();
-        for (f_i, s_i) in folded.iter().zip(live_block_weights.iter()) {
-            f_i.mul_accumulate_sparse_rhs_into(s_i, &mut eval);
-        }
-        (eval, folded)
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_subfield(
+            self.fold_blocks_subfield::<D>(multipliers, num_positions_per_block)?,
+            multipliers,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "SparseRingPoly::decompose_fold")]
@@ -594,6 +603,7 @@ where
     CyclotomicRing::from_coefficients(coeffs)
 }
 
+#[cfg(test)]
 fn fold_sparse_block_ring<F, const D: usize>(
     entries: &[SparseRingBlockEntry],
     scalars: &[CyclotomicRing<F, D>],
@@ -618,6 +628,29 @@ where
         }
     }
     acc
+}
+
+fn fold_sparse_block_subfield<F, const D: usize>(
+    entries: &[SparseRingBlockEntry],
+    multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
+    num_positions_per_block: usize,
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+{
+    let mut acc = CyclotomicRing::<F, D>::zero();
+    for entry in entries {
+        let position = entry.pos_in_block();
+        if position < num_positions_per_block {
+            multipliers.accumulate_position_monomial(
+                position,
+                entry.coeff_idx(),
+                F::from_i8(entry.value),
+                &mut acc,
+            )?;
+        }
+    }
+    Ok(acc)
 }
 
 fn sparse_accumulate<const D: usize>(
