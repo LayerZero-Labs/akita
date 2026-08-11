@@ -180,7 +180,7 @@ fn assert_mutated_row_is_rejected<Cfg: CommitmentConfig>(
 }
 
 #[test]
-fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
+fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
@@ -217,31 +217,31 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
     );
     assert_mutated_row_is_rejected::<Cfg>(profiles.clone(), low_rank_d);
 
-    let mut low_rank_terminal = selected.schedule().clone();
-    let matrix = &low_rank_terminal
-        .terminal
+    let mut low_rank_a = selected.schedule().clone();
+    let matrix = &low_rank_a
+        .root
         .params
-        .witness
+        .final_group
+        .commitment
         .inner_commit_matrix;
-    low_rank_terminal
-        .terminal
+    let table_key = matrix
+        .sis_table_key()
+        .expect("root A matrix must use the L infinity route");
+    low_rank_a
+        .root
         .params
-        .witness
+        .final_group
+        .commitment
         .inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
-        matrix.security_policy(),
-        matrix
-            .sis_table_key()
-            .expect("terminal test matrix is L infinity")
-            .table_digest,
-        matrix.sis_modulus_profile(),
+        table_key.policy,
+        table_key.table_digest,
+        table_key.modulus_profile,
         0,
         matrix.input_width(),
-        matrix
-            .coeff_linf_bound()
-            .expect("terminal test matrix is L infinity"),
-        matrix.ring_dimension(),
+        table_key.coeff_linf_bound,
+        table_key.ring_dimension as usize,
     );
-    assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_terminal);
+    assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_a);
 }
 
 #[test]
