@@ -260,17 +260,24 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let len = 1usize << nv;
     let decomp = Cfg::decomposition();
     let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
-    let evals: Vec<FF> = if decomp.log_commit_bound >= 128 {
-        (0..len)
-            .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect()
-    } else {
-        (0..len)
-            .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
-            .collect()
+    let evals: Vec<FF> = {
+        let _span = tracing::info_span!("profile_dense_generate_evals", len).entered();
+        if decomp.log_commit_bound >= 128 {
+            (0..len)
+                .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect()
+        } else {
+            (0..len)
+                .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
+                .collect()
+        }
     };
-    let poly = DensePoly::<FF>::from_field_evals(nv, D, &evals).unwrap();
-    let opening =
+    let poly = {
+        let _span = tracing::info_span!("profile_dense_construct_poly").entered();
+        DensePoly::<FF>::from_field_evals(nv, D, &evals).unwrap()
+    };
+    let opening = {
+        let _span = tracing::info_span!("profile_dense_compute_opening").entered();
         if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&original_pt) {
             Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
                 &poly,
@@ -280,7 +287,8 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             ))
         } else {
             dense_lagrange_opening_from_evals::<FF, Cfg::ExtField>(&evals, &original_pt)
-        };
+        }
+    };
     let t0 = Instant::now();
     let setup =
         AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)

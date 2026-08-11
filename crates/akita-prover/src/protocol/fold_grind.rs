@@ -362,12 +362,15 @@ where
                         group
                             .group
                             .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
-                    let candidate = accepts_fold_witness_flat(
-                        &prepared_group.acceptance,
-                        &output.witness,
-                        &output.centered_per_chunk,
-                    )
-                    .then_some(output);
+                    let candidate = {
+                        let _span = tracing::info_span!("fold_grind_acceptance_scan").entered();
+                        accepts_fold_witness_flat(
+                            &prepared_group.acceptance,
+                            &output.witness,
+                            &output.centered_per_chunk,
+                        )
+                        .then_some(output)
+                    };
                     let Some(candidate) = candidate else {
                         return Ok(None);
                     };
@@ -377,22 +380,25 @@ where
             Ok(Some(candidate_outputs))
         })?;
 
-    let mut live = LiveFoldDraw::<F, T>::new(transcript);
-    for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
-        let group = &prepared_group.input;
-        let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
-        let challenges = live.draw_folding_challenges(
-            ring_d,
-            group.group_index,
-            group.params.num_live_blocks(),
-            group.group.num_polynomials(),
-            &group.params.fold_challenge_config(),
-            nonce,
-        )?;
-        if challenges != output.challenges {
-            return Err(AkitaError::InvalidInput(
-                "fold grind preview did not match live transcript replay".to_string(),
-            ));
+    {
+        let _span = tracing::info_span!("fold_grind_live_replay").entered();
+        let mut live = LiveFoldDraw::<F, T>::new(transcript);
+        for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
+            let group = &prepared_group.input;
+            let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
+            let challenges = live.draw_folding_challenges(
+                ring_d,
+                group.group_index,
+                group.params.num_live_blocks(),
+                group.group.num_polynomials(),
+                &group.params.fold_challenge_config(),
+                nonce,
+            )?;
+            if challenges != output.challenges {
+                return Err(AkitaError::InvalidInput(
+                    "fold grind preview did not match live transcript replay".to_string(),
+                ));
+            }
         }
     }
     Ok((candidate_outputs, nonce))

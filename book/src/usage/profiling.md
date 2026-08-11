@@ -56,7 +56,9 @@ The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
 | `AKITA_NUM_VARS` | `32` | Witness size |
 | `AKITA_NUM_POLYS` | `1` | Batched opening count |
 | `AKITA_PROFILE_TRACE` | `1` | Chrome/Perfetto trace output |
-| `AKITA_PROFILE_LOG` | `trace` | `tracing` filter |
+| `AKITA_PROFILE_MONITOR` | `1` when tracing | Add process CPU, host CPU, and RSS counter tracks |
+| `AKITA_PROFILE_MONITOR_INTERVAL_MS` | `100` | Resource sampling interval in milliseconds (minimum `10`) |
+| `AKITA_PROFILE_LOG` | `trace` | Console tracing filter; the Perfetto layer always captures all spans |
 | `AKITA_PROFILE_ANSI` | `1` | Colored log output |
 | `AKITA_PROFILE_SPAN_CLOSES` | `1` | Log span close events |
 | `AKITA_PROFILE_PROVE_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Global prove pool size (`0` = Rayon default) |
@@ -65,6 +67,40 @@ The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
 | `RAYON_NUM_THREADS` | Rayon default | Fallback when profile thread vars are unset |
 
 Implementation: `crates/akita-pcs/examples/profile/main.rs`.
+
+When the resource monitor is enabled, the trace contains native Perfetto
+counter tracks named `process_effective_cores`, `process_cpu_percent`,
+`system_effective_cores`, `system_cpu_percent`, `rss_gib`,
+`virtual_memory_gib`, and `logical_cpus`. One effective core means one core was
+busy for the complete sampling interval. Values can exceed one when Rayon
+workers run concurrently.
+
+After the Chrome writer flushes, the harness rewrites resource samples as
+native Perfetto counter events and writes a sibling `*.summary.json`. The
+versioned summary records run identity, the git revision, exact process peak
+RSS, root wall and dark time, CPU pool utilization, counter statistics, and
+inclusive and same-thread self time for every span label. Per-label inclusive
+totals can exceed wall time because instances on different Rayon workers are
+summed. Dark time is root-thread wall time not covered by a root-thread child.
+
+Quick inspection without opening Perfetto:
+
+```bash
+jq '{run, root, peak_rss_gib, cpu_utilization}' \
+  profile_traces/akita_nv28_dense_fp128_*.summary.json
+jq '.spans["DensePoly::decompose_fold"]' \
+  profile_traces/akita_nv28_dense_fp128_*.summary.json
+```
+
+The sampled RSS track shows when memory changes, while the `getrusage`
+high-water mark cannot miss a short peak between samples. Neither is an
+allocation profiler. Akita field values implement `Allocative` only under the
+Jolt compatibility feature, while the PCS setup, polynomial, and witness
+object graphs do not. Type-attributed heap snapshots therefore require an
+explicit object-graph instrumentation change. Use the RSS timeline and span
+summary to choose those snapshot boundaries rather than treating RSS as live
+object attribution.
+
 Disable parallel while retaining the same pruned workload:
 
 ```bash

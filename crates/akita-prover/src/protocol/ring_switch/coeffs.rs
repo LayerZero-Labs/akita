@@ -89,44 +89,50 @@ fn emit_group_witness_segments<F: CanonicalField>(
     num_claims: usize,
 ) -> Result<(), AkitaError> {
     let num_digits_fold = group.params.num_digits_fold();
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        group.role_dims.d_a(),
-        |D_G| {
-            emit_group_native_a_segments::<F, D_G>(
-                out,
-                layout,
-                group_id,
-                group,
-                num_claims,
-                num_digits_fold,
-            )
-        }
-    )?;
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        group.role_dims.d_a(),
-        |D_A| {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Opening),
-                F,
-                group.role_dims.d_d(),
-                |D_D| {
-                    emit_witness_e_planes::<D_A, D_D>(
-                        out,
-                        layout,
-                        group_id,
-                        num_claims,
-                        group.params.num_digits_open(),
-                        &group.e_hat,
-                        group.params.num_live_blocks(),
-                    )
-                }
-            )
-        }
-    )
+    {
+        let _span = tracing::info_span!("ring_switch_emit_native_a_segments").entered();
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group.role_dims.d_a(),
+            |D_G| {
+                emit_group_native_a_segments::<F, D_G>(
+                    out,
+                    layout,
+                    group_id,
+                    group,
+                    num_claims,
+                    num_digits_fold,
+                )
+            }
+        )?;
+    }
+    {
+        let _span = tracing::info_span!("ring_switch_emit_e_segments").entered();
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group.role_dims.d_a(),
+            |D_A| {
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Opening),
+                    F,
+                    group.role_dims.d_d(),
+                    |D_D| {
+                        emit_witness_e_planes::<D_A, D_D>(
+                            out,
+                            layout,
+                            group_id,
+                            num_claims,
+                            group.params.num_digits_open(),
+                            &group.e_hat,
+                            group.params.num_live_blocks(),
+                        )
+                    }
+                )
+            }
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -147,45 +153,56 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
         });
     }
     for (unit, z_centered) in units.zip(&group.z_folded_centered_per_chunk) {
-        let typed: Vec<[i32; D_GROUP]> = z_centered
-            .iter()
-            .map(|row| {
-                row.as_slice()
-                    .try_into()
-                    .map_err(|_| AkitaError::InvalidSize {
-                        expected: D_GROUP,
-                        actual: row.len(),
-                    })
-            })
-            .collect::<Result<_, _>>()?;
-        let z_planes =
-            decompose_z_folded_planes(&typed, num_digits_fold, group.params.log_basis_open())?;
-        emit_witness_z_planes::<D_GROUP>(
-            out,
-            unit,
-            group.params.num_positions_per_block(),
-            group.params.num_digits_inner(),
-            num_digits_fold,
-            &z_planes,
-        )?;
-    }
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Outer),
-        F,
-        group.role_dims.d_b(),
-        |D_B| {
-            emit_witness_t_planes::<D_GROUP, D_B>(
+        let typed: Vec<[i32; D_GROUP]> = {
+            let _span = tracing::info_span!("ring_switch_copy_typed_z").entered();
+            z_centered
+                .iter()
+                .map(|row| {
+                    row.as_slice()
+                        .try_into()
+                        .map_err(|_| AkitaError::InvalidSize {
+                            expected: D_GROUP,
+                            actual: row.len(),
+                        })
+                })
+                .collect::<Result<_, _>>()?
+        };
+        let z_planes = {
+            let _span = tracing::info_span!("ring_switch_decompose_z_planes").entered();
+            decompose_z_folded_planes(&typed, num_digits_fold, group.params.log_basis_open())?
+        };
+        {
+            let _span = tracing::info_span!("ring_switch_emit_z_planes").entered();
+            emit_witness_z_planes::<D_GROUP>(
                 out,
-                layout,
-                group_id,
-                num_claims,
-                group.params.a_rows_len(),
-                group.params.num_digits_outer(),
-                &group.t_hat,
-                group.params.num_live_blocks(),
-            )
+                unit,
+                group.params.num_positions_per_block(),
+                group.params.num_digits_inner(),
+                num_digits_fold,
+                &z_planes,
+            )?;
         }
-    )
+    }
+    {
+        let _span = tracing::info_span!("ring_switch_emit_t_segments").entered();
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Outer),
+            F,
+            group.role_dims.d_b(),
+            |D_B| {
+                emit_witness_t_planes::<D_GROUP, D_B>(
+                    out,
+                    layout,
+                    group_id,
+                    num_claims,
+                    group.params.a_rows_len(),
+                    group.params.num_digits_outer(),
+                    &group.t_hat,
+                    group.params.num_live_blocks(),
+                )
+            }
+        )
+    }
 }
 
 /// Build the witness vector `w` from the ring-relation witness.
@@ -381,8 +398,12 @@ where
         AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
     })?;
 
-    let mut out = vec![0i8; witness_layout.live_coeff_len()];
+    let mut out = {
+        let _span = tracing::info_span!("ring_switch_allocate_output").entered();
+        vec![0i8; witness_layout.live_coeff_len()]
+    };
     for &group_index in &order {
+        let _span = tracing::info_span!("ring_switch_emit_group_segments", group_index).entered();
         let group_layout = opening_batch.group_layout(group_index)?;
         emit_group_witness_segments::<F>(
             &mut out,
@@ -393,8 +414,12 @@ where
         )?;
     }
     let levels = r_decomp_levels::<F>(lp.log_basis_open);
-    emit_r_rows(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
+    {
+        let _span = tracing::info_span!("ring_switch_emit_r_rows").entered();
+        emit_r_rows(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
+    }
     if let Some(compression) = &compression {
+        let _span = tracing::info_span!("ring_switch_emit_compression").entered();
         emit_compression_witness(&mut out, &witness_layout, compression)?;
     }
     let expected = witness_layout.live_coeff_len();
