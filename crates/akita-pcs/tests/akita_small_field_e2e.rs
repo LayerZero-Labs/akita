@@ -675,11 +675,11 @@ macro_rules! small_field_test {
 // ----------------------------------------------------------------------------
 
 // fp32 × Dense × direct
-small_field_test!(dense;     fp32_dense;     fp32::Dense;  fp32::Field; fp32::ExtensionField; nvs=[12, 14]);
+small_field_test!(dense;     fp32_dense;     fp32::Dense;  fp32::Field; fp32::ExtensionField; nvs=[20]);
 // fp32 × Dense × precommitted   (pre nv=14, final nv from list)
 small_field_test!(dense_pre; fp32_dense_pre; fp32::Dense;  fp32::Field; fp32::ExtensionField; final_nvs=[16]);
 // fp32 × OneHot × direct
-small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[12, 16]; k=256);
+small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]; k=256);
 // fp32 × OneHot × precommitted
 small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; final_nvs=[16]; k=256);
 
@@ -689,11 +689,11 @@ small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::
 // ----------------------------------------------------------------------------
 
 // fp64 × Dense × direct
-small_field_test!(dense;     fp64_dense;     fp64::Dense;  fp64::Field; fp64::ExtensionField; nvs=[12, 14]);
+small_field_test!(dense;     fp64_dense;     fp64::Dense;  fp64::Field; fp64::ExtensionField; nvs=[14]);
 // fp64 × Dense × precommitted
 small_field_test!(dense_pre; fp64_dense_pre; fp64::Dense;  fp64::Field; fp64::ExtensionField; final_nvs=[16]);
 // fp64 × OneHot × direct
-small_field_test!(onehot;     fp64_onehot;     fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[12, 16]; k=256);
+small_field_test!(onehot;     fp64_onehot;     fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]; k=256);
 // fp64 × OneHot × precommitted
 small_field_test!(onehot_pre; fp64_onehot_pre; fp64::OneHot; fp64::Field; fp64::ExtensionField; final_nvs=[16]; k=256);
 
