@@ -458,7 +458,7 @@ where
 
         let q = (-F::one()).to_canonical_u128() + 1;
         let coeffs = self.coeffs;
-        let coeff_accum = balanced_tight_digit_fold_partitioned::<D>(
+        let coeff_accum = balanced_tight_digit_fold_partitioned::<F, D>(
             coeffs,
             challenges,
             num_positions_per_block,

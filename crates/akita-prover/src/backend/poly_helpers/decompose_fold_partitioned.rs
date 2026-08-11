@@ -1,13 +1,17 @@
 //! Partitioned decompose-fold accumulation (element- and position-partitioned).
 
+use super::narrow_accum::{
+    sparse_mul_acc as sparse_mul_acc_narrow, sparse_mul_acc_i16 as sparse_mul_acc_i16_narrow,
+    sparse_mul_acc_i16_terms as sparse_mul_acc_i16_narrow_terms,
+    sparse_mul_acc_terms as sparse_mul_acc_narrow_terms,
+};
 use super::rotated_accum::{
     accumulate_rotated_digit_plane, decompose_ring_full_challenge_accumulate,
     should_use_rotated_challenge,
 };
 use super::{
     decompose_ring_interleaved, decompose_ring_interleaved_i16, fill_rotated_challenge,
-    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_narrow, sparse_mul_acc_i16_narrow_terms,
-    sparse_mul_acc_i16_pm1, sparse_mul_acc_narrow, sparse_mul_acc_narrow_terms, sparse_mul_acc_pm1,
+    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_pm1,
     DecomposeParams,
 };
 use akita_algebra::CyclotomicRing;
@@ -22,49 +26,84 @@ struct PreparedPm1Challenge {
     negative: Vec<u32>,
 }
 
-enum PreparedChallenge<const D: usize> {
+enum ChallengePlan<const D: usize> {
     Rotated(Box<[[i16; D]; D]>),
-    Pm1(PreparedPm1Challenge),
-    Generic,
+    NarrowFull(u64),
+    NarrowChunked(Vec<Range<usize>>),
+    WidePm1(PreparedPm1Challenge),
+    WideGeneric,
 }
 
-enum NarrowChallengePlan {
-    Full(u64),
-    Chunked(Vec<Range<usize>>),
-    Wide,
-}
-
-fn prepare_pm1_challenge<const D: usize>(
-    challenge: &SparseChallenge,
-) -> Option<PreparedPm1Challenge> {
-    if challenge.positions.len() != challenge.coeffs.len() {
-        return None;
-    }
+fn prepare_wide_plan<const D: usize>(challenge: &SparseChallenge) -> ChallengePlan<D> {
     let mut positive = Vec::with_capacity(challenge.positions.len());
     let mut negative = Vec::with_capacity(challenge.positions.len());
     for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-        if position >= D as u32 {
-            return None;
-        }
         match coefficient {
             1 => positive.push(position),
             -1 => negative.push(position),
-            _ => return None,
+            _ => return ChallengePlan::WideGeneric,
         }
     }
-    Some(PreparedPm1Challenge { positive, negative })
+    ChallengePlan::WidePm1(PreparedPm1Challenge { positive, negative })
 }
 
-fn prepare_challenge<const D: usize>(challenge: &SparseChallenge) -> PreparedChallenge<D> {
+fn prepare_challenge<const D: usize>(
+    digit_abs_bound: u64,
+    challenge: &SparseChallenge,
+) -> ChallengePlan<D> {
+    let has_valid_shape = challenge.positions.len() == challenge.coeffs.len()
+        && challenge
+            .positions
+            .iter()
+            .all(|&position| position < D as u32);
+    if !has_valid_shape {
+        return ChallengePlan::WideGeneric;
+    }
     if should_use_rotated_challenge::<D>(challenge) {
         let mut rotated = Box::new([[0i16; D]; D]);
         fill_rotated_challenge::<D>(rotated.as_mut(), challenge);
-        PreparedChallenge::Rotated(rotated)
-    } else if let Some(pm1) = prepare_pm1_challenge::<D>(challenge) {
-        PreparedChallenge::Pm1(pm1)
-    } else {
-        PreparedChallenge::Generic
+        return ChallengePlan::Rotated(rotated);
     }
+    if digit_abs_bound == 0 {
+        return ChallengePlan::NarrowFull(0);
+    }
+
+    let max_chunk_mass = i16::MAX as u64 / digit_abs_bound;
+    let mut total_mass = 0u64;
+    for coefficient in &challenge.coeffs {
+        let term_mass = u64::from(coefficient.unsigned_abs());
+        if term_mass > max_chunk_mass {
+            return prepare_wide_plan(challenge);
+        }
+        let Some(next_total_mass) = total_mass.checked_add(term_mass) else {
+            return prepare_wide_plan(challenge);
+        };
+        total_mass = next_total_mass;
+    }
+
+    let Some(contribution_bound) = digit_abs_bound.checked_mul(total_mass) else {
+        return prepare_wide_plan(challenge);
+    };
+    if contribution_bound <= i16::MAX as u64 {
+        return ChallengePlan::NarrowFull(contribution_bound);
+    }
+
+    let mut chunk_mass = 0u64;
+    let mut chunk_start = 0usize;
+    let mut term_ranges = Vec::new();
+    for (term_idx, coefficient) in challenge.coeffs.iter().enumerate() {
+        let term_mass = u64::from(coefficient.unsigned_abs());
+        if chunk_mass + term_mass > max_chunk_mass {
+            term_ranges.push(chunk_start..term_idx);
+            chunk_start = term_idx;
+            chunk_mass = 0;
+        }
+        chunk_mass += term_mass;
+    }
+    if chunk_start < challenge.coeffs.len() {
+        term_ranges.push(chunk_start..challenge.coeffs.len());
+    }
+    ChallengePlan::NarrowChunked(term_ranges)
 }
 
 fn partition_thread_count(num_positions_per_block: usize) -> usize {
@@ -123,14 +162,14 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
 
     fn digit_scratch(
         &self,
-        prepared_challenges: &[PreparedChallenge<D>],
+        plans: &[ChallengePlan<D>],
         num_digits: usize,
     ) -> Option<DigitScratch<D>> {
         match self {
             Self::LiveRings { params, .. }
-                if prepared_challenges
+                if plans
                     .iter()
-                    .any(|prepared| !matches!(prepared, PreparedChallenge::Rotated(_))) =>
+                    .any(|plan| !matches!(plan, ChallengePlan::Rotated(_))) =>
             {
                 Some(
                     match SignedDigitKernel::for_log_basis(params.log_basis)
@@ -152,13 +191,13 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
         local_elem_idx: usize,
         acc: &mut [[i32; D]],
         challenge: &SparseChallenge,
-        prepared: &PreparedChallenge<D>,
+        plan: &ChallengePlan<D>,
         digit_scratch: Option<&mut DigitScratch<D>>,
         num_digits: usize,
     ) {
         let dst_base = local_elem_idx * num_digits;
-        match (self, prepared) {
-            (Self::Predecomposed { digit_planes, .. }, PreparedChallenge::Rotated(rotated)) => {
+        match (self, plan) {
+            (Self::Predecomposed { digit_planes, .. }, ChallengePlan::Rotated(rotated)) => {
                 let src_base = ring_idx * num_digits;
                 for digit_idx in 0..num_digits {
                     accumulate_rotated_digit_plane::<D>(
@@ -168,23 +207,25 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                     );
                 }
             }
-            (Self::Predecomposed { digit_planes, .. }, prepared) => {
+            (Self::Predecomposed { digit_planes, .. }, plan) => {
                 let src_base = ring_idx * num_digits;
                 for digit_idx in 0..num_digits {
                     let digit_plane = &digit_planes[src_base + digit_idx];
                     let digit_acc = &mut acc[dst_base + digit_idx];
-                    match prepared {
-                        PreparedChallenge::Pm1(pm1) => {
+                    match plan {
+                        ChallengePlan::WidePm1(pm1) => {
                             sparse_mul_acc_pm1(digit_plane, &pm1.positive, &pm1.negative, digit_acc)
                         }
-                        PreparedChallenge::Generic => {
+                        ChallengePlan::WideGeneric => {
                             sparse_mul_acc(digit_plane, challenge, digit_acc);
                         }
-                        PreparedChallenge::Rotated(_) => unreachable!(),
+                        ChallengePlan::Rotated(_)
+                        | ChallengePlan::NarrowFull(_)
+                        | ChallengePlan::NarrowChunked(_) => unreachable!(),
                     }
                 }
             }
-            (Self::LiveRings { coeffs, params }, PreparedChallenge::Rotated(rotated)) => {
+            (Self::LiveRings { coeffs, params }, ChallengePlan::Rotated(rotated)) => {
                 let base = dst_base;
                 decompose_ring_full_challenge_accumulate::<F, D>(
                     &coeffs[ring_idx],
@@ -193,7 +234,7 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                     params,
                 );
             }
-            (Self::LiveRings { coeffs, params }, prepared) => {
+            (Self::LiveRings { coeffs, params }, plan) => {
                 let base = dst_base;
                 match digit_scratch.expect("live sparse path requires signed-digit scratch") {
                     DigitScratch::I8(digit_buf) => {
@@ -204,19 +245,21 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                             params,
                         );
                         for digit in 0..num_digits {
-                            match prepared {
-                                PreparedChallenge::Pm1(pm1) => sparse_mul_acc_pm1(
+                            match plan {
+                                ChallengePlan::WidePm1(pm1) => sparse_mul_acc_pm1(
                                     &digit_buf[digit],
                                     &pm1.positive,
                                     &pm1.negative,
                                     &mut acc[base + digit],
                                 ),
-                                PreparedChallenge::Generic => sparse_mul_acc(
+                                ChallengePlan::WideGeneric => sparse_mul_acc(
                                     &digit_buf[digit],
                                     challenge,
                                     &mut acc[base + digit],
                                 ),
-                                PreparedChallenge::Rotated(_) => unreachable!(),
+                                ChallengePlan::Rotated(_)
+                                | ChallengePlan::NarrowFull(_)
+                                | ChallengePlan::NarrowChunked(_) => unreachable!(),
                             }
                         }
                     }
@@ -228,19 +271,21 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                             params,
                         );
                         for digit in 0..num_digits {
-                            match prepared {
-                                PreparedChallenge::Pm1(pm1) => sparse_mul_acc_i16_pm1(
+                            match plan {
+                                ChallengePlan::WidePm1(pm1) => sparse_mul_acc_i16_pm1(
                                     &digit_buf[digit],
                                     &pm1.positive,
                                     &pm1.negative,
                                     &mut acc[base + digit],
                                 ),
-                                PreparedChallenge::Generic => sparse_mul_acc_i16(
+                                ChallengePlan::WideGeneric => sparse_mul_acc_i16(
                                     &digit_buf[digit],
                                     challenge,
                                     &mut acc[base + digit],
                                 ),
-                                PreparedChallenge::Rotated(_) => unreachable!(),
+                                ChallengePlan::Rotated(_)
+                                | ChallengePlan::NarrowFull(_)
+                                | ChallengePlan::NarrowChunked(_) => unreachable!(),
                             }
                         }
                     }
@@ -391,62 +436,6 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
     }
 }
 
-fn narrow_challenge_plan<const D: usize>(
-    digit_abs_bound: u64,
-    challenge: &SparseChallenge,
-    prepared: &PreparedChallenge<D>,
-) -> NarrowChallengePlan {
-    if matches!(prepared, PreparedChallenge::Rotated(_))
-        || challenge.positions.len() != challenge.coeffs.len()
-        || challenge
-            .positions
-            .iter()
-            .any(|&position| position >= D as u32)
-    {
-        return NarrowChallengePlan::Wide;
-    }
-    if digit_abs_bound == 0 {
-        return NarrowChallengePlan::Full(0);
-    }
-
-    let max_chunk_mass = i16::MAX as u64 / digit_abs_bound;
-    let mut total_mass = 0u64;
-    for coefficient in &challenge.coeffs {
-        let term_mass = u64::from(coefficient.unsigned_abs());
-        if term_mass > max_chunk_mass {
-            return NarrowChallengePlan::Wide;
-        }
-        let Some(next_total_mass) = total_mass.checked_add(term_mass) else {
-            return NarrowChallengePlan::Wide;
-        };
-        total_mass = next_total_mass;
-    }
-
-    let Some(contribution_bound) = digit_abs_bound.checked_mul(total_mass) else {
-        return NarrowChallengePlan::Wide;
-    };
-    if contribution_bound <= i16::MAX as u64 {
-        return NarrowChallengePlan::Full(contribution_bound);
-    }
-
-    let mut chunk_mass = 0u64;
-    let mut chunk_start = 0usize;
-    let mut term_ranges = Vec::new();
-    for (term_idx, coefficient) in challenge.coeffs.iter().enumerate() {
-        let term_mass = u64::from(coefficient.unsigned_abs());
-        if chunk_mass + term_mass > max_chunk_mass {
-            term_ranges.push(chunk_start..term_idx);
-            chunk_start = term_idx;
-            chunk_mass = 0;
-        }
-        chunk_mass += term_mass;
-    }
-    if chunk_start < challenge.coeffs.len() {
-        term_ranges.push(chunk_start..challenge.coeffs.len());
-    }
-    NarrowChallengePlan::Chunked(term_ranges)
-}
-
 #[inline]
 fn flush_narrow_accumulator<const D: usize>(narrow: &mut [[i16; D]], wide: &mut [[i32; D]]) {
     debug_assert_eq!(narrow.len(), wide.len());
@@ -471,19 +460,17 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
         return Vec::new();
     }
 
-    let prepared_challenges = challenges
-        .iter()
-        .map(prepare_challenge::<D>)
-        .collect::<Vec<_>>();
     let digit_abs_bound = source.digit_abs_bound();
-    let narrow_plans = challenges
+    let plans = challenges
         .iter()
-        .zip(&prepared_challenges)
-        .map(|(challenge, prepared)| narrow_challenge_plan(digit_abs_bound, challenge, prepared))
+        .map(|challenge| prepare_challenge::<D>(digit_abs_bound, challenge))
         .collect::<Vec<_>>();
-    let uses_narrow_accumulation = narrow_plans
-        .iter()
-        .any(|plan| !matches!(plan, NarrowChallengePlan::Wide));
+    let uses_narrow_accumulation = plans.iter().any(|plan| {
+        matches!(
+            plan,
+            ChallengePlan::NarrowFull(_) | ChallengePlan::NarrowChunked(_)
+        )
+    });
     let position_tile = position_tile_len(num_positions_per_block);
     let mut out = vec![[0i32; D]; inner_width];
 
@@ -496,13 +483,11 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
             }
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
-            let mut digit_scratch = source.digit_scratch(&prepared_challenges, num_digits);
+            let mut digit_scratch = source.digit_scratch(&plans, num_digits);
             let mut narrow_acc = uses_narrow_accumulation.then(|| vec![[0i16; D]; acc.len()]);
             let mut narrow_bound = 0u64;
 
-            for (block_idx, (challenge, prepared)) in
-                challenges.iter().zip(&prepared_challenges).enumerate()
-            {
+            for (block_idx, (challenge, plan)) in challenges.iter().zip(&plans).enumerate() {
                 let block_start = block_idx * num_positions_per_block;
                 if block_start >= source.num_rings() {
                     break;
@@ -513,7 +498,8 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
                 }
                 let ring_end = (block_start + elem_end).min(source.num_rings());
 
-                if let NarrowChallengePlan::Full(contribution_bound) = narrow_plans[block_idx] {
+                if let ChallengePlan::NarrowFull(contribution_bound) = plan {
+                    let contribution_bound = *contribution_bound;
                     if narrow_bound + contribution_bound > i16::MAX as u64 {
                         flush_narrow_accumulator(
                             narrow_acc
@@ -537,7 +523,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
                         );
                     }
                     narrow_bound += contribution_bound;
-                } else if let NarrowChallengePlan::Chunked(term_ranges) = &narrow_plans[block_idx] {
+                } else if let ChallengePlan::NarrowChunked(term_ranges) = plan {
                     if narrow_bound != 0 {
                         flush_narrow_accumulator(
                             narrow_acc
@@ -578,7 +564,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
                             local_elem_idx,
                             acc,
                             challenge,
-                            prepared,
+                            plan,
                             digit_scratch.as_mut(),
                             num_digits,
                         );
@@ -599,7 +585,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
 }
 
 /// Element-partitioned accumulation for predecomposed dense digit caches.
-pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
+pub fn cached_digit_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
     digit_planes: &[[i8; D]],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
@@ -610,8 +596,7 @@ pub fn cached_digit_decompose_fold_partitioned<const D: usize>(
     let digit_abs_bound = akita_types::balanced_signed_digit_abs_bound(log_basis)
         .expect("cached decompose-fold basis must be validated")
         .min(u64::from(i8::MIN.unsigned_abs()));
-    // `F` is unused for the predecomposed source; any `CanonicalField` instantiates the driver.
-    element_partitioned_decompose_fold::<akita_field::Prime128Offset275, D>(
+    element_partitioned_decompose_fold::<F, D>(
         ElementFoldSource::Predecomposed {
             digit_planes,
             num_rings,
@@ -640,7 +625,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
 }
 
 /// Position-partitioned accumulation for an already-tight recursive digit witness.
-pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
+pub fn balanced_tight_digit_fold_partitioned<F: CanonicalField, const D: usize>(
     coeffs: &[[i8; D]],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
@@ -654,7 +639,7 @@ pub fn balanced_tight_digit_fold_partitioned<const D: usize>(
         .iter()
         .flat_map(|ring| ring.iter())
         .all(|digit| u64::from(digit.unsigned_abs()) <= digit_abs_bound));
-    element_partitioned_decompose_fold::<akita_field::Prime128Offset275, D>(
+    element_partitioned_decompose_fold::<F, D>(
         ElementFoldSource::Predecomposed {
             digit_planes: coeffs,
             num_rings: coeffs.len(),

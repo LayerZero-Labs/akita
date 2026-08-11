@@ -102,12 +102,14 @@ fn suffix_case<const D: usize>(c: &mut Criterion) {
     group.throughput(Throughput::Elements(FIELD_COEFFICIENTS as u64));
     group.bench_function(format!("d{D}"), |b| {
         b.iter(|| {
-            black_box(balanced_tight_digit_fold_partitioned(
-                black_box(&rings),
-                black_box(&challenges),
-                POSITIONS_PER_BLOCK,
-                Some(3),
-            ))
+            black_box(
+                balanced_tight_digit_fold_partitioned::<Prime128OffsetA7F7, D>(
+                    black_box(&rings),
+                    black_box(&challenges),
+                    POSITIONS_PER_BLOCK,
+                    Some(3),
+                ),
+            )
         });
     });
     group.finish();
