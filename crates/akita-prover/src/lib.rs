@@ -69,8 +69,6 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
     ///
     /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
     centered_coeffs_flat: Vec<i32>,
-    /// Infinity norm of the flat centered coefficient storage above.
-    centered_inf_norm: u32,
     /// Smallest signed centered coefficient.
     centered_min: i32,
     /// Largest signed centered coefficient.
@@ -90,7 +88,6 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
         Self {
             z_folded_rings: RingVec::from_coefficient_rows(z_folded_coeffs),
             centered_coeffs_flat: centered_coeffs.into_flattened(),
-            centered_inf_norm: centered_min.unsigned_abs().max(centered_max.unsigned_abs()),
             centered_min,
             centered_max,
             ring_dim: D,
@@ -107,7 +104,6 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
         Self {
             z_folded_rings: RingVec::from_ring_elems(&z_folded_rings),
             centered_coeffs_flat: centered_coeffs.into_flattened(),
-            centered_inf_norm: centered_min.unsigned_abs().max(centered_max.unsigned_abs()),
             centered_min,
             centered_max,
             ring_dim: D,
@@ -172,7 +168,9 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
 
     /// Infinity norm derived from the centered coefficient buffer.
     pub fn centered_inf_norm(&self) -> u32 {
-        self.centered_inf_norm
+        self.centered_min
+            .unsigned_abs()
+            .max(self.centered_max.unsigned_abs())
     }
 
     /// Signed extrema derived from the centered coefficient buffer.

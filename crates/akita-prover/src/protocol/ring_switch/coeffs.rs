@@ -6,7 +6,7 @@ use crate::protocol::ring_relation::{
     RelationQuotientOutput,
 };
 use crate::protocol::ring_relation_witness::{
-    CenteredFoldChunk, RingRelationGroupWitness, RingRelationWitness,
+    FoldChunkCoefficients, RingRelationGroupWitness, RingRelationWitness,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::DecomposeFoldWitness;
@@ -29,7 +29,7 @@ pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
     pub(crate) e_folded: RingVec<F>,
     pub(crate) z_centered: Vec<i32>,
     pub(crate) z_inf: u32,
-    pub(crate) z_folded_centered_per_chunk: Option<Vec<CenteredFoldChunk>>,
+    pub(crate) z_folded_coefficients: FoldChunkCoefficients,
 }
 
 fn emit_packed_negative_binary(
@@ -171,29 +171,13 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
         }
         Ok(())
     };
-    match &group.z_folded_centered_per_chunk {
-        Some(chunks) => {
-            if unit_count != chunks.len() {
-                return Err(AkitaError::InvalidSize {
-                    expected: unit_count,
-                    actual: chunks.len(),
-                });
-            }
-            for (unit, chunk) in units.zip(chunks) {
-                emit_chunk(unit, chunk.coefficients())?;
-            }
-        }
-        None => {
-            if unit_count != 1 {
-                return Err(AkitaError::InvalidSize {
-                    expected: unit_count,
-                    actual: 1,
-                });
-            }
-            let unit = units.into_iter().next().ok_or(AkitaError::InvalidProof)?;
-            emit_chunk(unit, &group.z_centered)?;
-        }
-    }
+    let mut units = units.into_iter();
+    group
+        .z_folded_coefficients
+        .try_for_each(&group.z_centered, unit_count, |coefficients| {
+            let unit = units.next().ok_or(AkitaError::InvalidProof)?;
+            emit_chunk(unit, coefficients)
+        })?;
     {
         let _span = tracing::info_span!("ring_switch_emit_t_segments").entered();
         dispatch_for_field!(
@@ -281,7 +265,7 @@ where
         )?;
         let RingRelationGroupWitness {
             z_folded_rings,
-            z_folded_centered_per_chunk,
+            z_folded_coefficients,
             e_hat,
             e_folded,
             hint,
@@ -367,7 +351,7 @@ where
             e_folded,
             z_centered,
             z_inf,
-            z_folded_centered_per_chunk,
+            z_folded_coefficients,
         });
     }
     validate_chunked_witness_cfg(lp)?;

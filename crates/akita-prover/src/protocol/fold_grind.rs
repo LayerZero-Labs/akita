@@ -18,7 +18,7 @@ use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
     window_sparse_challenges,
 };
-use super::ring_relation_witness::CenteredFoldChunk;
+use super::ring_relation_witness::{CenteredFoldChunk, FoldChunkCoefficients};
 use crate::DecomposeFoldWitness;
 use akita_types::dispatch_for_field;
 
@@ -71,21 +71,11 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
 fn accepts_fold_witness_flat<F: CanonicalField>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
-    centered_per_chunk: Option<&[CenteredFoldChunk]>,
+    coefficients: &FoldChunkCoefficients,
 ) -> bool {
-    let accepts = |min: i32, max: i32| {
+    coefficients.all_extrema_within(witness, |min, max| {
         coeff_within_digit_bounds(min, ctx) && coeff_within_digit_bounds(max, ctx)
-    };
-    match centered_per_chunk {
-        Some(chunks) => chunks.iter().all(|chunk| {
-            let (min, max) = chunk.signed_extrema();
-            accepts(min, max)
-        }),
-        None => {
-            let (min, max) = witness.centered_signed_extrema();
-            accepts(min, max)
-        }
-    }
+    })
 }
 
 pub(crate) struct FoldGrindGroup<'params, 'group, G> {
@@ -104,9 +94,7 @@ impl<G> Clone for FoldGrindGroup<'_, '_, G> {
 
 pub(crate) struct FoldGrindGroupOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
-    /// `None` means the single chunk borrows the witness's global centered
-    /// buffer. Multi-chunk folds retain one flat centered buffer per chunk.
-    pub(crate) centered_per_chunk: Option<Vec<CenteredFoldChunk>>,
+    pub(crate) coefficients: FoldChunkCoefficients,
     pub(crate) challenges: Challenges,
 }
 
@@ -239,7 +227,7 @@ pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     point_indices: &[usize],
     root_lp: &CommittedGroupParams,
     params: &(impl LevelParamsLike + ?Sized),
-) -> Result<(DecomposeFoldWitness<F>, Option<Vec<CenteredFoldChunk>>), AkitaError>
+) -> Result<(DecomposeFoldWitness<F>, FoldChunkCoefficients), AkitaError>
 where
     F: FieldCore + CanonicalField,
     P: RootOpeningSource<F, D>,
@@ -259,7 +247,7 @@ where
             params.num_digits_inner(),
             params.log_basis_inner(),
         )?;
-        return Ok((witness, None));
+        return Ok((witness, FoldChunkCoefficients::single()));
     }
 
     let chunk_block_ranges = dyadic_block_ranges(params.num_live_blocks(), num_chunks)?;
@@ -284,7 +272,7 @@ where
         .map(CenteredFoldChunk::from_witness)
         .collect();
     let global = aggregate_decompose_fold_witnesses::<F, D>(windows)?;
-    Ok((global, Some(per_chunk)))
+    Ok((global, FoldChunkCoefficients::chunked(per_chunk)?))
 }
 
 fn first_jointly_accepted_nonce<T>(
@@ -352,7 +340,7 @@ where
                         accepts_fold_witness_flat(
                             &prepared_group.acceptance,
                             &output.witness,
-                            output.centered_per_chunk.as_deref(),
+                            &output.coefficients,
                         )
                         .then_some(output)
                     };
@@ -523,8 +511,23 @@ mod tests {
         assert!(!accepts_fold_witness_flat(
             &acceptance,
             &witness,
-            Some(&chunks)
+            &FoldChunkCoefficients::chunked(chunks).unwrap()
         ));
+    }
+
+    #[test]
+    fn distributed_fold_chunk_state_rejects_empty_and_singleton_sets() {
+        const D: usize = 4;
+        let witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero()],
+            vec![[0; D]],
+        );
+
+        assert!(FoldChunkCoefficients::chunked(Vec::new()).is_err());
+        assert!(
+            FoldChunkCoefficients::chunked(vec![CenteredFoldChunk::from_witness(&witness)])
+                .is_err()
+        );
     }
 
     #[test]
@@ -538,7 +541,11 @@ mod tests {
         assert_eq!(neg_bound, 2080);
         assert_eq!(pos_bound, 2015);
         let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound);
-        assert!(!accepts_fold_witness_flat(&acceptance, &witness, None));
+        assert!(!accepts_fold_witness_flat(
+            &acceptance,
+            &witness,
+            &FoldChunkCoefficients::single()
+        ));
     }
 
     #[test]
@@ -567,6 +574,10 @@ mod tests {
         assert_eq!(witness.centered_inf_norm(), 2_080);
 
         let acceptance = fold_grind_acceptance_ctx(2_080, 2_015);
-        assert!(accepts_fold_witness_flat(&acceptance, &witness, None));
+        assert!(accepts_fold_witness_flat(
+            &acceptance,
+            &witness,
+            &FoldChunkCoefficients::single()
+        ));
     }
 }

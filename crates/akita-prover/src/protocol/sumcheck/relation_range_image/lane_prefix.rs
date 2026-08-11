@@ -646,17 +646,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let relation_lane_weights = &self.relation_lane_weights;
         let evaluation_trace = &self.evaluation_trace;
         let coeff_count = common_alpha_factor.len();
-        let blocks_per_coefficient = live_pairs.div_ceil(block_size);
-        let work_items = coeff_count * blocks_per_coefficient;
+        let tiles =
+            crate::protocol::sumcheck::ReductionTiles::new(coeff_count, live_pairs, block_size);
         debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..work_items,
+                tiles.work_items(),
                 || ([E::zero(); 2], [E::zero(); 3]),
                 |(mut virt, mut rel), work_item| {
-                    let coefficient = work_item / blocks_per_coefficient;
-                    let blk = (work_item % blocks_per_coefficient) * block_size;
+                    let tile = tiles.decode(work_item);
+                    let coefficient = tile.outer;
+                    let blk = tile.inner.start;
                     let coefficient_start = coefficient * self.live_lane_count;
                     let coefficient_values = &folded_witness
                         [coefficient_start..coefficient_start + self.live_lane_count];
@@ -667,7 +668,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         blk,
                         num_first,
                         first_bits,
-                        block_size,
+                        tile.inner.len(),
                         live_pairs,
                     );
                     let mut inner_virt = [E::zero(); 2];
@@ -723,11 +724,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
         } else {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
-                0..work_items,
+                tiles.work_items(),
                 || ([E::zero(); 3], [E::zero(); 3]),
                 |(mut virt, mut rel), work_item| {
-                    let coefficient = work_item / blocks_per_coefficient;
-                    let blk = (work_item % blocks_per_coefficient) * block_size;
+                    let tile = tiles.decode(work_item);
+                    let coefficient = tile.outer;
+                    let blk = tile.inner.start;
                     let coefficient_start = coefficient * self.live_lane_count;
                     let coefficient_values = &folded_witness
                         [coefficient_start..coefficient_start + self.live_lane_count];
@@ -738,7 +740,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         blk,
                         num_first,
                         first_bits,
-                        block_size,
+                        tile.inner.len(),
                         live_pairs,
                     );
                     let mut inner_virt = [E::zero(); 3];

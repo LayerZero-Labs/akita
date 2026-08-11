@@ -257,20 +257,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let current_x_half = 1usize << (self.current_x_width() - 1);
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
-        let blocks_per_row = live_pairs.div_ceil(block_size);
-        let work_items = y_len * blocks_per_row;
+        let tiles = crate::protocol::sumcheck::ReductionTiles::new(y_len, live_pairs, block_size);
 
         let polynomial_precomputation = &self.polynomial_precomputation;
         let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
-            0..work_items,
+            tiles.work_items(),
             || vec![E::ProductAccum::zero(); num_coeffs_q],
             |mut outer_accum, work_item| {
                 debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
-                let y = work_item / blocks_per_row;
-                let blk = (work_item % blocks_per_row) * block_size;
-                let blk_end = (blk + block_size).min(live_pairs);
+                let tile = tiles.decode(work_item);
+                let y = tile.outer;
+                let blk = tile.inner.start;
+                let blk_end = tile.inner.end;
                 let row_start = y * self.live_x_cols;
                 let row = &range_image[row_start..row_start + self.live_x_cols];
                 let j_base = y * current_x_half;

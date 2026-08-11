@@ -157,6 +157,7 @@ pub(super) fn finalize_trace(
 }
 
 fn build_summary(aggregate: TraceAggregate, context: &ReportContext<'_>) -> ProfileSummary {
+    let root_interval = aggregate.root.map(|(interval, _)| interval);
     let root = aggregate.root.map(|(interval, dark_time_ns)| {
         let wall_time_ns = interval.duration_ns();
         RootSummary {
@@ -174,7 +175,7 @@ fn build_summary(aggregate: TraceAggregate, context: &ReportContext<'_>) -> Prof
     let cpu_utilization = aggregate
         .counters
         .get("process_effective_cores")
-        .and_then(|samples| cpu_summary(samples, context.prove_threads));
+        .and_then(|samples| cpu_summary(samples, root_interval?, context.prove_threads));
     let counters = aggregate
         .counters
         .into_iter()
@@ -350,29 +351,27 @@ fn peak_within(samples: Option<&Samples>, interval: Interval) -> Option<f64> {
         .reduce(f64::max)
 }
 
-fn cpu_summary(samples: &Samples, prove_threads: usize) -> Option<CpuUtilizationSummary> {
-    let count = samples.points.len();
+fn cpu_summary(
+    samples: &Samples,
+    interval: Interval,
+    prove_threads: usize,
+) -> Option<CpuUtilizationSummary> {
+    let scoped = samples
+        .points
+        .iter()
+        .filter(|(timestamp, _)| interval.contains(*timestamp))
+        .map(|(_, value)| *value)
+        .collect::<Vec<_>>();
+    let count = scoped.len();
     if count == 0 {
         return None;
     }
     let pool = prove_threads.max(1) as f64;
-    let sum = samples.points.iter().map(|(_, value)| value).sum::<f64>();
+    let sum = scoped.iter().sum::<f64>();
     let mean = sum / count as f64;
-    let peak = samples
-        .points
-        .iter()
-        .map(|(_, value)| *value)
-        .fold(0.0, f64::max);
-    let below_one = samples
-        .points
-        .iter()
-        .filter(|(_, value)| *value < 1.0)
-        .count();
-    let below_half = samples
-        .points
-        .iter()
-        .filter(|(_, value)| *value < pool / 2.0)
-        .count();
+    let peak = scoped.iter().copied().fold(0.0, f64::max);
+    let below_one = scoped.iter().filter(|value| **value < 1.0).count();
+    let below_half = scoped.iter().filter(|value| **value < pool / 2.0).count();
     Some(CpuUtilizationSummary {
         prove_threads,
         mean_effective_cores: mean,
@@ -461,5 +460,25 @@ mod tests {
         assert_eq!(converted[0]["ph"], "C");
         assert_eq!(converted[0]["name"], "rss_gib");
         assert_eq!(converted[0]["args"]["rss_gib"], 3.25);
+    }
+
+    #[test]
+    fn cpu_summary_excludes_samples_outside_the_root_interval() {
+        let samples = Samples {
+            points: vec![(1.0, 4.0), (5.0, 6.0), (11.0, 0.0)],
+        };
+        let summary = cpu_summary(
+            &samples,
+            Interval {
+                start_us: 0.0,
+                end_us: 10.0,
+            },
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(summary.mean_effective_cores, 5.0);
+        assert_eq!(summary.peak_effective_cores, 6.0);
+        assert_eq!(summary.samples_below_one_core_fraction, 0.0);
     }
 }

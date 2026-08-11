@@ -115,11 +115,6 @@ fn main() {
         None
     };
     let monitor_enabled = enable_trace && env_flag("AKITA_PROFILE_MONITOR", true);
-    let resource_monitor = monitor_enabled.then(|| {
-        let interval_ms = env_usize("AKITA_PROFILE_MONITOR_INTERVAL_MS", 100).max(10);
-        tracing::info!(interval_ms, "starting process resource monitor");
-        monitor::ResourceMonitor::start(Duration::from_millis(interval_ms as u64))
-    });
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
     let cpu = CpuBackend::DEFAULT;
     tracing::info!(
@@ -143,6 +138,11 @@ fn main() {
             prove_threads = parallel::ProfileThreadPools::get().prove_threads(),
         )
         .entered();
+        let resource_monitor = monitor_enabled.then(|| {
+            let interval_ms = env_usize("AKITA_PROFILE_MONITOR_INTERVAL_MS", 100).max(10);
+            tracing::info!(interval_ms, "starting process resource monitor");
+            monitor::ResourceMonitor::start(Duration::from_millis(interval_ms as u64))
+        });
         #[cfg(not(feature = "profile-onehot-fp128"))]
         {
             if mode == "all" {
@@ -153,6 +153,7 @@ fn main() {
         }
         #[cfg(feature = "profile-onehot-fp128")]
         modes::run_profile_mode(&mode, nv, num_polys);
+        drop(resource_monitor);
     }
 
     let peak_rss_bytes = monitor::peak_rss_bytes();
@@ -161,7 +162,6 @@ fn main() {
     } else {
         tracing::info!("Done");
     }
-    drop(resource_monitor);
     drop(chrome_guard);
     if enable_trace {
         let context = trace_report::ReportContext {

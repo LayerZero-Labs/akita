@@ -1,5 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use sysinfo::{get_current_pid, ProcessRefreshKind, ProcessesToUpdate, System};
@@ -9,35 +8,37 @@ const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 #[must_use = "the resource monitor stops when dropped"]
 pub(super) struct ResourceMonitor {
     handle: Option<JoinHandle<()>>,
-    stop: Arc<AtomicBool>,
+    stop: Option<SyncSender<()>>,
 }
 
 impl ResourceMonitor {
     pub(super) fn start(interval: Duration) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread_stop = Arc::clone(&stop);
+        let (stop, receiver) = sync_channel(1);
         let handle = thread::Builder::new()
             .name("akita-resource-monitor".to_string())
-            .spawn(move || sample_resources(thread_stop, interval))
+            .spawn(move || sample_resources(receiver, interval))
             .map_err(|error| {
                 tracing::warn!(%error, "failed to start profile resource monitor");
                 error
             })
             .ok();
+        let stop = handle.as_ref().map(|_| stop);
         Self { handle, stop }
     }
 }
 
 impl Drop for ResourceMonitor {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
     }
 }
 
-fn sample_resources(stop: Arc<AtomicBool>, interval: Duration) {
+fn sample_resources(stop: Receiver<()>, interval: Duration) {
     let Ok(pid) = get_current_pid() else {
         tracing::warn!("resource monitor could not resolve the current process id");
         return;
@@ -55,8 +56,11 @@ fn sample_resources(stop: Arc<AtomicBool>, interval: Duration) {
     let mut system_cpu_percent = system.global_cpu_usage();
     let mut previous_system_sample_at = Instant::now();
 
-    while !stop.load(Ordering::Acquire) {
-        thread::sleep(interval);
+    loop {
+        match stop.recv_timeout(interval) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
         if previous_system_sample_at.elapsed() >= sysinfo::MINIMUM_CPU_UPDATE_INTERVAL {
             system.refresh_cpu_all();
             system_cpu_percent = system.global_cpu_usage();
@@ -116,4 +120,17 @@ pub(super) fn peak_rss_bytes() -> Option<u64> {
 #[cfg(not(unix))]
 pub(super) fn peak_rss_bytes() -> Option<u64> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monitor_shutdown_interrupts_a_long_sampling_wait() {
+        let monitor = ResourceMonitor::start(Duration::from_secs(30));
+        let shutdown_started = Instant::now();
+        drop(monitor);
+        assert!(shutdown_started.elapsed() < Duration::from_secs(2));
+    }
 }
