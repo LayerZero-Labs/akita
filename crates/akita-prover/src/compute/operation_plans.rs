@@ -198,10 +198,3 @@ pub struct RingSwitchRelationPlan {
     /// Logarithm of the B/outer gadget basis used to produce `t_hat`.
     pub log_basis_outer: u32,
 }
-
-/// Scalar operation parameters for additional public-row quotient rows.
-#[derive(Debug, Clone, Copy)]
-pub struct RingSwitchQuotientPlan {
-    /// Number of A-side quotient rows to produce.
-    pub n_a: usize,
-}

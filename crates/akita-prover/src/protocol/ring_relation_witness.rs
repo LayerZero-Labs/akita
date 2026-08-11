@@ -142,6 +142,8 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
 pub struct RingRelationWitness<F: FieldCore> {
     pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
+    /// Level-owned D-role quotient rows retained after transcript-time `v` construction.
+    pub(crate) d_quotients: RingVec<F>,
     pub(crate) compression: Option<CompressionWitnessMaterialization<F>>,
 }
 
@@ -156,6 +158,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
         e_folded: RingVec<F>,
         hint: AkitaCommitmentHint<F>,
         role_dims: CommitmentRingDims,
+        d_quotients: RingVec<F>,
         compression: Option<CompressionWitnessMaterialization<F>>,
     ) -> Self {
         Self {
@@ -168,6 +171,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
                 hint,
                 role_dims,
             )],
+            d_quotients,
             compression,
         }
     }
@@ -176,11 +180,13 @@ impl<F: FieldCore> RingRelationWitness<F> {
     pub(crate) fn from_groups(
         fold_grind_nonce: u32,
         groups: Vec<RingRelationGroupWitness<F>>,
+        d_quotients: RingVec<F>,
         compression: Option<CompressionWitnessMaterialization<F>>,
     ) -> Self {
         Self {
             fold_grind_nonce,
             groups,
+            d_quotients,
             compression,
         }
     }
