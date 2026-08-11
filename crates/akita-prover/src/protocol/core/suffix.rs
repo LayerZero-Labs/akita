@@ -442,7 +442,7 @@ where
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
         + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let SuffixProverState {
         w,
