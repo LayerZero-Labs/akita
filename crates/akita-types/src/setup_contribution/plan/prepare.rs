@@ -267,43 +267,81 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .groups
                     .get(group_index)
                     .ok_or(AkitaError::InvalidProof)?;
-                // Shared reborrow alongside group's sub-borrow; both are &T so
-                // NLL allows them to coexist for parallel closure capture.
-                let plan: &Self = self;
-                let (e_res, (t_res, z_res)) = cfg_join!(
-                    || {
+                const PARALLEL_THRESHOLD: usize = 1 << 14;
+                let total_output = group
+                    .d_col_range
+                    .len()
+                    .saturating_add(group.t_cols)
+                    .saturating_add(group.z_cols);
+                if total_output >= PARALLEL_THRESHOLD {
+                    // Shared reborrow alongside group's sub-borrow; both are &T so
+                    // NLL allows them to coexist for parallel closure capture.
+                    let plan: &Self = self;
+                    let (e_res, (t_res, z_res)) = cfg_join!(
+                        || {
+                            let _span =
+                                tracing::info_span!("setup_materialize_e_weights").entered();
+                            plan.materialize_role_tensor_weights(
+                                group.d_ratio,
+                                &group.d_tensors,
+                                group.d_col_range.len(),
+                                alpha,
+                            )
+                        },
+                        || cfg_join!(
+                            || {
+                                let _span =
+                                    tracing::info_span!("setup_materialize_t_weights").entered();
+                                plan.materialize_role_tensor_weights(
+                                    group.b_ratio,
+                                    &group.b_tensors,
+                                    group.t_cols,
+                                    alpha,
+                                )
+                            },
+                            || {
+                                let _span =
+                                    tracing::info_span!("setup_materialize_z_weights").entered();
+                                plan.materialize_role_tensor_weights(
+                                    group.a_ratio,
+                                    &group.a_tensors,
+                                    group.z_cols,
+                                    alpha,
+                                )
+                            }
+                        )
+                    );
+                    (e_res?, t_res?, z_res?)
+                } else {
+                    let e = {
                         let _span = tracing::info_span!("setup_materialize_e_weights").entered();
-                        plan.materialize_role_tensor_weights(
+                        self.materialize_role_tensor_weights(
                             group.d_ratio,
                             &group.d_tensors,
                             group.d_col_range.len(),
                             alpha,
-                        )
-                    },
-                    || cfg_join!(
-                        || {
-                            let _span =
-                                tracing::info_span!("setup_materialize_t_weights").entered();
-                            plan.materialize_role_tensor_weights(
-                                group.b_ratio,
-                                &group.b_tensors,
-                                group.t_cols,
-                                alpha,
-                            )
-                        },
-                        || {
-                            let _span =
-                                tracing::info_span!("setup_materialize_z_weights").entered();
-                            plan.materialize_role_tensor_weights(
-                                group.a_ratio,
-                                &group.a_tensors,
-                                group.z_cols,
-                                alpha,
-                            )
-                        }
-                    )
-                );
-                (e_res?, t_res?, z_res?)
+                        )?
+                    };
+                    let t = {
+                        let _span = tracing::info_span!("setup_materialize_t_weights").entered();
+                        self.materialize_role_tensor_weights(
+                            group.b_ratio,
+                            &group.b_tensors,
+                            group.t_cols,
+                            alpha,
+                        )?
+                    };
+                    let z = {
+                        let _span = tracing::info_span!("setup_materialize_z_weights").entered();
+                        self.materialize_role_tensor_weights(
+                            group.a_ratio,
+                            &group.a_tensors,
+                            group.z_cols,
+                            alpha,
+                        )?
+                    };
+                    (e, t, z)
+                }
             };
             let group = self
                 .groups
