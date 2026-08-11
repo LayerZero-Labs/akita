@@ -135,6 +135,14 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
+    /// Borrow the validated compact opening point, when this is a proper extension.
+    pub fn as_subfield(&self) -> Option<&SubfieldMultiplierOpeningPoint<F>> {
+        match self {
+            Self::Base(_) => None,
+            Self::Subfield(point) => Some(point),
+        }
+    }
+
     /// Materialize the position multipliers for a prover ring kernel.
     pub fn materialize_position_rings<const D: usize>(
         &self,
@@ -819,6 +827,25 @@ mod tests {
             .accumulate_position_product(0, &rhs, &mut actual)
             .expect("compact product");
         assert_eq!(actual, expected_ring * rhs);
+
+        let mut actual = CyclotomicRing::zero();
+        point
+            .as_subfield()
+            .expect("proper extension multipliers")
+            .accumulate_fold_product(0, &rhs, &mut actual)
+            .expect("compact fold product");
+        assert_eq!(actual, expected_ring * rhs);
+
+        let scale = F::from_u64(23);
+        for shift in [0, D / 2, D - 1] {
+            let mut actual = CyclotomicRing::zero();
+            point
+                .as_subfield()
+                .expect("proper extension multipliers")
+                .accumulate_position_monomial(0, shift, scale, &mut actual)
+                .expect("compact shifted monomial");
+            assert_eq!(actual, expected_ring.negacyclic_shift(shift).scale(&scale));
+        }
     }
 
     #[test]

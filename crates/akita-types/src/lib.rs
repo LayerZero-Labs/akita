@@ -127,9 +127,9 @@ pub use proof::{
     RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity,
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
-    SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts, TerminalResponseShape,
-    TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    SetupSumcheckProof, SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape, TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
     MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
