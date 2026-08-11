@@ -93,7 +93,8 @@ macro_rules! matrix_test {
             });
         }
     };
-    (dense_pre; $name:ident; $cfg:ty; final_nvs=[$($nv:expr),+]) => {
+    ($(#[$attr:meta])* dense_pre; $name:ident; $cfg:ty; final_nvs=[$($nv:expr),+]) => {
+        $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
@@ -105,7 +106,8 @@ macro_rules! matrix_test {
             });
         }
     };
-    (onehot_pre; $name:ident; $cfg:ty; final_nvs=[$($nv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; final_nvs=[$($nv:expr),+]; k=$k:expr) => {
+        $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
@@ -156,8 +158,10 @@ macro_rules! matrix_test {
 // ----------------------------------------------------------------------------
 matrix_test!(dense; fp128_dense; fp128::Dense; nvs=[14, 16, 24, 26]);
 
-// Dense × single-chunk × precommitted × non-recursive: NA — fp128::Dense has
-// no combined-schedule entries (precommitted_groups: &[] in all catalog rows).
+// Dense × single-chunk × precommitted × non-recursive    [16]
+// Ignored: fp128::Dense catalog has no combined-schedule entries; regenerate
+// catalog with the planner to enable.
+matrix_test!(#[ignore = "no catalog entry for fp128::Dense precommitted; regenerate catalog to enable"] dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 
 // ----------------------------------------------------------------------------
 // Dense × multi-chunk × direct × non-recursive    [16]  (feature-gated)
@@ -176,9 +180,10 @@ matrix_test!(dense_pre; fp128_dense_mc_pre; fp128::DenseMultiChunk; final_nvs=[1
 // ----------------------------------------------------------------------------
 matrix_test!(onehot; fp128_onehot; fp128::OneHot; nvs=[12, 15, 20, 28]; k=256);
 
-// OneHot × single-chunk × precommitted × non-recursive: NA — the catalog has
-// no entry for a single 1-poly pre-group + 1-poly final-group; all combined
-// OneHot entries involve heterogeneous configs or different poly counts.
+// OneHot × single-chunk × precommitted × non-recursive    [16, 20]
+// Ignored: catalog has no entry for a single 1-poly pre-group + 1-poly
+// final-group; all combined OneHot entries involve heterogeneous configs.
+matrix_test!(#[ignore = "no catalog entry for fp128::OneHot single-config precommitted; regenerate catalog to enable"] onehot_pre; fp128_onehot_pre; fp128::OneHot; final_nvs=[16, 20]; k=256);
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × direct × recursive    (production-sized, ignored)

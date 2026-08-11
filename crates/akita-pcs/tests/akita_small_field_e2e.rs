@@ -69,7 +69,8 @@ macro_rules! small_field_test {
     // ------------------------------------------------------------------
     // dense — single-group, non-precommitted
     // ------------------------------------------------------------------
-    (dense; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]) => {
+    ($(#[$attr:meta])* dense; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]) => {
+        $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
@@ -188,7 +189,8 @@ macro_rules! small_field_test {
     // dense_pre — two-group precommitted, dense polynomial
     // pre-group: nv=PRE_NV=14  |  final-group: nv from final_nvs list
     // ------------------------------------------------------------------
-    (dense_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; final_nvs=[$($fnv:expr),+]) => {
+    ($(#[$attr:meta])* dense_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; final_nvs=[$($fnv:expr),+]) => {
+        $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
@@ -358,7 +360,8 @@ macro_rules! small_field_test {
     // ------------------------------------------------------------------
     // onehot — single-group, non-precommitted, one-hot polynomial
     // ------------------------------------------------------------------
-    (onehot; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]; k=$k:expr) => {
+        $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
@@ -484,7 +487,8 @@ macro_rules! small_field_test {
     // onehot_pre — two-group precommitted, one-hot polynomial
     // pre-group: nv=PRE_NV=14  |  final-group: nv from final_nvs list
     // ------------------------------------------------------------------
-    (onehot_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; final_nvs=[$($fnv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; final_nvs=[$($fnv:expr),+]; k=$k:expr) => {
+        $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
@@ -676,7 +680,8 @@ macro_rules! small_field_test {
 
 // fp32 × Dense × direct
 small_field_test!(dense;     fp32_dense;     fp32::Dense;  fp32::Field; fp32::ExtensionField; nvs=[20]);
-// fp32 × Dense × precommitted: NA — fp32::Dense catalog has no combined schedule entries.
+// fp32 × Dense × precommitted: ignored — fp32::Dense catalog has no combined schedule entries.
+small_field_test!(#[ignore = "no catalog entry for fp32::Dense precommitted; regenerate catalog to enable"] dense_pre; fp32_dense_pre; fp32::Dense; fp32::Field; fp32::ExtensionField; final_nvs=[16]);
 // fp32 × OneHot × direct
 small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]; k=256);
 // fp32 × OneHot × precommitted (catalog entry: final_nv=20 with pre=[onehot(14,1)])
@@ -689,9 +694,12 @@ small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::
 
 // fp64 × Dense × direct (nv=14 has a pre-existing witness mismatch; use nv=20)
 small_field_test!(dense;     fp64_dense;     fp64::Dense;  fp64::Field; fp64::ExtensionField; nvs=[20]);
-// fp64 × Dense × precommitted: NA — fp64::Dense catalog has no combined schedule entries.
-// fp64 × OneHot × direct: NA — fp64::OneHot minimum nv=28 causes 2^28 Lagrange weights (OOM).
-// fp64 × OneHot × precommitted: NA — fp64::OneHot has no nv=14 precommit entry (min nv=28).
+// fp64 × Dense × precommitted: ignored — fp64::Dense catalog has no combined schedule entries.
+small_field_test!(#[ignore = "no catalog entry for fp64::Dense precommitted; regenerate catalog to enable"] dense_pre; fp64_dense_pre; fp64::Dense; fp64::Field; fp64::ExtensionField; final_nvs=[16]);
+// fp64 × OneHot × direct: ignored — minimum nv=28 causes 2^28 Lagrange weights (OOM in CI).
+small_field_test!(#[ignore = "fp64::OneHot nv=28 requires 2^28 Lagrange weights (OOM in CI)"] onehot; fp64_onehot; fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]; k=256);
+// fp64 × OneHot × precommitted: ignored — fp64::OneHot has no nv=14 precommit entry (min nv=28).
+small_field_test!(#[ignore = "no catalog entry for fp64::OneHot nv=14 precommit; min precommit nv=28"] onehot_pre; fp64_onehot_pre; fp64::OneHot; fp64::Field; fp64::ExtensionField; final_nvs=[16]; k=256);
 
 // ============================================================================
 // GROUP E (small-field) — fp32 multi-group
