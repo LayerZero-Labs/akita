@@ -158,6 +158,37 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             if entry.root.precommitted_groups.is_empty() {
                 continue;
             }
+            // An independent precommit only needs its own frozen A/B matrices
+            // resident, so it is provisionable at its own polynomial count even
+            // when the grouped root it later feeds is not. Commit-time
+            // admission prices these same descriptors through
+            // `root_runtime_matrix_field_elements_for_opening_batch`, so
+            // sizing has to price them too.
+            for group in entry.root.precommitted_groups {
+                let profile = group.descriptor;
+                if profile.group.num_vars() > max_num_vars
+                    || profile.group.num_polynomials() > max_num_batched_polys
+                {
+                    continue;
+                }
+                let a_coeff_len = matrix_coefficient_len(
+                    profile.inner_commit_matrix.output_rank(),
+                    profile.inner_commit_matrix.input_width(),
+                    profile.inner_commit_matrix.ring_dimension(),
+                    "precommit A",
+                )?;
+                let b_coeff_len = matrix_coefficient_len(
+                    profile.outer_commit_matrix.output_rank(),
+                    profile.outer_commit_matrix.input_width(),
+                    profile.outer_commit_matrix.ring_dimension(),
+                    "precommit B",
+                )?;
+                saw_supported_shape = true;
+                envelope.num_field_elements = envelope
+                    .num_field_elements
+                    .max(a_coeff_len)
+                    .max(b_coeff_len);
+            }
             let key = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
                 prior_group_profiles: entry

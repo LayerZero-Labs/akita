@@ -77,11 +77,14 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         verifier.num_field_elements,
         incoming_prefixes
     );
-    assert_eq!(&incoming_prefixes[..2], &[Some(11_316_224), None]);
+    assert_eq!(&incoming_prefixes[..2], &[Some(11_976_704), None]);
     assert!(incoming_prefixes[2..].iter().all(Option::is_none));
     assert_eq!(prover.num_field_elements, 16_777_216);
     assert_eq!(verifier.num_field_elements, 8_388_608);
-    assert_eq!(setup_for_two.num_field_elements, 132_096);
+    // `K=2` cannot reach the grouped root, so it provisions only the frozen
+    // precommit B matrix (`1 * 5504 * 64`), the largest independent-commit
+    // footprint reachable within two polynomials.
+    assert_eq!(setup_for_two.num_field_elements, 352_256);
     assert_eq!(setup_for_four.num_field_elements, 16_777_216);
 }
 
