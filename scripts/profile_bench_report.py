@@ -1120,7 +1120,9 @@ def extract_summary(
 
 
 def run_benchmark_case(
-    binary: str, output_dir: pathlib.Path, case: BenchmarkCaseSpec
+    binary: str,
+    output_dir: pathlib.Path,
+    case: BenchmarkCaseSpec,
 ) -> tuple[dict[str, object], int]:
     env = os.environ.copy()
     env["AKITA_MODE"] = case.mode
@@ -1342,13 +1344,27 @@ def plan_case_runs(
     case_dir = summary_dir / case.case_id
     schedule = [
         ScheduledRun(
-            binary, summary_dir, case_dir / f"warmup-{warmup_index}", case, "warmup", 0
+            binary,
+            summary_dir,
+            case_dir / f"warmup-{warmup_index}",
+            case,
+            "warmup",
+            0,
         )
         for warmup_index in range(1, warmups + 1)
     ]
     for run_index in range(1, runs + 1):
         run_dir = case_dir if runs == 1 else case_dir / f"run-{run_index}"
-        schedule.append(ScheduledRun(binary, summary_dir, run_dir, case, "measured", run_index))
+        schedule.append(
+            ScheduledRun(
+                binary,
+                summary_dir,
+                run_dir,
+                case,
+                "measured",
+                run_index,
+            )
+        )
     return schedule
 
 
@@ -1469,7 +1485,13 @@ def run_benchmark(args: argparse.Namespace) -> int:
     schedule: list[ScheduledRun] = []
     for case in cases:
         plans = [
-            plan_case_runs(binary, summary_dir, case, args.runs, args.warmups)
+            plan_case_runs(
+                binary,
+                summary_dir,
+                case,
+                args.runs,
+                args.warmups,
+            )
             for binary, summary_dir in binaries
         ]
         plan_lengths = {len(plan) for plan in plans}
@@ -1701,7 +1723,7 @@ class Metric:
 
 
 MEASURED_METRICS = [
-    Metric("setup_s", "Setup and preparation", "s", fmt_seconds),
+    Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("setup_expand_s", "Setup expansion", "s", fmt_seconds),
     Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
