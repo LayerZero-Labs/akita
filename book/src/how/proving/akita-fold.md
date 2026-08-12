@@ -515,8 +515,12 @@ $$
 $$
 
 Here $\mathbf u\in R^{n_B}$, where $n_B$ is the output rank of $\mathbf B$.
-This relation does not use the fold challenges(freya: And this is a semantic relation binds t, so the prover will prove such relation between u and t, whereas in the compressed realization, the prover will recommits
-$\mathbf u$ through a commitment chain to get a smaller terminal commitment, and will prove this commitment chain)
+Equation (14) binds the private outer digits $\hat{\mathbf t}$ to the semantic
+commitment $\mathbf u$ and does not use the fold challenges. In the raw
+realization, the prover proves this equation directly against the public
+$\mathbf u$. In the compressed realization, $\mathbf u$ remains the semantic
+intermediate value: the prover recommits it through an $\mathbf F$ chain and
+proves that the chain ends at the smaller public payload $p_F$.
 
 ### 4. Opening-commitment consistency
 
@@ -532,22 +536,37 @@ $$
 \tag{15}
 $$
 
-(freya: make the following paragraph and the above description for the above u commitment 相互照应)
-Here $\mathbf v_D\in R^{n_D}$, where $n_D$ is the output rank of $\mathbf D$. In raw mode $\mathbf v_D$ is absorbed before the fold challenges are sampled;
-in compressed mode a terminal commitment binding $\mathbf v_D$ is absorbed
-instead. Together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
+Here $\mathbf v_D\in R^{n_D}$, where $n_D$ is the output rank of $\mathbf D$.
+Equation (15) similarly binds the private opening digits
+$\hat{\mathbf e}$ to the semantic opening commitment $\mathbf v_D$. In the
+raw realization, the prover proves this equation directly against the public
+$\mathbf v_D$. In the compressed realization, $\mathbf v_D$ remains the
+semantic intermediate value: the prover recommits it through an $\mathbf H$
+chain and proves that the chain ends at the smaller public payload $p_H$.
+
+The public value binding this relation is absorbed before the fold challenges
+are sampled: raw mode absorbs $\mathbf v_D$, whereas compressed mode absorbs
+$p_H$. Together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
 binding, this prevents the prover from adapting the partial-evaluation digits
-after learning those challenges. 
-Like the other three families, this is a ring-valued relation distinct from
-the field-valued scalar evaluation claim.
+after learning those challenges. Like the other three families, Equation (15)
+is a ring-valued relation distinct from the field-valued scalar evaluation
+claim.
 
 ## Semantic relations and physical realizations
 
 The four relations above are semantic: they state which algebraic constraints
 a valid fold must satisfy, without prescribing which commitment values are
-sent in the proof. A **physical realization** makes that second choice. It
-determines the public payload, any additional compression witness, and the
-right-hand side that the verifier uses for each physical relation row.
+sent in the proof. A **physical realization** turns those constraints into the
+native-ring matrix equations used by a particular payload mode. It determines
+the public payload, any additional compression witness, and the right-hand
+side of each equation.
+
+When these equations are assembled as a matrix, each coordinate equation is a
+**physical row**. For example, the vector equation
+$\mathbf B\hat{\mathbf t}=\mathbf u$ contributes $n_B$ physical rows, one for
+each coordinate of $\mathbf u$. A physical row is therefore an individual
+native-ring equation implementing a semantic relation, not a new semantic
+claim.
 
 Only the two commitment relations depend on this choice. Their semantic
 values are
@@ -631,14 +650,21 @@ be materialized densely: its entries are generated from the fold challenges,
 opening weights, gadget weights, and the setup matrices $\mathbf A$,
 $\mathbf B$, and $\mathbf D$.
 
-(freya: we can also mentioned a bit. This is not the final physical relations. we also need to expand such relations to enable ring switch that convert the relations in rings to relations in field that can be further proven in sum-check protocol. This part is delayed to the section "")
+Equation (17) is still a relation in the native cyclotomic ring; it is not yet
+the exact field identity consumed by sumcheck. The section
+[Lift the physical ring relations before
+sumcheck](#lift-the-physical-ring-relations-before-sumcheck) adds the quotient
+witness needed to lift every physical row and then evaluates the lifted rows
+at the ring-switch challenge. That step applies to both realizations and is
+deferred until after the compressed rows have also been defined.
+
 ### Compressed realization
 
 In compressed mode, the prover still computes the same semantic commitments,
 but does not transmit $\mathbf u$ or $\mathbf v_D$. Instead, it decomposes each
 one, recommits the resulting blocks through a two-map chain, and sends one
-fixed 128-byte terminal payload for each chain. In the common q128 example
-developed below, this replaces a typical 1024-byte semantic outer commitment
+fixed 128-byte terminal payload for each chain. In the illustrative q128
+example developed below, this replaces a 1024-byte semantic outer commitment
 by the 128-byte payload $p_F$. The two commitment relations follow parallel
 chains:
 
@@ -657,9 +683,10 @@ $$
 The prover stores the two layers of $\mathbf F$ and $\mathbf H$ compression
 digits as additional private witness coordinates. These arrows are not a
 decoding procedure: the verifier does not recover $\mathbf u$ from $p_F$ or
-$\mathbf v_D$ from $p_H$. Instead, additional physical relations (freya: the text usually uses rows instead physical relations. I am not sure readers know the meaning of row at this point. or we should put this notion earlier at some point) prove that the
-hidden semantic commitments recompose from the first digit layer and that the
-two compression maps lead to the transmitted terminal payloads. The
+$\mathbf v_D$ from $p_H$. Instead, additional $\mathbf F/\mathbf H$ equations,
+represented by physical rows, prove that the hidden semantic commitments
+recompose from the first digit layer and that the two compression maps lead
+to the transmitted terminal payloads. The
 $\mathbf B$ and $\mathbf D$ right-hand sides are therefore zero in compressed
 mode; $p_F$ and $p_H$ appear only on the terminal $\mathbf F_2$ and
 $\mathbf H_2$ rows.
@@ -669,12 +696,6 @@ mode. For a raw level, it assembles the ordinary relation right-hand side from
 $\mathbf u$ and $\mathbf v_D$. For a compressed level, it assembles the larger
 row layout from $p_F$ and $p_H$ and verifies the compression chains together
 with the ordinary relations. The proof does not carry a separate mode tag.
-
-In both modes, the public payload that binds $\mathbf v_D$ is absorbed before
-the fold challenges are sampled: raw mode absorbs $\mathbf v_D$ itself,
-whereas compressed mode absorbs $p_H$. Together with the boundedness of
-$\hat{\mathbf e}$ and Module-SIS binding, this prevents the prover from
-adapting the partial-evaluation digits after learning those challenges.
 
 | View | Raw realization | Compressed realization |
 |---|---|---|
@@ -738,8 +759,8 @@ $$
 
 where $d_B$ is the $\mathbf B$ ring dimension and $b_F$ is the canonical byte
 width of one field element. In the q128 profile, one field element occupies
-16 bytes. A common committed-group profile has $n_B=1$ and $d_B=64$, so its
-uncompressed payload occupies
+16 bytes. For a simple rank-one example, take $n_B=1$ and $d_B=64$. Its
+uncompressed payload then occupies
 
 $$
 1\cdot64\cdot16=1024\ \text{bytes}.
@@ -754,12 +775,12 @@ both effects when it chooses between compressed and raw recursive payloads.
 ### One recommitment step
 
 At a high level, one step does not map a large-ring element directly into a
-smaller quotient ring. It first exposes a signed base-$2$ (freya: dont introduce new notion, use the balanced decompostion with digit range in -1 and 0 sort of way )representation of
-the source, then groups those digits into short coefficient blocks. Each block
-can be treated as an element of the smaller ring, and a new (freya: add rank-one set up matrix of the same smaller ring) commits the
-resulting vector. The recomposition equation is what (freya: is it better to say" what bridge the ring elements of smaller rings to the that of original large-ring element?)
-proves that these
-small-ring blocks still describe the original large-ring element.
+smaller quotient ring. It first applies the balanced decomposition introduced
+above with base $2$, whose digit range is $\{-1,0\}$. It then groups those
+digits into short coefficient blocks, each representing an element of the
+smaller ring. A rank-one setup matrix over that same smaller ring commits the
+resulting vector to one new ring element. The recomposition identity is the
+bridge from these smaller-ring blocks back to the original large-ring element.
 
 For intuition, first suppose that the semantic commitment is a single ring
 element
@@ -771,8 +792,8 @@ u(X)
 \in R_d=F[X]/(X^d+1).
 $$
 
-The first operation is a coefficientwise base-$2$ (freya: add balanced) decomposition. For each
-$u_\ell\in F$, choose negative-binary digits
+The first operation is a coefficientwise balanced base-$2$ decomposition. For
+each $u_\ell\in F$, choose digits
 $\xi_{k,\ell}\in\{-1,0\}$ such that
 
 $$
@@ -889,9 +910,20 @@ Module-SIS security bounds.
 
 The current protocol therefore uses a fixed, profile-specific ladder of
 exactly two certified rank-one maps. The ladder accepts a complete source of
-at most 8 KiB and terminates at exactly 128 bytes. For the semantic commitment
-$\mathbf u\in R_{d_B}^{n_B}$, the first digit vector contains the repacked
-digits of every component of $\mathbf u$(freya: I don't think this sentence is complete):
+at most 8 KiB and terminates at exactly 128 bytes.
+
+For the semantic commitment $\mathbf u\in R_{d_B}^{n_B}$, flatten its
+$n_B$ ring coordinates into $n_Bd_B$ field coefficients. Balanced base-$2$
+decomposition produces $\kappa n_Bd_B$ digits in $\{-1,0\}$. Pack these digits
+in bit-major order into
+$
+w_1
+$
+elements of $R_{d_1}$, filling any unused coefficients of the last element
+with zero. These smaller-ring elements form
+$\boldsymbol\xi_{F,1}\in R_{d_1}^{w_1}$. The first rank-one map commits this
+vector to $u^{(1)}\in R_{d_1}$; the second layer repeats the same decomposition,
+repacking, and recommitment at dimension $d_2$:
 
 $$
 \underbrace{\mathbf u\in R_{d_B}^{n_B}}_{\text{semantic commitment}}
@@ -954,17 +986,17 @@ For the q128 example above, the complete chain is
 
 $$
 \underbrace{u\in R_{64}}_{1024\ \text{bytes}}
-\xrightarrow{}
+\xrightarrow{\text{}}
 \underbrace{\boldsymbol\xi_{F,1}\in R_{16}^{512}}_{\text{base-2 digit blocks}}
 \overset{\mathbf F_1}{\longrightarrow}
 \underbrace{u^{(1)}\in R_{16}}_{256\ \text{bytes}}
-\xrightarrow{}
+\xrightarrow{\text{}}
 \underbrace{\boldsymbol\xi_{F,2}\in R_8^{256}}_{\text{base-2 digit blocks}}
 \overset{\mathbf F_2}{\longrightarrow}
 \underbrace{p_F\in R_8}_{128\ \text{bytes}}.
 $$
 
-The widths count the small-ring elements needed to hold all negative-binary
+The widths count the small-ring elements needed to hold all balanced base-$2$
 digits: $w_1=64\cdot128/16=512$ and
 $w_2=16\cdot128/8=256$.
 
@@ -1092,10 +1124,11 @@ sumcheck rather than as another physical ring row.
 The physical equations above are congruences in cyclotomic rings, whereas
 sumcheck needs exact field identities. In the raw basic case, every row uses
 the common ring $R_D$ (freya: use might since we will consider mixed rings in the advanced relations). Compressed mode introduces several native rings:
-ordinary rows retain their scheduled $\mathbf A$, $\mathbf B$, and
-$\mathbf D$ dimensions, while the first and terminal compression rows use (freya: is it typo? what do you mean the first and terminal compression rows)
-$d_1$ and $d_2$, respectively. There is therefore no single denominator
-$X^D+1$ that applies to every compressed row.
+compressed mode retains those scheduled ordinary dimensions and adds two
+compression-only dimensions: the $\mathbf F_1$ and $\mathbf H_1$ rows lie in
+$R_{d_1}$, while the $\mathbf F_2$ and $\mathbf H_2$ rows lie in $R_{d_2}$.
+There is therefore no single denominator $X^D+1$ that applies to every row in
+the general physical layout.
 
 Instead, lift each physical row in its own ring. Index the rows by $i$, let
 $d_i$ be the native dimension of row $i$, and choose the canonical
@@ -1148,8 +1181,8 @@ $$
 $$
 
 Compressed mode keeps that ordinary quotient segment, then stores each
-compression layer's negative-binary digits beside the quotient digits for the
-same $\mathbf F/\mathbf H$ maps. Suppressing derived zero-alignment ranges,
+compression layer's balanced base-$2$ digits beside the quotient digits for
+the same $\mathbf F/\mathbf H$ maps. Suppressing derived zero-alignment ranges,
 the basic one-group layout is
 
 $$
