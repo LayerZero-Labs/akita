@@ -64,12 +64,8 @@
 //! Every ✓ cell resolves against a real shipped catalog row; no cell here is
 //! backed by a schedule added solely to make a test pass.
 
-#![allow(missing_docs)]
-#![cfg(feature = "schedules-default")]
-
-mod common;
-mod matrix_drivers;
-
+use crate::common::*;
+use crate::matrix_drivers::*;
 use akita_config::proof_optimized::fp128;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -82,8 +78,6 @@ use akita_types::{
     AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
-use common::*;
-use matrix_drivers::*;
 
 // ============================================================================
 // matrix_test! — generic driver for fp128 (Field = ExtField = F)

@@ -1,11 +1,5 @@
-<<<<<<< HEAD
-
 mod opening_oracles;
 
-pub(super) use opening_oracles::*;
-
-=======
->>>>>>> 6491e70a (fix: resolve clippy and format failures in consolidated pcs test suite)
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::RecursiveCommitmentConfig;
@@ -30,6 +24,7 @@ pub(super) use akita_types::{
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+pub(super) use opening_oracles::*;
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};

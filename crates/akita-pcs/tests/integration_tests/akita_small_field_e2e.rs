@@ -43,12 +43,8 @@
 //! `fp32_onehot_multi_group`: two precommit groups proved jointly, verifying the
 //! multi-group code path with a small field.
 
-#![allow(missing_docs)]
-#![cfg(feature = "schedules-default")]
-
-mod common;
-mod small_field_drivers;
-
+use crate::common::*;
+use crate::small_field_drivers::*;
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
@@ -60,8 +56,6 @@ use akita_types::{
     lagrange_weights, AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement,
     OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
-use common::*;
-use small_field_drivers::*;
 
 // ============================================================================
 // small_field_test! — inline driver for small fields (ExtField ≠ Field)

@@ -3,8 +3,6 @@
 //! Crate unit tests include this module under `cfg(test)`. Production builds
 //! never compile it.
 
-#![allow(dead_code)]
-
 use akita_challenges::SparseChallengeConfig;
 use akita_config::{committed_group_profile, policy_of, CommitmentConfig};
 use akita_field::AkitaError;
