@@ -146,6 +146,41 @@ fn retarget_group_role_dims(
     .expect("audited retargeted B matrix");
 }
 
+fn retarget_group_role_dims_wide(
+    params: &mut CommittedGroupParams,
+    inner_ring_dimension: usize,
+    outer_ring_dimension: usize,
+    min_input_width: usize,
+) {
+    retarget_group_role_dims(params, inner_ring_dimension, outer_ring_dimension);
+    let inner = params.inner_commit_matrix;
+    params.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: inner.security_policy(),
+            table_digest: inner.sis_table_key().table_digest,
+            modulus_profile: inner.sis_modulus_profile(),
+            role: crate::sis::SisMatrixRole::Inner,
+            ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
+            coeff_linf_bound: 131_071,
+        },
+        inner.input_width().max(min_input_width),
+    )
+    .expect("wide audited A matrix");
+    let outer = params.outer_commit_matrix;
+    params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: outer.security_policy(),
+            table_digest: outer.sis_table_key().table_digest,
+            modulus_profile: outer.sis_modulus_profile(),
+            role: crate::sis::SisMatrixRole::Outer,
+            ring_dimension: u32::try_from(outer_ring_dimension).expect("test ring dimension"),
+            coeff_linf_bound: 3,
+        },
+        outer.input_width().max(min_input_width),
+    )
+    .expect("wide audited B matrix");
+}
+
 fn precommitted_group(
     params: &CommittedGroupParams,
     group: PolynomialGroupLayout,
@@ -156,6 +191,18 @@ fn precommitted_group(
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
         num_digits_fold: params.num_digits_fold,
+    }
+}
+
+fn verifier_slot_for_id<F: FieldCore>(id: SetupPrefixSlotId) -> SetupPrefixVerifierSlot<F> {
+    let payload_coefficients = setup_prefix_compression_plan(&id.commitment_params)
+        .expect("setup-prefix compression plan")
+        .terminal_coefficients();
+    SetupPrefixVerifierSlot {
+        id,
+        commitment: SetupPrefixPublicCommitment {
+            rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
+        },
     }
 }
 
@@ -263,33 +310,22 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
 fn select_setup_prefix_slot_uses_exact_registry_match() {
     use akita_field::Prime32Offset99 as F;
 
-    let level_params = prefix_eligible_level_params();
+    let mut level_params = prefix_eligible_level_params();
+    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
     let source_ring_dimension = 32;
     let natural_len = 129usize;
     let n_prefix = padded_setup_prefix_len(natural_len);
     let commitment_params =
         setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
     let id = setup_prefix_slot_id(natural_len, commitment_params);
-    let mut level_params = level_params;
     level_params.setup_prefix = Some(id.clone());
-    let slot = SetupPrefixVerifierSlot {
-        id: id.clone(),
-        natural_len,
-        padded_len: n_prefix,
-        commitment: SetupPrefixPublicCommitment {
-            rows: vec![RingVec::from_coeffs(vec![F::zero()])],
-        },
-    };
+    let slot = verifier_slot_for_id(id.clone());
     let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());
     registry.insert(slot).expect("insert slot");
 
     let selection = select_setup_prefix_slot(
         Some(n_prefix),
-        |candidate| {
-            registry
-                .get(candidate)
-                .map(|slot| (slot, slot.natural_len, slot.padded_len))
-        },
+        registry.get(&id).map(|slot| &slot.id),
         &level_params,
         natural_len,
         source_ring_dimension,
@@ -297,17 +333,13 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     )
     .expect("selection succeeds")
     .expect("slot selected");
-    assert_eq!(&selection.0.id, &id);
-    assert_eq!(selection.0.id.d_setup(), 64);
+    assert_eq!(selection.0, &id);
+    assert_eq!(selection.0.d_setup(), 64);
     assert_eq!(selection.1, 8);
 
     let external_selection = select_setup_prefix_slot(
         None,
-        |candidate| {
-            registry
-                .get(candidate)
-                .map(|slot| (slot, slot.natural_len, slot.padded_len))
-        },
+        registry.get(&id).map(|slot| &slot.id),
         &level_params,
         natural_len,
         source_ring_dimension,
@@ -319,11 +351,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
 
     let err = select_setup_prefix_slot(
         Some(n_prefix),
-        |candidate| {
-            registry
-                .get(candidate)
-                .map(|slot| (slot, slot.natural_len, slot.padded_len))
-        },
+        registry.get(&id).map(|slot| &slot.id),
         &level_params,
         natural_len,
         512,
@@ -336,11 +364,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
 
     let err = select_setup_prefix_slot(
         Some(n_prefix),
-        |candidate| {
-            registry
-                .get(candidate)
-                .map(|slot| (slot, slot.natural_len, slot.padded_len))
-        },
+        registry.get(&id).map(|slot| &slot.id),
         &level_params,
         natural_len + 1,
         source_ring_dimension,
@@ -350,29 +374,8 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert!(err.to_string().contains("slot does not cover request"));
 
     let err = select_setup_prefix_slot(
-        Some(n_prefix),
-        |candidate| {
-            registry
-                .get(candidate)
-                .map(|slot| (slot, slot.natural_len, slot.padded_len / 2))
-        },
-        &level_params,
-        natural_len,
-        source_ring_dimension,
-        "slot does not cover request",
-    )
-    .expect_err("insufficient full-prefix slot capacity must fail");
-    assert!(err.to_string().contains(
-        "slot does not cover request: slot natural/full-prefix lengths are 129/128, active lengths are 129/256"
-    ));
-
-    let err = select_setup_prefix_slot(
         Some(5 * source_ring_dimension),
-        |candidate| {
-            registry
-                .get(candidate)
-                .map(|slot| (slot, slot.natural_len, slot.padded_len))
-        },
+        registry.get(&id).map(|slot| &slot.id),
         &level_params,
         193,
         source_ring_dimension,
@@ -385,9 +388,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
 }
 
 #[test]
-fn select_setup_prefix_slot_rejects_missing_registry_entry() {
-    use akita_field::Prime32Offset99 as F;
-
+fn select_setup_prefix_slot_rejects_missing_selected_slot_id() {
     let mut level_params = prefix_eligible_level_params();
     let d_setup = 64;
     let natural_len = 65usize;
@@ -397,9 +398,9 @@ fn select_setup_prefix_slot_rejects_missing_registry_entry() {
         setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params"),
     ));
 
-    let err = select_setup_prefix_slot::<SetupPrefixVerifierSlot<F>, _>(
+    let err = select_setup_prefix_slot(
         Some(2 * d_setup),
-        |_: &SetupPrefixSlotId| None,
+        None,
         &level_params,
         natural_len,
         d_setup,
@@ -408,16 +409,17 @@ fn select_setup_prefix_slot_rejects_missing_registry_entry() {
     .expect_err("missing registry entry must fail");
     assert!(err
         .to_string()
-        .contains("required setup prefix slot is missing from registry"));
-    let _ = F::zero();
+        .contains("required setup prefix slot is missing"));
 }
 
 #[test]
 fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
     use akita_field::Prime32Offset99 as F;
 
+    let mut level_params = sample_level_params();
+    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
     let commitment_params =
-        setup_prefix_precommitted_params(&sample_level_params(), 64).expect("prefix params");
+        setup_prefix_precommitted_params(&level_params, 64).expect("prefix params");
     let id = setup_prefix_slot_id(1, commitment_params);
     let slot = || {
         let inner_rows =
@@ -455,8 +457,6 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
         .expect("hint");
         SetupPrefixSlot {
             id: id.clone(),
-            natural_len: id.natural_len,
-            padded_len: id.n_prefix().expect("padded len"),
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![RingVec::from_coeffs(vec![
                     F::zero();
@@ -490,17 +490,12 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
 fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
     use akita_field::Prime32Offset99 as F;
 
+    let mut level_params = sample_level_params();
+    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
     let commitment_params =
-        setup_prefix_precommitted_params(&sample_level_params(), 64).expect("prefix params");
+        setup_prefix_precommitted_params(&level_params, 64).expect("prefix params");
     let id = setup_prefix_slot_id(1, commitment_params);
-    let slot = || SetupPrefixVerifierSlot {
-        id: id.clone(),
-        natural_len: id.natural_len,
-        padded_len: id.n_prefix().expect("padded len"),
-        commitment: SetupPrefixPublicCommitment {
-            rows: vec![RingVec::from_coeffs(vec![F::zero()])],
-        },
-    };
+    let slot = || verifier_slot_for_id(id.clone());
 
     let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());
     registry.insert(slot()).expect("first insert");
