@@ -359,7 +359,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Select the exact sole-group row for an opening layout.
+    /// Select the exact row without prior groups for an opening layout.
     ///
     /// Implementations own any configuration-specific layout-to-key mapping.
     fn select_schedule_for_opening(

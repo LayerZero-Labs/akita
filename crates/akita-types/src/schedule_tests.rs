@@ -974,13 +974,13 @@ fn ordered_group_profile_extractor_rejects_empty_input() {
 }
 
 #[test]
-fn ordered_group_profile_extractor_handles_sole_group_without_prefix() {
+fn ordered_group_profile_extractor_handles_a_group_without_prior_groups() {
     let final_group = committed_group_for_extractor(12);
     let batch = CommittedGroupBatchProfile::from_ordered_groups(
         [&final_group],
         PriorGroupProfiles::default(),
     )
-    .expect("sole group profile");
+    .expect("profile without prior groups");
     assert!(batch.prior_group_profiles.is_empty());
     assert_eq!(batch.final_group, *final_group.profile());
 }

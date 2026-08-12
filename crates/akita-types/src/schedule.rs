@@ -220,9 +220,9 @@ impl CommittedGroupProfile {
 
 /// Canonical runtime schedule lookup key.
 ///
-/// Single-group openings use an empty `prior_group_profiles` vector and store the
-/// sole group in `final_group`. Multi-group roots list earlier groups in
-/// `prior_group_profiles` and the final group in `final_group`.
+/// Openings without prior groups use an empty `prior_group_profiles` vector and
+/// store their only group in `final_group`. Multi-group roots list earlier
+/// groups in `prior_group_profiles` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.

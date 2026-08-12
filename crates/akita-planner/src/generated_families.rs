@@ -191,7 +191,8 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
 }
 
-fn sole_profile<Cfg: CommitmentConfig>(
+/// Frozen profile a group commits with when it has no prior groups.
+fn profile_without_prior_groups<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
     let schedule = regen::<Cfg>(group)?;
@@ -254,7 +255,7 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     type Cfg = fp128::OneHotMultiChunkW2R2;
     let group = PolynomialGroupLayout::new(14, 1);
-    let precommitted = sole_profile::<Cfg>(group)?;
+    let precommitted = profile_without_prior_groups::<Cfg>(group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: group,
@@ -270,7 +271,7 @@ fn fp32_onehot_group_batch_keys(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     type Cfg = fp32::OneHot;
     let group = PolynomialGroupLayout::new(14, 1);
-    let precommitted = sole_profile::<Cfg>(group)?;
+    let precommitted = profile_without_prior_groups::<Cfg>(group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(20, 1),
@@ -283,7 +284,7 @@ fn fp32_onehot_group_batch_keys(
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted = sole_profile::<BaseCfg>(precommitted_group)?;
+    let precommitted = profile_without_prior_groups::<BaseCfg>(precommitted_group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
@@ -302,8 +303,8 @@ fn heterogeneous_onehot_catalog_key(
     let dense_group = PolynomialGroupLayout::new(15, 2);
     let onehot_policy = honest_fold_policy_of::<fp128::OneHot>();
     let dense_policy = honest_fold_policy_of::<fp128::Dense>();
-    let onehot = sole_profile::<fp128::OneHot>(onehot_group)?;
-    let dense = sole_profile::<fp128::Dense>(dense_group)?;
+    let onehot = profile_without_prior_groups::<fp128::OneHot>(onehot_group)?;
+    let dense = profile_without_prior_groups::<fp128::Dense>(dense_group)?;
     Ok((
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(16, 1),
@@ -315,8 +316,8 @@ fn heterogeneous_onehot_catalog_key(
 
 fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    let singleton_pre = sole_profile::<BaseCfg>(PolynomialGroupLayout::new(14, 1))?;
-    let pair_pre = sole_profile::<BaseCfg>(PolynomialGroupLayout::new(14, 2))?;
+    let singleton_pre = profile_without_prior_groups::<BaseCfg>(PolynomialGroupLayout::new(14, 1))?;
+    let pair_pre = profile_without_prior_groups::<BaseCfg>(PolynomialGroupLayout::new(14, 2))?;
     let policy = honest_fold_policy_of::<BaseCfg>();
     Ok(vec![
         (
@@ -432,7 +433,10 @@ pub fn emit_spec_for_family(
 fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
     group: PolynomialGroupLayout,
 ) -> Result<(CommittedGroupProfile, HonestFoldPolicySpec), AkitaError> {
-    Ok((sole_profile::<Cfg>(group)?, honest_fold_policy_of::<Cfg>()))
+    Ok((
+        profile_without_prior_groups::<Cfg>(group)?,
+        honest_fold_policy_of::<Cfg>(),
+    ))
 }
 
 /// Every `Cfg` that has a generated schedule table.
