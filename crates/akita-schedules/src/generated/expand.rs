@@ -71,7 +71,6 @@ impl GeneratedSetupPrefixInput {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
-        producer_fold_level: usize,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
         super::validate_certified_bases(
             self.commitment.inner_commit_matrix.log_basis,
@@ -180,7 +179,7 @@ impl GeneratedSetupPrefixInput {
         let outer_slice_count =
             CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
         outer_slice_count.validate_for_commitment(
-            producer_fold_level,
+            0,
             akita_types::CommitmentPayloadMode::Compressed,
             num_live_blocks,
         )?;
@@ -544,7 +543,6 @@ impl GeneratedCommittedGroup {
                 policy,
                 &ring_challenge_config,
                 log_basis_open,
-                fold_level,
             )?;
             let n_prefix = 1usize
                 .checked_shl(commitment_params.layout.group.num_vars() as u32)
@@ -1057,7 +1055,7 @@ mod tests {
         };
 
         let expanded = input
-            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3, 0)
+            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
             .expect("audited mixed-dimension setup-prefix layout");
 
         assert_eq!(&*requested_dimensions.borrow(), &[128]);
@@ -1073,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_prefix_expansion_rejects_slicing_after_level_one() {
+    fn setup_prefix_expansion_accepts_slicing_independent_of_fold_level() {
         let input = GeneratedSetupPrefixInput {
             natural_len: 1 << 16,
             num_digits_fold: 4,
@@ -1100,9 +1098,9 @@ mod tests {
             })
         };
 
-        let error = input
-            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3, 2)
-            .expect_err("level-two setup-prefix slicing must be rejected");
-        assert!(matches!(error, AkitaError::InvalidSetup(_)));
+        let expanded = input
+            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
+            .expect("setup-prefix precommitment may use slicing at any consumer level");
+        assert_eq!(expanded.layout.outer_slice_count, CommitmentSliceCount::TWO);
     }
 }

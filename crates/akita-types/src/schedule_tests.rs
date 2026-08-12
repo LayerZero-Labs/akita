@@ -310,6 +310,54 @@ fn schedule_rejects_slicing_after_the_second_absolute_level() {
 }
 
 #[test]
+fn schedule_accepts_setup_prefix_slicing_at_late_levels() {
+    let mut sliced = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        3,
+        2,
+        2,
+        2,
+        SparseChallengeConfig::pm1_only(3),
+    );
+    sliced.outer_slice_count = crate::CommitmentSliceCount::TWO;
+    let sliced = sliced
+        .with_decomp(2, 4, 2, 2, 2)
+        .expect("sliced prefix source params");
+    let commitment_params = crate::setup_prefix_precommitted_params(&sliced, 128)
+        .expect("sliced setup-prefix commitment params");
+    let prefix = crate::setup_prefix_slot_id(128, commitment_params);
+
+    let mut level_two_consumer = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut level_two_consumer);
+    level_two_consumer.recursive_folds[1]
+        .params
+        .incoming_setup_prefix = Some(prefix.clone());
+    level_two_consumer.recursive_folds[1]
+        .params
+        .witness
+        .setup_prefix = Some(prefix.clone());
+    level_two_consumer
+        .validate_structure()
+        .expect("a level-two consumer may use a sliced setup prefix");
+
+    let mut level_three_consumer = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut level_three_consumer);
+    append_recursive_fold(&mut level_three_consumer);
+    level_three_consumer.recursive_folds[2]
+        .params
+        .incoming_setup_prefix = Some(prefix.clone());
+    level_three_consumer.recursive_folds[2]
+        .params
+        .witness
+        .setup_prefix = Some(prefix);
+
+    level_three_consumer
+        .validate_structure()
+        .expect("setup-prefix slicing is independent of the consumer witness level");
+}
+
+#[test]
 fn schedule_rejects_setup_prefix_inside_raw_suffix() {
     let mut schedule = recursive_schedule(64, 64, false);
     append_recursive_fold(&mut schedule);

@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-08-10 |
 | Status | implemented |
-| PR | [#383](https://github.com/LayerZero-Labs/akita/pull/383) |
+| PR | [#388](https://github.com/LayerZero-Labs/akita/pull/388) |
 | Supersedes | The inactive commitment matrix slice fields in generated schedules |
 | Superseded-by | |
 | Book-chapter | book/src/how/commitment.md |
@@ -17,24 +17,27 @@ of a commitment input. Each use produces its own B image. Akita stacks those
 images in slice order and compresses the complete stack with one F compression
 chain.
 
-This change reduces the B setup width at the first two commitment levels, where
-setup cost has the largest effect. It does not slice D. It admits only one,
-two, four, or eight B slices. B slicing and witness multi chunking both use the
-canonical dyadic block partition, so one partition always refines the other.
+This change reduces the B setup width for ordinary witness commitments at the
+first two commitment levels, where setup cost has the largest effect. Setup
+prefix commitments may use the same slicing at every level. It does not slice
+D. It admits only one, two, four, or eight B slices. B slicing and witness multi
+chunking both use the canonical dyadic block partition, so one partition always
+refines the other.
 
 The existing 8 KiB compression input limit remains unchanged. A planner
 candidate is valid only when the complete stacked B image fits that limit.
 
 The implementation started from PR #377 commit
-`16c09f9c684e6ab3e4158c0a3c76fa22534f7e0a` and is completed by PR #383.
+`16c09f9c684e6ab3e4158c0a3c76fa22534f7e0a` and is completed by PR #388.
 
 ## Intent
 
 ### Goal
 
-Add planner selected B commitment slicing at absolute commitment levels zero
-and one while keeping one physical B matrix, one complete B compression source
-per group, and one canonical block partition rule.
+Add planner selected B commitment slicing for ordinary witness commitments at
+absolute levels zero and one and for setup prefix commitments at every level.
+Keep one physical B matrix, one complete B compression source per group, and one
+canonical block partition rule.
 
 ### Terminology
 
@@ -60,8 +63,9 @@ recursive commitment is level one.
 
 - Only B may be sliced. D always has one unsliced image.
 - The only valid B slice counts are `1`, `2`, `4`, and `8`.
-- A slice count above one is valid only at absolute commitment levels zero and
-  one.
+- An ordinary witness slice count above one is valid only at absolute commitment
+  levels zero and one. Setup prefix commitments use standalone precommitment
+  eligibility at every level.
 - A slice count above one requires compressed payload mode.
 - A slice count above one must not exceed the group's live block count.
 - `S = 1` preserves the current B input order, physical B matrix shape,
@@ -69,9 +73,9 @@ recursive commitment is level one.
   change because the schedule descriptor now binds the slice count.
 - Standalone precommitments use root eligibility. Their selected slice count is
   frozen in `CommittedGroupProfile`.
-- A setup prefix uses the eligibility of the absolute schedule level whose
-  commitment geometry forms that prefix. The producer freezes the selected
-  count. A later consumer cannot reslice the commitment.
+- A setup prefix uses standalone precommitment eligibility at every level. Its
+  selected count is frozen in the prefix commitment parameters. A later
+  consumer cannot reslice the commitment.
 
 #### Canonical partition
 
@@ -288,9 +292,9 @@ Every earlier group uses its frozen count. Each group has one complete stacked
 B source and one F compression chain. The level still has one shared unsliced D
 image and one H compression chain.
 
-A generated setup prefix input carries the commitment shape that produced it,
-including the B slice count. A consuming fold checks that frozen shape before
-using the prefix. It does not derive a count from the consumer's current level.
+A generated setup prefix input carries its frozen commitment shape, including
+the B slice count. A consuming fold checks that shape before using the prefix.
+The consumer's witness commitment level does not change prefix eligibility.
 
 #### Identity and version policy
 
@@ -321,7 +325,8 @@ an unchecked count.
 - This change does not slice D.
 - This change does not support arbitrary slice counts.
 - This change does not support more than eight B slices.
-- This change does not slice commitments formed after absolute level one.
+- This change does not slice ordinary witness commitments formed after absolute
+  level one. Setup prefixes retain standalone precommitment eligibility.
 - This change does not add empty B slices.
 - This change does not change witness chunk selection policy.
 - This change does not couple the selected B slice count to the selected
@@ -338,7 +343,8 @@ an unchecked count.
 - [x] One checked B slice count type accepts exactly `1`, `2`, `4`, and `8`.
 - [x] Every B slice range comes from `dyadic_block_ranges`.
 - [x] `S > B` rejects before allocation.
-- [x] `S > 1` rejects after absolute commitment level one.
+- [x] Ordinary witness `S > 1` rejects after absolute commitment level one.
+- [x] Setup prefix `S > 1` remains eligible at later consumer levels.
 - [x] `S > 1` rejects for raw payload mode.
 - [x] D has no runtime or generated slice count.
 - [x] For `S = 1`, the B input planes, B image, relation values, compression
@@ -681,7 +687,7 @@ Update the commitment API and profiling documentation if public reports expose
 the selected slice count. Do not change the descriptor development version
 policy.
 
-This spec is implemented by PR #383. Archive it during the next normal pruning
+This spec is implemented by PR #388. Archive it during the next normal pruning
 pass after the pull request merges.
 
 ## Execution

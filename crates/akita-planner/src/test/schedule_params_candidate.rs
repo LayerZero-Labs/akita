@@ -117,7 +117,6 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
                 num_chunks: 1,
                 inner_ring_dimension: 64,
                 outer_ring_dimension: 64,
-                producer_fold_level: 0,
             },
         )
         .expect("setup-prefix frontier");

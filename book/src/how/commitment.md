@@ -33,7 +33,8 @@ cannot change ordinary relation alignment.
 At absolute commitment levels zero and one, a compressed commitment may reuse
 one smaller physical B matrix across `S` consecutive block ranges, where `S`
 is 1, 2, 4, or 8. D is never sliced. Raw commitments and deeper levels require
-`S = 1`.
+`S = 1`. Setup prefixes are separate frozen precommitments and may use slicing
+at any consumer level.
 
 The block ranges are the proportional dyadic ranges
 

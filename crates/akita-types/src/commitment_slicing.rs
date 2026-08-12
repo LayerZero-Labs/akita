@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn slice_and_chunk_intersections_are_the_finer_partition() {
-        for num_live_blocks in [5usize, 13, 61] {
+        for num_live_blocks in 1usize..=512 {
             for slice_count in CommitmentSliceCount::ALL {
                 if slice_count.get() > num_live_blocks {
                     continue;
@@ -531,6 +531,14 @@ mod tests {
                 let slices = slice_count
                     .block_ranges(num_live_blocks)
                     .expect("slice ranges");
+                assert!(slices.iter().all(|range| !range.is_empty()));
+                assert_eq!(
+                    slices
+                        .iter()
+                        .flat_map(|range| range.clone())
+                        .collect::<Vec<_>>(),
+                    (0..num_live_blocks).collect::<Vec<_>>()
+                );
                 for chunk_count in [1usize, 2, 4, 8] {
                     let chunks =
                         dyadic_block_ranges(num_live_blocks, chunk_count).expect("chunk ranges");
@@ -554,7 +562,12 @@ mod tests {
                         .filter(|range| !range.is_empty())
                         .cloned()
                         .collect::<Vec<_>>();
-                    assert_eq!(intersections, expected);
+                    assert_eq!(
+                        intersections,
+                        expected,
+                        "B={num_live_blocks}, S={}, W={chunk_count}",
+                        slice_count.get()
+                    );
                 }
             }
         }

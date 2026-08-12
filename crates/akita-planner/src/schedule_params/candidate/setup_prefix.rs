@@ -10,7 +10,6 @@ struct SetupPrefixSearchKey {
     num_chunks: usize,
     inner_ring_dimension: usize,
     outer_ring_dimension: usize,
-    producer_fold_level: usize,
 }
 
 #[derive(Default)]
@@ -26,7 +25,6 @@ pub(crate) struct SetupPrefixSearchRequest<'a> {
     pub(crate) num_chunks: usize,
     pub(crate) inner_ring_dimension: usize,
     pub(crate) outer_ring_dimension: usize,
-    pub(crate) producer_fold_level: usize,
 }
 
 type SetupPrefixFrontierEntry = (
@@ -130,7 +128,6 @@ impl SetupPrefixCandidateContext<'_> {
 }
 
 fn setup_prefix_slice_counts(
-    producer_fold_level: usize,
     num_live_blocks: usize,
 ) -> impl Iterator<Item = akita_types::CommitmentSliceCount> {
     akita_types::CommitmentSliceCount::ALL
@@ -138,7 +135,7 @@ fn setup_prefix_slice_counts(
         .filter(move |&count| {
             count
                 .validate_for_commitment(
-                    producer_fold_level,
+                    0,
                     akita_types::CommitmentPayloadMode::Compressed,
                     num_live_blocks,
                 )
@@ -170,7 +167,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         num_chunks,
         inner_ring_dimension,
         outer_ring_dimension,
-        producer_fold_level,
     } = request;
     let cache_key = SetupPrefixSearchKey {
         ring_challenge: *ring_challenge_cfg,
@@ -179,7 +175,6 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         num_chunks,
         inner_ring_dimension,
         outer_ring_dimension,
-        producer_fold_level,
     };
     if let Some(cached) = cache.entries.get(&cache_key) {
         return Ok(cached.to_vec());
@@ -265,8 +260,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 num_positions_per_block,
                 width_s,
             };
-            for outer_slice_count in setup_prefix_slice_counts(producer_fold_level, num_live_blocks)
-            {
+            for outer_slice_count in setup_prefix_slice_counts(num_live_blocks) {
                 let Some(entry) = candidate_context.derive(split, outer_slice_count)? else {
                     continue;
                 };
@@ -311,18 +305,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn setup_prefix_slicing_uses_the_absolute_producer_level() {
+    fn setup_prefix_slicing_uses_standalone_precommitment_eligibility() {
         assert_eq!(
-            setup_prefix_slice_counts(1, 8)
+            setup_prefix_slice_counts(8)
                 .map(akita_types::CommitmentSliceCount::get)
                 .collect::<Vec<_>>(),
             vec![1, 2, 4, 8]
         );
         assert_eq!(
-            setup_prefix_slice_counts(2, 8)
+            setup_prefix_slice_counts(3)
                 .map(akita_types::CommitmentSliceCount::get)
                 .collect::<Vec<_>>(),
-            vec![1]
+            vec![1, 2]
         );
     }
 }
