@@ -25,10 +25,11 @@ use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
-    CommitmentPayloadMode, CommittedGroupBatchProfile, DigitRangePlan,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
-    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
+    PolynomialGroupLayout, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
