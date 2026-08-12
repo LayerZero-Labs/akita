@@ -79,8 +79,8 @@ use akita_prover::{
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 use common::*;
 use matrix_drivers::*;
@@ -195,9 +195,9 @@ matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 fn fp128_dense_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let schedule = fp128::DenseMultiChunk::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(16),
-        ))
+        let schedule = fp128::DenseMultiChunk::runtime_schedule(
+            akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16)),
+        )
         .expect("dense multi-chunk schedule");
         assert_eq!(
             schedule
