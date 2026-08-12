@@ -33,7 +33,7 @@ pub(crate) type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
 /// Ordered groups committed before the current group.
 #[derive(Debug, Clone, Copy)]
-pub enum PriorGroupContext<'a> {
+enum PriorGroupContext<'a> {
     /// The current group has no earlier groups in its opening batch.
     NoPriorGroups,
     /// Exact prior profiles in opening-claim and transcript order.
@@ -52,7 +52,7 @@ impl PriorGroupContext<'_> {
 
 /// Authority for the current group's commitment parameters.
 #[derive(Debug, Clone, Copy)]
-pub enum GroupParameterSource<'a> {
+enum GroupParameterSource<'a> {
     /// Select an existing scalar or grouped row from the generated catalog.
     Scheduler,
     /// Use caller-supplied root parameters without catalog selection.
@@ -114,13 +114,6 @@ pub struct CommitOutput<F: FieldCore> {
     pub committed_group: CommittedGroup<F>,
     /// Prover-only opening hint.
     pub hint: AkitaCommitmentHint<F>,
-}
-
-impl<F: FieldCore> CommitOutput<F> {
-    /// Consume the named result into its committed group and prover hint.
-    pub fn into_parts(self) -> (CommittedGroup<F>, AkitaCommitmentHint<F>) {
-        (self.committed_group, self.hint)
-    }
 }
 
 #[derive(Clone, Copy)]

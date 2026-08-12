@@ -19,8 +19,7 @@ use akita_types::RingVec;
 
 pub use api::{
     commit, commit_setup_prefix, prepare_commit_inputs, AkitaProverSetup, CommitOutput,
-    GroupContext, GroupParameterSource, PreparedGroupProveOps, PreparedProverGroup,
-    PriorGroupContext,
+    GroupContext, PreparedGroupProveOps, PreparedProverGroup,
 };
 
 pub use backend::{

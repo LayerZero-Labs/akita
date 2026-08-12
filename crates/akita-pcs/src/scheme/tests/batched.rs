@@ -33,7 +33,7 @@ fn batched_commit_matches_individual_commits() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
-        .map(akita_prover::CommitOutput::into_parts)
+        .map(|output| (output.committed_group, output.hint))
         .unzip();
     let akita_prover::CommitOutput {
         committed_group: commitment_a,
