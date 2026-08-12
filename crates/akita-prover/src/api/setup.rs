@@ -84,7 +84,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     pub fn to_verifier_setup(
         &self,
         matrix_capacity: SetupMatrixCapacity,
-    ) -> Result<AkitaVerifierSetup<F>, AkitaError> {
+    ) -> Result<AkitaVerifierSetup<F>, AkitaError>
+    where
+        F: Valid,
+    {
         if matrix_capacity.num_field_elements == 0 {
             return Err(AkitaError::InvalidSetup(
                 "verifier setup matrix capacity must be non-zero".to_string(),
@@ -330,12 +333,10 @@ mod tests {
             num_digits_open: 1,
             num_digits_fold: 1,
         };
-        setup
+        let err = setup
             .prefix_slots
             .insert(SetupPrefixSlot {
                 id: setup_prefix_slot_id(1, commitment_params),
-                natural_len: 1,
-                padded_len: 3,
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![
                         RingVec::from_coeffs(vec![Prime128Offset275::default(); 64]);
@@ -344,11 +345,7 @@ mod tests {
                 },
                 hint,
             })
-            .expect("insert malformed slot");
-
-        let err = setup
-            .check()
-            .expect_err("prover setup check must reject invalid prefix slots");
-        assert!(err.to_string().contains("full_prefix_len"));
+            .expect_err("insert must reject malformed prefix slot");
+        assert!(err.to_string().contains("commitment row"));
     }
 }

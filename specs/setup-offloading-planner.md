@@ -1249,7 +1249,7 @@ Update the statuses of related specs when their deferred work is completed.
 
 - `STACK.md`
 - `specs/setup-layout-repack.md`
-- `specs/setup-prefix-ladder.md`
+- `specs/archive/2026-Q3/setup-prefix-ladder.md`
 - `specs/batched-stage3-setup-opening.md`
 - `specs/setup-product-sumcheck.md`
 - `specs/multi-group-batching.md`

@@ -12,7 +12,9 @@ use std::sync::{LazyLock, Mutex};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
-use akita_types::{CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout};
+use akita_types::{
+    CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout, SETUP_PREFIX_CONTENT_TAG,
+};
 
 use crate::generated::{
     generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
@@ -20,8 +22,6 @@ use crate::generated::{
     GeneratedScheduleTable, GeneratedWitnessPartition,
 };
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
-
-const SETUP_PREFIX_CONTENT_MODE_FULL_PREFIX: u64 = u64::from_le_bytes(*b"SPF1\0\0\0\0");
 
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -528,7 +528,19 @@ pub fn key_digest(keys: &[PolynomialGroupLayout]) -> u64 {
     h.finish()
 }
 
+fn write_setup_prefix_content_mode_full_prefix(h: &mut Fnv64) {
+    h.write_bytes(SETUP_PREFIX_CONTENT_TAG);
+    h.write_bytes(&[0; 4]);
+}
+
 fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
+    entries_key_digest_with_setup_prefix_content_mode(entries, true)
+}
+
+fn entries_key_digest_with_setup_prefix_content_mode(
+    entries: &[GeneratedFoldScheduleEntry],
+    write_full_prefix_content_mode: bool,
+) -> u64 {
     let mut entries = entries.to_vec();
     entries.sort_by(generated_schedule_key_cmp);
     let mut h = Fnv64::new();
@@ -552,7 +564,9 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
             write_generated_partition(&mut h, fold.witness_partition);
             h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
             if let Some(prefix) = fold.incoming_setup_prefix {
-                h.write_u64(SETUP_PREFIX_CONTENT_MODE_FULL_PREFIX);
+                if write_full_prefix_content_mode {
+                    write_setup_prefix_content_mode_full_prefix(&mut h);
+                }
                 h.write_u64(prefix.natural_len);
                 write_generated_group(&mut h, prefix.commitment);
             }
@@ -708,48 +722,12 @@ impl Fnv64 {
 #[cfg(all(test, feature = "fp128-onehot-recursive"))]
 mod tests {
     use super::*;
-    use crate::generated::GeneratedFoldScheduleEntry;
     use akita_challenges::SparseChallengeConfig;
-
-    fn old_zero_padded_entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
-        let mut entries = entries.to_vec();
-        entries.sort_by(generated_schedule_key_cmp);
-        let mut h = Fnv64::new();
-        for entry in entries {
-            write_generated_schedule_key(&mut h, entry.root.final_group.layout);
-            write_generated_group(&mut h, entry.root.final_group.commitment);
-            h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
-            h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
-            h.write_u64(entry.root.precommitted_groups.len() as u64);
-            for group in entry.root.precommitted_groups {
-                write_generated_precommitted_group_key(&mut h, &group.descriptor);
-                write_generated_group(&mut h, group.commitment);
-                h.write_u64(u64::from(group.num_digits_fold));
-            }
-            write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
-            write_generated_partition(&mut h, entry.root.witness_partition);
-            h.write_u64(entry.recursive_folds.len() as u64);
-            for fold in entry.recursive_folds {
-                write_generated_group(&mut h, fold.witness);
-                write_generated_open_matrix(&mut h, fold.open_commit_matrix);
-                write_generated_partition(&mut h, fold.witness_partition);
-                h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
-                if let Some(prefix) = fold.incoming_setup_prefix {
-                    h.write_u64(prefix.natural_len);
-                    write_generated_group(&mut h, prefix.commitment);
-                }
-            }
-            write_generated_geometry(&mut h, entry.terminal.geometry);
-            h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
-            h.write_u64(u64::from(entry.terminal.inner_commit_matrix.log_basis));
-        }
-        h.finish()
-    }
 
     #[test]
     fn full_prefix_catalog_identity_rejects_old_zero_padded_digest() {
         let table = crate::generated::fp128_onehot_recursive_table();
-        let old_digest = old_zero_padded_entries_key_digest(table.entries);
+        let old_digest = entries_key_digest_with_setup_prefix_content_mode(table.entries, false);
         assert_ne!(
             old_digest, table.identity.key_digest,
             "full-prefix setup content mode must change the generated key digest"

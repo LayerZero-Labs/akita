@@ -173,8 +173,6 @@ where
     let id = setup_prefix_slot_id(natural_len, level_params.clone());
     Ok(SetupPrefixSlot {
         id,
-        natural_len,
-        padded_len: n_prefix,
         commitment: SetupPrefixPublicCommitment {
             rows: vec![commitment_payload],
         },
@@ -218,21 +216,50 @@ mod tests {
     use akita_field::Prime128OffsetA7F7 as F;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
-        OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId,
+        InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
+        SisModulusProfileId, SisTableKey,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
+        let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             ring_dimension,
             3,
             2,
             3,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+                .expect("production challenge"),
         )
         .with_decomp(4, 3, 2, 2, 2)
-        .expect("level params")
+        .expect("level params");
+        let inner = params.inner_commit_matrix;
+        params.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: inner.security_policy(),
+                table_digest: inner.sis_table_key().table_digest,
+                modulus_profile: inner.sis_modulus_profile(),
+                role: akita_types::sis::SisMatrixRole::Inner,
+                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                coeff_linf_bound: 131_071,
+            },
+            inner.input_width(),
+        )
+        .expect("audited inner matrix");
+        let outer = params.outer_commit_matrix;
+        params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: outer.security_policy(),
+                table_digest: outer.sis_table_key().table_digest,
+                modulus_profile: outer.sis_modulus_profile(),
+                role: akita_types::sis::SisMatrixRole::Outer,
+                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                coeff_linf_bound: 3,
+            },
+            outer.input_width(),
+        )
+        .expect("audited outer matrix");
+        params
     }
 
     fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
@@ -375,8 +402,8 @@ mod tests {
             natural_len,
         )
         .expect("commit prefix");
-        assert_eq!(slot.natural_len, natural_len);
-        assert_eq!(slot.padded_len, n_prefix);
+        assert_eq!(slot.id.natural_len, natural_len);
+        assert_eq!(slot.id.n_prefix().expect("full prefix len"), n_prefix);
         setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }

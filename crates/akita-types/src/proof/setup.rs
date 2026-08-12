@@ -755,8 +755,6 @@ mod tests {
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
             id: crate::setup_prefix_slot_id(d_setup - 1, commitment_params),
-            natural_len: d_setup - 1,
-            padded_len: d_setup,
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
             },

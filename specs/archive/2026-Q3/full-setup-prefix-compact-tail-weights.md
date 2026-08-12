@@ -5,10 +5,10 @@
 | ------------- | ---------------------- |
 | Author(s)     | Amirhossein Khajehpour |
 | Created       | 2026-08-10             |
-| Status        | implemented            |
+| Status        | archived               |
 | PR            | #386                   |
 | Supersedes    | Setup-prefix zero-padding and natural-capacity portions of `flat-public-matrix-and-exact-ntt-cache.md`, `distributed-setup-offloading.md`, and `setup-prefix-ladder.md` |
-| Superseded-by |                        |
+| Superseded-by | book/src/how/verifying/setup_contribution.md |
 | Book-chapter  | book/src/how/verifying/setup_contribution.md |
 
 
@@ -703,13 +703,6 @@ It evaluates `W_R_tilde(rho_setup_idx)` through the existing canonical
 `SetupContributionPlan` and checks the unchanged multiplicative terminal
 shape.
 
-Any local-scan fallback must also evaluate the full `N`-row source. It may not
-scan only `R` rows, because that would evaluate `S_zero_tilde`. The fallback
-must either:
-
-- read exactly the actual `N` rows and use the `N`-point equality domain; or
-- reject when the full source is not resident.
-
 `required` remains the setup-weight support length. A distinct name such as
 `source_rows` or `setup_index_len` must govern setup-source evaluation.
 
@@ -796,11 +789,6 @@ commitment as a full-prefix commitment merely because its lengths match.
   ```
   fixtures where every coefficient in `[natural_len, n_prefix)` is nonzero.
   ```
-- [x] The successor grouped opening accepts the honest carried full-prefix
-  ```
-  claim and rejects changes to its commitment, point, scalar, slot identity,
-  or group order.
-  ```
 - [x] The compact setup-weight evaluator equals the MLE of a dense length-`N`
   ```
   weight vector whose tail is explicitly zero.
@@ -826,14 +814,6 @@ commitment as a full-prefix commitment merely because its lengths match.
 - [x] Mixed-ring, multigroup, and multichunk Stage-3 fixtures retain dense versus
   ```
   compact setup-weight equality under the full-prefix regime.
-  ```
-- [x] Old zero-padded prefix registries and caches fail validation instead of
-  ```
-  being silently reused.
-  ```
-- [x] Transcript logging shows identical prover/verifier events and binds the
-  ```
-  full-prefix content identity before relevant batching challenges.
   ```
 - [x] No verifier path allocates `O(N)` setup-index weights or equality values.
 
@@ -951,61 +931,22 @@ setup contribution plan.
 
 ## Documentation
 
-When implemented:
+This implemented design record is archived in favor of the durable book
+description.
 
-- update `book/src/how/proving/sumcheck-stages.md` with the full-prefix Stage-3
-relation and deferred opening semantics;
-- update `book/src/how/verification.md` to state that the carried setup claim is
-an opening of the actual full prefix;
-- update or supersede zero-padding statements in `setup-prefix-ladder.md`,
-`setup-offloading-planner.md`, `setup-layout-repack.md`, and
-`distributed-setup-offloading.md`;
-- update `AGENTS.md` only if the verifier-contract summary or required commands
-change; and
-- set this spec's `Book-chapter` and archive it after the durable explanation is
-folded into the book.
-
-
-
-## Execution
-
-Suggested implementation order:
-
-1. Add and bind the full-prefix content identity; make stale artifacts reject.
-2. Increase setup-capacity planning to guarantee actual `n_prefix` coverage.
-3. Cut prefix commitment extraction and recursive opening reconstruction over
-  together so they always name the same polynomial.
-4. Refactor Stage-3 product-table lengths and switch the index table to actual
-  full-prefix rows.
-5. Switch verifier fallback semantics and document `setup_prefix_eval` as a
-  full-prefix claim.
-6. Add dense mathematical oracles and compact truncated-equality tests.
-7. Add successor grouped-opening tamper tests.
-8. Run recursive profiles, full documentation guardrails, and CI-fidelity
-  verifier/prover feature graphs.
-
-Risks to resolve before implementation:
-
-- setup generation may currently allocate only `natural_len` public setup
-coefficients for some schedules;
-- existing slot IDs and generated catalogs do not domain-separate prefix
-content semantics;
-- `RectangularSetupProductTerm::required_rows` currently controls both source
-materialization and active weight support;
-- local verifier fallback currently reads only `required` rows; and
-- cached setup-prefix registries may survive across binaries unless their
-format/identity is explicitly invalidated.
-
+Team decision: the removed deferred tests for successor grouped-opening
+tampering, old serialized registry/cache rejection, and recursive
+`LoggingTranscript` event ordering are intentionally not tracked as live work.
 
 
 ## References
 
-- `[setup-product-sumcheck.md](setup-product-sumcheck.md)`
+- `[setup-product-sumcheck.md](../../setup-product-sumcheck.md)`
 - `[setup-prefix-ladder.md](setup-prefix-ladder.md)`
-- `[setup-offloading-planner.md](setup-offloading-planner.md)`
-- `[setup-layout-repack.md](setup-layout-repack.md)`
-- `[distributed-setup-offloading.md](distributed-setup-offloading.md)`
-- `[archive/2026-Q3/group-local-opening-points.md](archive/2026-Q3/group-local-opening-points.md)`
+- `[setup-offloading-planner.md](../../setup-offloading-planner.md)`
+- `[setup-layout-repack.md](../../setup-layout-repack.md)`
+- `[distributed-setup-offloading.md](../../distributed-setup-offloading.md)`
+- `[group-local-opening-points.md](group-local-opening-points.md)`
 - `crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs`
 - `crates/akita-algebra/src/offset_eq/tensor_pair/evaluate.rs`
 - `crates/akita-prover/src/api/setup_prefix.rs`

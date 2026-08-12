@@ -833,8 +833,6 @@ mod tests {
                     .prefix_slots
                     .insert(SetupPrefixSlot {
                         id,
-                        natural_len: 1,
-                        padded_len: TEST_D,
                         commitment: SetupPrefixPublicCommitment {
                             rows: vec![commitment_row; commitment_rows],
                         },
