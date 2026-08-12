@@ -494,15 +494,9 @@ where
             actual: eta_weights.len(),
         });
     }
-    let mut out = EqPolynomial::evals(tail_point)?;
-    let project = |value: &mut E| {
-        *value = project_tensor_factor_value_unchecked::<F, E>(*value, &eta_weights);
-    };
-    #[cfg(feature = "parallel")]
-    out.par_iter_mut().for_each(project);
-    #[cfg(not(feature = "parallel"))]
-    out.iter_mut().for_each(project);
-    Ok(out)
+    EqPolynomial::evals_mapped(tail_point, |value| {
+        project_tensor_factor_value_unchecked::<F, E>(value, &eta_weights)
+    })
 }
 
 /// Evaluate the transparent tensor equality factor `A_eta` at one point.

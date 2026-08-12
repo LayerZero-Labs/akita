@@ -122,6 +122,75 @@ impl<E: FieldCore> EqPolynomial<E> {
         Self::evals_with_scaling(r, None)
     }
 
+    /// Compute the full equality table and transform each entry as it is
+    /// materialized.
+    ///
+    /// The serial path fuses the transformation into the last recurrence
+    /// layer. Medium parallel tables expand a small equality frontier into
+    /// disjoint mapped subtrees. Larger tables retain the ordinary parallel
+    /// equality builder and map its output in parallel. All paths preserve
+    /// little-endian table order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the equality table length or allocation is invalid.
+    #[track_caller]
+    pub fn evals_mapped<G>(r: &[E], map: G) -> Result<Vec<E>, AkitaError>
+    where
+        G: Fn(E) -> E + Sync,
+    {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+
+            // Coarse subtree expansion wins at the terminal suffix sizes.
+            // Above this range, the existing parallel DP plus parallel map is
+            // faster; below it, task overhead dominates.
+            const PARALLEL_SLAB_MIN_VARS: usize = 14;
+            const PARALLEL_SLAB_MAX_VARS: usize = 16;
+            if rayon::current_num_threads() > 1 {
+                if (PARALLEL_SLAB_MIN_VARS..=PARALLEL_SLAB_MAX_VARS).contains(&r.len()) {
+                    return Self::evals_mapped_parallel_slabs(r, map);
+                }
+                let mut out = Self::evals(r)?;
+                out.par_iter_mut().for_each(|value| *value = map(*value));
+                return Ok(out);
+            }
+        }
+        Self::evals_serial_with_final_map("mapped eq evaluation table", r, E::one(), map)
+    }
+
+    #[cfg(feature = "parallel")]
+    fn evals_mapped_parallel_slabs<G>(r: &[E], map: G) -> Result<Vec<E>, AkitaError>
+    where
+        G: Fn(E) -> E + Sync,
+    {
+        use rayon::prelude::*;
+
+        // Keep at least 256 mapped leaves in each task to amortize Rayon
+        // scheduling and the small high-variable frontier allocation.
+        const MINIMUM_SLAB_VARS: usize = 8;
+        let final_size = Self::materialized_table_len("mapped eq evaluation table", r.len())?;
+        let target_tasks = rayon::current_num_threads().saturating_mul(4).max(1);
+        let target_outer_vars = target_tasks.ilog2() as usize;
+        let outer_vars = target_outer_vars.min(r.len().saturating_sub(MINIMUM_SLAB_VARS));
+        debug_assert!(outer_vars > 0);
+        let low_vars = r.len() - outer_vars;
+        let slab_len = 1usize << low_vars;
+        // The high-variable equality entries seed contiguous little-endian
+        // subtrees over the low variables. Expanding each seed with the
+        // canonical serial recurrence preserves the ordinary `2^n - 1`
+        // multiplication count while making output slabs disjoint.
+        let outer = Self::evals_serial(&r[low_vars..], None)?;
+        let mut out = Self::zero_vec("mapped eq evaluation table", final_size)?;
+        out.par_chunks_mut(slab_len)
+            .zip(outer.par_iter())
+            .for_each(|(slab, &initial)| {
+                Self::fill_serial_with_final_map(slab, &r[..low_vars], initial, &map);
+            });
+        Ok(out)
+    }
+
     /// Compute the first `len` entries of the little-endian equality table.
     ///
     /// The split representation keeps this bounded by the requested prefix
@@ -192,19 +261,54 @@ impl<E: FieldCore> EqPolynomial<E> {
     /// Uses **little-endian** index order.
     #[track_caller]
     pub fn evals_serial(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
-        let size = Self::materialized_table_len("eq evaluation table", r.len())?;
-        let mut evals = Self::zero_vec("eq evaluation table", size)?;
-        evals[0] = scaling_factor.unwrap_or(E::one());
+        Self::evals_serial_with_final_map(
+            "eq evaluation table",
+            r,
+            scaling_factor.unwrap_or(E::one()),
+            |value| value,
+        )
+    }
+
+    fn evals_serial_with_final_map<G>(
+        label: &str,
+        r: &[E],
+        initial: E,
+        map: G,
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        G: Fn(E) -> E,
+    {
+        let size = Self::materialized_table_len(label, r.len())?;
+        let mut evals = Self::zero_vec(label, size)?;
+        Self::fill_serial_with_final_map(&mut evals, r, initial, &map);
+        Ok(evals)
+    }
+
+    fn fill_serial_with_final_map<G>(evals: &mut [E], r: &[E], initial: E, map: &G)
+    where
+        G: Fn(E) -> E,
+    {
+        debug_assert_eq!(evals.len(), 1usize << r.len());
+        if r.is_empty() {
+            evals[0] = map(initial);
+            return;
+        }
+
+        evals[0] = initial;
         let mut len = 1usize;
-        for &t in r.iter().rev() {
-            for j in (0..len).rev() {
-                let (left, right) = Self::split_lagrange_parent(evals[j], t);
-                evals[2 * j] = left;
-                evals[2 * j + 1] = right;
+        for &coordinate in r[1..].iter().rev() {
+            for parent in (0..len).rev() {
+                let (left, right) = Self::split_lagrange_parent(evals[parent], coordinate);
+                evals[2 * parent] = left;
+                evals[2 * parent + 1] = right;
             }
             len *= 2;
         }
-        Ok(evals)
+        for parent in (0..len).rev() {
+            let (left, right) = Self::split_lagrange_parent(evals[parent], r[0]);
+            evals[2 * parent] = map(left);
+            evals[2 * parent + 1] = map(right);
+        }
     }
 
     /// Compute eq evaluations and cache intermediate tables.
@@ -266,22 +370,18 @@ impl<E: FieldCore> EqPolynomial<E> {
         let mut evals = Self::zero_vec("eq evaluation table", final_size)?;
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut size = 1;
-
         // Forward iteration (r[0] first) produces little-endian ordering.
         for &r_i in r.iter() {
             let (evals_left, evals_right) = evals.split_at_mut(size);
             let (evals_right, _) = evals_right.split_at_mut(size);
-
             evals_left
                 .par_iter_mut()
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
                     (*x, *y) = Self::split_lagrange_parent(*x, r_i);
                 });
-
             size *= 2;
         }
-
         Ok(evals)
     }
 }
@@ -479,6 +579,21 @@ mod tests {
     }
 
     #[test]
+    fn evals_mapped_matches_evals_then_map_for_small_tables() {
+        let mut rng = StdRng::seed_from_u64(0xA11C_E5A1);
+        for n in 0..8 {
+            let point: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+            let map = |value: F| value.square() + F::from_u64(17);
+            let expected = EqPolynomial::evals(&point)
+                .unwrap()
+                .into_iter()
+                .map(map)
+                .collect::<Vec<_>>();
+            assert_eq!(EqPolynomial::evals_mapped(&point, map).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn serial_expansions_use_one_multiply_and_subtract_per_parent() {
         for num_vars in 0..9 {
             let point = vec![F::from_u64(7); num_vars];
@@ -554,6 +669,29 @@ mod tests {
             let serial = EqPolynomial::evals_serial(&r, None).unwrap();
             let parallel = EqPolynomial::evals_parallel(&r, None).unwrap();
             assert_eq!(serial, parallel, "n={n}");
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn mapped_parallel_paths_match_serial_table_order() {
+        let mut rng = StdRng::seed_from_u64(0xA11C_E5AB);
+        for n in [14, 15, 16, 17] {
+            let point: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+            let map = |value: F| value.square() + F::from_u64(17);
+            let expected = EqPolynomial::evals_serial(&point, None)
+                .unwrap()
+                .into_iter()
+                .map(map)
+                .collect::<Vec<_>>();
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(2)
+                .build()
+                .unwrap();
+            let actual = pool
+                .install(|| EqPolynomial::evals_mapped(&point, map))
+                .unwrap();
+            assert_eq!(actual, expected, "n={n}");
         }
     }
 }
