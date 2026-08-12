@@ -37,7 +37,7 @@
 //! ║          ║          ║    24,26]     ║               ║               ║               ║
 //! ║ Dense    ║ rec      ║      NA       ║      NA       ║      NA       ║      NA       ║
 //! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
-//! ║ OneHot   ║ nonrec   ║ ✓ [12,15,     ║ ✓ final=      ║   cfg+ign     ║   cfg+ign     ║
+//! ║ OneHot   ║ nonrec   ║ ✓ [12,15,     ║ ✓ final=      ║   cfg+ign     ║      NA       ║
 //! ║          ║          ║    20,28]     ║   [16,20]     ║               ║               ║
 //! ║ OneHot   ║ rec      ║   cfg+ign     ║   cfg+ign     ║   cfg+ign     ║   cfg+ign     ║
 //! ╚══════════╩══════════╩═══════════════╩═══════════════╩═══════════════╩═══════════════╝
@@ -47,7 +47,8 @@
 //! Dense mc pre: NA. The multi-chunk family ships only nv=16, and the DP finds
 //! no multi-group multi-chunk schedule below final_nv=20, so backing this cell
 //! would mean adding a production size purely for a test.
-//! OneHot mc nonrec:  cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
+//! OneHot mc nonrec direct: cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
+//! OneHot mc nonrec pre: NA. The catalog has no combined final=32, pre=14 row.
 //! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
 //!   pre    = RecursiveCommitmentConfig + user precommit (fp128_onehot_recursive_precommitted.rs).
@@ -165,11 +166,11 @@ macro_rules! matrix_test {
 // Full cartesian product: {Dense, OneHot} × {sc, mc} × {direct, pre} × {nonrec, rec}
 // Generic driver (prove_verify_*) used throughout.
 //
-// Only the Dense + recursive cells are NA: no production schedule exists for
-// them, so they are absent from the source rather than marked #[ignore]. Every
-// other cell is declared. The OneHot recursive and multi-chunk cells do have
-// schedules; they are feature-gated and #[ignore]d only because their nv is
-// production-sized, not because they are unsupported.
+// NA cells have no exact production catalog row and are absent from the source
+// rather than marked #[ignore]. These are all Dense recursive cells, Dense
+// multi-chunk pre, and OneHot multi-chunk nonrecursive pre. Declared recursive
+// and multi-chunk cells are feature-gated and #[ignore]d only when their exact
+// production workloads are too large for the default suite.
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -253,22 +254,10 @@ fn fp128_onehot_mc() {
 }
 
 // ----------------------------------------------------------------------------
-// OneHot × multi-chunk × precommitted × non-recursive    [32]
-// (production-sized schedule; run explicitly with --release)
+// OneHot × multi-chunk × precommitted × non-recursive — NA
 // ----------------------------------------------------------------------------
-#[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
-#[test]
-#[ignore = "production-sized; run explicitly with --release"]
-fn fp128_onehot_mc_pre() {
-    init_rayon_pool();
-    run_on_large_stack(|| {
-        prove_verify_onehot_precommitted_roundtrip::<fp128::OneHotMultiChunkW2R2>(
-            &[32],
-            256,
-            b"completeness/fp128_onehot_mc_pre",
-        );
-    });
-}
+// The catalog has direct final=32 and combined final=14, pre=14 rows, but no
+// combined final=32, pre=14 row. The exact matrix cell therefore cannot run.
 
 // ============================================================================
 // GROUP C — Batched commitment (multiple polynomials in a single group)

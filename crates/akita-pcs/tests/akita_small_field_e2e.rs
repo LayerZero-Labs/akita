@@ -322,15 +322,7 @@ macro_rules! small_field_test {
                     let point: Vec<$se> = (0..nv)
                         .map(|i| <$se>::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
                         .collect();
-                    let weights = lagrange_weights::<$se>(&point).expect("weights");
-                    let expected: $se = poly
-                        .indices()
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(chunk, hot)| {
-                            hot.map(|idx| weights[chunk * onehot_k + usize::from(idx)])
-                        })
-                        .fold(<$se>::from_u64(0), |a, b| a + b);
+                    let expected = onehot_opening_lagrange(&poly, &point);
 
                     single_group_roundtrip::<$cfg>(
                         nv,

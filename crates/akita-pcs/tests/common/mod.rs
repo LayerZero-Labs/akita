@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 
+mod opening_oracles;
+
+pub(super) use opening_oracles::*;
+
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::RecursiveCommitmentConfig;
@@ -362,126 +366,6 @@ where
     let packed_inner = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis_mode)
         .expect("inner opening point should match ring dimension");
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
-}
-
-// ============================================================================
-// Independent opening oracles.
-//
-// These deliberately share no code with the prover.  `opening_from_poly*`
-// above reaches `OpeningFoldKernel::evaluate_and_fold` — the exact call the
-// prover uses to build its root openings — so a shared bug in point layout,
-// fold order, or the kernel itself would move the proof and the "expected"
-// value together and the round trip would still pass.
-//
-// The oracles below evaluate the multilinear extension directly from the raw
-// coefficients, with no layout, no fold plan, and no backend.  They are what
-// makes the correctness matrix a correctness matrix rather than a
-// prover/verifier agreement check.
-// ============================================================================
-
-/// Lagrange weight at a single Boolean index, straight from the definition:
-/// `w(index) = ∏_i (bit_i(index) ? point[i] : 1 - point[i])`, little-endian to
-/// match [`akita_types::lagrange_weights`].
-pub(super) fn lagrange_weight_at(point: &[F], index: usize) -> F {
-    point
-        .iter()
-        .enumerate()
-        .fold(F::one(), |acc, (bit, &coordinate)| {
-            if (index >> bit) & 1 == 1 {
-                acc * coordinate
-            } else {
-                acc * (F::one() - coordinate)
-            }
-        })
-}
-
-/// Dense multilinear opening `Σ_x eq(point, x) · evals[x]`, by depth-first
-/// recursion over halves of the evaluation slice.
-///
-/// Two constraints shape this. It cannot use a materialized `lagrange_weights`
-/// table, which is capped at `DEFAULT_MAX_SEQUENCE_LEN` (`2^25`) and so
-/// excludes the nv=26 cell outright. And it must not copy `evals`: at nv=26
-/// that copy alone is 1 GiB, which is real OOM pressure when CI runs targets
-/// concurrently.
-///
-/// Recursing over borrowed halves satisfies both — no allocation at all, O(n)
-/// multiplies, and `O(|point|)` stack. Indices are little-endian (variable `i`
-/// is bit `i`), so the *last* coordinate is the high bit and `split_at` on the
-/// midpoint separates exactly on it.
-pub(super) fn dense_opening_lagrange(evals: &[F], point: &[F]) -> F {
-    debug_assert_eq!(
-        evals.len(),
-        1usize << point.len(),
-        "dense evaluation count must be 2^|point|"
-    );
-    // Recursing to single elements costs 2^(nv+1) calls, measurably slower than
-    // a linear pass, so bottom out at a small block folded iteratively. One
-    // scratch buffer is allocated here and reused by every leaf, keeping total
-    // extra memory at LEAF elements regardless of nv.
-    const LEAF: usize = 1 << 12;
-
-    let mut scratch = vec![F::zero(); LEAF.min(evals.len())];
-    dense_opening_lagrange_rec(evals, point, &mut scratch)
-}
-
-fn dense_opening_lagrange_rec(evals: &[F], point: &[F], scratch: &mut [F]) -> F {
-    if evals.len() <= scratch.len() {
-        let mut len = evals.len();
-        scratch[..len].copy_from_slice(evals);
-        for &coordinate in point {
-            let half = len / 2;
-            for j in 0..half {
-                let low = scratch[2 * j];
-                let high = scratch[2 * j + 1];
-                scratch[j] = low + (high - low) * coordinate;
-            }
-            len = half;
-        }
-        return scratch[0];
-    }
-
-    let (&high_coordinate, rest) = point.split_last().expect("non-leaf slice has coordinates");
-    let (low_half, high_half) = evals.split_at(evals.len() / 2);
-    let low = dense_opening_lagrange_rec(low_half, rest, scratch);
-    let high = dense_opening_lagrange_rec(high_half, rest, scratch);
-    low + (high - low) * high_coordinate
-}
-
-/// Dense opening in the monomial basis: `Σ_j (∏_{i ∈ bits(j)} point[i]) · e_j`.
-///
-/// Uses the tensor product directly rather than any fold plan.
-pub(super) fn dense_opening_monomial(evals: &[F], point: &[F]) -> F {
-    assert_eq!(
-        evals.len(),
-        1usize << point.len(),
-        "dense evaluation count must be 2^|point|"
-    );
-    evals
-        .iter()
-        .enumerate()
-        .fold(F::zero(), |acc, (index, &eval)| {
-            let weight = point
-                .iter()
-                .enumerate()
-                .filter(|(bit, _)| (index >> bit) & 1 == 1)
-                .fold(F::one(), |product, (_, &coordinate)| product * coordinate);
-            acc + weight * eval
-        })
-}
-
-/// One-hot multilinear opening: the sum of the Lagrange weights sitting at the
-/// hot index of each chunk.  A one-hot polynomial has coefficient 1 at
-/// `chunk * k + hot` and 0 everywhere else, so its opening collapses to a
-/// selection of weights, each computed on demand.
-pub(super) fn onehot_opening_lagrange(poly: &OneHotPoly<F, u8>, point: &[F]) -> F {
-    let k = poly.onehot_k();
-    poly.indices()
-        .iter()
-        .enumerate()
-        .filter_map(|(chunk, hot)| {
-            hot.map(|idx| lagrange_weight_at(point, chunk * k + usize::from(idx)))
-        })
-        .fold(F::zero(), |acc, weight| acc + weight)
 }
 
 pub(super) fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, u8> {
