@@ -68,24 +68,6 @@ where
     })
 }
 
-pub(super) fn dense_lagrange_opening_from_evals<FF, E>(evals: &[FF], point: &[E]) -> E
-where
-    FF: FieldCore,
-    E: ExtField<FF>,
-{
-    assert_eq!(evals.len(), 1usize << point.len());
-    let mut layer = evals.iter().copied().map(E::lift_base).collect::<Vec<_>>();
-    for &r in point {
-        let one_minus_r = E::one() - r;
-        let next_len = layer.len() / 2;
-        for i in 0..next_len {
-            layer[i] = layer[2 * i] * one_minus_r + layer[2 * i + 1] * r;
-        }
-        layer.truncate(next_len);
-    }
-    layer[0]
-}
-
 pub(super) fn onehot_lagrange_opening<FF, E, I>(poly: &OneHotPoly<FF, I>, point: &[E]) -> E
 where
     FF: FieldCore,
