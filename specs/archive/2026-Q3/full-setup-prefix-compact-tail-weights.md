@@ -934,6 +934,9 @@ setup contribution plan.
 This implemented design record is archived in favor of the durable book
 description.
 
+Team decision: the removed deferred tests for successor grouped-opening
+tampering, old serialized registry/cache rejection, and recursive
+`LoggingTranscript` event ordering are intentionally not tracked as live work.
 
 
 ## References
@@ -943,7 +946,7 @@ description.
 - `[setup-offloading-planner.md](../../setup-offloading-planner.md)`
 - `[setup-layout-repack.md](../../setup-layout-repack.md)`
 - `[distributed-setup-offloading.md](../../distributed-setup-offloading.md)`
-- `[archive/2026-Q3/group-local-opening-points.md](archive/2026-Q3/group-local-opening-points.md)`
+- `[group-local-opening-points.md](group-local-opening-points.md)`
 - `crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs`
 - `crates/akita-algebra/src/offset_eq/tensor_pair/evaluate.rs`
 - `crates/akita-prover/src/api/setup_prefix.rs`
