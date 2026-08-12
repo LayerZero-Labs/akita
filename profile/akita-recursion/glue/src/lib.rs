@@ -645,8 +645,6 @@ mod tests {
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.clone(),
-                natural_len: 1,
-                padded_len: PREFIX_D,
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![RingVec::from_coeffs(vec![
                         TestF::zero();

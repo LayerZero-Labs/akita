@@ -385,7 +385,7 @@ Risks to resolve before implementation:
 ## References
 
 - `specs/setup-product-sumcheck.md`
-- `specs/setup-prefix-ladder.md`
+- `specs/archive/2026-Q3/setup-prefix-ladder.md`
 - `specs/setup-offloading-planner.md` — planner-owned per-fold offload
   selection and successor two-group scheduling.
 - `crates/akita-prover/src/protocol/core/fold.rs`
