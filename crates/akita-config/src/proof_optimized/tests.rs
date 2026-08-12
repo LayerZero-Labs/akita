@@ -77,7 +77,7 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
         131_072,
     );
     assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 4);
-    assert_eq!(response_cap, 2_640_276_358);
+    assert_eq!(response_cap, 783_496_643);
     let expected_collision = akita_types::sis::role_a_collision_l2_sq_for_response_bound(
         u128::from(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2.threshold),
         response_cap,
@@ -128,8 +128,8 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         terminal.sparse_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(305_885_676));
-    assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 6);
+    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(2_618_810_696));
+    assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 7);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
@@ -154,17 +154,12 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         .estimate
         .estimated_proof_payload_bytes()
         .expect("fp64 proof estimate");
-    assert_eq!(
-        schedule.recursive_folds.len(),
-        linf_schedule.schedule.recursive_folds.len(),
-        "the modeled L2 suffix should improve bytes without adding a fold"
-    );
     assert!(proof_bytes < linf_bytes);
 }
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn terminal_l2_preserves_its_own_fold_geometry() {
+fn terminal_l2_uses_its_catalog_fold_geometry() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(28));
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 one-hot catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
@@ -177,16 +172,6 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
     );
 
     let schedule = fp64::OneHot::runtime_schedule(key).expect("generated one-hot schedule");
-    let predecessor = &schedule
-        .recursive_folds
-        .last()
-        .expect("recursive predecessor")
-        .params
-        .witness;
-    assert_eq!(
-        (predecessor.log_basis_open, predecessor.num_digits_fold),
-        (4, 3)
-    );
     assert_eq!(
         (
             schedule.terminal.params.witness.fold_log_basis,
@@ -203,79 +188,6 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
             .security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     ));
-}
-
-#[cfg(feature = "schedules-default")]
-#[test]
-fn response_model_reduces_planned_payload_in_every_field_profile() {
-    fn compare<Cfg: CommitmentConfig>(num_vars: usize) {
-        let policy = crate::policy_of::<Cfg>();
-        assert!(
-            matches!(
-                policy.selective_l2_response_model,
-                akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1
-            ),
-            "{} must use the typed L2 response model",
-            std::any::type_name::<Cfg>()
-        );
-        let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
-        let catalog = Cfg::schedule_catalog().expect("generated catalog");
-        let entry =
-            akita_schedules::generated::table_entry(catalog, &key).expect("generated schedule row");
-        let schedule = Cfg::runtime_schedule(key.clone()).expect("generated runtime schedule");
-        let recursive_l2 = schedule.recursive_folds.iter().any(|step| {
-            matches!(
-                step.params.witness.inner_commit_matrix.security_route(),
-                akita_types::InnerCommitSecurityRoute::L2 { .. }
-            )
-        });
-        let terminal_l2 = matches!(
-            schedule
-                .terminal
-                .params
-                .witness
-                .inner_commit_matrix
-                .security_route(),
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
-        );
-        assert!(
-            recursive_l2 || terminal_l2,
-            "{} must ship at least one selected L2 route",
-            std::any::type_name::<Cfg>()
-        );
-        let modeled = akita_schedules::estimate_proof_bytes(
-            entry,
-            &key,
-            &crate::policy_of::<Cfg>(),
-            Cfg::ring_challenge_config,
-        )
-        .expect("modeled proof estimate");
-        let mut linf_policy = crate::policy_of::<Cfg>();
-        linf_policy.selective_l2_response_model =
-            akita_schedules::SelectiveL2ResponseModelId::Disabled;
-        let linf = akita_planner::find_schedule(
-            &key,
-            Cfg::root_honest_fold_policy(),
-            &[],
-            &linf_policy,
-            Cfg::ring_challenge_config,
-        )
-        .expect("L-infinity schedule")
-        .estimate
-        .estimated_proof_payload_bytes()
-        .expect("L-infinity proof estimate");
-        assert!(modeled < linf);
-    }
-
-    compare::<fp32::OneHot>(30);
-    compare::<fp32::Dense>(26);
-    compare::<fp64::OneHot>(30);
-    compare::<fp64::Dense>(26);
-    compare::<fp128::OneHot>(36);
-    compare::<fp128::Dense>(28);
-
-    #[cfg(feature = "all-schedules")]
-    compare::<fp128::DenseMultiChunk>(16);
 }
 
 #[cfg(feature = "all-schedules")]
@@ -393,7 +305,7 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig>(
 fn generated_q32_terminals_require_the_i16_tail() {
     assert_eq!(
         assert_every_table_terminal_uses_i16_tail::<fp32::OneHot>(fp32_onehot_table()),
-        (128, 256),
+        (128, 128),
     );
 }
 

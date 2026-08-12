@@ -7,7 +7,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use super::{
-    fold_witness_linf_cap, num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    fold_witness_linf_cap, num_digits_for_linf_cap, FoldChallengeNorms, FoldWitnessLinfCapConfig,
     FoldWitnessNorms,
 };
 
@@ -71,8 +71,7 @@ impl BalancedSignedDigitFoldPolicy {
     }
 
     fn digit_depth_for_cap(&self, cap: u128, log_basis: u32) -> usize {
-        let log_cap = (128 - cap.leading_zeros()).saturating_add(1);
-        num_digits_for_bound(log_cap, self.field_bits, log_basis)
+        num_digits_for_linf_cap(cap, self.field_bits, log_basis)
     }
 }
 
@@ -167,8 +166,7 @@ impl UnitOneHotFoldPolicy {
     }
 
     fn digit_depth_for_cap(&self, cap: u128, log_basis: u32) -> usize {
-        let log_cap = (128 - cap.leading_zeros()).saturating_add(1);
-        num_digits_for_bound(log_cap, self.field_bits, log_basis)
+        num_digits_for_linf_cap(cap, self.field_bits, log_basis)
     }
 }
 
@@ -388,11 +386,7 @@ mod tests {
         )
         .expect("universal cap")
         .0;
-        let expected = num_digits_for_bound(
-            (u128::BITS - expected_cap.leading_zeros()).saturating_add(1),
-            128,
-            query.log_basis_response,
-        );
+        let expected = num_digits_for_linf_cap(expected_cap, 128, query.log_basis_response);
         assert_eq!(actual, expected);
     }
 

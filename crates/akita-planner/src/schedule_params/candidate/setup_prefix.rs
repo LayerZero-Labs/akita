@@ -154,8 +154,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                     num_fold_coeffs,
                 )
                 .map(|cap| {
-                    let log_cap = (u128::BITS - cap.leading_zeros()).saturating_add(1);
-                    num_digits_for_bound(log_cap, policy.decomposition.field_bits(), log_basis_open)
+                    num_digits_for_linf_cap(cap, policy.decomposition.field_bits(), log_basis_open)
                         .min(universal_digits)
                 })
                 .unwrap_or(universal_digits);

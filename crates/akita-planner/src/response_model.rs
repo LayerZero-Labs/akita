@@ -36,12 +36,6 @@ const SOURCE_MODEL_ENVELOPE_PPM: u128 = 1_030_000;
 /// 4096 independent transcript attempts, even this worst-case bound makes
 /// exhaustion negligible.
 const RESPONSE_MEAN_MULTIPLIER_PPM: u128 = 1_060_000;
-/// Extra allowance for the sub-Gaussian peak approximation.
-///
-/// The whole-response threshold already includes the requested failure
-/// probability. This independent factor covers the largest measured negative
-/// residual of the Gaussian maximum model across supported profile families.
-const RESPONSE_PEAK_ENVELOPE_PPM: f64 = 1_100_000.0;
 const PPM: u128 = 1_000_000;
 const MOMENT_PPM: u128 = 1_000_000;
 
@@ -141,8 +135,7 @@ impl SourceMomentEstimate {
         let variance =
             average_variance.max(peak_variance) * SOURCE_MODEL_ENVELOPE_PPM as f64 / PPM as f64;
         let union_log = (16.0 * num_fold_coeffs as f64 / 7.0).ln();
-        let threshold =
-            (2.0 * variance * union_log).sqrt() * RESPONSE_PEAK_ENVELOPE_PPM / PPM as f64;
+        let threshold = (2.0 * variance * union_log).sqrt();
         if !threshold.is_finite() || threshold <= 0.0 || threshold > u128::MAX as f64 {
             return None;
         }

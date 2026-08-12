@@ -705,9 +705,9 @@ mod tests {
                 ))
                 .expect("generated fp64 dense schedule"),
                 512,
-                8,
-                8_192,
-                true,
+                6,
+                11_264,
+                false,
             ),
         ] {
             let root = &schedule.root.params.final_group.commitment;

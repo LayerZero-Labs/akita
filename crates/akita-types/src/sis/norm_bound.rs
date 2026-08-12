@@ -14,7 +14,7 @@ use super::ajtai_key::{
 };
 use super::decomposition_digits::balanced_digit_abs_max;
 #[cfg(test)]
-use super::decomposition_digits::num_digits_for_bound;
+use super::decomposition_digits::num_digits_for_linf_cap;
 use crate::layout::digit_math::isqrt_ceil;
 
 pub use super::fold_linf_cap::{
@@ -277,8 +277,8 @@ pub(crate) fn fold_witness_digit_plan(
 ) -> Result<(usize, u128), AkitaError> {
     let (inf_norm_bound, _) =
         fold_witness_linf_cap(num_live_blocks, num_claims, challenge, witness, cap_config)?;
-    let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
-    let fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
+    let fold_decomposed_digits =
+        super::num_digits_for_linf_cap(inf_norm_bound, field_bits, log_basis);
     Ok((fold_decomposed_digits, inf_norm_bound))
 }
 
@@ -611,8 +611,8 @@ mod tests {
             isqrt_ceil(rademacher_proxy_variance(5, 1, witness_linf_sq, &cap_config).unwrap());
         let beta = fold_witness_beta_inf(5, 1, challenge, witness).unwrap();
         let universal_cap = beta.min(t_star);
-        let expected_digits = num_digits_for_bound(
-            (128 - universal_cap.leading_zeros()).saturating_add(1),
+        let expected_digits = num_digits_for_linf_cap(
+            universal_cap,
             decomposition.field_bits(),
             decomposition.log_basis,
         );

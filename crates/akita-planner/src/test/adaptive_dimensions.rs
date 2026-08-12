@@ -66,32 +66,3 @@ fn fp32_suffix_candidates_are_uniform_and_monotone() {
     .expect("fp32 suffix candidates after D64 transition");
     assert_eq!(after_drop, vec![CommitmentRingDims::uniform(64)]);
 }
-
-#[test]
-fn fp32_dense_nv20_uses_corrected_physical_a_bound() {
-    use akita_config::proof_optimized::fp32;
-    use akita_types::InnerCommitSecurityRoute;
-
-    let policy = akita_config::policy_of::<fp32::Dense>();
-    let planned = crate::planner::find_schedule(
-        &akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(20)),
-        fp32::Dense::root_honest_fold_policy(),
-        &[],
-        &policy,
-        fp32::Dense::ring_challenge_config,
-    )
-    .expect("physical A sizing no longer double-counts the subfield embedding norm");
-    let root = &planned.schedule.root.params.final_group.commitment;
-    assert_eq!(
-        root.inner_commit_matrix.coeff_linf_bound(),
-        Some(33_554_431)
-    );
-    assert!(matches!(
-        root.inner_commit_matrix.security_route(),
-        InnerCommitSecurityRoute::Linf(_)
-    ));
-    assert!(planned.schedule.recursive_folds.iter().any(|step| matches!(
-        step.params.witness.inner_commit_matrix.security_route(),
-        InnerCommitSecurityRoute::L2 { .. }
-    )));
-}

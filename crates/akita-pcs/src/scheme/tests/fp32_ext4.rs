@@ -270,17 +270,17 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             )
         })
         .expect("schedule-selected small-field L2 fold");
-    assert_eq!(l2_step.params.witness.d_a(), 64);
+    assert_eq!(l2_step.params.witness.d_a(), 128);
     assert_eq!(
         l2_step.params.witness.fold_challenge_config,
-        akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+        akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
     assert_eq!(
         akita_challenges::selective_l2_operator_norm_rejection(
-            64,
+            128,
             &l2_step.params.witness.fold_challenge_config,
         ),
-        Some(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2),
+        Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
     );
     let akita_types::InnerCommitSecurityRoute::L2 {
         norm_proof_shape, ..

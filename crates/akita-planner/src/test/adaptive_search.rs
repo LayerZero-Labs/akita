@@ -319,12 +319,8 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         .expect("D-varying adaptive domain"),
     ];
 
-    // Literal oracle values, deliberately not derived through candidate
-    // construction, SIS pricing, setup scoring, or the production selector.
-    // The response-model cutover makes the smaller B64/D64 carrier globally
-    // optimal in both domains. These literal role choices remain independent
-    // of the production selector, and the unpruned traversal below verifies
-    // the complete objective value and descriptor.
+    // This isolates adaptive frontier pruning from selective-L2 candidate
+    // enumeration, which has separate global-selection regressions below.
     let expected_root_dimensions = [
         CommitmentRingDims {
             inner: 128,
@@ -343,7 +339,9 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         .zip(expected_root_dimensions)
         .enumerate()
     {
-        let policy = policy_for_domain(policy_of::<OneHot>(), &domain);
+        let mut base_policy = policy_of::<OneHot>();
+        base_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+        let policy = policy_for_domain(base_policy, &domain);
         let key = PolynomialGroupLayout::singleton(14);
         let selected = find_schedule(
             key,
@@ -815,10 +813,10 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
 
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
-        20_971_520
+        22_544_384
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        126_192
+        112_616
     );
 }
