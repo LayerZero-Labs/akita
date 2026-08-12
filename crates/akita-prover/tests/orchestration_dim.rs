@@ -13,7 +13,7 @@ use akita_types::{
 
 #[test]
 fn batched_selection_preserves_typed_schedule_topology() {
-    type Cfg = fp64::D128Dense;
+    type Cfg = fp64::Dense;
     let nv = 14;
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
     let expected = Cfg::runtime_schedule(key.clone()).expect("runtime schedule");
@@ -51,11 +51,11 @@ fn role_dispatch_rejects_wrong_inner_dimension() {
 
 #[test]
 fn real_presets_validate_against_setup_ring_dimension() {
-    let fp64_schedule = fp64::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let fp64_schedule = fp64::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp64 schedule");
-    validate_schedule_ring_dims(&fp64_schedule).expect("D128 schedule envelope");
+    validate_schedule_ring_dims(&fp64_schedule).expect("adaptive fp64 schedule envelope");
 
     let fp128_schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(14),

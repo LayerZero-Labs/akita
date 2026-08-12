@@ -50,7 +50,9 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     let poly = DensePoly::<F>::from_field_evals(full_num_vars, D, &evals).unwrap();
 
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
 
     let commit_backend = CommitCluster;
     let opening = OpeningCluster;
@@ -74,8 +76,9 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     assert_eq!(stack.ring_switch().backend() as *const _, &ring as *const _);
 
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-    let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-        .expect("commit stack");
+    let commit_stack =
+        UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+            .expect("commit stack");
     let (commitment, hint) = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&poly),
         setup.expanded.as_ref(),

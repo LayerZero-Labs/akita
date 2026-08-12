@@ -32,7 +32,11 @@
   - [Recursion and proof shape](./how/recursion.md)
   - [Verification](./how/verification.md)
     - [Matrix evaluation at a point](./how/verifying/matrix_evaluation.md)
+    - [The Stage 2 fused check](./how/verifying/stage2.md)
+    - [Evaluation trace](./how/verifying/evaluation_trace.md)
+    - [Setup contribution and Stage 3](./how/verifying/setup_contribution.md)
     - [The distributed relation verifier](./how/verifying/distributed-relation-verifier.md)
+    - [Terminal verification](./how/verifying/terminal.md)
   - [Security model](./how/security.md)
   - [Optimizations](./how/optimizations.md)
 

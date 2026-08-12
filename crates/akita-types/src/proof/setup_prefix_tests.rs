@@ -20,7 +20,10 @@ fn sample_level_params() -> CommittedGroupParams {
 }
 
 fn prefix_eligible_level_params() -> CommittedGroupParams {
-    let field_element_digits = crate::sis::compute_num_digits_field_width(128, 3);
+    let field_element_digits = crate::sis::compute_num_digits_field_width(
+        SisModulusProfileId::Q32Offset99.field_bits(),
+        3,
+    );
     CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         64,
@@ -281,7 +284,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     registry.insert(slot).expect("insert slot");
 
     let selection = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)
@@ -315,7 +318,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert_eq!(external_selection.1, 8);
 
     let err = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)
@@ -326,13 +329,13 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         512,
         "slot does not cover request",
     )
-    .expect_err("producer dimension must divide the padded prefix");
+    .expect_err("producer dimension must divide the full prefix");
     assert!(err
         .to_string()
-        .contains("setup prefix padded length must be divisible"));
+        .contains("setup prefix full length must be divisible"));
 
     let err = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)
@@ -347,7 +350,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert!(err.to_string().contains("slot does not cover request"));
 
     let err = select_setup_prefix_slot(
-        Some(5 * source_ring_dimension),
+        Some(n_prefix),
         |candidate| {
             registry
                 .get(candidate)
@@ -358,9 +361,9 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         source_ring_dimension,
         "slot does not cover request",
     )
-    .expect_err("insufficient padded slot capacity must fail");
+    .expect_err("insufficient full-prefix slot capacity must fail");
     assert!(err.to_string().contains(
-        "slot does not cover request: slot natural/padded lengths are 129/128, active lengths are 129/256"
+        "slot does not cover request: slot natural/full-prefix lengths are 129/128, active lengths are 129/256"
     ));
 
     let err = select_setup_prefix_slot(

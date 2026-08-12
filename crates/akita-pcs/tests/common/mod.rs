@@ -2,30 +2,31 @@
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::{PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::RecursiveCommitmentConfig;
 use akita_field::Zero;
-pub(super) use akita_field::{
-    AkitaError, CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge,
-};
+pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
+use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 pub(super) use akita_prover::{ProverOpeningData, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
+use akita_types::{
+    dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
+    LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupSumcheckProof,
+};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
-use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    GroupBatchStatement, OpeningClaimsLayout, PolynomialGroupLayout, SetupSumcheckProof,
-};
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 #[cfg(feature = "logging-transcript")]
 use akita_transcript::TranscriptEvent;
@@ -39,7 +40,7 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // `runtime_schedule` fallback.
 pub(super) type OneHotCfg = fp128::OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::OneHot` requires K=256 one-hot schedules
+// `fp128::OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
 // ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
 // per ring element.
 pub(super) const ONEHOT_K: usize = 256;
@@ -282,7 +283,7 @@ where
 pub(super) fn opening_from_poly<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &CommittedGroupParams,
+    layout: &(impl LevelParamsLike + ?Sized),
 ) -> F
 where
     P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
@@ -294,7 +295,7 @@ where
 pub(super) fn opening_from_poly_for_layout<'a, P>(
     poly: &'a P,
     point: &[F],
-    layout: &CommittedGroupParams,
+    layout: &(impl LevelParamsLike + ?Sized),
 ) -> F
 where
     P: RootOpeningSource<F, 64>
@@ -307,7 +308,7 @@ where
         + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
         + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
 {
-    match layout.d_a() {
+    match layout.inner_commit_matrix_params().ring_dimension() {
         64 => opening_from_poly::<64, _>(poly, point, layout),
         128 => opening_from_poly::<128, _>(poly, point, layout),
         256 => opening_from_poly::<256, _>(poly, point, layout),
@@ -318,7 +319,7 @@ where
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &CommittedGroupParams,
+    layout: &(impl LevelParamsLike + ?Sized),
     basis_mode: BasisMode,
 ) -> F
 where
@@ -340,20 +341,20 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.num_positions_per_block,
-        layout.num_live_blocks,
+        layout.num_positions_per_block(),
+        layout.num_live_blocks(),
         basis_mode,
     )
     .expect("opening point shape should match layout");
 
     let opening = OpeningFoldKernel::<P::OpeningView<'a>, F, D>::evaluate_and_fold(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.num_positions_per_block,
+            num_positions_per_block: layout.num_positions_per_block(),
         },
     )
     .expect("evaluate_and_fold");
@@ -363,17 +364,16 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
-    let root_d = layout.d_a();
-    let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
+    let total_field = 1usize << num_vars;
     let total_chunks = total_field / ONEHOT_K;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(ONEHOT_K, root_d, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
@@ -431,13 +431,90 @@ fn first_stage3_proof_mut(
         .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
 }
 
+fn first_setup_prefix_slot(schedule: &FoldSchedule) -> &SetupPrefixSlotId {
+    schedule
+        .recursive_folds
+        .iter()
+        .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+        .expect("recursive profile must carry a setup prefix")
+}
+
+fn verifier_setup_with_alternate_full_prefix(
+    setup: &AkitaProverSetup<F>,
+    verifier_setup: &AkitaVerifierSetup<F>,
+    slot_id: &SetupPrefixSlotId,
+) -> AkitaVerifierSetup<F> {
+    let natural_len = slot_id.natural_len;
+    let n_prefix = slot_id.n_prefix().expect("prefix length");
+    assert!(
+        natural_len < n_prefix,
+        "adversarial fixture requires a non-empty setup tail"
+    );
+
+    let original = setup.expanded.shared_matrix().as_field_slice();
+    let mut altered = original.to_vec();
+    altered[natural_len] += F::one();
+    assert_eq!(&altered[..natural_len], &original[..natural_len]);
+    assert_ne!(
+        &altered[natural_len..n_prefix],
+        &original[natural_len..n_prefix]
+    );
+
+    let seed = setup.expanded.seed().clone();
+    let setup_seed = seed.setup_seed.clone();
+    let altered_expanded = Arc::new(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            seed,
+            FlatMatrix::from_flat_data(altered),
+        ),
+    );
+    let altered_setup = AkitaProverSetup {
+        expanded: altered_expanded,
+        prefix_slots: SetupPrefixProverRegistry::new(setup_seed.clone()),
+    };
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend
+        .prepare_setup(&altered_setup)
+        .expect("prepare altered setup");
+    let altered_slot = dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        F,
+        slot_id.d_setup(),
+        |D| {
+            commit_setup_prefix::<F, D, _>(
+                &altered_setup.expanded,
+                &backend,
+                &prepared,
+                &slot_id.commitment_params,
+                n_prefix,
+                natural_len,
+            )
+        }
+    )
+    .expect("commit altered full setup prefix");
+
+    let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed);
+    for (id, slot) in verifier_setup.prefix_slots.iter() {
+        let replacement = if id == slot_id {
+            altered_slot.verifier_slot()
+        } else {
+            slot.clone()
+        };
+        prefix_slots
+            .insert(replacement)
+            .expect("insert verifier slot");
+    }
+    AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
+        .expect("alternate verifier setup")
+}
+
 /// Drives the shared recursive setup-offload profile end to end: two precommitted
 /// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
 /// main group at `nv=32`, a recursive proof that offloads the setup contribution,
 /// a serialization round-trip, an honest verify, and a tampered-opening rejection.
 ///
 /// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
-/// recursion adapter and exact-precommit adapter are derived from it.
+/// recursion adapter and standalone profiles are derived from it.
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
 pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     transcript_domain: &'static [u8],
@@ -446,7 +523,6 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
-    type Precommitted<BaseCfg> = AkitaCommitmentScheme<PrecommittedCommitmentConfig<BaseCfg>>;
 
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 32;
@@ -458,12 +534,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     init_rayon_pool();
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_layout =
-            PrecommittedCommitmentConfig::<BaseCfg>::get_params_for_batched_commitment(
-                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
-            )
-            .expect("precommit params");
-        let pre_frozen = CommittedGroupProfile::from_params(pre_key, &pre_layout);
+        let pre_frozen =
+            akita_config::committed_group_profile::<BaseCfg>(&pre_key).expect("precommit profile");
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
@@ -484,9 +556,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute setup-prefix slots for the generated profile"
         );
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        let prepared = CpuBackend::DEFAULT
+            .prepare_setup(&setup)
+            .expect("prepared setup");
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )
@@ -496,8 +570,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut pre_commitments = Vec::new();
         let mut pre_hints = Vec::new();
         for group_idx in 0..PRE_GROUPS {
-            let poly = make_onehot_poly(&pre_layout, 0x0bee_fcaf_2026_0000 + group_idx as u64);
-            let (commitment, hint) = Precommitted::<BaseCfg>::batched_commit(
+            let poly = make_onehot_poly(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
+            let (commitment, hint) = AkitaCommitmentScheme::<BaseCfg>::commit_group(
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,
@@ -509,7 +583,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         }
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
-            .map(|poly_idx| make_onehot_poly(root_params, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
+            .map(|poly_idx| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
             .collect();
         let (final_commitment, final_hint, _selection) = Recursive::<BaseCfg>::commit_final_group(
             &setup,
@@ -525,7 +599,10 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             .map(|polys| {
                 polys
                     .iter()
-                    .map(|poly| opening_from_poly_for_layout(poly, &point[..PRE_NV], &pre_layout))
+                    .map(|poly| {
+                        let pre_params = &root_params.precommitted_groups[0];
+                        opening_from_poly_for_layout(poly, &point[..PRE_NV], pre_params)
+                    })
                     .collect()
             })
             .collect();
@@ -633,6 +710,24 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         )
         .expect("generated-profile recursive verify");
 
+        let alternate_verifier_setup = verifier_setup_with_alternate_full_prefix(
+            &setup,
+            &verifier_setup,
+            first_setup_prefix_slot(&schedule),
+        );
+        let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        let alternate_result = Recursive::<BaseCfg>::batched_verify(
+            &proof,
+            &alternate_verifier_setup,
+            &mut alternate_transcript,
+            verify_claims(final_openings.clone()),
+            BasisMode::Lagrange,
+        );
+        assert!(
+            alternate_result.is_err(),
+            "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
+        );
+
         let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
             let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
             let result = Recursive::<BaseCfg>::batched_verify(
@@ -643,11 +738,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 BasisMode::Lagrange,
             );
             assert!(
-                matches!(
-                    result,
-                    Err(AkitaError::InvalidProof | AkitaError::InvalidInput(_))
-                ),
-                "{label} must return a proof/input rejection without panicking, got {result:?}"
+                result.is_err(),
+                "{label} must be rejected without panicking, got {result:?}"
             );
         };
 

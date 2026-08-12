@@ -2,8 +2,8 @@ use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -87,7 +87,7 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    C: crate::compute::CommitmentComputeBackend<Cfg::Field>
+    C: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     O: SuffixOpeningProveBackend<Cfg::Field>
@@ -442,7 +442,7 @@ where
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
         + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let SuffixProverState {
         w,

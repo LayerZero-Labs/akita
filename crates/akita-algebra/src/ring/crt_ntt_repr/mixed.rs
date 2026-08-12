@@ -67,17 +67,43 @@ pub fn mat_vec_i16_with_tail<F: FieldCore + CanonicalField, const K: usize, cons
     Ok(wide_accumulators
         .iter()
         .zip(&tail_accumulators)
-        .map(|(wide, tail)| split_to_ring(wide, tail, params))
+        .map(|(wide, tail)| ntt_with_i16_tail_to_ring(wide, tail, params))
         .collect())
 }
 
-fn split_to_ring<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+/// Reconstruct one negacyclic NTT accumulator from a wide CRT prefix and its
+/// exactness-only i16 tail.
+pub fn ntt_with_i16_tail_to_ring<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
     wide_ntt: &CyclotomicCrtNtt<i32, K, D>,
     tail_ntt: &CyclotomicCrtNtt<i16, 1, D>,
     params: &I16TailParams<K, D>,
 ) -> CyclotomicRing<F, D> {
     let wide = wide_ntt.centered_coefficients_with_params(&params.wide);
     let tail = tail_ntt.centered_coefficients_with_params(&params.tail);
+    mixed_coefficients_to_ring(&wide, &tail, params)
+}
+
+/// Reconstruct one cyclic NTT accumulator from a wide CRT prefix and its
+/// exactness-only i16 tail.
+pub fn cyclic_ntt_with_i16_tail_to_ring<
+    F: FieldCore + CanonicalField,
+    const K: usize,
+    const D: usize,
+>(
+    wide_ntt: &CyclotomicCrtNtt<i32, K, D>,
+    tail_ntt: &CyclotomicCrtNtt<i16, 1, D>,
+    params: &I16TailParams<K, D>,
+) -> CyclotomicRing<F, D> {
+    let wide = wide_ntt.centered_cyclic_coefficients_with_params(&params.wide);
+    let tail = tail_ntt.centered_cyclic_coefficients_with_params(&params.tail);
+    mixed_coefficients_to_ring(&wide, &tail, params)
+}
+
+fn mixed_coefficients_to_ring<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+    wide: &[[i32; D]; K],
+    tail: &[[i16; D]; 1],
+    params: &I16TailParams<K, D>,
+) -> CyclotomicRing<F, D> {
     let tail_modulus = i64::from(params.tail.primes[0].p);
     let mut field_product = F::one();
     let field_weights: [F; K] = from_fn(|i| {

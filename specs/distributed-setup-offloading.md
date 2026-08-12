@@ -7,7 +7,7 @@
 | Status        | implemented                                |
 | PR            |                                            |
 | Supersedes    |                                            |
-| Superseded-by |                                            |
+| Superseded-by | Setup-prefix content and capacity semantics superseded by `full-setup-prefix-compact-tail-weights.md` |
 | Book-chapter  | book/src/how/proving/distributed-prover.md |
 
 > **Stage-3 model update (2026-07-29).** The fused witness-carry details in the
@@ -139,16 +139,17 @@ the same planner, walker, prover, and verifier, and are mostly orthogonal:
 
 - **Planner DP** already prices the mix. `derive_candidate_level_params`
   (`crates/akita-planner/src/schedule_params/candidate.rs`) resolves
-  `num_chunks = policy.chunks_at_level(fold_level)` and threads it through both
+  `num_chunks = crate::policy::chunks_at_level(policy, fold_level)` and threads it through both
   the folded-witness sizing (`grouped_setup_prefix_next_witness_len`,
   `grouped_segment_rings` scale `z_hat` by `num_chunks`) and the setup-prefix
   group derivation (`derive_setup_prefix_group`, which retains all supported
   splits and represents `num_live_blocks < num_chunks` with empty ranges).
-- **Generated walker** stamps `lp.witness_chunk = policy.witness_chunk_for_level(fold_level)`
-  on recursive folds too (`crates/akita-planner/src/generated/walk.rs`, both the
-  scalar and multi-group walkers), and expands `FoldWithSetupMetadata` generically.
+- **Planner policy helpers** stamp
+  `lp.witness_chunk = crate::policy::witness_chunk_at_level(policy, fold_level)`
+  on recursive folds. Generated expansion replays the selected value through
+  `crates/akita-schedules/src/generated/expand.rs`.
 - **Catalog identity** commits both `witness_chunk` and `recursive_setup_planning`
-  (`crates/akita-planner/src/catalog_identity.rs`), so the mix table cannot alias
+  (`crates/akita-schedules/src/catalog_identity.rs`), so the mix table cannot alias
   the plain recursive or plain multi-chunk tables.
 - **Multi-group + multi-chunk already round-trips** at runtime
   (`crates/akita-pcs/src/scheme/tests/onehot.rs::multi_group_multi_chunk_fold_round_trips`,
@@ -192,8 +193,8 @@ The following are already implemented and verified (the
 2. **Config family.** A `GeneratedFamily` row for
    `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>` in
    `crates/akita-config/src/generated_families.rs` (module
-   `fp128_d64_onehot_recursive_multi_chunk_w8r2`, `emit_group_batch = true`,
-   reusing `recursive_profile_group_batch_keys`). The capacity selector
+   `fp128_d64_onehot_recursive_multi_chunk_w8r2`, using
+   `recursive_profile_group_batch_keys`). The capacity selector
    `recursive_group_batch_candidates_for_capacity` now also returns the profiling
    key(s) for the mix config.
 3. **Catalog wiring.** `RecursiveCommitmentConfig::schedule_catalog`
@@ -267,8 +268,9 @@ materializes exactly the setup-prefix slots the mix schedule references, at
   schedule's `Recursive` folds and records each successor's
   `params.setup_prefix` slot id).
 - `crates/akita-prover/src/api/setup_prefix.rs::commit_setup_prefix` commits the
-  flat prefix `S^flat[0..natural_len]` (zero-padded to `n_prefix`) using the slot
-  id's frozen `PrecommittedLevelParams` geometry.
+  full flat prefix `S^flat[0..n_prefix]` using the slot id's frozen
+  `PrecommittedLevelParams` geometry. The active support remains `natural_len`;
+  inactive tail rows are zeroed by the setup-index weight.
 
 **Why it should work.** `natural_len` is chunk-independent (setup-matrix
 footprint), and the slot id's block geometry is exactly the planner's

@@ -1,9 +1,10 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
 use crate::api::commitment::validate_commit_outer_input_nonempty;
+use crate::backend::{DensePoly, DenseView};
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
-    CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan, OperationCtx,
+    CommitInnerPlan, DigitRowsComputeBackend, OperationCtx, RootCommitKernel, RootCommitSource,
 };
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
@@ -14,10 +15,10 @@ use akita_types::{
     SetupPrefixSlot,
 };
 
-/// Commit one padded flat prefix of the shared setup matrix.
+/// Commit one actual power-of-two flat prefix of the shared setup matrix.
 ///
-/// The witness is the coefficient form of `S^flat[0..natural_len]`,
-/// zero-padded to `n_prefix`. The caller must supply `level_params` whose inner
+/// The witness is the coefficient form of `S^flat[0..n_prefix]`. The caller
+/// must supply `level_params` whose inner
 /// witness shape satisfies `num_live_blocks * num_positions_per_block == n_prefix / D`.
 ///
 /// # Errors
@@ -35,7 +36,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    B: CommitmentComputeBackend<F>,
+    B: DigitRowsComputeBackend<F> + for<'a> RootCommitKernel<DenseView<'a, F, D>, F, D>,
 {
     if natural_len == 0 || natural_len > n_prefix {
         return Err(AkitaError::InvalidSetup(
@@ -47,7 +48,7 @@ where
             "setup prefix length must be a power-of-two multiple of D".to_string(),
         ));
     }
-    let padded_ring_slots = n_prefix / D;
+    let full_prefix_ring_slots = n_prefix / D;
     let witness_ring_slots = level_params
         .layout
         .num_live_blocks
@@ -55,38 +56,41 @@ where
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
-    if witness_ring_slots != padded_ring_slots {
+    if witness_ring_slots != full_prefix_ring_slots {
         return Err(AkitaError::InvalidSetup(format!(
-            "level params witness shape {witness_ring_slots} ring slots does not match padded prefix {padded_ring_slots}"
+            "level params witness shape {witness_ring_slots} ring slots does not match full setup prefix {full_prefix_ring_slots}"
         )));
     }
 
     let available_field_len = expanded.shared_matrix().num_field_elements();
-    if natural_len > available_field_len {
+    if n_prefix > available_field_len {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix natural length exceeds shared matrix capacity".to_string(),
+            "setup prefix length exceeds shared matrix capacity".to_string(),
         ));
     }
 
-    let ring_elems =
-        extract_setup_prefix_ring_elems::<F, D>(expanded, padded_ring_slots, natural_len)?;
-    let block_slices = setup_prefix_block_slices(
-        &ring_elems,
-        level_params.layout.num_live_blocks,
-        level_params.layout.num_positions_per_block,
-    )?;
-
-    let recomposed_inner_rows = backend.dense_commit_rows(
+    let ring_elems = extract_setup_prefix_ring_elems::<F, D>(expanded, full_prefix_ring_slots)?;
+    let dense = DensePoly::from_ring_coeffs::<D>(ring_elems);
+    let view = <DensePoly<F> as RootCommitSource<F, D>>::commit_view(&dense)?;
+    let witnesses = backend.commit_inner_group(
         prepared,
-        DenseCommitRowsPlan {
-            n_a: level_params.layout.inner_commit_matrix.output_rank(),
-            input: DenseCommitInput::CoeffBlocks {
-                block_slices,
-                num_digits_inner: level_params.layout.num_digits_inner,
-                log_basis_inner: level_params.layout.log_basis_inner,
-            },
-        },
+        vec![view],
+        CommitInnerPlan::from_profile(&level_params.layout),
     )?;
+    let [witness] = witnesses.try_into().map_err(|witnesses: Vec<_>| {
+        AkitaError::InvalidSetup(format!(
+            "dense setup-prefix commit returned {} witnesses, expected one",
+            witnesses.len()
+        ))
+    })?;
+    let n_a = level_params.layout.inner_commit_matrix.output_rank();
+    let recomposed_inner_rows = (0..level_params.layout.num_live_blocks)
+        .map(|block| {
+            witness
+                .block_rows::<D>(block, n_a)
+                .map(|rows| rows.to_vec())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let n_b = level_params.layout.outer_commit_matrix.output_rank();
     let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
@@ -176,53 +180,29 @@ where
 
 fn extract_setup_prefix_ring_elems<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    padded_ring_slots: usize,
-    natural_len: usize,
+    full_prefix_ring_slots: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore,
 {
     let fields = expanded.shared_matrix().as_field_slice();
-    let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup prefix padded field length overflow".to_string())
+    let full_prefix_field_len = full_prefix_ring_slots.checked_mul(D).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix full field length overflow".to_string())
     })?;
-    if natural_len > padded_field_len || natural_len > fields.len() {
+    if full_prefix_field_len > fields.len() {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix natural length exceeds shared matrix capacity".to_string(),
+            "setup prefix length exceeds shared matrix capacity".to_string(),
         ));
     }
 
-    let mut ring_elems = vec![CyclotomicRing::zero(); padded_ring_slots];
-    for (ring, coeffs) in ring_elems.iter_mut().zip(fields[..natural_len].chunks(D)) {
-        ring.coefficients_mut()[..coeffs.len()].copy_from_slice(coeffs);
-    }
-    Ok(ring_elems)
-}
-
-fn setup_prefix_block_slices<F, const D: usize>(
-    ring_elems: &[CyclotomicRing<F, D>],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-) -> Result<Vec<&[CyclotomicRing<F, D>]>, AkitaError>
-where
-    F: FieldCore,
-{
-    if num_live_blocks
-        .checked_mul(num_positions_per_block)
-        .is_none_or(|witness| witness != ring_elems.len())
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix ring elements do not match witness block layout".to_string(),
-        ));
-    }
-    Ok((0..num_live_blocks)
-        .map(|block_idx| {
-            let start = block_idx
-                .checked_mul(num_positions_per_block)
-                .expect("block index fits after witness length check");
-            &ring_elems[start..start + num_positions_per_block]
+    fields[..full_prefix_field_len]
+        .chunks_exact(D)
+        .map(|coeffs| {
+            let mut ring = CyclotomicRing::zero();
+            ring.coefficients_mut().copy_from_slice(coeffs);
+            Ok(ring)
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -294,49 +274,33 @@ mod tests {
     }
 
     #[test]
-    fn setup_prefix_extraction_zero_pads_after_natural_len() {
-        let natural_len = 129usize;
+    fn setup_prefix_extraction_preserves_actual_tail() {
         let padded_ring_slots = 4usize;
         let setup = AkitaProverSetup::<F>::generate_with_capacity(
             8,
             1,
             SetupMatrixCapacity {
-                num_field_elements: natural_len,
+                num_field_elements: padded_ring_slots * 64,
             },
         )
         .expect("setup");
         let fields = setup.expanded.shared_matrix().as_field_slice();
-        assert_eq!(fields.len(), natural_len);
-        assert!(fields.len() < padded_ring_slots * 64);
+        assert_eq!(fields.len(), padded_ring_slots * 64);
 
-        let ring_elems = extract_setup_prefix_ring_elems::<F, 64>(
-            &setup.expanded,
-            padded_ring_slots,
-            natural_len,
-        )
-        .expect("extract setup prefix");
+        let ring_elems =
+            extract_setup_prefix_ring_elems::<F, 64>(&setup.expanded, padded_ring_slots)
+                .expect("extract setup prefix");
 
         assert_eq!(ring_elems.len(), padded_ring_slots);
         assert_eq!(ring_elems[0].coefficients(), &fields[..64]);
         assert_eq!(ring_elems[1].coefficients(), &fields[64..128]);
         assert_eq!(ring_elems[2].coefficients()[0], fields[128]);
-        assert!(
-            ring_elems[2].coefficients()[1..]
-                .iter()
-                .all(|coeff| coeff.is_zero()),
-            "coefficients after natural_len must be zero padded"
-        );
-        assert!(
-            ring_elems[3]
-                .coefficients()
-                .iter()
-                .all(|coeff| coeff.is_zero()),
-            "padding may extend beyond the shared setup backing"
-        );
+        assert_eq!(ring_elems[2].coefficients(), &fields[128..192]);
+        assert_eq!(ring_elems[3].coefficients(), &fields[192..256]);
     }
 
     #[test]
-    fn commit_setup_prefix_uses_natural_len_with_shared_setup() {
+    fn commit_setup_prefix_requires_full_prefix_shared_setup() {
         let level_params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
@@ -354,15 +318,23 @@ mod tests {
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let natural_len = n_prefix / 2 + 1;
-        let mut setup = test_setup::<64>(&level_params, natural_len);
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            8,
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: natural_len,
+            },
+        )
+        .expect("setup");
         let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
         assert!(available_field_len >= natural_len);
+        assert!(available_field_len < n_prefix);
 
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let slot = commit_setup_prefix::<F, 64, _>(
+        let error = commit_setup_prefix::<F, 64, _>(
             &setup.expanded,
             &backend,
             &prepared,
@@ -370,10 +342,8 @@ mod tests {
             n_prefix,
             natural_len,
         )
-        .expect("commit prefix");
-        assert_eq!(slot.natural_len, natural_len);
-        assert_eq!(slot.padded_len, n_prefix);
-        setup.prefix_slots.insert(slot).expect("insert");
+        .expect_err("full-prefix source must be resident");
+        assert!(error.to_string().contains("shared matrix capacity"));
     }
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
@@ -388,7 +358,7 @@ mod tests {
             .expect("natural len")
             .min(n_prefix);
         let mut setup = test_setup::<D>(&level_params, n_prefix);
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
@@ -434,7 +404,7 @@ mod tests {
         );
 
         let setup = test_setup::<64>(&level_params, n_prefix);
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
         let error = commit_setup_prefix::<F, 64, _>(
             &setup.expanded,

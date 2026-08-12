@@ -77,7 +77,7 @@ pub fn new_prover_setup<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + Valid,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + Valid + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
     if max_num_batched_polys == 0 {
@@ -415,7 +415,7 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: FieldCore + Valid + CanonicalField + RandomSampling + HalvingField + AkitaSerialize,
+    F: FieldCore + Valid + CanonicalField + RandomSampling + HalvingField + AkitaSerialize + 'static,
     Cfg: CommitmentConfig<Field = F>,
 >(
     max_num_vars: usize,
@@ -1036,15 +1036,16 @@ mod tests {
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 
                 let commit_u = |setup: &AkitaProverSetup<TestF>| {
-                    let prepared = CpuBackend.prepare_setup(setup).unwrap();
+                    let prepared = CpuBackend::DEFAULT.prepare_setup(setup).unwrap();
                     let plan = CommitInnerPlan::from_level(&lp);
-                    let inner = RootCommitKernel::commit_inner(
-                        &CpuBackend,
-                        &prepared,
-                        RootCommitSource::<TestF, TEST_D>::commit_view(&poly).unwrap(),
-                        plan,
-                    )
-                    .unwrap();
+                    let mut inner_group = CpuBackend::DEFAULT
+                        .commit_inner_group(
+                            &prepared,
+                            vec![RootCommitSource::<TestF, TEST_D>::commit_view(&poly).unwrap()],
+                            plan,
+                        )
+                        .unwrap();
+                    let inner = inner_group.pop().expect("singleton commit result");
                     let n_a = lp.inner_commit_matrix.output_rank();
                     let blocks = (0..lp.num_live_blocks)
                         .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
@@ -1056,7 +1057,7 @@ mod tests {
                             TEST_D,
                         >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
                         .unwrap();
-                    CpuBackend
+                    CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer_commit_matrix.output_rank(),

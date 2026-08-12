@@ -443,7 +443,9 @@ mod tests {
             },
         )
         .unwrap();
-        let prepared = CpuBackend.prepare_expanded(setup.expanded.clone()).unwrap();
+        let prepared = CpuBackend::DEFAULT
+            .prepare_expanded(setup.expanded.clone())
+            .unwrap();
         (setup, prepared)
     }
 
@@ -464,7 +466,8 @@ mod tests {
     #[test]
     fn sequential_and_batched_execution_match_and_preserve_identity() {
         let (setup, prepared) = prepared_context(64);
-        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+        let ctx =
+            OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref()).unwrap();
         let (batched, report) =
             execute_compression_chains(&ctx, vec![input(0, 64), input(1, 64)]).unwrap();
         let (first, _) = execute_compression_chains(&ctx, vec![input(0, 64)]).unwrap();
@@ -492,7 +495,8 @@ mod tests {
     #[test]
     fn mixed_shapes_partition_and_rhs_expansion_is_bounded() {
         let (setup, prepared) = prepared_context(65);
-        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+        let ctx =
+            OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref()).unwrap();
         let mut inputs = (0..MAX_COMPRESSION_RHS_BATCH + 3)
             .map(|id| input(id, 64))
             .collect::<Vec<_>>();
@@ -519,7 +523,8 @@ mod tests {
     fn compression_execution_bench() {
         const SAMPLES: usize = 30;
         let (setup, prepared) = prepared_context(64);
-        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+        let ctx =
+            OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref()).unwrap();
         let (_, cold) = execute_compression_chains(&ctx, vec![input(0, 64)]).unwrap();
         let mut digitization_ns = Vec::with_capacity(SAMPLES);
         let mut cached_kernel_ns = Vec::with_capacity(SAMPLES);

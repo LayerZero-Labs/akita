@@ -1,7 +1,7 @@
 use akita_config::{
     policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
-use akita_planner::{derive_standalone_precommit_profile, find_schedule};
+use akita_planner::{find_schedule, plan_standalone_precommit};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
@@ -92,24 +92,30 @@ fn main() -> Result<(), akita_field::AkitaError> {
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let recursive_policy = policy_of::<Recursive>();
-    let scalar_recursive_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(32, 2));
-    let scalar_recursive_error = find_schedule(
+    let scalar_recursive_key =
+        AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+    let scalar_recursive = find_schedule(
         &scalar_recursive_key,
         Recursive::root_honest_fold_policy(),
         &[],
         &recursive_policy,
         Recursive::ring_challenge_config,
-    )
-    .expect_err("scalar recursive planning has no setup groups to offload");
-    println!("scalar recursive request rejected as expected: {scalar_recursive_error}");
+    )?;
+    print_schedule("adaptive recursive scalar planner", &scalar_recursive);
+    println!(
+        "  offload_edges={}",
+        scalar_recursive.estimate.selected_offload_edges,
+    );
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let descriptor = derive_standalone_precommit_profile(
+    let descriptor = plan_standalone_precommit(
         precommit_layout,
         &direct_policy,
         OneHot::root_honest_fold_policy(),
         OneHot::ring_challenge_config,
-    )?;
+    )?
+    .selected
+    .profile;
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],

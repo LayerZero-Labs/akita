@@ -25,6 +25,42 @@ pub struct LgsaSummary {
     pub log2_vector_length_at_idx_start: f64,
 }
 
+/// Smallest dimension at which the LGSA profile has its full GSA prefix.
+///
+/// For larger dimensions the non-unit part of the profile is unchanged: the
+/// extra coordinates are unit vectors. This is the finite transition point
+/// used by the proven-pruned zeta optimizer.
+pub(crate) fn lgsa_stable_dimension(n: u64, q: &num_bigint::BigUint, beta: u32) -> Result<u64> {
+    if beta < 2 {
+        return Err(EstimatorError::InvalidParameter {
+            field: "beta",
+            reason: "LGSA requires beta >= 2".to_string(),
+        });
+    }
+
+    let log_vol = n as f64 * log2_biguint(q);
+    let step = 2.0 * delta(beta).log2();
+    let mut count = if log_vol <= 0.0 {
+        1
+    } else {
+        (((1.0 + 8.0 * log_vol / step).sqrt() - 1.0) / 2.0).floor() as u64
+    }
+    .max(1);
+    let profile_sum = |candidate: u64| step * candidate as f64 * (candidate as f64 + 1.0) / 2.0;
+    while profile_sum(count) <= log_vol {
+        count = count
+            .checked_add(1)
+            .ok_or(EstimatorError::InvalidParameter {
+                field: "n",
+                reason: "LGSA stable dimension overflow".to_string(),
+            })?;
+    }
+    while count > 1 && profile_sum(count - 1) > log_vol {
+        count -= 1;
+    }
+    Ok(count)
+}
+
 /// Return squared Gram-Schmidt norms for the LGSA profile.
 ///
 /// Mirrors `estimator.simulator.LGSA` with `xi=1` and `tau=False`.
@@ -105,25 +141,20 @@ pub fn lgsa_summary(
     }
 
     let log_q = log2_biguint(q);
-    let log_vol = (d as f64 - identity_vectors as f64) * log_q;
+    let n = u64::try_from(d as i128 - identity_vectors).map_err(|_| {
+        EstimatorError::InvalidParameter {
+            field: "n",
+            reason: "LGSA q-ary dimension must be non-negative".to_string(),
+        }
+    })?;
+    let log_vol = n as f64 * log_q;
     let step = 2.0 * delta(beta).log2();
     // The loop in the dense reference implementation sums the arithmetic
     // progression `step * k` until it exceeds `log_vol`. Solve the quadratic
     // directly, then correct the rounded candidate by at most a few steps.
     // This keeps the compact path genuinely compact when `m` is very large.
-    let mut num_gsa_vec = if log_vol <= 0.0 {
-        1
-    } else {
-        (((1.0 + 8.0 * log_vol / step).sqrt() - 1.0) / 2.0).floor() as u64
-    };
-    num_gsa_vec = num_gsa_vec.clamp(1, d);
+    let num_gsa_vec = lgsa_stable_dimension(n, q, beta)?.min(d);
     let profile_sum = |count: u64| step * count as f64 * (count as f64 + 1.0) / 2.0;
-    while num_gsa_vec < d && profile_sum(num_gsa_vec) <= log_vol {
-        num_gsa_vec += 1;
-    }
-    while num_gsa_vec > 1 && profile_sum(num_gsa_vec - 1) > log_vol {
-        num_gsa_vec -= 1;
-    }
     let profile_log_vol = profile_sum(num_gsa_vec);
 
     let shift = if num_gsa_vec > 0 {

@@ -2,6 +2,7 @@
 
 mod dense;
 mod field_reduction;
+pub(crate) mod flat_blocks;
 mod multilinear_polynomial;
 pub(crate) mod onehot;
 #[doc(hidden)]
@@ -19,13 +20,11 @@ pub use field_reduction::{
 pub use multilinear_polynomial::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
 };
-pub use onehot::{
-    MultiChunkEntry, OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView, SingleChunkEntry,
-};
+pub use onehot::{OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView};
 pub use recursive::{
     RecursiveFoldSource, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
 };
-pub use ring_switch::{RingSwitchQuotientView, RingSwitchRelationView};
+pub use ring_switch::RingSwitchRelationView;
 pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};
 
 #[cfg(test)]

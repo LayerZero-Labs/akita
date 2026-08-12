@@ -66,6 +66,7 @@ impl<'a, P> PreparedProverGroup<'a, P> {
 pub trait PreparedGroupProveOps<F, E, O, TS>:
     crate::protocol::core::RootProverGroupOpening<F, E, O>
     + crate::protocol::core::RootProverGroupTensor<F, E, TS>
+    + Clone
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
@@ -83,6 +84,7 @@ where
     O: crate::compute::ComputeBackendSetup<F> + crate::compute::DigitRowsComputeBackend<F>,
     TS: crate::compute::ComputeBackendSetup<F>,
     G: crate::protocol::core::RootProverGroupOpening<F, E, O>
-        + crate::protocol::core::RootProverGroupTensor<F, E, TS>,
+        + crate::protocol::core::RootProverGroupTensor<F, E, TS>
+        + Clone,
 {
 }

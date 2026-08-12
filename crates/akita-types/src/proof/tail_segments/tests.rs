@@ -83,8 +83,26 @@ fn terminal_decoder_uses_one_coding_and_admission_cap() {
     };
     assert_eq!(
         decode_terminal_z_golomb_payload(&payload, &group).unwrap(),
-        values
+        values.map(|value| value as i16)
     );
+}
+
+#[test]
+fn terminal_decoder_rejects_coefficient_outside_i16() {
+    let cap = u128::from(u16::MAX);
+    let value = i64::from(i16::MAX) + 1;
+    let rice_low_bits = wire_rice_low_bits(cap);
+    let zigzag_w = golomb_rice_zigzag_width(cap);
+    let payload = golomb_rice_encode_vec(&[value], rice_low_bits, zigzag_w).unwrap();
+    let group = TailSegmentGroupLayout {
+        z_coords: 1,
+        e_field_elems: 0,
+        t_field_elems: 0,
+        z_admission_linf_cap: cap,
+        z_rice_low_bits: rice_low_bits,
+        z_payload_bytes: payload.len(),
+    };
+    assert!(decode_terminal_z_golomb_payload(&payload, &group).is_err());
 }
 
 #[test]

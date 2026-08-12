@@ -7,7 +7,7 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeCommitBackendFor,
     RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
     RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
     SuffixTensorProveBackend, UniformProverStack,
@@ -261,7 +261,7 @@ where
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
         P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B, B>,
         B: ComputeBackendSetup<Cfg::Field>
-            + CommitmentComputeBackend<Cfg::Field>
+            + RuntimeCommitBackendFor<Cfg::Field, akita_prover::RecursiveWitnessFlat>
             + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
             + RuntimeOpeningProveBackendFor<
                 Cfg::Field,

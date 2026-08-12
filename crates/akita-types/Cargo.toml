@@ -34,7 +34,12 @@ default = []
 parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+
+[[bench]]
+name = "golomb_rice"
+harness = false
 
 [lints]
 workspace = true

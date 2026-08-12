@@ -14,19 +14,6 @@ pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
     pub(in crate::protocol::core) trace_eval_target: E,
 }
 
-/// Extract the typed fold/position ring-weight slices from a multiplier point.
-pub(in crate::protocol::core) fn multiplier_ring_weights<F: FieldCore, const D: usize>(
-    point: &RingMultiplierOpeningPoint<F>,
-) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
-    let live_block_weights = point.fold_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry fold weights".to_string())
-    })?;
-    let position_weights = point.position_rings_trusted::<D>()?.ok_or_else(|| {
-        AkitaError::InvalidInput("ring multiplier must carry position weights".to_string())
-    })?;
-    Ok((live_block_weights, position_weights))
-}
-
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
@@ -39,19 +26,20 @@ where
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
-    let plan = if let Some(base_point) = point.as_base() {
-        OpeningFoldPlan::Base {
+    if let Some(base_point) = point.as_base() {
+        let plan = OpeningFoldPlan::Base {
             live_block_weights: &base_point.live_block_weights,
             position_weights: &base_point.position_weights,
             num_positions_per_block,
-        }
-    } else {
-        let (live_block_weights, position_weights) = multiplier_ring_weights(point)?;
-        OpeningFoldPlan::Ring {
-            live_block_weights,
-            position_weights,
-            num_positions_per_block,
-        }
+        };
+        let OpeningFoldOutput { eval, folded } =
+            OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
+        return Ok((eval, folded));
+    }
+    let multipliers = point.as_subfield().ok_or(AkitaError::InvalidProof)?;
+    let plan = OpeningFoldPlan::Subfield {
+        multipliers,
+        num_positions_per_block,
     };
     let OpeningFoldOutput { eval, folded } =
         OpeningFoldKernel::evaluate_and_fold(backend, prepared, poly.opening_view()?, plan)?;
@@ -71,7 +59,16 @@ where
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
-    let _span = tracing::info_span!("fold_evaluate_claims", num_claims = polys.len()).entered();
+    let _span = tracing::info_span!(
+        "fold_evaluate_claims",
+        num_claims = polys.len(),
+        source = std::any::type_name::<Q>(),
+        ring_dimension = D,
+        positions_per_block = num_positions_per_block,
+        live_blocks = prepared_point.ring_multiplier_point.fold_len(),
+        compact_subfield = prepared_point.ring_multiplier_point.as_base().is_none(),
+    )
+    .entered();
     let mut folded_rings = Vec::with_capacity(polys.len());
     let mut folded_blocks = Vec::with_capacity(polys.len());
     for poly in polys {

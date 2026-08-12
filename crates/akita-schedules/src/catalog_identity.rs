@@ -21,6 +21,8 @@ use crate::generated::{
 };
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
+const SETUP_PREFIX_CONTENT_MODE_FULL_PREFIX: u64 = u64::from_le_bytes(*b"SPF1\0\0\0\0");
+
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -53,13 +55,16 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.ring_subfield_norm_bound));
     h.write_u64(policy.claim_ext_degree as u64);
     h.write_u64(policy.chal_ext_degree as u64);
-    h.write_u64(u64::from(policy.basis_range.0));
-    h.write_u64(u64::from(policy.basis_range.1));
+    h.write_u64(u64::from(policy.inner_basis_range.0));
+    h.write_u64(u64::from(policy.inner_basis_range.1));
+    h.write_u64(u64::from(policy.opening_basis_range.0));
+    h.write_u64(u64::from(policy.opening_basis_range.1));
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
+    h.write_u64(u64::from(policy.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, policy.setup_field_budget);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
@@ -82,13 +87,16 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.ring_subfield_norm_bound));
     h.write_u64(identity.claim_ext_degree as u64);
     h.write_u64(identity.chal_ext_degree as u64);
-    h.write_u64(u64::from(identity.basis_range.0));
-    h.write_u64(u64::from(identity.basis_range.1));
+    h.write_u64(u64::from(identity.inner_basis_range.0));
+    h.write_u64(u64::from(identity.inner_basis_range.1));
+    h.write_u64(u64::from(identity.opening_basis_range.0));
+    h.write_u64(u64::from(identity.opening_basis_range.1));
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
+    h.write_u64(u64::from(identity.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, identity.setup_field_budget);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
@@ -125,6 +133,7 @@ struct CatalogIdentityExpectation {
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
     selection_policy: crate::SelectionPolicyId,
+    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     setup_field_budget: Option<usize>,
     min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
@@ -136,7 +145,8 @@ struct CatalogIdentityExpectation {
     ring_subfield_norm_bound: u32,
     claim_ext_degree: usize,
     chal_ext_degree: usize,
-    basis_range: (u32, u32),
+    inner_basis_range: (u32, u32),
+    opening_basis_range: (u32, u32),
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
@@ -155,6 +165,7 @@ impl CatalogIdentityExpectation {
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
             selection_policy: identity.selection_policy,
+            recursive_split_search_policy: identity.recursive_split_search_policy,
             setup_field_budget: identity.setup_field_budget,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
@@ -166,7 +177,8 @@ impl CatalogIdentityExpectation {
             ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
-            basis_range: identity.basis_range,
+            inner_basis_range: identity.inner_basis_range,
+            opening_basis_range: identity.opening_basis_range,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
@@ -199,6 +211,7 @@ fn catalog_identity_expectation(
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
         selection_policy: policy.selection_policy,
+        recursive_split_search_policy: policy.recursive_split_search_policy,
         setup_field_budget: policy.setup_field_budget,
         min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
@@ -210,7 +223,8 @@ fn catalog_identity_expectation(
         ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
-        basis_range: policy.basis_range,
+        inner_basis_range: policy.inner_basis_range,
+        opening_basis_range: policy.opening_basis_range,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
@@ -237,6 +251,7 @@ pub fn expected_catalog_identity(
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
         selection_policy: expected.selection_policy,
+        recursive_split_search_policy: expected.recursive_split_search_policy,
         setup_field_budget: expected.setup_field_budget,
         min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,
@@ -248,7 +263,8 @@ pub fn expected_catalog_identity(
         ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
-        basis_range: expected.basis_range,
+        inner_basis_range: expected.inner_basis_range,
+        opening_basis_range: expected.opening_basis_range,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
@@ -416,16 +432,26 @@ fn validate_entry_dimensions(
             previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;
-        let expected_terminal = match mode {
-            RingDimensionScheduleMode::UniformDimension { ring_dimension } => ring_dimension,
+        let terminal_is_admitted = match mode {
+            RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+                terminal_d == ring_dimension
+            }
             RingDimensionScheduleMode::AdaptiveDimension {
-                uniform_suffix_dimension,
-                ..
-            } => uniform_suffix_dimension,
+                suffix_dimensions, ..
+            } => suffix_dimensions.contains(&terminal_d),
         };
-        if terminal_d != expected_terminal {
+        if !terminal_is_admitted {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal D{terminal_d} is not policy suffix D{expected_terminal} for key {:?}",
+                "generated terminal D{terminal_d} is outside the policy suffix domain for key {:?}",
+                entry.root.final_group.layout
+            )));
+        }
+        if matches!(mode, RingDimensionScheduleMode::AdaptiveDimension { .. })
+            && terminal_d > previous.d_a()
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated terminal D{terminal_d} exceeds predecessor A dimension D{} for key {:?}",
+                previous.d_a(),
                 entry.root.final_group.layout
             )));
         }
@@ -446,7 +472,7 @@ fn validate_level_dimensions(
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
@@ -461,7 +487,14 @@ fn validate_level_dimensions(
                             && dimensions.d_d() <= ceiling.d_d()
                     })
             } else {
-                dimensions == CommitmentRingDims::uniform(uniform_suffix_dimension)
+                dimensions.d_a() == dimensions.d_b()
+                    && dimensions.d_b() == dimensions.d_d()
+                    && suffix_dimensions.contains(&dimensions.d_a())
+                    && previous.is_none_or(|ceiling| {
+                        dimensions.d_a() <= ceiling.d_a()
+                            && dimensions.d_b() <= ceiling.d_b()
+                            && dimensions.d_d() <= ceiling.d_d()
+                    })
             }
         }
     };
@@ -519,6 +552,7 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
             write_generated_partition(&mut h, fold.witness_partition);
             h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
             if let Some(prefix) = fold.incoming_setup_prefix {
+                h.write_u64(SETUP_PREFIX_CONTENT_MODE_FULL_PREFIX);
                 h.write_u64(prefix.natural_len);
                 write_generated_group(&mut h, prefix.commitment);
             }
@@ -591,14 +625,17 @@ fn write_ring_dimension_schedule_mode(h: &mut Fnv64, mode: RingDimensionSchedule
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
-            uniform_suffix_dimension,
+            suffix_dimensions,
             potential_a_dimensions,
             potential_b_dimensions,
             potential_d_dimensions,
         } => {
             h.write_u64(1);
             h.write_u64(num_search_levels as u64);
-            h.write_u64(uniform_suffix_dimension as u64);
+            h.write_u64(suffix_dimensions.len() as u64);
+            for &dimension in suffix_dimensions {
+                h.write_u64(dimension as u64);
+            }
             for dimensions in [
                 potential_a_dimensions,
                 potential_b_dimensions,
@@ -666,5 +703,95 @@ impl Fnv64 {
 
     fn finish(self) -> u64 {
         self.state
+    }
+}
+
+#[cfg(all(test, feature = "fp128-onehot-recursive"))]
+mod tests {
+    use super::*;
+    use crate::generated::GeneratedFoldScheduleEntry;
+    use akita_challenges::SparseChallengeConfig;
+
+    fn old_zero_padded_entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
+        let mut entries = entries.to_vec();
+        entries.sort_by(generated_schedule_key_cmp);
+        let mut h = Fnv64::new();
+        for entry in entries {
+            write_generated_schedule_key(&mut h, entry.root.final_group.layout);
+            write_generated_group(&mut h, entry.root.final_group.commitment);
+            h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
+            h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
+            h.write_u64(entry.root.precommitted_groups.len() as u64);
+            for group in entry.root.precommitted_groups {
+                write_generated_precommitted_group_key(&mut h, &group.descriptor);
+                write_generated_group(&mut h, group.commitment);
+                h.write_u64(u64::from(group.num_digits_fold));
+            }
+            write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
+            write_generated_partition(&mut h, entry.root.witness_partition);
+            h.write_u64(entry.recursive_folds.len() as u64);
+            for fold in entry.recursive_folds {
+                write_generated_group(&mut h, fold.witness);
+                write_generated_open_matrix(&mut h, fold.open_commit_matrix);
+                write_generated_partition(&mut h, fold.witness_partition);
+                h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
+                if let Some(prefix) = fold.incoming_setup_prefix {
+                    h.write_u64(prefix.natural_len);
+                    write_generated_group(&mut h, prefix.commitment);
+                }
+            }
+            write_generated_geometry(&mut h, entry.terminal.geometry);
+            h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
+            h.write_u64(u64::from(entry.terminal.inner_commit_matrix.log_basis));
+        }
+        h.finish()
+    }
+
+    #[test]
+    fn full_prefix_catalog_identity_rejects_old_zero_padded_digest() {
+        let table = crate::generated::fp128_onehot_recursive_table();
+        let old_digest = old_zero_padded_entries_key_digest(table.entries);
+        assert_ne!(
+            old_digest, table.identity.key_digest,
+            "full-prefix setup content mode must change the generated key digest"
+        );
+
+        let stale = GeneratedScheduleTable {
+            identity: GeneratedScheduleCatalogIdentity {
+                key_digest: old_digest,
+                ..table.identity
+            },
+            ..table
+        };
+        let policy = PlannerPolicy {
+            cost_model: stale.identity.cost_model,
+            selection_policy: stale.identity.selection_policy,
+            recursive_split_search_policy: stale.identity.recursive_split_search_policy,
+            setup_field_budget: stale.identity.setup_field_budget,
+            min_offloaded_witness_contraction: stale.identity.min_offloaded_witness_contraction,
+            sis_modulus_profile: stale.identity.sis_modulus_profile,
+            sis_security_policy: stale.identity.sis_security_policy,
+            sis_table_digest: stale.identity.sis_table_digest,
+            uniform_ring_dimension: stale.identity.uniform_ring_dimension,
+            setup_prefix_inner_ring_dimension: stale.identity.setup_prefix_inner_ring_dimension,
+            decomposition: stale.identity.decomposition,
+            ring_subfield_norm_bound: stale.identity.ring_subfield_norm_bound,
+            claim_ext_degree: stale.identity.claim_ext_degree,
+            chal_ext_degree: stale.identity.chal_ext_degree,
+            inner_basis_range: stale.identity.inner_basis_range,
+            opening_basis_range: stale.identity.opening_basis_range,
+            witness_chunk: stale.identity.witness_chunk,
+            recursive_setup_planning: stale.identity.recursive_setup_planning,
+            ring_dimension_schedule_mode: stale.identity.ring_dimension_schedule_mode,
+        };
+        let err = validate_catalog_identity(&stale, &policy, |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        })
+        .expect_err("old zero-padded catalog identity must reject");
+        assert!(err
+            .to_string()
+            .contains("schedule catalog identity mismatch"));
     }
 }

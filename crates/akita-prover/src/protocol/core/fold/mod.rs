@@ -3,11 +3,12 @@ mod single_field;
 
 use super::*;
 use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeCommitBackendFor,
     RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
+use crate::RecursiveWitnessFlat;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
@@ -103,7 +104,7 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
     Q: RootProverGroupOpening<F, E, O>,
     O: DigitRowsComputeBackend<F>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     C: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
 {
@@ -213,10 +214,6 @@ where
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
-        prepared_points
-            .iter()
-            .map(|prepared| prepared.ring_opening_point.clone())
-            .collect::<Vec<_>>(),
         prepared_points
             .iter()
             .map(|prepared| prepared.ring_multiplier_point.clone())
@@ -339,7 +336,7 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,

@@ -129,8 +129,8 @@ fn many_short_families_avoid_quadratic_bucketing() {
         1,
         outer_stride,
         1,
-        &[F::one()],
-        &[F::one()],
+        &[F::one()][..],
+        &[F::one()][..],
         &[F::one()],
         &[],
     )

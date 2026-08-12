@@ -657,5 +657,8 @@ The fused identity is implemented by
 When the level uses recursive setup contribution, Stage 3 batches the public
 setup-product claim with Stage 2's next-witness opening. One sumcheck proves
 both claims and returns their evaluations at the resulting projected points.
+For setup-prefix offloading, the carried setup evaluation is over the actual
+full power-of-two prefix `S[0..n_prefix]`; the inactive tail is suppressed by
+the compact setup-index weight, not by zero-filled commitment contents.
 Under direct setup contribution, Stage 3 is absent
 ([`fold.rs:1079`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/core/fold.rs#L671-L731)).

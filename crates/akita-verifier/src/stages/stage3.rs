@@ -135,7 +135,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let required = self.setup_contribution_plan.required();
+        let setup_index_len = self
+            .setup_contribution_plan
+            .projection_geometry()
+            .setup_index_len();
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -159,7 +162,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 Some(value) => value,
                 None => setup_mle_at_eq_tables::<F, E, D>(
                     &setup.expanded,
-                    required,
+                    setup_index_len,
                     setup_eval_len,
                     rho_setup_idx,
                     &eq_y,
@@ -238,7 +241,7 @@ fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, Ak
 
 fn setup_mle_at_eq_tables<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
-    required: usize,
+    source_rows: usize,
     setup_eval_len: usize,
     rho_setup_idx: &[E],
     eq_y: &[E],
@@ -247,18 +250,15 @@ where
     F: FieldCore,
     E: ExtField<F> + akita_field::MulBaseUnreduced<F>,
 {
-    if required > setup_eval_len {
+    if source_rows > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
             "setup prefix is too small for selected verifier layout".into(),
         ));
     }
-    let setup_idx_len = required
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup MLE index length overflow".into()))?;
     let eq_setup_idx = SplitEqEvals::new(rho_setup_idx)?;
-    if eq_setup_idx.len() != setup_idx_len {
+    if eq_setup_idx.len() != source_rows {
         return Err(AkitaError::InvalidSize {
-            expected: setup_idx_len,
+            expected: source_rows,
             actual: eq_setup_idx.len(),
         });
     }
@@ -268,35 +268,55 @@ where
             actual: eq_y.len(),
         });
     }
-    let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
+    let setup_view = setup.shared_matrix().ring_view::<D>(1, source_rows)?;
     let setup_entries = setup_view.as_slice();
 
     // Scan the selected setup prefix once. Each entry contracts the ring with
-    // `eq_y` and the setup-index equality; the scan is `O(required · D)` and is
-    // the dominant recursive-mode verifier cost, so evaluate it in parallel.
-    let _span = tracing::info_span!("stage3_setup_mle_scan", required).entered();
-    let terms = cfg_into_iter!(0..required)
-        .map(|setup_idx| -> Result<E, AkitaError> {
-            let entry = setup_entries
-                .get(setup_idx)
+    // `eq_y` and the setup-index equality; the scan is `O(source_rows · D)` and
+    // is the dominant recursive-mode verifier cost, so evaluate it in parallel.
+    let _span = tracing::info_span!("stage3_setup_mle_scan", source_rows).entered();
+    let inner_len = eq_setup_idx.in_len();
+    let required_outer = source_rows.div_ceil(inner_len);
+    cfg_fold_reduce!(
+        0..required_outer,
+        || Ok(E::zero()),
+        |acc: Result<E, AkitaError>, outer_idx| {
+            let start = outer_idx
+                .checked_mul(inner_len)
                 .ok_or(AkitaError::InvalidProof)?;
-            let ring_eval = eval_ring_at_pows_fast(entry, eq_y);
-            Ok(eq_setup_idx.eval_at(setup_idx)? * ring_eval)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(terms.into_iter().fold(E::zero(), |acc, value| acc + value))
+            let end = start.saturating_add(inner_len).min(source_rows);
+            let entries = setup_entries
+                .get(start..end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let inner_weights = eq_setup_idx
+                .e_in
+                .get(..entries.len())
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut inner = E::zero();
+            for (entry, &weight) in entries.iter().zip(inner_weights) {
+                inner += eval_ring_at_pows_fast(entry, eq_y) * weight;
+            }
+            let outer_weight = eq_setup_idx
+                .e_out
+                .get(outer_idx)
+                .ok_or(AkitaError::InvalidProof)?;
+            Ok(acc? + *outer_weight * inner)
+        },
+        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{committed_group_params, proof_optimized::fp128::Dense};
+    use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
     use akita_field::Prime128OffsetA7F7;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, setup_prefix_precommitted_params,
-        setup_prefix_slot_id, AkitaSetupDescriptor, CommittedGroupParams, PolynomialGroupLayout,
-        RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+        setup_prefix_slot_id, AkitaScheduleLookupKey, AkitaSetupDescriptor, CommittedGroupParams,
+        PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,
+        SetupPrefixVerifierSlot,
     };
     use std::sync::Arc;
 
@@ -345,8 +365,14 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = committed_group_params::<Dense>(&PolynomialGroupLayout::singleton(16))
-            .expect("level parameters");
+        let level_params = Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(16),
+        ))
+        .expect("scalar schedule")
+        .root
+        .params
+        .final_group
+        .commitment;
         let natural_field_len = level_params
             .inner_commit_matrix
             .ring_dimension()
@@ -383,5 +409,59 @@ mod tests {
             &mut direct_transcript,
         )
         .is_err());
+    }
+
+    #[test]
+    fn setup_mle_scan_matches_dense_reference() {
+        let required = 9usize;
+        let source_rows = required.next_power_of_two();
+        let setup_eval_len = source_rows;
+        let descriptor = AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: setup_eval_len * RING_D,
+            setup_seed: [9u8; 32].into(),
+        };
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            descriptor,
+            akita_types::FlatMatrix::from_flat_data(
+                (0..setup_eval_len * RING_D)
+                    .map(|index| F::from_u64(11 + index as u64))
+                    .collect(),
+            ),
+        );
+        let rho_y = (0..RING_D.trailing_zeros() as usize)
+            .map(|index| F::from_u64(101 + index as u64))
+            .collect::<Vec<_>>();
+        let eq_y = ring_eq_table::<F, RING_D>(&rho_y).expect("ring equality table");
+        let rho_setup = (0..required.next_power_of_two().trailing_zeros() as usize)
+            .map(|index| F::from_u64(201 + index as u64))
+            .collect::<Vec<_>>();
+        let eq_setup = SplitEqEvals::new(&rho_setup).expect("setup equality");
+        let rings = setup
+            .shared_matrix()
+            .ring_view::<RING_D>(1, setup_eval_len)
+            .expect("setup ring view");
+        let expected = rings
+            .as_slice()
+            .iter()
+            .take(source_rows)
+            .enumerate()
+            .map(|(index, ring)| {
+                eq_setup.eval_at(index).expect("setup equality entry")
+                    * eval_ring_at_pows_fast(ring, &eq_y)
+            })
+            .sum::<F>();
+        assert_eq!(
+            setup_mle_at_eq_tables::<F, F, RING_D>(
+                &setup,
+                source_rows,
+                setup_eval_len,
+                &rho_setup,
+                &eq_y,
+            )
+            .expect("streamed setup scan"),
+            expected
+        );
     }
 }

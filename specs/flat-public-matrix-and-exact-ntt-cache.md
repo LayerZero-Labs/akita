@@ -4,10 +4,10 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-31 |
-| Status        | implemented; compact provenance certificates and large-artifact I/O are explicit follow-ups |
+| Status        | implemented; setup-prefix zero-padding portions superseded by `full-setup-prefix-compact-tail-weights.md`; compact provenance certificates and large-artifact I/O are explicit follow-ups |
 | PR            | #341, stacked on #338 |
 | Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, `mixed-ring-dimension-per-level.md`, and `setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
-| Superseded-by | |
+| Superseded-by | Setup-prefix offloading content and capacity semantics are superseded by `full-setup-prefix-compact-tail-weights.md` |
 | Book-chapter  | book/src/usage/commitment-api.md |
 
 ## Summary
@@ -175,9 +175,9 @@ accept. A verifier must distinguish three separate claims:
 
 1. `AkitaSetupSeed` names the intended deterministic stream under the intended
    field and derivation version.
-2. A setup-prefix commitment is the exact commitment to the stated natural
-   prefix of that stream, with the stated zero padding and commitment
-   parameters.
+2. A setup-prefix commitment is the exact commitment to the stated full
+   power-of-two prefix of that stream, with the stated active support and
+   commitment parameters.
 3. The bytes loaded by this process are the same bytes that previously passed
    the required validation.
 
@@ -189,7 +189,7 @@ validated and authenticated those bytes. Package authentication is therefore
 an allowed deployment mechanism, not the final transparent provenance model.
 
 Direct validation derives the public stream and recomputes the commitment. It
-can use bounded working memory, but its time is linear in the natural prefix.
+can use bounded working memory, but its time is linear in the full prefix.
 Random spot checks do not prove equality of a commitment to the complete
 prefix. Random linear checks also do not avoid reading the complete SHAKE
 stream unless an additional authenticated algebraic structure is introduced.
@@ -201,7 +201,7 @@ setup-prefix slot `i`, a certificate proves this statement:
 
 ```text
 C_i = Commit(
-    S_F,id[0 .. natural_len_i] || zero padding,
+    S_F,id[0 .. n_prefix_i],
     slot_id_i.commitment_params
 )
 ```
@@ -211,7 +211,7 @@ The certified transcript MUST bind at least:
 - the field and complete `AkitaSetupSeed`;
 - the certificate protocol version and domain separator;
 - the exact bytes or a cryptographic canonical digest of `C_i`;
-- the complete slot ID, natural length, padded length, and commitment
+- the complete slot ID, active support, full-prefix length, and commitment
   parameters;
 - the predecessor and successor certificate identities when this is a chained
   level.
@@ -453,7 +453,7 @@ verifier_matrix_capacity = max(
 
 The opening layout for the root is the exact call layout. The opening layout
 for a recursive producer consists of its witness group and, when present, its
-incoming setup-prefix group. The latter uses the padded prefix domain. These
+incoming setup-prefix group. The latter uses the full-prefix domain. These
 layouts and `active_setup_field_len` are canonical. Capacity code MUST NOT
 reconstruct them with a second approximation.
 
@@ -506,35 +506,37 @@ hot-path public matrix is shorter.
 
 ### Setup-prefix offloading
 
-Setup-prefix offloading has two lengths with different meanings:
+Setup-prefix offloading has two lengths with different meanings. The original
+zero-padded content rule in this spec has been superseded by
+[`full-setup-prefix-compact-tail-weights.md`](full-setup-prefix-compact-tail-weights.md):
 
 ```text
-natural_len = exact number of public stream coefficients used by Stage 3
+natural_len = active setup-weight support used by Stage 3
 n_prefix    = next_power_of_two(max(1, natural_len))
 ```
 
 The committed witness is:
 
 ```text
-S[0..natural_len] || zero^(n_prefix - natural_len)
+S[0..n_prefix]
 ```
 
 Therefore:
 
-- base public-matrix capacity MUST cover `natural_len`, not `n_prefix`;
-- zero padding MUST be constructed explicitly and MUST NOT be read from later
-  random coefficients of `S`;
+- base public-matrix capacity MUST cover `n_prefix` for every materialized
+  setup-prefix commitment;
+- no coefficient in `S[0..n_prefix]` is synthesized as zero;
 - the Boolean setup-index domain and setup-prefix commitment layout continue
   to use `n_prefix`;
-- A/B matrices that commit the padded object are ordinary matrix uses and their
+- A/B matrices that commit the full-prefix object are ordinary matrix uses and their
   exact `rows * columns * D` footprints remain in capacity accounting;
 - the setup-prefix group's inner A-matrix ring dimension determines how the
-  padded witness is chunked for commitment. It is a planner-owned commitment
+  full-prefix witness is chunked for commitment. It is a planner-owned commitment
   parameter, not a public-matrix generation dimension;
 - the setup-prefix group's outer B-matrix dimension is selected independently,
   exactly like every other committed group's B matrix;
 - neither `natural_len` nor the whole materialized setup must be divisible by
-  the prefix A dimension. Only the padded witness shape consumed by that
+  the prefix A dimension. Only the full-prefix witness shape consumed by that
   commitment must be divisible by it.
 
 A setup-prefix slot's semantic identity MUST bind the `AkitaSetupSeed`,
@@ -549,14 +551,12 @@ witness remains a separate group with its own variable count. The multi-group
 opening machinery MUST preserve those per-group arities; it MUST NOT physically
 extend the setup group to the witness group's larger domain merely to batch
 them. Therefore no new common-suffix padding is introduced, but the existing
-zero padding inside the setup-prefix group still participates in its commitment,
-folding, and opening work.
+setup-prefix tail contains actual public setup coefficients. The zero tail is
+owned by the compact setup-index weight, not by the committed setup polynomial.
 
-The immediate saving is narrower: deriving and storing the shared random matrix
-requires only `natural_len` source coefficients, not `n_prefix`. This reduces
-the final setup capacity only when that source prefix is the maximum matrix
-footprint; setup-prefix A/B commitment matrices or another protocol matrix may
-still dominate the maximum. Exact NTT-cache sizing can remove additional
+The former setup storage saving no longer applies to selected recursive
+setup-prefix edges: deriving and storing the shared random matrix must cover
+`n_prefix` source coefficients. Exact NTT-cache sizing can still remove
 derived-state waste independently. Eliminating the remaining Boolean-domain
 padding would require a separate non-power-of-two-domain protocol change.
 
@@ -1021,7 +1021,8 @@ admitted schedule universe.
   is irrelevant.
 - A/B/D role matrices overlap at flat index zero across roles, groups, levels,
   chunks, and dimensions.
-- Setup-prefix zero padding is protocol data, not public randomness.
+- Setup-prefix inactive support is encoded in protocol weights, not by
+  synthesizing committed zeros.
 - Per-proof verification consumes validated setup state and never performs a
   large setup provenance check on its hot path.
 - The effective schedule is the sole owner of protocol ring dimensions.
@@ -1087,10 +1088,12 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 
 #### Setup-prefix offloading
 
-- [x] Capacity accounting charges `natural_len`, not `n_prefix`, for the source
-  prefix and separately includes setup-prefix commitment matrices.
-- [x] Tests cover a non-power-of-two natural length and prove all padded entries
-  are zero rather than later public-stream coefficients.
+- [x] Superseded by `full-setup-prefix-compact-tail-weights.md`: capacity
+  accounting now charges `n_prefix` for selected full-prefix setup sources and
+  separately includes setup-prefix commitment matrices.
+- [x] Superseded by `full-setup-prefix-compact-tail-weights.md`: tests now cover
+  a non-power-of-two natural support and prove tail entries are actual
+  public-stream coefficients rather than synthesized zeros.
 - [x] Setup-prefix preprocessing works for independently selected prefix A/B
   dimensions while the same setup serves a differently dimensioned mixed
   schedule.
@@ -1099,7 +1102,7 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 - [x] Slot identity derives the prefix A dimension from the committed-group
   profile without a duplicate `d_setup` field.
 - [x] Setup-prefix slot identity and registry validation are bound to the flat
-  public matrix identity and exact natural/padded geometry.
+  public matrix identity and exact natural/full-prefix geometry.
 
 #### NTT caches
 
@@ -1125,10 +1128,11 @@ This follow-up is not complete until all merge-blocking criteria below are satis
   without changing transcript identity.
 - [x] `parallel`, no-default-feature, and `disk-persistence` feature graphs use
   identical public stream coefficients.
-- [x] The fp128 one-hot nv32 mixed-dimension CI bench runs through production
+- [x] The fp128 one-hot nv36 mixed-dimension CI benches run through production
   schedule resolution, prewarms the exact shared-owner commit-and-prove union
   in its preparation phase, rejects online cache growth, and reports exact
-  setup fields plus per-D/domain/cluster NTT bytes.
+  setup fields plus per-D/domain/cluster NTT bytes for direct and recursive
+  setup contribution.
 - [x] No setup code uses a config/preset D or `D512OneHot` as public-matrix
   identity or allocation unit.
 
@@ -1201,11 +1205,11 @@ silently bypass the compiler.
 
 #### End-to-end tests
 
-Run commit/prove/verify for the production fp128 nv32 one-hot mixed-dimension
-schedule, including setup offloading when selected. Run the same proof with
+Run commit/prove/verify for the production fp128 nv36 one-hot mixed-dimension
+schedule in both direct and recursive setup modes. Run the same proof with
 different covering materialization capacities. Exercise multi-group and
-multi-chunk layouts together because their interaction is the easiest place to
-accidentally sum overlapping prefixes or duplicate caches.
+multi-chunk layouts together because their interaction is the easiest place
+to accidentally sum overlapping prefixes or duplicate caches.
 
 Malformed verifier tests cover zero/overflowing dimensions, overflowing
 row-width products, insufficient field prefixes, wrong public matrix IDs,
@@ -1220,10 +1224,10 @@ The cutover has three required measurements:
    domain, and profile;
 3. setup derivation, prefix preprocessing, commit, prove, and verify time.
 
-The fp128 one-hot nv32 mixed-dimension CI bench is the primary regression
-fixture. Its report MUST show both the provisioned setup requirement and the
-concrete execution-cache requirement. A single aggregate `setup_ring_elements`
-number is insufficient.
+The direct and recursive fp128 one-hot nv36 mixed-dimension CI benches are the
+primary regression fixtures. Their reports MUST show both the provisioned
+setup requirement and the concrete execution-cache requirement. A single
+aggregate `setup_ring_elements` number is insufficient.
 
 Expected direction:
 
@@ -1260,9 +1264,9 @@ compile provisioning requirements
         v
 derive/load PublicMatrixPrefix<F>
         |
-        | exact natural coefficients
+        | exact full-prefix coefficients
         +---------------------> setup-prefix preprocessing
-        |                           | explicit zero padding
+        |                           | active support in setup-index weights
         |                           `-> persistent slot registries
         |
 resolved schedule + call + compute-stack routing

@@ -57,7 +57,7 @@ mod non_zk_aggregated_cases {
                 OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
             let polys: Vec<OneHotPoly<F, u8>> = (0..batch_size)
-                .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
+                .map(|idx| make_onehot_poly(nv, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
                 .collect();
 
             let pt = random_point(nv, 0xf00d_0000 + nv as u64);
@@ -67,9 +67,9 @@ mod non_zk_aggregated_cases {
                 .collect();
 
             let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
-            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
             let stack = akita_prover::UniformProverStack::uniform(
-                &CpuBackend,
+                &CpuBackend::DEFAULT,
                 &prepared,
                 setup.expanded.as_ref(),
             )
@@ -158,9 +158,9 @@ mod non_zk_aggregated_cases {
                 .collect();
 
             let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
-            let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
             let stack = akita_prover::UniformProverStack::uniform(
-                &CpuBackend,
+                &CpuBackend::DEFAULT,
                 &prepared,
                 setup.expanded.as_ref(),
             )
@@ -281,9 +281,9 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             .collect();
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH_SIZE).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )

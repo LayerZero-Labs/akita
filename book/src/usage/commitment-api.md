@@ -93,21 +93,24 @@ change `AkitaSetupSeed`, transcript bytes, or proof validity. A proof made with
 one materialized capacity can therefore be verified with a larger covering
 prefix carrying the same public matrix identity.
 
-Setup-prefix offloading follows the same rule. If Stage 3 needs
-`natural_len` coefficients, setup storage covers exactly that many source
-coefficients. The committed setup polynomial still has the power-of-two length
-`n_prefix`; preprocessing constructs
-`S[0..natural_len] || 0^(n_prefix-natural_len)` explicitly. Later random stream
-coefficients are never used as padding. The prefix commitment's A and B matrix
-dimensions are ordinary planner-owned commitment parameters, independent of
-the dimensions used by the producing or consuming fold.
+Setup-prefix offloading follows the same one-stream rule, but the committed
+object is now the actual power-of-two setup prefix. If Stage 3 has active
+support `natural_len`, setup storage for the selected prefix covers
+`n_prefix = next_power_of_two(natural_len)` source coefficients, and
+preprocessing commits `S[0..n_prefix]`. The tail after `natural_len` is real
+public setup data; it contributes zero because the setup-index weight is zero
+there. The prefix commitment's A and B matrix dimensions are ordinary
+planner-owned commitment parameters, independent of the dimensions used by the
+producing or consuming fold.
 
 After a concrete schedule is selected, callers may use
 `setup_verifier_for_schedule` to keep only the public-matrix prefix that proof
-verification can read. A producer followed by an incoming setup-prefix
-commitment is offloaded, so the verifier does not scan that producer's natural
-source prefix. The retained matrix is the maximum of the terminal A matrix and
-the active setup fields of every producer that remains direct. This is a
+verification can read directly. A producer followed by an incoming setup-prefix
+commitment is offloaded, so the verifier does not scan that producer's active
+source prefix during Stage 3; it authenticates the carried full-prefix opening
+against the setup-prefix commitment in the successor opening. The retained
+matrix is the maximum of the terminal A matrix and the active setup fields of
+every producer that remains direct. This is a
 schedule-derived capacity, not necessarily the length of any stored setup
 prefix. The complete setup-prefix commitment registry remains in the verifier
 artifact.
@@ -126,6 +129,31 @@ keys and can have different prefix lengths. Equal requirements join by maximum
 because the matrices overlap. An initialized larger prefix covers a smaller
 request with the same field profile, ring dimension, and transform domain.
 Concurrent construction of the same key is single-flight.
+
+The execution plan describes every matrix operation. The selected backend then
+decides which operations retain NTT slots. CPU ring switch operations above the
+streaming threshold compute transform chunks from the public matrix and do not
+prewarm a complete slot. Memory reporting uses the same decision, so its total
+matches the slots that prewarming can leave resident.
+
+Prepared state stays warm across proofs by default. A caller may use
+`ReleaseRootNttAfterFold` when it owns an isolated root cache and wants to free
+it before the recursive suffix. Release removes built shared matrix keys and
+deduplicates clusters that share one physical cache owner. Small compression
+NTT entries stay resident. Existing readers remain valid through their `Arc`.
+Release does not cancel construction already in progress, so a caller that
+needs an empty shared matrix cache must prevent new construction during the
+release boundary.
+
+A normal lifecycle is:
+
+```text
+prepare empty backend state
+prewarm retained requirements and skip streamed requirements
+run the proof and retain built slots for reuse
+optionally release shared matrix state at an exclusive root boundary
+reuse the prepared setup; released shared slots rebuild at the next exact extent
+```
 
 The terminal verifier keeps its separate exact-negacyclic cache and adds the
 i16 tail only when the checked CRT bound requires it. Compression execution

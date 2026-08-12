@@ -72,7 +72,7 @@ mod tests {
                 let encoded =
                     golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w).expect("encode");
                 let decoded =
-                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient)
+                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient, Ok)
                         .expect("decode");
                 assert_eq!(decoded, [n], "cap={cap} n={n}");
             }

@@ -5,7 +5,7 @@ use crate::proof_optimized::{fp128, fp32};
 #[cfg(feature = "schedules-default")]
 use crate::CommitmentConfig;
 #[cfg(feature = "schedules-default")]
-use akita_schedules::{fp32_d128_onehot_table, fp32_d256_onehot_table};
+use akita_schedules::fp32_onehot_table;
 #[cfg(feature = "schedules-default")]
 use akita_schedules::{schedule_from_entry, GeneratedScheduleTable};
 #[cfg(feature = "schedules-default")]
@@ -102,16 +102,8 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
 #[cfg(feature = "schedules-default")]
 fn generated_q32_terminals_require_the_i16_tail() {
     assert_eq!(
-        assert_every_table_terminal_uses_i16_tail::<fp32::D128OneHot, 128>(
-            fp32_d128_onehot_table(),
-        ),
+        assert_every_table_terminal_uses_i16_tail::<fp32::OneHot, 128>(fp32_onehot_table()),
         (128, 128),
-    );
-    assert_eq!(
-        assert_every_table_terminal_uses_i16_tail::<fp32::D256OneHot, 256>(
-            fp32_d256_onehot_table(),
-        ),
-        (64, 64),
     );
 }
 

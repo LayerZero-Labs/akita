@@ -177,7 +177,7 @@ pub enum SearchMode {
     Exhaustive,
     /// Exhaustively scan in parallel.
     ExhaustiveParallel,
-    /// Future pruned search with a proof that skipped cells cannot win.
+    /// Production ADPS16/LGSA zeta search using the proven profile endpoints.
     ProvenPruned,
 }
 
@@ -200,8 +200,8 @@ pub struct EstimateConfig {
 }
 
 impl EstimateConfig {
-    /// Akita infinity table generation profile: ADPS16 quantum + LGSA with
-    /// exhaustive beta and zeta search.
+    /// Akita infinity table certificate profile: ADPS16 quantum + LGSA with
+    /// proven-pruned beta and zeta search.
     #[must_use]
     pub fn akita_infinity_table() -> Self {
         Self {
@@ -210,7 +210,7 @@ impl EstimateConfig {
             },
             optimizer: OptimizerConfig::OptimizeZeta {
                 beta: SearchMode::Exhaustive,
-                zeta: SearchMode::Exhaustive,
+                zeta: SearchMode::ProvenPruned,
             },
             ..Self::default()
         }

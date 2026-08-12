@@ -103,14 +103,46 @@ mod tests {
     use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
-    use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
+    use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
     use akita_types::{
-        select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor,
-        FlatMatrix, PolynomialGroupLayout, ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
+        prepare_ntt_cache, select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey,
+        AkitaSetupDescriptor, FlatMatrix, NttCacheMode, PolynomialGroupLayout,
+        ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use std::sync::Arc;
 
     const D: usize = 64;
+
+    fn centered_inner_product<F, const D: usize>(
+        lhs: &[CyclotomicRing<F, D>],
+        rhs: &[[i16; D]],
+    ) -> Result<CyclotomicRing<F, D>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+    {
+        if lhs.len() != rhs.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        if lhs.is_empty() {
+            return Ok(CyclotomicRing::zero());
+        }
+        let rhs_abs_bound = 1u64
+            .checked_shl(TERMINAL_I16_LOG_BASIS - 1)
+            .ok_or(AkitaError::InvalidProof)?;
+        let flat = FlatMatrix::from_ring_slice(lhs);
+        let matrix = flat.ring_view::<D>(1, lhs.len())?;
+        let prepared = prepare_ntt_cache(
+            matrix,
+            NttCacheMode::ExactNegacyclic {
+                width: lhs.len(),
+                rhs_abs_bound,
+            },
+        )?;
+        prepared
+            .mat_vec_i16::<F>(TERMINAL_I16_LOG_BASIS, 1, rhs)?
+            .pop()
+            .ok_or(AkitaError::InvalidProof)
+    }
 
     fn q128_base_cache_bytes(entries: usize) -> usize {
         let bytes_per_coefficient = if ifma52_enabled() {
@@ -268,6 +300,35 @@ mod tests {
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
             10 * D * (base_bytes_per_coefficient + tail_bytes_per_coefficient)
+        );
+    }
+
+    #[test]
+    fn dynamic_d128_inner_product_matches_schoolbook() {
+        const D128: usize = 128;
+        const WIDTH: usize = 17;
+        let lhs = (0..WIDTH)
+            .map(|column| {
+                CyclotomicRing::<F64, D128>::from_coefficients(std::array::from_fn(|index| {
+                    F64::from_i64(((column * 11 + index * 7) % 29) as i64 - 14)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let rhs = (0..WIDTH)
+            .map(|column| std::array::from_fn(|index| ((column * 5 + index * 3) % 31) as i16 - 15))
+            .collect::<Vec<_>>();
+        let expected =
+            lhs.iter()
+                .zip(&rhs)
+                .fold(CyclotomicRing::<F64, D128>::zero(), |sum, (lhs, rhs)| {
+                    let rhs = CyclotomicRing::from_coefficients(
+                        rhs.map(|coefficient| F64::from_i64(i64::from(coefficient))),
+                    );
+                    sum + *lhs * rhs
+                });
+        assert_eq!(
+            centered_inner_product(&lhs, &rhs).expect("exact dynamic terminal inner product"),
+            expected
         );
     }
 
