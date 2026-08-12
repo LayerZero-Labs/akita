@@ -530,11 +530,9 @@ in the next recursive fold:
 
 ```text
 SetupPrefixSlot {
-  id: (setup digest/layout tag, D_setup, N_prefix, commitment params),
+  id: (natural_len, D_setup, full_prefix_len, commitment params),
   commitment: RingCommitment,
   hint: AkitaCommitmentHint,
-  natural_len,
-  padded_len = N_prefix,
 }
 ```
 
@@ -551,8 +549,6 @@ Verifier setup metadata only needs the public half:
 SetupPrefixVerifierSlot {
   id,
   commitment,
-  natural_len,
-  padded_len = N_prefix,
 }
 ```
 
@@ -769,7 +765,7 @@ Setup offloading needs the recursive boundary to become genuinely batched.
 The target recursive carry object is a list of claims:
 
 ```text
-(commitment, point, value, basis, natural_len, padded_len, kind)
+(commitment, point, value, basis, natural_len, full_prefix_len, kind)
 ```
 
 The first claim is the ordinary folded-witness opening. When setup offloading

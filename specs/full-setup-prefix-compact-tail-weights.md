@@ -5,10 +5,10 @@
 | ------------- | ---------------------- |
 | Author(s)     | Amirhossein Khajehpour |
 | Created       | 2026-08-10             |
-| Status        | implemented            |
+| Status        | archived               |
 | PR            | #386                   |
 | Supersedes    | Setup-prefix zero-padding and natural-capacity portions of `flat-public-matrix-and-exact-ntt-cache.md`, `distributed-setup-offloading.md`, and `setup-prefix-ladder.md` |
-| Superseded-by |                        |
+| Superseded-by | book/src/how/verifying/setup_contribution.md |
 | Book-chapter  | book/src/how/verifying/setup_contribution.md |
 
 
@@ -796,10 +796,11 @@ commitment as a full-prefix commitment merely because its lengths match.
   ```
   fixtures where every coefficient in `[natural_len, n_prefix)` is nonzero.
   ```
-- [x] The successor grouped opening accepts the honest carried full-prefix
+- [ ] The successor grouped opening accepts the honest carried full-prefix
   ```
   claim and rejects changes to its commitment, point, scalar, slot identity,
-  or group order.
+  or group order. Current focused coverage rejects commitment and scalar
+  changes; point, slot-identity, and group-order fixtures remain follow-ups.
   ```
 - [x] The compact setup-weight evaluator equals the MLE of a dense length-`N`
   ```
@@ -827,13 +828,15 @@ commitment as a full-prefix commitment merely because its lengths match.
   ```
   compact setup-weight equality under the full-prefix regime.
   ```
-- [x] Old zero-padded prefix registries and caches fail validation instead of
+- [ ] Old zero-padded prefix registries and caches fail validation instead of
   ```
-  being silently reused.
+  being silently reused. Catalog legacy digest rejection is covered; explicit
+  serialized registry/cache fixtures remain follow-ups.
   ```
-- [x] Transcript logging shows identical prover/verifier events and binds the
+- [ ] Transcript logging shows identical prover/verifier events and binds the
   ```
-  full-prefix content identity before relevant batching challenges.
+  full-prefix content identity before relevant batching challenges. Recursive
+  LoggingTranscript event-order coverage remains a follow-up.
   ```
 - [x] No verifier path allocates `O(N)` setup-index weights or equality values.
 
@@ -950,6 +953,10 @@ time and discards the affine paired-equality structure already present in the
 setup contribution plan.
 
 ## Documentation
+
+This implemented design record is archived in favor of the durable book
+description. Remaining unchecked acceptance criteria above are test follow-ups,
+not live protocol design deltas.
 
 When implemented:
 

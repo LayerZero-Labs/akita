@@ -187,33 +187,27 @@ where
     .entered();
     ensure_setup_envelope(expanded, active_weight_rows, ring_d)?;
     let natural_field_len = geometry.natural_field_len();
-    let setup_len = expanded.shared_matrix().num_field_elements() / ring_d;
-    let setup_eval_len = if next_fold_level_params.setup_prefix.is_some() {
-        let setup_prefix_selection = select_setup_prefix_slot(
-            Some(expanded.shared_matrix().num_field_elements()),
-            |slot_id| {
-                prefix_slots
-                    .get(slot_id)
-                    .map(|slot| (slot, slot.natural_len, slot.padded_len))
-            },
-            next_fold_level_params,
-            natural_field_len,
-            ring_d,
-            "selected setup-prefix slot does not cover setup product",
-        )?;
-        if let Some((slot, setup_eval_len)) = setup_prefix_selection {
-            transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-            setup_eval_len
-        } else if next_fold_level_params.setup_prefix.is_some() {
-            return Err(AkitaError::InvalidSetup(
-                "planned setup-prefix slot is missing from prover setup".to_string(),
-            ));
-        } else {
-            setup_len
-        }
-    } else {
-        setup_len
-    };
+    let selected_slot_id = next_fold_level_params
+        .setup_prefix
+        .as_ref()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
+        })?;
+    let slot = prefix_slots.get(selected_slot_id).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "planned setup-prefix slot is missing from prover setup".to_string(),
+        )
+    })?;
+    let (_, setup_eval_len) = select_setup_prefix_slot(
+        Some(expanded.shared_matrix().num_field_elements()),
+        Some(&slot.id),
+        next_fold_level_params,
+        natural_field_len,
+        ring_d,
+        "selected setup-prefix slot does not cover setup product",
+    )?
+    .expect("selected setup-prefix slot exists");
+    transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
     // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
     // the flat shared matrix; read them directly instead of building a typed
     // ring view that would immediately be flattened back into the table. The

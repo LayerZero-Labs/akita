@@ -2,8 +2,12 @@
 //! prover-side `AkitaStage3Prover`.
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
+#[cfg(test)]
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
-use akita_algebra::ring::{eval_ring_at_pows_fast, evaluate_power_sequence_mle};
+#[cfg(test)]
+use akita_algebra::ring::eval_ring_at_pows_fast;
+use akita_algebra::ring::evaluate_power_sequence_mle;
+#[cfg(test)]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -11,10 +15,11 @@ use akita_transcript::labels::{
     ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
+#[cfg(test)]
+use akita_types::AkitaExpandedSetup;
 use akita_types::{
-    dispatch_for_field, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
-    CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan, SetupSumcheckProof,
-    SETUP_SUMCHECK_DEGREE,
+    dispatch_for_field, select_setup_prefix_slot, AkitaVerifierSetup, CommittedGroupParams,
+    PreparedRelationAddress, SetupContributionPlan, SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -93,7 +98,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 "Stage 3 setup ring dimension must be nonzero".into(),
             ));
         }
-        let setup_eval_len = setup_eval_len::<F, T>(
+        let _setup_eval_len = setup_eval_len::<F, T>(
             setup,
             next_fold_level_params,
             self.setup_contribution_plan
@@ -105,29 +110,24 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let setup_prefix_eval = next_fold_level_params
             .setup_prefix
             .as_ref()
-            .map(|_| proof.setup_prefix_eval);
+            .map(|_| proof.setup_prefix_eval)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "Stage 3 requires a selected setup-prefix slot".to_string(),
+                )
+            })?;
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             ring_d,
-            |D| {
-                self.verify_stage3_kernel::<F, T, D>(
-                    setup,
-                    proof,
-                    setup_eval_len,
-                    setup_prefix_eval,
-                    transcript,
-                )
-            }
+            |D| self.verify_stage3_kernel::<F, T, D>(proof, setup_prefix_eval, transcript)
         )
     }
 
     fn verify_stage3_kernel<F, T, const D: usize>(
         &self,
-        setup: &AkitaVerifierSetup<F>,
         proof: &SetupSumcheckProof<E>,
-        setup_eval_len: usize,
-        setup_prefix_eval: Option<E>,
+        setup_prefix_eval: E,
         transcript: &mut T,
     ) -> Result<Vec<E>, AkitaError>
     where
@@ -135,10 +135,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let setup_index_len = self
-            .setup_contribution_plan
-            .projection_geometry()
-            .setup_index_len();
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -149,25 +145,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         )?;
         let (rho_y, rho_setup_idx) = challenges.split_at(self.ring_bits);
 
-        // The setup prefix itself is still evaluated by scanning the selected
-        // prefix. The setup-index weight is structured, so evaluate its MLE
-        // directly at `rho_setup_idx` instead of building a dense equality
-        // table for that factor.
-        let eq_y = ring_eq_table::<E, D>(rho_y)?;
         let setup_val = {
-            let _span =
-                tracing::info_span!("stage3_setup_prefix", cached = setup_prefix_eval.is_some())
-                    .entered();
-            match setup_prefix_eval {
-                Some(value) => value,
-                None => setup_mle_at_eq_tables::<F, E, D>(
-                    &setup.expanded,
-                    setup_index_len,
-                    setup_eval_len,
-                    rho_setup_idx,
-                    &eq_y,
-                )?,
-            }
+            let _span = tracing::info_span!("stage3_setup_prefix", cached = true).entered();
+            setup_prefix_eval
         };
         let setup_index_weight = {
             let _span = tracing::info_span!("stage3_setup_index_weight_eval").entered();
@@ -195,36 +175,35 @@ where
     T: Transcript<F>,
 {
     if next_fold_level_params.setup_prefix.is_none() {
-        let setup_field_len = setup.expanded.shared_matrix().num_field_elements();
-        if ring_d == 0 || !setup_field_len.is_multiple_of(ring_d) {
-            return Err(AkitaError::InvalidSetup(
-                "shared setup field length is not divisible by Stage 3 ring dimension".into(),
-            ));
-        }
-        return Ok(setup_field_len / ring_d);
+        return Err(AkitaError::InvalidSetup(
+            "Stage 3 requires a selected setup-prefix slot".to_string(),
+        ));
     }
-    let (slot, setup_eval_len) = select_setup_prefix_slot(
+    let selected_slot_id = next_fold_level_params
+        .setup_prefix
+        .as_ref()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
+        })?;
+    let slot = setup.prefix_slots.get(selected_slot_id).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "planned setup-prefix slot is missing from verifier setup".to_string(),
+        )
+    })?;
+    let (_, setup_eval_len) = select_setup_prefix_slot(
         None,
-        |id| {
-            setup
-                .prefix_slots
-                .get(id)
-                .map(|slot| (slot, slot.natural_len, slot.padded_len))
-        },
+        Some(&slot.id),
         next_fold_level_params,
         natural_field_len,
         ring_d,
         "verifier setup-prefix slot does not cover setup product",
     )?
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "planned setup-prefix slot is missing from verifier setup".to_string(),
-        )
-    })?;
+    .expect("selected setup-prefix slot exists");
     transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
     Ok(setup_eval_len)
 }
 
+#[cfg(test)]
 fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
     if rho_y.len() != D.trailing_zeros() as usize {
         return Err(AkitaError::InvalidProof);
@@ -239,6 +218,7 @@ fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, Ak
     Ok(eq_y)
 }
 
+#[cfg(test)]
 fn setup_mle_at_eq_tables<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     source_rows: usize,
@@ -315,8 +295,8 @@ mod tests {
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, setup_prefix_precommitted_params,
         setup_prefix_slot_id, AkitaScheduleLookupKey, AkitaSetupDescriptor, CommittedGroupParams,
-        PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry,
-        SetupPrefixVerifierSlot,
+        CompressionChainPlan, PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment,
+        SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
     };
     use std::sync::Arc;
 
@@ -343,19 +323,24 @@ mod tests {
             ),
         );
 
-        let padded_len = padded_setup_prefix_len(natural_field_len);
-        let commitment_params = setup_prefix_precommitted_params(&level_params, padded_len)
+        let full_prefix_len = padded_setup_prefix_len(natural_field_len);
+        let commitment_params = setup_prefix_precommitted_params(&level_params, full_prefix_len)
             .expect("setup-prefix parameters");
         let id = setup_prefix_slot_id(natural_field_len, commitment_params);
+        let matrix = &id.commitment_params.layout.outer_commit_matrix;
+        let payload_coefficients = CompressionChainPlan::for_complete_source(
+            matrix.sis_modulus_profile(),
+            matrix.output_rank() * matrix.ring_dimension(),
+        )
+        .expect("setup-prefix compression plan")
+        .terminal_coefficients();
         level_params.setup_prefix = Some(id.clone());
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(expanded.seed.setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id,
-                natural_len: natural_field_len,
-                padded_len,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![RingVec::from_coeffs(vec![F::zero(); RING_D])],
+                    rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
                 },
             })
             .expect("insert setup-prefix slot");
