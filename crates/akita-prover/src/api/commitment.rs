@@ -613,9 +613,9 @@ where
                     || row_profile != CommittedGroupProfile::from_params(group_layout, params)
                 {
                     return Err(AkitaError::InvalidSetup(
-                    "scalar S row profile does not match its requested layout and root parameters"
-                        .to_string(),
-                ));
+                        "scalar S row profile does not match its layout and root parameters"
+                            .to_string(),
+                    ));
                 }
                 scheduled_params = row.into_schedule().root.params.final_group.commitment;
                 (&scheduled_params, row_profile)
