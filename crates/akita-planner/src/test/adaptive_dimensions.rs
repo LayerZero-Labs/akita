@@ -1,5 +1,4 @@
 use super::*;
-use akita_config::CommitmentConfig;
 
 #[test]
 fn candidates_enumerate_exact_role_cartesian_product() {
