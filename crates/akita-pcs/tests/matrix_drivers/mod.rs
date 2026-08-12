@@ -19,14 +19,13 @@ use akita_types::{
     OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 
-/// Drives the shared recursive setup-offload profile end to end: two precommitted
-/// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
-/// main group at `nv=32`, a recursive proof that offloads the setup contribution,
-/// a serialization round-trip, an honest verify, and a tampered-opening rejection.
+/// Single-group recursive roundtrip: one two-polynomial final group at `nv=32`, no
+/// user precommitted groups. Uses `RecursiveCommitmentConfig<BaseCfg>` so the proof
+/// carries a stage-3 recursive setup-sumcheck, offloading the setup contribution.
 ///
-/// Single-group recursive roundtrip: one final group, no user precommitted polynomials.
-/// Uses `RecursiveCommitmentConfig<BaseCfg>` so the proof carries a stage-3 recursive
-/// setup-sumcheck, but there are no external precommit groups in the opening claims.
+/// Covers schedule resolution, setup-prefix precomputation, prove, a serialization
+/// round-trip, and an honest verify. Rejection coverage for the recursive path lives
+/// in `recursive_multi_group_round_trip` and `protocol_soundness.rs`.
 // Only called from the `schedules-fp128-onehot-recursive` matrix cells, so
 // it is genuinely unused when that feature is off.
 #[allow(dead_code)]

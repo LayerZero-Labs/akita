@@ -87,7 +87,9 @@ use small_field_drivers::*;
 //   $sf        — base field type  (Cfg::Field)
 //   $se        — extension field type  (Cfg::ExtField)
 //   nvs        — list of num_vars to test (non-precommitted arms)
-//   final_nvs  — list of final-group num_vars (precommitted arms; pre nv = 14)
+//   pre_nv     — pre-group num_vars (precommitted arms); per config, because the
+//                smallest usable pre size differs between families
+//   final_nvs  — list of final-group num_vars (precommitted arms)
 //   k          — one-hot group size K (onehot arms)
 // ============================================================================
 
@@ -142,7 +144,7 @@ macro_rules! small_field_test {
 
     // ------------------------------------------------------------------
     // dense_pre — two-group precommitted, dense polynomial
-    // pre-group: nv=PRE_NV=14  |  final-group: nv from final_nvs list
+    // pre-group: nv=pre_nv  |  final-group: nv from final_nvs list
     // ------------------------------------------------------------------
     ($(#[$attr:meta])* dense_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; pre_nv=$pnv:expr; final_nvs=[$($fnv:expr),+]) => {
         $(#[$attr])*
@@ -339,7 +341,7 @@ macro_rules! small_field_test {
 
     // ------------------------------------------------------------------
     // onehot_pre — two-group precommitted, one-hot polynomial
-    // pre-group: nv=PRE_NV=14  |  final-group: nv from final_nvs list
+    // pre-group: nv=pre_nv  |  final-group: nv from final_nvs list
     // ------------------------------------------------------------------
     ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; pre_nv=$pnv:expr; final_nvs=[$($fnv:expr),+]; k=$k:expr) => {
         $(#[$attr])*
@@ -565,27 +567,6 @@ fn fp32_onehot_multi_group() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let onehot_opening_at =
-            |poly: &akita_prover::OneHotPoly<SmallF, u8>, point: &[SmallE]| -> SmallE {
-                let k = poly.onehot_k();
-                poly.indices()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(chunk, hot)| {
-                        hot.map(|idx| {
-                            let eval_idx = chunk * k + usize::from(idx);
-                            point.iter().enumerate().fold(SmallE::one(), |w, (v, &c)| {
-                                if (eval_idx >> v) & 1 == 0 {
-                                    w * (SmallE::one() - c)
-                                } else {
-                                    w * c
-                                }
-                            })
-                        })
-                    })
-                    .fold(SmallE::zero(), |acc, w| acc + w)
-            };
-
         let grouped_poly = |params: &CommittedGroupParams, seed: usize| {
             let onehot_k = 256usize;
             let total = params.num_live_blocks * params.num_positions_per_block * params.d_a();
@@ -647,8 +628,8 @@ fn fp32_onehot_multi_group() {
         let final_point = (0..FINAL_NV)
             .map(|i| SmallE::from_u64((i as u64).wrapping_mul(5).wrapping_add(2)))
             .collect::<Vec<_>>();
-        let pre_opening = onehot_opening_at(&pre_poly, &pre_point);
-        let final_opening = onehot_opening_at(&final_poly, &final_point);
+        let pre_opening = onehot_opening_lagrange(&pre_poly, &pre_point);
+        let final_opening = onehot_opening_lagrange(&final_poly, &final_point);
 
         let pre_refs = [&pre_poly];
         let final_refs = [&final_poly];

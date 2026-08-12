@@ -23,9 +23,10 @@
 //! the test is fast once compiled), ign-only (default tables, but nv is too large for CI), or
 //! both (large tables AND large nv).
 //!
-//! All `pre` cells use a 14-variable pre-group. Every ✓ cell below runs and is
-//! backed by a real generated catalog row — there are no `#[ignore]`d
-//! placeholders for missing catalog entries in this file.
+//! Non-recursive `pre` cells use one 14-variable pre-group; recursive `pre`
+//! cells use the shared recursive profile's two 16-variable pre-groups. Every ✓
+//! cell below runs and is backed by a real generated catalog row — there are no
+//! `#[ignore]`d placeholders for missing catalog entries in this file.
 //!
 //! ```text
 //! ╔══════════╦══════════╦═══════════════════════════════╦═══════════════════════════════╗
@@ -48,13 +49,17 @@
 //! no multi-group multi-chunk schedule below final_nv=20, so backing this cell
 //! would mean adding a production size purely for a test.
 //! OneHot mc nonrec direct: cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
+//!   `fp128_onehot_mc_catalog_resolves` is the cheap always-run companion that
+//!   checks the same catalog row without proving at nv=32.
 //! OneHot mc nonrec pre: NA. The catalog has no combined final=32, pre=14 row.
 //! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
-//!   pre    = RecursiveCommitmentConfig + user precommit (fp128_onehot_recursive_precommitted.rs).
+//!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits
+//!            (fp128_onehot_recursive_precommitted.rs).
 //! OneHot mc rec:     cfg=schedules-fp128-onehot-recursive-multi-chunk; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig<OneHotMultiChunk> (fp128_onehot_recursive_multi_chunk_w8r2.rs).
-//!   pre    = same + user precommit (fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs).
+//!   pre    = same + two 16-variable user precommits
+//!            (fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs).
 //!
 //! Every ✓ cell resolves against a real shipped catalog row; no cell here is
 //! backed by a schedule added solely to make a test pass.
@@ -239,14 +244,14 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 // OneHot × multi-chunk × direct × non-recursive    [32]
 // (production-sized schedule; run explicitly with --release)
 // ----------------------------------------------------------------------------
-#[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
-type Fp128OneHotMultiChunkCfg = fp128::OneHotMultiChunk;
-
+// Catalog-only companion of `fp128_onehot_mc`: the roundtrip below is
+// production-sized and stays ignored, so this cheap check is what CI runs to
+// keep the W8R2 feature graph wired to a real catalog row.
 #[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
-    Fp128OneHotMultiChunkCfg::get_params_for_batched_commitment(&opening_batch)
+    fp128::OneHotMultiChunk::get_params_for_batched_commitment(&opening_batch)
         .expect("W8R2 multi-chunk catalog row");
 }
 
@@ -256,7 +261,7 @@ fn fp128_onehot_mc_catalog_resolves() {
 fn fp128_onehot_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        prove_verify_onehot_roundtrip::<Fp128OneHotMultiChunkCfg>(
+        prove_verify_onehot_roundtrip::<fp128::OneHotMultiChunk>(
             &[32],
             256,
             b"completeness/fp128_onehot_mc",

@@ -247,6 +247,8 @@ fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
     num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
 }
 
+/// Derive the structural proof shape from the schedule. The terminal carries
+/// only optional EOR, its grind nonce, and the clear terminal response.
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
@@ -297,6 +299,9 @@ fn expected_same_point_batched_shape(
             None => NextWitnessBindingShape::TerminalInnerState,
         },
     };
+    // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
+    // total: `num_fold_levels - 2` intermediate steps followed by exactly one
+    // terminal step. (We've already consumed the root.)
     let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
     let mut input_witness_len = root_step.output_witness_len;
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
@@ -324,6 +329,8 @@ fn expected_same_point_batched_shape(
         });
         input_witness_len = output_witness_len;
     }
+    // Terminal fold step (always present in the multi-fold case); the
+    // structural terminal field encodes its witness shape.
     assert_eq!(schedule.terminal.input_witness_len, input_witness_len);
     let terminal = TerminalLevelProofShape {
         extension_opening_reduction: None,
