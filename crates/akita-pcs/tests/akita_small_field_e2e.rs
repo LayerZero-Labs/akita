@@ -8,12 +8,13 @@
 //! macro.
 //!
 //! Legend:
-//!   ✓ — runs in default `cargo test` (schedules-default feature)
+//!   ✓   — runs in default `cargo test` (schedules-default feature)
+//!   ign — supported, but production-sized nv; run with `-- --ignored`
+//!   NA  — no production schedule row exists; cell is intentionally absent
 //!
-//! Every cell below is backed by a real generated catalog row and runs; there
-//! are no `#[ignore]`d placeholders in this file. The `nv` values are the
-//! catalog sizes each cell resolves against, and `pre` is the pre-group size
-//! for the precommitted cells.
+//! Every cell resolves against a real shipped catalog row. No cell is backed by
+//! a schedule added purely to make a test pass: where the production catalog
+//! has no row, the cell is NA rather than propped up by a test-only fixture.
 //!
 //! ```text
 //! ╔══════════╦═════════════════════════════╦═════════════════════════════╗
@@ -23,10 +24,14 @@
 //! ╠══════════╬══════════════╬══════════════╬══════════════╬══════════════╣
 //! ║  fp32    ║ ✓ nv=20      ║ ✓ pre=14     ║ ✓ nv=14,16   ║ ✓ pre=14     ║
 //! ║          ║              ║   final=20   ║              ║   final=20   ║
-//! ║  fp64    ║ ✓ nv=20      ║ ✓ pre=16     ║ ✓ nv=16      ║ ✓ pre=14     ║
-//! ║          ║              ║   final=20   ║              ║   final=16   ║
+//! ║  fp64    ║ ✓ nv=20      ║ ✓ pre=16     ║ ign nv=28    ║ NA           ║
+//! ║          ║              ║   final=20   ║              ║              ║
 //! ╚══════════╩══════════════╩══════════════╩══════════════╩══════════════╝
 //! ```
+//!
+//! fp64 × OneHot: the family's smallest production size is nv=28, and it ships
+//! no combined precommit+final row. The direct cell is therefore ign and the
+//! pre cell NA.
 //!
 //! fp64 × Dense × pre uses a 16-variable pre-group rather than 14: at pre=14
 //! or 15 the prover and the planned schedule disagree on the fold-level-1
@@ -536,10 +541,19 @@ small_field_test!(dense;     fp64_dense;     fp64::Dense;  fp64::Field; fp64::Ex
 // actual 3204096). Same class as the pre-existing fp64::Dense nv=14 mismatch
 // noted above; tracked separately, not introduced here.
 small_field_test!(dense_pre; fp64_dense_pre; fp64::Dense; fp64::Field; fp64::ExtensionField; pre_nv=16; final_nvs=[20]);
-// fp64 × OneHot × direct             catalog: single(16,1)
-small_field_test!(onehot;     fp64_onehot;     fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[16]; k=256);
-// fp64 × OneHot × precommitted       catalog: final=(16,1) <- pre=[(14,1)]
-small_field_test!(onehot_pre; fp64_onehot_pre; fp64::OneHot; fp64::Field; fp64::ExtensionField; pre_nv=14; final_nvs=[16]; k=256);
+// fp64 × OneHot × direct             catalog: single(28,1)
+//
+// The smallest fp64::OneHot production size is nv=28, so this cell is
+// production-sized and skipped by default; run it with `-- --ignored`. It is
+// runnable: the independent oracle no longer materializes a 2^28 weight table,
+// which is what previously made it infeasible.
+small_field_test!(#[ignore = "production-sized: fp64::OneHot starts at nv=28; run with --ignored --release"] onehot; fp64_onehot; fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]; k=256);
+//
+// fp64 × OneHot × precommitted — NA. The fp64::OneHot catalog ships no combined
+// precommit+final row, and its smallest final size is nv=28. Adding one purely
+// to make this cell run would widen the shipped production schedule surface
+// (it would also pull ring dimension 128 into the fp64 one-hot catalog), so the
+// cell is intentionally absent rather than backed by a test-only schedule.
 
 // ============================================================================
 // GROUP E (small-field) — fp32 multi-group

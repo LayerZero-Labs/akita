@@ -6,8 +6,12 @@
 //! The table covers the full cartesian product:
 //!   poly ∈ {Dense, OneHot} × chunk ∈ {sc, mc} × precommit ∈ {direct, pre} × recursion ∈ {nonrec, rec}
 //!
-//! "Recursive" always implies precommitted groups (recursive mode operates on a
-//! multi-group setup), so the `direct × rec` column is structurally absent.
+//! In the recursive rows, `direct` and `pre` distinguish whether the *caller*
+//! supplies precommitted groups, not whether the schedule is multi-group:
+//! recursive mode always resolves against a multi-group setup internally.
+//! `direct` is `RecursiveCommitmentConfig` with no user precommit; `pre` adds
+//! user precommitted groups on top. Both columns therefore exist and are
+//! declared below.
 //!
 //! Legend:
 //!   ✓        — runs in default `cargo test`  (schedules-default feature, small nv)
@@ -29,8 +33,8 @@
 //! ║ poly     ║ rec?     ╠═══════════════╦═══════════════╬═══════════════╦═══════════════╣
 //! ║          ║          ║    direct     ║      pre      ║    direct     ║      pre      ║
 //! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
-//! ║ Dense    ║ nonrec   ║ ✓ [14,16,     ║ ✓ final=16    ║ ✓cfg [16]     ║ ✓cfg          ║
-//! ║          ║          ║    24,26]     ║               ║               ║   final=20    ║
+//! ║ Dense    ║ nonrec   ║ ✓ [14,16,     ║ ✓ final=16    ║ ✓cfg [16]     ║      NA       ║
+//! ║          ║          ║    24,26]     ║               ║               ║               ║
 //! ║ Dense    ║ rec      ║      NA       ║      NA       ║      NA       ║      NA       ║
 //! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
 //! ║ OneHot   ║ nonrec   ║ ✓ [12,15,     ║ ✓ final=      ║   cfg+ign     ║   cfg+ign     ║
@@ -40,8 +44,9 @@
 //! ```
 //!
 //! Dense + recursive: no production schedule exists; those cells are permanently NA.
-//! Dense mc pre uses final_nv=20: at nv=16 the multi-chunk DP finds no
-//! multi-group schedule with the required two folds.
+//! Dense mc pre: NA. The multi-chunk family ships only nv=16, and the DP finds
+//! no multi-group multi-chunk schedule below final_nv=20, so backing this cell
+//! would mean adding a production size purely for a test.
 //! OneHot mc nonrec:  cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
 //! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
@@ -49,6 +54,9 @@
 //! OneHot mc rec:     cfg=schedules-fp128-onehot-recursive-multi-chunk; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig<OneHotMultiChunk> (fp128_onehot_recursive_multi_chunk_w8r2.rs).
 //!   pre    = same + user precommit (fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs).
+//!
+//! Every ✓ cell resolves against a real shipped catalog row; no cell here is
+//! backed by a schedule added solely to make a test pass.
 
 #![allow(missing_docs)]
 #![cfg(feature = "schedules-default")]
@@ -157,8 +165,11 @@ macro_rules! matrix_test {
 // Full cartesian product: {Dense, OneHot} × {sc, mc} × {direct, pre} × {nonrec, rec}
 // Generic driver (prove_verify_*) used throughout.
 //
-// NA cells (Dense + recursive, mc + recursive) have no production schedule and
-// are intentionally absent from the source rather than marked #[ignore].
+// Only the Dense + recursive cells are NA: no production schedule exists for
+// them, so they are absent from the source rather than marked #[ignore]. Every
+// other cell is declared. The OneHot recursive and multi-chunk cells do have
+// schedules; they are feature-gated and #[ignore]d only because their nv is
+// production-sized, not because they are unsupported.
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -177,12 +188,13 @@ matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 matrix_test!(dense; fp128_dense_mc; fp128::DenseMultiChunk; nvs=[16]);
 
 // ----------------------------------------------------------------------------
-// Dense × multi-chunk × precommitted × non-recursive    [16]  (feature-gated)
+// Dense × multi-chunk × precommitted × non-recursive — NA
 // ----------------------------------------------------------------------------
-// Catalog row: final=(20,1) <- pre=[(14,1)]. nv=16 has no multi-group
-// multi-chunk schedule with the required two folds, so this cell uses nv=20.
-#[cfg(feature = "schedules-fp128-dense-multi-chunk")]
-matrix_test!(dense_pre; fp128_dense_mc_pre; fp128::DenseMultiChunk; final_nvs=[20]);
+// The fp128::DenseMultiChunk catalog ships a single scalar size (nv=16), and
+// nv=16 has no multi-group schedule with the required two folds — the DP needs
+// final_nv >= 20. Backing this cell would mean adding a new production size to
+// the multi-chunk family purely for a test, so the cell is intentionally
+// absent rather than backed by a test-only schedule.
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × direct × non-recursive    [12, 15, 20, 28]

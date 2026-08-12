@@ -395,32 +395,56 @@ pub(super) fn lagrange_weight_at(point: &[F], index: usize) -> F {
         })
 }
 
-/// Dense multilinear opening `Σ_x eq(point, x) · evals[x]`, evaluated by
-/// folding one variable at a time.
+/// Dense multilinear opening `Σ_x eq(point, x) · evals[x]`, by depth-first
+/// recursion over halves of the evaluation slice.
 ///
-/// Deliberately streaming rather than `Σ w_i · e_i` over a materialized
-/// `lagrange_weights` table: that table is capped at `DEFAULT_MAX_SEQUENCE_LEN`
-/// (`2^25`), which would exclude the nv=26 matrix cell outright.  Folding needs
-/// only the evaluation vector the test already owns and is exact at any nv.
+/// Two constraints shape this. It cannot use a materialized `lagrange_weights`
+/// table, which is capped at `DEFAULT_MAX_SEQUENCE_LEN` (`2^25`) and so
+/// excludes the nv=26 cell outright. And it must not copy `evals`: at nv=26
+/// that copy alone is 1 GiB, which is real OOM pressure when CI runs targets
+/// concurrently.
+///
+/// Recursing over borrowed halves satisfies both — no allocation at all, O(n)
+/// multiplies, and `O(|point|)` stack. Indices are little-endian (variable `i`
+/// is bit `i`), so the *last* coordinate is the high bit and `split_at` on the
+/// midpoint separates exactly on it.
 pub(super) fn dense_opening_lagrange(evals: &[F], point: &[F]) -> F {
-    assert_eq!(
+    debug_assert_eq!(
         evals.len(),
         1usize << point.len(),
         "dense evaluation count must be 2^|point|"
     );
-    // Variable i occupies bit i of the index, so fold point[0] first over
-    // adjacent pairs and halve on each step.
-    let mut current = evals.to_vec();
-    for &coordinate in point {
-        let half = current.len() / 2;
-        for j in 0..half {
-            let low = current[2 * j];
-            let high = current[2 * j + 1];
-            current[j] = low + (high - low) * coordinate;
+    // Recursing to single elements costs 2^(nv+1) calls, measurably slower than
+    // a linear pass, so bottom out at a small block folded iteratively. One
+    // scratch buffer is allocated here and reused by every leaf, keeping total
+    // extra memory at LEAF elements regardless of nv.
+    const LEAF: usize = 1 << 12;
+
+    let mut scratch = vec![F::zero(); LEAF.min(evals.len())];
+    dense_opening_lagrange_rec(evals, point, &mut scratch)
+}
+
+fn dense_opening_lagrange_rec(evals: &[F], point: &[F], scratch: &mut [F]) -> F {
+    if evals.len() <= scratch.len() {
+        let mut len = evals.len();
+        scratch[..len].copy_from_slice(evals);
+        for &coordinate in point {
+            let half = len / 2;
+            for j in 0..half {
+                let low = scratch[2 * j];
+                let high = scratch[2 * j + 1];
+                scratch[j] = low + (high - low) * coordinate;
+            }
+            len = half;
         }
-        current.truncate(half);
+        return scratch[0];
     }
-    current[0]
+
+    let (&high_coordinate, rest) = point.split_last().expect("non-leaf slice has coordinates");
+    let (low_half, high_half) = evals.split_at(evals.len() / 2);
+    let low = dense_opening_lagrange_rec(low_half, rest, scratch);
+    let high = dense_opening_lagrange_rec(high_half, rest, scratch);
+    low + (high - low) * high_coordinate
 }
 
 /// Dense opening in the monomial basis: `Σ_j (∏_{i ∈ bits(j)} point[i]) · e_j`.

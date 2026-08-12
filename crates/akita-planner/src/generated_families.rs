@@ -109,10 +109,6 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
 ];
 
 const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
-    // nv=16 is not a production size; it exists so the `fp64 x OneHot`
-    // correctness-matrix cells are runnable in CI. The production sizes
-    // remain 28 and 30.
-    PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(28),
     PolynomialGroupLayout::singleton(30),
 ];
@@ -368,12 +364,14 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
     )])
 }
 
-/// One standalone precommit group plus one final group.
+/// Grouped-root key for one standalone precommit group plus one final group.
 ///
-/// This is the shape the PCS precommitted correctness-matrix drivers exercise
-/// (`prove_verify_{dense,onehot}_precommitted_roundtrip`): commit a small
-/// frozen group, then commit a final group against it and prove both jointly.
-/// Families that ship a `Dense`/`OneHot` matrix cell need a root row for it.
+/// This is the minimal precommit workload: freeze a small group, then commit a
+/// final group against it and open both under one root. Families that already
+/// ship both a standalone precommit descriptor at the pre size and a scalar row
+/// at the final size can resolve each half but not the combination, so this
+/// fills that gap. Both sizes are existing production sizes for the family —
+/// no key here introduces a new polynomial size or ring dimension.
 fn single_pre_group_batch_keys<Cfg: CommitmentConfig + 'static>(
     pre_group: PolynomialGroupLayout,
     final_group: PolynomialGroupLayout,
@@ -424,27 +422,6 @@ fn fp64_dense_group_batch_keys(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     single_pre_group_batch_keys::<fp64::Dense>(
         PolynomialGroupLayout::new(16, 1),
-        PolynomialGroupLayout::new(20, 1),
-    )
-}
-
-/// Precommit-plus-final row backing the `fp64 × OneHot × pre` matrix cell.
-fn fp64_onehot_group_batch_keys(
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    single_pre_group_batch_keys::<fp64::OneHot>(
-        PolynomialGroupLayout::new(14, 1),
-        PolynomialGroupLayout::new(16, 1),
-    )
-}
-
-/// Precommit-plus-final row backing the `fp128 × Dense × mc × pre` matrix cell.
-///
-/// `final_nv` must be at least 20: at nv=16 the multi-chunk DP finds no
-/// multi-group schedule with the required two folds.
-fn fp128_dense_multichunk_group_batch_keys(
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    single_pre_group_batch_keys::<fp128::DenseMultiChunk>(
-        PolynomialGroupLayout::new(14, 1),
         PolynomialGroupLayout::new(20, 1),
     )
 }
@@ -749,7 +726,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-dense-multi-chunk",
         FP128_DENSE_MULTI_CHUNK_KEYS,
         fp128::DenseMultiChunk,
-        fp128_dense_multichunk_group_batch_keys,
+        no_group_batch_keys,
         baseline_precommitted_profiles::<fp128::DenseMultiChunk>
     ),
     family_row!(
@@ -767,7 +744,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp64-onehot",
         FP64_ONEHOT_KEYS,
         fp64::OneHot,
-        fp64_onehot_group_batch_keys,
+        no_group_batch_keys,
         baseline_precommitted_profiles::<fp64::OneHot>
     ),
     family_row!(
