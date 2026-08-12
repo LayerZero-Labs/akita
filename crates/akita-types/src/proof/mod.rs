@@ -89,7 +89,7 @@ pub use setup_envelope::{
     setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule,
 };
 pub use setup_prefix::{
-    active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
+    active_setup_field_len, padded_setup_prefix_len, setup_prefix_coverage_eval_len,
     setup_prefix_precommitted_params, setup_prefix_slot_id, suffix_opening_layout,
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,

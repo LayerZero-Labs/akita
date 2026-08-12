@@ -44,9 +44,10 @@ prefix slot selected by the schedule.
 
 ### Invariants
 
-- **Slot identity is deterministic.** A slot id binds the setup seed digest,
-`D_setup`, `N_prefix`, and the digest of the commitment parameters used to
-commit that prefix. Prover and verifier must derive the same id for a fold.
+- **Slot identity is deterministic.** A slot id binds the natural active setup
+length and the commitment parameters used to commit that prefix. Prover and
+verifier must derive the same id for a fold; the registry binds slots to the
+public setup seed.
 - **Prefix length is power-of-two.** A fold's natural setup footprint determines
 `padded_setup_prefix_len`; the committed prefix covers that full actual setup
 field length while retaining the natural length in the slot identity.
@@ -80,8 +81,8 @@ reject instead of falling back inside Stage 3.
 
 ### Acceptance Criteria
 
-- Recursive setup construction populates every setup-prefix slot that fits
-the active schedule and skips unsupported shapes.
+- Recursive setup construction populates every selected setup-prefix slot
+required by the active schedule.
 - Prover and verifier select the same committed slot id for folds whose
 slots were populated.
 - Superseded: folds with no populated compatible selected slot reject.
@@ -115,10 +116,7 @@ AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 AKITA_SETUP_MODE=recursive \
 ### Performance
 
 This PR adds setup preprocessing work and stores extra setup metadata for
-populated prefixes. It does not yet remove the setup matrix scan from every
-fold: unsupported or missing slots use direct fallback. Proof-size and verifier
-performance wins are expected only after the later planner-aware and carried
-opening integration PRs.
+populated prefixes.
 
 ### Design Note: Prefix Contents and Cache Reuse
 
@@ -158,40 +156,19 @@ num_live_blocks * a_key.row_len() * num_digits_open <= b_key.col_len()
 ```
 
 If a split fits, the function returns repacked `LevelParams` for the prefix
-commitment. If not, it returns `None` and the fold uses direct setup scan.
+commitment. If not, recursive setup planning rejects the unsupported selected
+slot.
 
 ### Current Scheduling Rule
 
-The planner is not consulted for setup-prefix compatibility. The current
-implementation blindly tries the **next fold's existing `LevelParams`** as the
-commitment parameters for the current fold's setup prefix:
+Superseded. Current recursive planning selects and validates setup-prefix
+commitment parameters as part of schedule construction:
 
 ```text
-prefix commitment params for fold i = schedule.fold[i + 1].params
+prefix commitment params for fold i = schedule.fold[i + 1].setup_prefix
 ```
 
-This matches the intended direction that a setup-prefix commitment should use
-the same kind of parameters as the next recursive witness commitment, but it is
-not globally optimized. Some folds will fail the prefix-shape check because the
-next fold's A/B key widths were chosen without considering setup-prefix
-commitment needs.
-
-Planner-aware setup-prefix scheduling is future work. That later PR should make
-the planner price and constrain candidate next-fold params against the current
-fold's setup-prefix footprint. The proposed per-fold mode, eligibility gates,
-and two-group suffix transition are specified in
-[`setup-offloading-planner.md`](setup-offloading-planner.md).
-
-### Runtime Fallback
-
-Setup construction only materializes slots for compatible folds. Stage-3 prover
-and verifier both recompute the same candidate id from the same setup seed,
-`D_setup`, full-prefix length, and prefix commitment params digest. If the
-slot exists and covers the active support, they use the full-prefix evaluation
-length. Otherwise they use the full setup matrix length.
-
-This fallback is intentionally permissive for this PR because the planner does
-not yet guarantee prefix-compatible next-fold params.
+Missing or incompatible selected slots are invalid for recursive Stage 3.
 
 ## Documentation
 

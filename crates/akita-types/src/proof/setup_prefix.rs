@@ -1357,32 +1357,28 @@ pub fn setup_prefix_slot_id(
     }
 }
 
-/// Select a setup-prefix slot that covers one setup-product footprint.
+/// Validate that a selected setup-prefix slot covers one setup-product footprint.
 ///
-/// This centralizes the derivation shared by prover and verifier: setup seed
-/// digest, full-prefix length, prefix commitment parameters, slot id, active
-/// source support, and the producer-ring evaluation length used for setup
-/// MLEs. The slot's commitment dimension is independent of that producer view.
+/// This centralizes the checks shared by prover and verifier: full-prefix
+/// length, planned prefix commitment parameters, selected slot identity, active
+/// source support, and the producer-ring evaluation length used for setup MLEs.
+/// The slot's commitment dimension is independent of that producer view.
 ///
 /// `shared_matrix_field_elements` is `Some` when the full source prefix must
 /// be resident in the shared matrix, as in the prover. It is `None` when the
-/// source is represented by the registered setup-prefix commitment, as in the
-/// schedule-scoped verifier. In both cases the slot's active support and
-/// full-prefix lengths are checked.
-pub fn select_setup_prefix_slot<'a>(
+/// source is represented by the registered setup-prefix commitment, as in the verifier.
+/// In both cases the slot's active support and full-prefix lengths are checked.
+pub fn setup_prefix_coverage_eval_len(
     shared_matrix_field_elements: Option<usize>,
-    selected_slot_id: Option<&'a SetupPrefixSlotId>,
+    selected_slot_id: &SetupPrefixSlotId,
     level_params: &CommittedGroupParams,
     natural_field_len: usize,
     source_ring_dimension: usize,
     coverage_error: &'static str,
-) -> Result<Option<(&'a SetupPrefixSlotId, usize)>, AkitaError> {
+) -> Result<usize, AkitaError> {
     let Some(template) = &level_params.setup_prefix else {
-        return Ok(None);
-    };
-    let Some(selected_slot_id) = selected_slot_id else {
         return Err(AkitaError::InvalidSetup(
-            "required setup prefix slot is missing".to_string(),
+            "Stage 3 requires a selected setup-prefix slot".to_string(),
         ));
     };
     if selected_slot_id != template {
@@ -1413,7 +1409,7 @@ pub fn select_setup_prefix_slot<'a>(
         ));
     }
     let setup_eval_len = template_n_prefix / source_ring_dimension;
-    Ok(Some((selected_slot_id, setup_eval_len)))
+    Ok(setup_eval_len)
 }
 
 fn read_limited_usize<R: Read>(

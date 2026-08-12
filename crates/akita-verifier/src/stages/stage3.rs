@@ -18,7 +18,7 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::AkitaExpandedSetup;
 use akita_types::{
-    dispatch_for_field, select_setup_prefix_slot, AkitaVerifierSetup, CommittedGroupParams,
+    dispatch_for_field, setup_prefix_coverage_eval_len, AkitaVerifierSetup, CommittedGroupParams,
     PreparedRelationAddress, SetupContributionPlan, SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
 
@@ -174,11 +174,6 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    if next_fold_level_params.setup_prefix.is_none() {
-        return Err(AkitaError::InvalidSetup(
-            "Stage 3 requires a selected setup-prefix slot".to_string(),
-        ));
-    }
     let selected_slot_id = next_fold_level_params
         .setup_prefix
         .as_ref()
@@ -190,15 +185,14 @@ where
             "planned setup-prefix slot is missing from verifier setup".to_string(),
         )
     })?;
-    let (_, setup_eval_len) = select_setup_prefix_slot(
+    let setup_eval_len = setup_prefix_coverage_eval_len(
         None,
-        Some(&slot.id),
+        &slot.id,
         next_fold_level_params,
         natural_field_len,
         ring_d,
         "verifier setup-prefix slot does not cover setup product",
-    )?
-    .expect("selected setup-prefix slot exists");
+    )?;
     transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
     Ok(setup_eval_len)
 }

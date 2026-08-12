@@ -307,7 +307,7 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
 }
 
 #[test]
-fn select_setup_prefix_slot_uses_exact_registry_match() {
+fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
     use akita_field::Prime32Offset99 as F;
 
     let mut level_params = prefix_eligible_level_params();
@@ -323,35 +323,32 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());
     registry.insert(slot).expect("insert slot");
 
-    let selection = select_setup_prefix_slot(
+    let setup_eval_len = setup_prefix_coverage_eval_len(
         Some(n_prefix),
-        registry.get(&id).map(|slot| &slot.id),
+        &registry.get(&id).expect("registered slot").id,
         &level_params,
         natural_len,
         source_ring_dimension,
         "slot does not cover request",
     )
-    .expect("selection succeeds")
-    .expect("slot selected");
-    assert_eq!(selection.0, &id);
-    assert_eq!(selection.0.d_setup(), 64);
-    assert_eq!(selection.1, 8);
+    .expect("selection succeeds");
+    assert_eq!(id.d_setup(), 64);
+    assert_eq!(setup_eval_len, 8);
 
-    let external_selection = select_setup_prefix_slot(
+    let external_setup_eval_len = setup_prefix_coverage_eval_len(
         None,
-        registry.get(&id).map(|slot| &slot.id),
+        &registry.get(&id).expect("registered slot").id,
         &level_params,
         natural_len,
         source_ring_dimension,
         "slot does not cover request",
     )
-    .expect("external committed source selection succeeds")
-    .expect("external committed source selects the slot");
-    assert_eq!(external_selection.1, 8);
+    .expect("external committed source selection succeeds");
+    assert_eq!(external_setup_eval_len, 8);
 
-    let err = select_setup_prefix_slot(
+    let err = setup_prefix_coverage_eval_len(
         Some(n_prefix),
-        registry.get(&id).map(|slot| &slot.id),
+        &registry.get(&id).expect("registered slot").id,
         &level_params,
         natural_len,
         512,
@@ -362,9 +359,9 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         .to_string()
         .contains("setup prefix full length must be divisible"));
 
-    let err = select_setup_prefix_slot(
+    let err = setup_prefix_coverage_eval_len(
         Some(n_prefix),
-        registry.get(&id).map(|slot| &slot.id),
+        &registry.get(&id).expect("registered slot").id,
         &level_params,
         natural_len + 1,
         source_ring_dimension,
@@ -373,9 +370,9 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     .expect_err("different natural_len must fail");
     assert!(err.to_string().contains("slot does not cover request"));
 
-    let err = select_setup_prefix_slot(
+    let err = setup_prefix_coverage_eval_len(
         Some(5 * source_ring_dimension),
-        registry.get(&id).map(|slot| &slot.id),
+        &registry.get(&id).expect("registered slot").id,
         &level_params,
         193,
         source_ring_dimension,
@@ -388,28 +385,29 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
 }
 
 #[test]
-fn select_setup_prefix_slot_rejects_missing_selected_slot_id() {
+fn setup_prefix_coverage_eval_len_rejects_unplanned_level_params() {
     let mut level_params = prefix_eligible_level_params();
     let d_setup = 64;
     let natural_len = 65usize;
     let n_prefix = padded_setup_prefix_len(natural_len);
-    level_params.setup_prefix = Some(setup_prefix_slot_id(
+    let id = setup_prefix_slot_id(
         natural_len,
         setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params"),
-    ));
+    );
+    level_params.setup_prefix = None;
 
-    let err = select_setup_prefix_slot(
+    let err = setup_prefix_coverage_eval_len(
         Some(2 * d_setup),
-        None,
+        &id,
         &level_params,
         natural_len,
         d_setup,
         "slot does not cover request",
     )
-    .expect_err("missing registry entry must fail");
+    .expect_err("unplanned Stage 3 prefix must fail");
     assert!(err
         .to_string()
-        .contains("required setup prefix slot is missing"));
+        .contains("Stage 3 requires a selected setup-prefix slot"));
 }
 
 #[test]

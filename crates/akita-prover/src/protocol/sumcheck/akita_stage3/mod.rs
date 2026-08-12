@@ -18,10 +18,11 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, PreparedRelationAddress, RelationAddressGeometry,
-    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, setup_prefix_coverage_eval_len, shared_setup_fold_gadget,
+    AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding, PreparedRelationAddress,
+    RelationAddressGeometry, RingRelationInstance, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupPrefixProverRegistry, SetupProjectionGeometry,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
@@ -198,15 +199,14 @@ where
             "planned setup-prefix slot is missing from prover setup".to_string(),
         )
     })?;
-    let (_, setup_eval_len) = select_setup_prefix_slot(
+    let setup_eval_len = setup_prefix_coverage_eval_len(
         Some(expanded.shared_matrix().num_field_elements()),
-        Some(&slot.id),
+        &slot.id,
         next_fold_level_params,
         natural_field_len,
         ring_d,
         "selected setup-prefix slot does not cover setup product",
-    )?
-    .expect("selected setup-prefix slot exists");
+    )?;
     transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
     // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
     // the flat shared matrix; read them directly instead of building a typed
