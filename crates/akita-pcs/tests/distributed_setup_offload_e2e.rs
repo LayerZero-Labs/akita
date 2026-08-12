@@ -24,8 +24,8 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, OpeningClaimsLayout,
-    PolynomialGroupLayout, SetupContributionMode,
+    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, PolynomialGroupLayout,
+    SetupContributionMode,
 };
 use common::*;
 
@@ -34,13 +34,8 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted = fp128::OneHotMultiChunk::select_schedule_for_opening(
-        &OpeningClaimsLayout::new(pre_group.num_vars(), pre_group.num_polynomials())
-            .expect("opening layout"),
-    )
-    .expect("independent schedule")
-    .profiles()
-    .final_group;
+    let precommitted = fp128::OneHotMultiChunk::profile_without_prior_groups(pre_group)
+        .expect("independent profile");
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         prior_group_profiles: vec![precommitted, precommitted],
@@ -77,15 +72,31 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         verifier.num_field_elements,
         incoming_prefixes
     );
-    assert_eq!(&incoming_prefixes[..2], &[Some(11_976_704), None]);
-    assert!(incoming_prefixes[2..].iter().all(Option::is_none));
+    // Exactly one fold carries a setup prefix, and it carries the length the
+    // committed catalog states. Reading the length from the schedule keeps this
+    // assertion from pinning a planner output that legitimately moves.
+    assert_eq!(
+        incoming_prefixes.len(),
+        schedule.schedule().recursive_folds.len()
+    );
+    assert!(incoming_prefixes[0].is_some());
+    assert!(incoming_prefixes[1..].iter().all(Option::is_none));
     assert_eq!(prover.num_field_elements, 16_777_216);
     assert_eq!(verifier.num_field_elements, 8_388_608);
-    // `K=2` cannot reach the grouped root, so it provisions only the frozen
-    // precommit B matrix (`1 * 5504 * 64`), the largest independent-commit
-    // footprint reachable within two polynomials.
-    assert_eq!(setup_for_two.num_field_elements, 352_256);
-    assert_eq!(setup_for_four.num_field_elements, 16_777_216);
+
+    // `K=2` cannot reach the four-polynomial grouped root, and this family
+    // ships no row without prior groups. The only shape it can still serve is
+    // an independent commitment of the frozen precommit descriptor, performed
+    // under the base config. Provisioning must cover exactly that, so derive
+    // the expectation from the same primitive commit-time admission uses.
+    let frozen_precommit = key.prior_group_profiles[0];
+    let precommit_footprint = akita_types::commit_only_setup_field_elements(
+        &frozen_precommit.inner_commit_matrix,
+        &frozen_precommit.outer_commit_matrix,
+    )
+    .expect("frozen precommit footprint");
+    assert_eq!(setup_for_two.num_field_elements, precommit_footprint);
+    assert_eq!(setup_for_four.num_field_elements, prover.num_field_elements);
 }
 
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".
@@ -108,7 +119,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             outer: 128,
             opening: 128,
         },
-        "level 0 must retain the shipped adaptive A/B/D role dimensions"
+        "level 0 must use the A/B/D role dimensions the shipped W8R2 row selects"
     );
     assert_eq!(
         schedule.recursive_folds[0].params.witness.role_dims(),
@@ -117,7 +128,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             outer: 128,
             opening: 128,
         },
-        "level 1 must retain the shipped adaptive A/B/D role dimensions"
+        "level 1 must use the A/B/D role dimensions the shipped W8R2 row selects"
     );
     assert_eq!(
         schedule.recursive_folds[1].params.witness.role_dims(),

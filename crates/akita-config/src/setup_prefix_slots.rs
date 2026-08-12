@@ -158,13 +158,8 @@ mod tests {
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
-        let precommitted = fp128::OneHot::select_schedule_for_opening(
-            &akita_types::OpeningClaimsLayout::new(pre.num_vars(), pre.num_polynomials())
-                .expect("opening layout"),
-        )
-        .expect("independent schedule")
-        .profiles()
-        .final_group;
+        let precommitted =
+            fp128::OneHot::profile_without_prior_groups(pre).expect("independent profile");
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             prior_group_profiles: vec![precommitted, precommitted],

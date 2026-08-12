@@ -20,8 +20,8 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
     dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
     AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
-    LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout, SetupPrefixProverRegistry,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -189,7 +189,6 @@ where
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        PriorGroupProfiles::default(),
         opening_claims,
         vec![hint],
         vec![polynomials],
@@ -198,7 +197,6 @@ where
 }
 
 pub(super) fn selected_prover_data<'a, Cfg, P>(
-    prior_group_profiles: PriorGroupProfiles,
     claims: OpeningClaims<'a, Cfg::ExtField, CommittedGroup<Cfg::Field>>,
     hints: Vec<AkitaCommitmentHint<Cfg::Field>>,
     polynomials: Vec<&'a [&'a P]>,
@@ -212,13 +210,8 @@ where
     Cfg: CommitmentConfig,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        prior_group_profiles,
-        claims,
-        hints,
-        polynomials,
-    )
-    .expect("valid selected prover data")
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials)
+        .expect("valid selected prover data")
 }
 
 pub(super) fn selected_statement<'a, Cfg>(
@@ -519,13 +512,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     init_rayon_pool();
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_frozen = BaseCfg::select_schedule_for_opening(
-            &OpeningClaimsLayout::new(pre_key.num_vars(), pre_key.num_polynomials())
-                .expect("opening layout"),
-        )
-        .expect("independent schedule")
-        .profiles()
-        .final_group;
+        let pre_frozen =
+            BaseCfg::profile_without_prior_groups(pre_key).expect("independent profile");
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             prior_group_profiles: vec![pre_frozen, pre_frozen],
@@ -579,7 +567,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|poly_idx| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
             .collect();
-        let prior_group_profiles = PriorGroupProfiles::from_ordered_groups(pre_commitments.iter());
+        let prior_group_profiles = PriorGroupProfiles::from_ordered_groups(pre_commitments.iter())
+            .expect("nonempty prior groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -587,8 +576,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
-                .expect("nonempty prior group context"),
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
         )
         .expect("final generated-profile commitment");
 
@@ -643,7 +631,6 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         prover_hints.push(final_hint);
 
         let prover_claims = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>, _>(
-            prior_group_profiles,
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
             prover_polys,

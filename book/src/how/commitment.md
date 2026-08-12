@@ -49,7 +49,7 @@ production choice; **D128** remains a comparison / legacy profile (see
 
 **Sources to fold in**
 
-- `crates/akita-prover/src/backend/dense.rs`, `backend/onehot/mod.rs`.
+- `crates/akita-prover/src/backend/dense/mod.rs`, `backend/onehot/mod.rs`.
 - `crates/akita-pcs/src/lib.rs:1-72`.
 - Paper App B.2.5 (one-hot commitment optimization), `sec:akita-crt-matvec`.
 - `specs/simd-ring-subfield-fp8.md` (technique note; primary consumer removed).

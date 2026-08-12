@@ -85,8 +85,9 @@ pub use setup::{
 };
 pub use setup_envelope::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
-    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
-    setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule,
+    commit_only_setup_field_elements, setup_matrix_capacity_for_schedule,
+    setup_matrix_field_elements_for_schedule, setup_prefix_slot_field_elements,
+    verifier_setup_matrix_capacity_for_schedule,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,

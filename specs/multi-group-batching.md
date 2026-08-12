@@ -15,8 +15,8 @@ that was used to commit it. The final root schedule is selected from the final
 group layout and the ordered list of those exact profiles.
 
 This file is the current contract. The archived record preserves earlier
-designs based on `ConservativeCommitmentConfig`, reconstructed layouts, and
-ordinary `batched_commit`. Those APIs have been removed.
+designs based on `ConservativeCommitmentConfig`, reconstructed layouts, and a
+separate scalar batch-commit entry point. Those APIs have been removed.
 
 ## Canonical types
 
@@ -60,17 +60,17 @@ The current staggered flow is:
 
 1. Commit each early group with the unified `commit` method and
    `GroupContext::scheduler_without_prior_groups()`; this resolves its exact
-   scalar S row. Retain the resulting committed group/profile for use as a
+   scalar row. Retain the resulting committed group/profile for use as a
    prior group.
 2. Build one ordered `PriorGroupProfiles` owner from those committed groups.
 3. Commit the last group with
    `GroupContext::scheduler_with_prior_groups(&prior)?`, borrowing that owner.
 4. Build the self-describing `OpeningClaims`, then pass the same owner to
    `SelectedProverOpeningData::from_committed_claims`; batch assembly selects
-   the exact generated G row before profiles are stripped.
+   the exact generated grouped row before profiles are stripped.
 5. Prove with that selected row and verify against its explicit row identity.
 
-The scheduler-without-priors context commits a group under its scalar S row.
+The scheduler-without-priors context commits a group under its scalar row.
 The same commitment may be opened alone or used before a later final group.
 Multiple homogeneous polynomials may still belong to one group.
 
@@ -79,11 +79,11 @@ Malformed, missing, reordered, or altered profiles return `AkitaError`.
 
 ## Planning and runtime ownership
 
-`akita-planner` owns scalar S-row search and grouped root search.
+`akita-planner` owns scalar-row search and grouped root search.
 `akita-schedules` owns generated catalogs, catalog identity checks, expansion,
 and strict runtime resolution. Verifier crates do not depend on the planner.
 
-Generated families carry scalar S rows and selected grouped rows.
+Generated families carry scalar rows and selected grouped rows.
 Generation holds a typed planning request with its key and honest fold policies
 through one materialization pass. Unsupported requests are omitted. Runtime
 table misses remain unsupported.
@@ -104,7 +104,7 @@ from unchecked lengths, or invoke the planner.
 - Scalar generation emits exact S profiles for every supported layout.
 - Profile descriptor changes alter lookup and effective schedule identity.
 - `GroupContext::scheduler_without_prior_groups()` always uses the exact
-  generated scalar S profile, including when that commitment later becomes a
+  generated scalar-row profile, including when that commitment later becomes a
   prior group.
 - `GroupContext::scheduler_with_prior_groups` selects from the exact ordered
   profiles supplied by the caller and rejects an empty prefix.

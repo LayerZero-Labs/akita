@@ -967,43 +967,57 @@ fn committed_group_for_extractor(num_vars: usize) -> CommittedGroup<F> {
 #[test]
 fn ordered_group_profile_extractor_rejects_empty_input() {
     let groups: [&CommittedGroup<F>; 0] = [];
-    let error =
-        CommittedGroupBatchProfile::from_ordered_groups(groups, PriorGroupProfiles::default())
-            .expect_err("empty group sequence must reject");
+    let error = CommittedGroupBatchProfile::from_ordered_groups(groups)
+        .expect_err("empty group sequence must reject");
     assert!(matches!(error, AkitaError::InvalidInput(_)));
 }
 
 #[test]
 fn ordered_group_profile_extractor_handles_a_group_without_prior_groups() {
     let final_group = committed_group_for_extractor(12);
-    let batch = CommittedGroupBatchProfile::from_ordered_groups(
-        [&final_group],
-        PriorGroupProfiles::default(),
-    )
-    .expect("profile without prior groups");
+    let batch = CommittedGroupBatchProfile::from_ordered_groups([&final_group])
+        .expect("profile without prior groups");
     assert!(batch.prior_group_profiles.is_empty());
     assert_eq!(batch.final_group, *final_group.profile());
 }
 
 #[test]
-fn ordered_group_profile_extractor_preserves_and_checks_prefix_order() {
+fn ordered_group_profile_extractor_preserves_prefix_order() {
     let first = committed_group_for_extractor(12);
     let second = committed_group_for_extractor(13);
     let final_group = committed_group_for_extractor(14);
-    let groups = [&first, &second, &final_group];
-    let prefix = PriorGroupProfiles::from_ordered_groups([&first, &second]);
-    let batch = CommittedGroupBatchProfile::from_ordered_groups(groups, prefix)
+    let batch = CommittedGroupBatchProfile::from_ordered_groups([&first, &second, &final_group])
         .expect("ordered grouped profile");
     assert_eq!(
         batch.prior_group_profiles,
         vec![*first.profile(), *second.profile()]
     );
     assert_eq!(batch.final_group, *final_group.profile());
+}
 
-    let reversed = PriorGroupProfiles::from_ordered_groups([&second, &first]);
-    let error = CommittedGroupBatchProfile::from_ordered_groups(groups, reversed)
-        .expect_err("reordered prior profiles must reject");
-    assert!(matches!(error, AkitaError::InvalidInput(_)));
+#[test]
+fn prior_group_profiles_reject_an_empty_prefix() {
+    let empty: [&CommittedGroup<F>; 0] = [];
+    assert!(matches!(
+        PriorGroupProfiles::from_ordered_groups(empty).expect_err("empty prefix must reject"),
+        AkitaError::InvalidInput(_)
+    ));
+    assert!(matches!(
+        PriorGroupProfiles::from_profiles(Vec::new()).expect_err("empty prefix must reject"),
+        AkitaError::InvalidInput(_)
+    ));
+}
+
+#[test]
+fn prior_group_profiles_preserve_caller_order() {
+    let first = committed_group_for_extractor(12);
+    let second = committed_group_for_extractor(13);
+    let prefix =
+        PriorGroupProfiles::from_ordered_groups([&first, &second]).expect("nonempty prefix");
+    assert_eq!(
+        prefix.as_slice(),
+        &[*first.profile(), *second.profile()][..]
+    );
 }
 
 #[test]

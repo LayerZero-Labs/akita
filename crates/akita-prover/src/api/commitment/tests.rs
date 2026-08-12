@@ -92,7 +92,11 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
         d_key.coeff_linf_bound,
         D,
     );
-    let commit_only_fields = commit_only_setup_field_elements((&params).into()).unwrap();
+    let commit_only_fields = akita_types::commit_only_setup_field_elements(
+        &params.inner_commit_matrix,
+        &params.outer_commit_matrix,
+    )
+    .unwrap();
     let expanded = AkitaProverSetup::<F>::generate_with_capacity(
         5,
         1,

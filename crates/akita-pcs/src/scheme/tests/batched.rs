@@ -61,7 +61,7 @@ fn batched_commit_matches_individual_commits() {
 }
 
 #[test]
-fn commit_rejects_empty_final_prefix_and_mixed_group_arity() {
+fn commit_rejects_mixed_group_arity() {
     let layout = singleton_layout::<Cfg>(16);
     let num_vars =
         layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
@@ -78,15 +78,9 @@ fn commit_rejects_empty_final_prefix_and_mixed_group_arity() {
     )
     .expect("stack");
 
-    let empty = PriorGroupProfiles::default();
-    let error = akita_prover::GroupContext::scheduler_with_prior_groups(&empty)
-        .expect_err("an empty prior-group context must reject");
-    assert!(matches!(error, AkitaError::InvalidInput(_)));
-    let params = singleton_layout::<Cfg>(num_vars);
-    let error = akita_prover::GroupContext::explicit_with_prior_groups(&empty, &params)
-        .expect_err("an empty explicit prior-group context must reject");
-    assert!(matches!(error, AkitaError::InvalidInput(_)));
-
+    // An empty prior-group prefix is unrepresentable, so no grouped context
+    // can carry one. `PriorGroupProfiles` owns that rejection; see
+    // `prior_group_profiles_reject_an_empty_prefix`.
     let error = Scheme::commit(
         &setup,
         &[poly, smaller],

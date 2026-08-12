@@ -9,7 +9,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,
     CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, PriorGroupProfiles, SetupPrefixSlot,
+    PolynomialGroupClaims, PolynomialGroupLayout, SetupPrefixSlot,
 };
 
 /// Exact top-level row selection paired with its prover opening material.
@@ -141,7 +141,6 @@ where
 {
     /// Atomically select the exact batch row before stripping commitment profiles.
     pub fn from_committed_claims<Cfg>(
-        prior_group_profiles: PriorGroupProfiles,
         opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomial_groups: Vec<&'a [&'a P]>,
@@ -154,7 +153,6 @@ where
                 .groups()
                 .iter()
                 .map(PolynomialGroupClaims::commitment),
-            prior_group_profiles,
         )?;
         let selection = Cfg::select_schedule_for_profiles(&batch_profile)?.selection();
         let opening_data = ProverOpeningData::new(opening_claims, hints, polynomial_groups)?;

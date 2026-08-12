@@ -88,7 +88,6 @@ where
 
         let poly_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
         let prover_data = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>, _>(
-            PriorGroupProfiles::default(),
             OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 point.clone(),
                 openings.clone(),
@@ -324,7 +323,8 @@ where
         let final_evals = dense_field_evals(final_nv, final_seed);
         let final_poly = DensePoly::<F>::from_field_evals(final_nv, DENSE_D, &final_evals)
             .expect("final dense poly");
-        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]);
+        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty prior groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -332,8 +332,7 @@ where
             &setup,
             std::slice::from_ref(&final_poly),
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
-                .expect("nonempty prior group context"),
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
         )
         .expect("final commit");
 
@@ -375,7 +374,6 @@ where
         let pre_refs = [&pre_poly];
         let final_refs = [&final_poly];
         let prover_data = selected_prover_data::<Cfg, _>(
-            prior_group_profiles,
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],
@@ -441,14 +439,10 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         // An independent precommit commits with its own row without prior
         // groups, so take the pre-group ring dimension from exactly the row
         // `commit` will select below.
-        let pre_d = Cfg::select_schedule_for_opening(
-            &OpeningClaimsLayout::new(PRE_NV, 1).expect("pre opening layout"),
-        )
-        .expect("pre row without prior groups")
-        .profiles()
-        .final_group
-        .inner_commit_matrix
-        .ring_dimension();
+        let pre_d = Cfg::profile_without_prior_groups(PolynomialGroupLayout::new(PRE_NV, 1))
+            .expect("pre profile without prior groups")
+            .inner_commit_matrix
+            .ring_dimension();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -486,7 +480,8 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
 
         let final_poly =
             make_onehot_poly_with_d_and_k(final_nv, final_d, k, 0x0bee_f001_u64 ^ final_nv as u64);
-        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]);
+        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty prior groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -494,8 +489,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             &setup,
             std::slice::from_ref(&final_poly),
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
-                .expect("nonempty prior group context"),
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
         )
         .expect("final commit");
 
@@ -521,7 +515,6 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         let pre_refs = [&pre_poly];
         let final_refs = [&final_poly];
         let prover_data = selected_prover_data::<Cfg, _>(
-            prior_group_profiles,
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],

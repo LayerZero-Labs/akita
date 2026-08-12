@@ -86,14 +86,6 @@ macro_rules! impl_multi_chunk_companion {
                     None
                 }
             }
-
-            fn select_schedule_for_opening(
-                layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_schedules::ResolvedScheduleRow, akita_field::AkitaError> {
-                Self::select_schedule_for_key(
-                    &$crate::proof_optimized::proof_optimized_schedule_key(layout)?,
-                )
-            }
         }
     };
 }
@@ -361,10 +353,39 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Select the exact row without prior groups for an opening layout.
     ///
-    /// Implementations own any configuration-specific layout-to-key mapping.
+    /// A layout carrying prior groups has no single row: grouped selection
+    /// needs the exact committed descriptors, so it goes through
+    /// [`Self::select_schedule_for_key`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed or grouped layout, and propagates
+    /// unsupported catalog requests.
     fn select_schedule_for_opening(
         layout: &OpeningClaimsLayout,
-    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError>;
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        Self::select_schedule_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
+    }
+
+    /// Frozen profile this config commits a group with when it has no prior groups.
+    ///
+    /// This is the one runtime definition of an independent commitment's
+    /// parameters. A grouped row's frozen prior descriptor is the value this
+    /// returns for the same group, which
+    /// `every_grouped_prior_descriptor_has_a_generated_producer` enforces.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no generated row without prior groups covers
+    /// `group`.
+    fn profile_without_prior_groups(
+        group: akita_types::PolynomialGroupLayout,
+    ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
+        let layout = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+        Ok(Self::select_schedule_for_opening(&layout)?
+            .profiles()
+            .final_group)
+    }
 
     /// Select the generated row accepted for exact committed profiles.
     ///
@@ -464,14 +485,6 @@ mod tests {
                     akita_types::sis::FoldWitnessNorms::bounded(8, Self::D),
                 ),
             )
-        }
-
-        fn select_schedule_for_opening(
-            layout: &OpeningClaimsLayout,
-        ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-            layout.check()?;
-            let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout()?);
-            Self::select_schedule_for_key(&key)
         }
     }
 
@@ -723,25 +736,20 @@ mod independent_commitment_tests {
     use super::*;
 
     #[test]
-    fn independent_profile_comes_from_the_scalar_s_row() {
+    fn independent_profile_comes_from_the_scalar_row() {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let profile = fp128::OneHot::select_schedule_for_opening(
-            &OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())
-                .expect("opening layout"),
-        )
-        .expect("independent schedule")
-        .profiles()
-        .final_group;
+        let profile =
+            fp128::OneHot::profile_without_prior_groups(group).expect("independent profile");
         assert_eq!(
             profile.inner_commit_matrix.ring_dimension(),
             256,
-            "the independent commitment uses the scalar S row's A dimension"
+            "the independent commitment uses the scalar row's A dimension"
         );
         assert_eq!(
             profile.outer_commit_matrix.ring_dimension(),
             64,
-            "the independent commitment uses the scalar S row's B dimension"
+            "the independent commitment uses the scalar row's B dimension"
         );
         let root_basis = fp128::OneHot::opening_basis_range().0;
         assert_eq!(profile.log_basis_inner, root_basis);

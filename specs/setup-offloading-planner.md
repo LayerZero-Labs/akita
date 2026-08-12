@@ -10,14 +10,14 @@
 | Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection policy remains active |
 | Book-chapter  | book/src/roadmap/verifier-offloading.md    |
 
-> **Commit-API update (2026-08-10).** References below to `commit_group` or
-> other pre-consolidation commitment entry points describe the implementation
-> available when this planner design landed. The current public flow uses
-> `AkitaCommitmentScheme::commit` with
-> `GroupContext::scheduler_without_prior_groups()` for each early S commitment
-> and `GroupContext::scheduler_with_prior_groups` for the grouped final
-> commitment; the recursive planning and setup-offloading contracts in this
-> document are unchanged.
+> **Commit-API update (2026-08-10).** The public commitment flow is one
+> `AkitaCommitmentScheme::commit` entry point taking a `GroupContext`:
+> `scheduler_without_prior_groups()` for each independent prior commitment and
+> `scheduler_with_prior_groups` for the grouped final commitment. A recursive
+> companion catalog ships no row without prior groups at a precommit layout, so
+> the caller precommits under the base `Cfg` and proves the grouped root under
+> `RecursiveCommitmentConfig<Cfg>`. The recursive planning and setup-offloading
+> contracts in this document are unchanged.
 
 ## Revision authority
 
@@ -50,8 +50,8 @@ suffix planning also assumes one commitment group, while complete offloading
 requires the successor to prove two openings together: its newly committed
 folded witness and the setup-prefix commitment selected by the preceding fold.
 
-This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
-generated `CommittedGroupProfile` and `commit_group` flow specified in
+This design adds `RecursiveCommitmentConfig<Cfg>`. Prior groups use the
+generated `CommittedGroupProfile` and the independent-commit flow specified in
 [`multi-group-batching.md`](multi-group-batching.md); the earlier conservative
 config adapter has been removed. The ordinary `Cfg` resolves a direct-only
 schedule. Selecting the recursion adapter activates setup-aware planning for
@@ -206,7 +206,7 @@ An offloaded candidate exists when:
 
 ```text
 recursive config is selected
-the root schedule key is genuinely multi-group (precommitteds is nonempty)
+the root schedule key is genuinely multi-group (prior_group_profiles is nonempty)
 the producer has a nonterminal recursive successor
 the successor can commit the exact padded setup prefix
 the active role dimensions and witness partition are supported
@@ -343,11 +343,12 @@ The base config's `schedule_catalog()` remains the direct table.
 `RecursiveCommitmentConfig<Cfg>` exposes the separate recursive companion
 catalog for both selected scalar and grouped keys.
 
-Its `runtime_schedule` routing is:
+Its `select_schedule_for_key` routing is:
 
 ```text
+validate the SIS modulus profile
 validate recursive D64/non-chunked policy
-resolve_group_batch_schedule(
+select_generated_schedule_row(
     key,
     recursion-enabled policy_of<RecursiveCommitmentConfig<Cfg>>,
     recursive_multi_group_schedule_catalog,

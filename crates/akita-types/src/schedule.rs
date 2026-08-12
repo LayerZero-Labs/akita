@@ -231,23 +231,38 @@ pub struct AkitaScheduleLookupKey {
     pub prior_group_profiles: Vec<CommittedGroupProfile>,
 }
 
-/// Exact ordered profiles of groups committed before a batch's final group.
+/// A non-empty ordered prefix of groups committed before a final group.
 ///
-/// This transient owner lets final commitment borrow the prefix while batch
-/// assembly later moves the same allocation into [`CommittedGroupBatchProfile`].
-#[derive(Debug, Default)]
+/// The type is non-empty by construction, so a grouped commitment context
+/// cannot describe "no prior groups" — that state has its own spelling in
+/// `PriorGroupContext::NoPriorGroups`. Both constructors reject an empty
+/// input, which is why building a grouped context is infallible.
+#[derive(Debug, Clone)]
 pub struct PriorGroupProfiles {
     profiles: Vec<CommittedGroupProfile>,
 }
 
 impl PriorGroupProfiles {
     /// Take ownership of an already ordered profile vector without cloning it.
-    pub fn from_profiles(profiles: Vec<CommittedGroupProfile>) -> Self {
-        Self { profiles }
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `profiles` is empty.
+    pub fn from_profiles(profiles: Vec<CommittedGroupProfile>) -> Result<Self, AkitaError> {
+        if profiles.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "prior group profiles must describe at least one group".to_string(),
+            ));
+        }
+        Ok(Self { profiles })
     }
 
     /// Extract profiles from committed groups in caller-supplied order.
-    pub fn from_ordered_groups<'a, F, I>(groups: I) -> Self
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `groups` is empty.
+    pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
     where
         F: FieldCore + 'a,
         I: IntoIterator<Item = &'a CommittedGroup<F>>,
@@ -256,7 +271,7 @@ impl PriorGroupProfiles {
         let groups = groups.into_iter();
         let mut profiles = Vec::with_capacity(groups.len());
         profiles.extend(groups.map(|group| *group.profile()));
-        Self { profiles }
+        Self::from_profiles(profiles)
     }
 
     /// Borrow the exact ordered profiles.
@@ -366,54 +381,30 @@ pub struct CommittedGroupBatchProfile {
 impl CommittedGroupBatchProfile {
     /// Assemble an exact batch profile from ordered committed groups.
     ///
-    /// The supplied prefix must describe every group except the last. Its
-    /// allocation is moved directly into the resulting batch profile.
-    pub fn from_ordered_groups<'a, F, I>(
-        groups: I,
-        prior_group_profiles: PriorGroupProfiles,
-    ) -> Result<Self, AkitaError>
+    /// Each group carries its own profile, so the prefix is derived here
+    /// rather than supplied and cross-checked.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `groups` is empty.
+    pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
     where
         F: FieldCore + 'a,
         I: IntoIterator<Item = &'a CommittedGroup<F>>,
         I::IntoIter: ExactSizeIterator,
     {
-        let mut groups = groups.into_iter();
-        let group_count = groups.len();
-        if group_count == 0 {
-            return Err(AkitaError::InvalidInput(
-                "committed group batch profile requires at least one group".to_string(),
-            ));
-        }
-        let expected_prior_count = group_count - 1;
-        if prior_group_profiles.profiles.len() != expected_prior_count {
-            return Err(AkitaError::InvalidInput(format!(
-                "committed group batch profile expected {expected_prior_count} prior profiles, got {}",
-                prior_group_profiles.profiles.len()
-            )));
-        }
-
-        let mut final_group = None;
-        for (index, group) in groups.by_ref().enumerate() {
-            let profile = *group.profile();
-            if index < expected_prior_count {
-                if prior_group_profiles.profiles.get(index) != Some(&profile) {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "prior profile {index} does not match its committed group"
-                    )));
-                }
-            } else {
-                final_group = Some(profile);
-            }
-        }
-
-        let final_group = final_group.ok_or_else(|| {
+        let mut profiles = groups
+            .into_iter()
+            .map(|group| *group.profile())
+            .collect::<Vec<_>>();
+        let final_group = profiles.pop().ok_or_else(|| {
             AkitaError::InvalidInput(
-                "committed group batch profile requires a final group".to_string(),
+                "committed group batch profile requires at least one group".to_string(),
             )
         })?;
         Ok(Self {
             final_group,
-            prior_group_profiles: prior_group_profiles.profiles,
+            prior_group_profiles: profiles,
         })
     }
 

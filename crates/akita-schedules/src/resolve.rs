@@ -7,7 +7,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout,
+    FoldSchedule, OpeningScheduleSelection,
 };
 
 use crate::audit::audit_resolved_schedule;
@@ -341,35 +341,6 @@ pub fn select_generated_schedule_row_for_profiles(
         policy,
         &ring_challenge_config,
         table,
-    )
-}
-
-/// Resolve a runtime schedule using only the enabled generated catalog.
-///
-/// A missing catalog or missing row is unsupported input. This function never
-/// invokes planner search.
-pub fn resolve_group_batch_schedule(
-    key: &AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    catalog: Option<GeneratedScheduleTable>,
-) -> Result<FoldSchedule, AkitaError> {
-    select_generated_schedule_row(key, policy, ring_challenge_config, catalog)
-        .map(ResolvedScheduleRow::into_schedule)
-}
-
-/// Resolve a scalar-root runtime schedule using only the enabled generated catalog.
-pub fn resolve_schedule(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    catalog: Option<GeneratedScheduleTable>,
-) -> Result<FoldSchedule, AkitaError> {
-    resolve_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        policy,
-        ring_challenge_config,
-        catalog,
     )
 }
 

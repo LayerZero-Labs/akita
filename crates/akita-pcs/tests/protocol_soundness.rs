@@ -129,7 +129,6 @@ fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Fie
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        akita_types::PriorGroupProfiles::default(),
         opening_claims,
         vec![hint],
         vec![polynomials],

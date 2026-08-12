@@ -10,8 +10,8 @@ use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    DecompositionParams, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
-    SetupMatrixCapacity, SisModulusProfileId,
+    DecompositionParams, OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
+    SisModulusProfileId,
 };
 use std::{
     any::TypeId,
@@ -163,10 +163,9 @@ where
         for final_polys in 1..max_num_batched_polys {
             let pre_polys = max_num_batched_polys - final_polys;
             for pre_num_vars in [14usize, 15, 16].into_iter().filter(|&n| n <= max_num_vars) {
-                let Ok(precommitted) = OpeningClaimsLayout::new(pre_num_vars, pre_polys)
-                    .and_then(|layout| Self::select_schedule_for_opening(&layout))
-                    .map(|row| row.profiles().final_group)
-                else {
+                let Ok(precommitted) = Self::profile_without_prior_groups(
+                    PolynomialGroupLayout::new(pre_num_vars, pre_polys),
+                ) else {
                     continue;
                 };
                 let Ok(schedule) = Self::select_schedule_for_key(&AkitaScheduleLookupKey {
@@ -254,19 +253,5 @@ where
         selection: OpeningScheduleSelection,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         resolve_synthetic_schedule_row::<Self>(selection)
-    }
-
-    fn select_schedule_for_opening(
-        opening_batch: &OpeningClaimsLayout,
-    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        opening_batch.check()?;
-        if opening_batch.num_groups() != 1 {
-            return Err(AkitaError::InvalidInput(
-                "grouped schedule selection requires exact committed-group descriptors".into(),
-            ));
-        }
-        Self::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-            opening_batch.root_final_group_layout()?,
-        ))
     }
 }

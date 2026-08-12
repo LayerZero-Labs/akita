@@ -1,6 +1,10 @@
 use super::*;
 
-fn independent_profile<Cfg: akita_config::CommitmentConfig>(
+/// Plan the profile a group commits with when it has no prior groups.
+///
+/// These tests assert planner output, so they plan the row rather than read a
+/// catalog, matching what `generated_families` does at generation time.
+fn planned_profile_without_prior_groups<Cfg: akita_config::CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
     let planned = crate::find_schedule(
@@ -23,7 +27,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     type Recursive = RecursiveCommitmentConfig<OneHot>;
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let descriptor = independent_profile::<OneHot>(precommit_layout);
+    let descriptor = planned_profile_without_prior_groups::<OneHot>(precommit_layout);
     assert_eq!(descriptor.inner_commit_matrix.ring_dimension(), 256);
     assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {
@@ -118,7 +122,7 @@ fn recursive_adaptive_search_selects_schedule_dimensions_and_setup_prefixes() {
     use akita_types::AkitaScheduleLookupKey;
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let descriptor = independent_profile::<OneHot>(precommit_layout);
+    let descriptor = planned_profile_without_prior_groups::<OneHot>(precommit_layout);
     assert_eq!(descriptor.inner_commit_matrix.ring_dimension(), 256);
     assert_eq!(descriptor.outer_commit_matrix.ring_dimension(), 64);
     let key = AkitaScheduleLookupKey {

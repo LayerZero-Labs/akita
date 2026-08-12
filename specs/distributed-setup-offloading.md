@@ -13,8 +13,13 @@
 > **Commit-API update (2026-08-10).** Pre-consolidation method and public-field
 > names below are retained as historical descriptions of the implementation
 > that landed this feature. Current callers use the unified
-> `AkitaCommitmentScheme::commit` roles and `prior_group_profiles`; the
-> distributed setup-offloading protocol and generated rows are unchanged.
+> `AkitaCommitmentScheme::commit` roles and `prior_group_profiles`. The
+> offloading protocol and the set of generated keys are unchanged, but row
+> contents move with the planner: the `W8R2` row now carries a different
+> setup prefix length and a D role dimension of 128 at fold levels 0 and 1.
+> `W8R2` ships no row without prior groups, so a caller precommits each prior
+> group under `fp128::OneHotMultiChunk` and proves the grouped root under
+> `RecursiveCommitmentConfig<fp128::OneHotMultiChunk>`.
 
 > **Stage-3 model update (2026-07-29).** The fused witness-carry details in the
 > original plan were superseded by

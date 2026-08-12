@@ -17,7 +17,6 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-    PriorGroupProfiles,
 };
 
 use akita_field::unreduced::{
@@ -92,7 +91,6 @@ pub(super) fn single_group_roundtrip<Cfg>(
     .expect("prover group")])
     .expect("prover claims");
     let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        PriorGroupProfiles::default(),
         prover_claims,
         vec![hint],
         vec![&poly_refs[..]],

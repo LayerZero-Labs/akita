@@ -24,7 +24,7 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     dispatch_for_field, BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
+    PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -176,13 +176,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-    let pre_descriptor = Cfg::select_schedule_for_opening(
-        &OpeningClaimsLayout::new(pre_key.num_vars(), pre_key.num_polynomials())
-            .expect("opening layout"),
-    )
-    .expect("independent schedule")
-    .profiles()
-    .final_group;
+    let pre_descriptor = Cfg::profile_without_prior_groups(pre_key).expect("independent profile");
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group,
@@ -297,7 +291,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
             .collect::<Vec<_>>();
         let prior_group_profiles =
-            akita_types::PriorGroupProfiles::from_ordered_groups(pre_commitments.iter());
+            akita_types::PriorGroupProfiles::from_ordered_groups(pre_commitments.iter())
+                .expect("nonempty prior groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -305,8 +300,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
-                .expect("nonempty prior group context"),
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
         )
         .expect("final multi-group commitment");
         report_timing(label, "commit", t_commit.elapsed().as_secs_f64());
@@ -353,7 +347,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
         let prover_data =
             akita_prover::SelectedProverOpeningData::from_committed_claims::<ProofCfg>(
-                prior_group_profiles,
                 OpeningClaims::from_groups(prover_groups).expect("prover claims"),
                 prover_hints,
                 prover_polys,

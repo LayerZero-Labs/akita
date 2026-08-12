@@ -40,7 +40,10 @@ fn dense_group_commit_freezes_scalar_s_profile() {
     );
     assert_eq!(
         commitment.profile,
-        independent_profile::<DenseGroupCfg>(akita_types::PolynomialGroupLayout::new(NUM_VARS, 1))
+        DenseGroupCfg::profile_without_prior_groups(akita_types::PolynomialGroupLayout::new(
+            NUM_VARS, 1
+        ))
+        .expect("independent profile")
     );
     assert_eq!(
         commitment.rows().count(),

@@ -54,12 +54,12 @@
 //! OneHot mc nonrec pre: NA. The catalog has no combined final=32, pre=14 row.
 //! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
-//!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits
-//!            (fp128_onehot_recursive_precommitted.rs).
+//!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits,
+//!            committed under the base config's scalar row.
 //! OneHot mc rec:     cfg=schedules-fp128-onehot-recursive-multi-chunk; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig<OneHotMultiChunk> (fp128_onehot_recursive_multi_chunk_w8r2.rs).
-//!   pre    = same + two 16-variable user precommits
-//!            (fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs).
+//!   pre    = same + two 16-variable user precommits, committed under the
+//!            base config's scalar row.
 //!
 //! Every ✓ cell resolves against a real shipped catalog row; no cell here is
 //! backed by a schedule added solely to make a test pass.
@@ -152,7 +152,7 @@ macro_rules! matrix_test {
             );
         }
     };
-    // recursive mode + user precommitted groups (fp128_onehot_recursive_precommitted.rs profiles)
+    // recursive mode + user precommitted groups (profiles from the base config's scalar row)
     (recursive_pre; $name:ident; $base_cfg:ty) => {
         #[test]
         #[ignore = "production-sized; run explicitly with --release"]
@@ -220,7 +220,7 @@ matrix_test!(recursive_direct; fp128_onehot_rec; fp128::OneHot);
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × precommitted × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig + user precommit; profiles from fp128_onehot_recursive_precommitted.rs.
+// RecursiveCommitmentConfig + user precommit; profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-onehot-recursive")]
 matrix_test!(recursive_pre; fp128_onehot_rec_pre; fp128::OneHot);
@@ -235,7 +235,7 @@ matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunk);
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × precommitted × recursive    (production-sized, ignored)
 // RecursiveCommitmentConfig<OneHotMultiChunk> + user precommit;
-// profiles from fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs.
+// profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk")]
 matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
@@ -719,12 +719,10 @@ fn heterogeneous_group_types() {
 
         // Derive the OneHot pre-commit ring_d from the row without prior
         // groups, so the polynomial matches what `commit` selects below.
-        let pre_d = OneHotCfg::select_schedule_for_opening(
-            &OpeningClaimsLayout::new(ONEHOT_PRE_NV, 1).expect("onehot pre layout"),
+        let pre_d = OneHotCfg::profile_without_prior_groups(
+            akita_types::PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
         )
-        .expect("onehot pre row without prior groups")
-        .profiles()
-        .final_group
+        .expect("onehot pre profile without prior groups")
         .inner_commit_matrix
         .ring_dimension();
         let onehot_k_pre = 16usize;
@@ -795,7 +793,8 @@ fn heterogeneous_group_types() {
         let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![
             onehot_pre_commitment.profile,
             dense_commitment.profile,
-        ]);
+        ])
+        .expect("nonempty prior groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -803,8 +802,7 @@ fn heterogeneous_group_types() {
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
-                .expect("nonempty prior group context"),
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
         )
         .expect("final commit");
 
@@ -832,7 +830,6 @@ fn heterogeneous_group_types() {
         let final_refs = [&final_polys[0]];
 
         let prover_data = selected_prover_data::<OneHotCfg, _>(
-            prior_group_profiles,
             OpeningClaims::from_groups(vec![
                 PolynomialGroupClaims::new(
                     onehot_pre_point.clone(),
@@ -975,7 +972,6 @@ fn heterogeneous_compute_backends() {
         let poly_refs = [&poly];
         let commitments = [commitment];
         let prover_data = selected_prover_data::<Cfg, _>(
-            PriorGroupProfiles::default(),
             OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 pt.clone(),
                 vec![expected_opening],

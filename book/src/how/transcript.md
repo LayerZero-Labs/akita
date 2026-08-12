@@ -27,7 +27,7 @@ The canonical descriptor binds algebra, setup, plan, and call shape.
 Prover and verifier share one helper:
 
 - `crates/akita-config/src/transcript_binding.rs` — `bind_transcript_instance_descriptor`
-- `crates/akita-types/src/instance_descriptor.rs` — descriptor shape and serialization
+- `crates/akita-types/src/instance_descriptor/mod.rs` — descriptor shape and serialization
 
 Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
 

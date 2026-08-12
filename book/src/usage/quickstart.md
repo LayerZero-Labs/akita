@@ -14,7 +14,7 @@ a newcomer should reach for first.
 
 **Sources to fold in**
 
-- `crates/akita-pcs/tests/single_poly_e2e.rs` (smallest E2E template).
+- `crates/akita-pcs/tests/akita_fp128_e2e.rs` (smallest E2E template).
 - `AGENTS.md` (Essential Commands); `crates/akita-pcs/examples/profile/main.rs`
   (`AKITA_MODE=onehot_fp128`, `AKITA_NUM_VARS=32`).
 

@@ -145,12 +145,8 @@ fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_capacity_includes_standalone_precommit_recipes() {
-    let profile = fp128::Dense::select_schedule_for_opening(
-        &OpeningClaimsLayout::new(16, 1).expect("opening layout"),
-    )
-    .expect("independent schedule")
-    .profiles()
-    .final_group;
+    let profile = fp128::Dense::profile_without_prior_groups(PolynomialGroupLayout::new(16, 1))
+        .expect("independent profile");
     let capacity = fp128::Dense::setup_matrix_capacity(16, 1).expect("dense setup capacity");
     let a_fields = profile.inner_commit_matrix.output_rank()
         * profile.inner_commit_matrix.input_width()

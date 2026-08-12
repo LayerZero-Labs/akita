@@ -9,8 +9,8 @@ use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offs
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    CommittedGroupParams, CommittedGroupProfile, FoldSchedule, OpeningClaimsLayout,
-    PolynomialGroupLayout, SetupMatrixCapacity,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+    SetupMatrixCapacity,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -198,7 +198,10 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
                 if profile.group.num_vars() <= max_num_vars
                     && profile.group.num_polynomials() <= max_num_batched_polys
                 {
-                    scan.observe(precommit_matrix_field_elements(&profile)?);
+                    scan.observe(akita_types::commit_only_setup_field_elements(
+                        &profile.inner_commit_matrix,
+                        &profile.outer_commit_matrix,
+                    )?);
                 }
             }
             let key = AkitaScheduleLookupKey {
@@ -330,21 +333,19 @@ pub fn ensure_prover_schedule_fits_setup<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let available_setup_field_elements = setup.shared_matrix.as_field_slice().len();
-    let required_setup_field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
+    // `setup_matrix_field_elements_for_schedule` already maxes over the root
+    // level's A/B/D matrices, every frozen prior group, the compression maps,
+    // and the fold tail, so it dominates any per-level recomputation here.
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .validate_opening_batch(layout)?;
     ensure_required_setup_field_elements(
-        required_setup_field_elements,
-        available_setup_field_elements,
-    )?;
-
-    let root_params = &schedule.root.params.final_group.commitment;
-    let required_root_field_elements =
-        root_runtime_matrix_field_elements_for_opening_batch(root_params, layout)?;
-    ensure_required_setup_field_elements(
-        required_root_field_elements,
-        available_setup_field_elements,
-    )?;
-    Ok(())
+        setup_matrix_field_elements_for_schedule(schedule)?,
+        setup.shared_matrix.as_field_slice().len(),
+    )
 }
 
 /// Reject a concrete schedule whose direct verifier matrix uses exceed setup.
@@ -374,69 +375,6 @@ fn ensure_required_setup_field_elements(
         "schedule requires {required_field_elements} physical setup field elements, but setup \
          provides {available_field_elements}"
     )))
-}
-
-fn root_runtime_matrix_field_elements_for_opening_batch(
-    lp: &CommittedGroupParams,
-    layout: &OpeningClaimsLayout,
-) -> Result<usize, AkitaError> {
-    lp.validate_opening_batch(layout)?;
-    let mut max_coeff_len = matrix_coefficient_len(
-        lp.inner_commit_matrix.output_rank(),
-        lp.inner_commit_matrix.input_width(),
-        lp.inner_commit_matrix.ring_dimension(),
-        "root A",
-    )?
-    .max(matrix_coefficient_len(
-        lp.outer_commit_matrix.output_rank(),
-        lp.outer_commit_matrix.input_width(),
-        lp.outer_commit_matrix.ring_dimension(),
-        "root B",
-    )?)
-    .max(matrix_coefficient_len(
-        lp.open_commit_matrix.output_rank(),
-        lp.open_commit_matrix.input_width(),
-        lp.open_commit_matrix.ring_dimension(),
-        "root D",
-    )?);
-
-    for group in &lp.precommitted_groups {
-        max_coeff_len = max_coeff_len.max(precommit_matrix_field_elements(&group.layout)?);
-    }
-
-    Ok(max_coeff_len)
-}
-
-/// Physical setup footprint of one frozen precommit's own A/B matrices.
-///
-/// Setup sizing and commit-time admission both price an independent precommit
-/// from this single definition, so provisioning can never fall short of what
-/// admission demands.
-fn precommit_matrix_field_elements(profile: &CommittedGroupProfile) -> Result<usize, AkitaError> {
-    let a_coeff_len = matrix_coefficient_len(
-        profile.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.input_width(),
-        profile.inner_commit_matrix.ring_dimension(),
-        "precommit A",
-    )?;
-    let b_coeff_len = matrix_coefficient_len(
-        profile.outer_commit_matrix.output_rank(),
-        profile.outer_commit_matrix.input_width(),
-        profile.outer_commit_matrix.ring_dimension(),
-        "precommit B",
-    )?;
-    Ok(a_coeff_len.max(b_coeff_len))
-}
-
-fn matrix_coefficient_len(
-    rows: usize,
-    columns: usize,
-    ring_dimension: usize,
-    label: &str,
-) -> Result<usize, AkitaError> {
-    rows.checked_mul(columns)
-        .and_then(|len| len.checked_mul(ring_dimension))
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} setup capacity overflow")))
 }
 
 // ---------------------------------------------------------------------------
@@ -584,14 +522,6 @@ macro_rules! impl_proof_optimized_preset {
                 }
             }
 
-            fn select_schedule_for_opening(
-                layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_schedules::ResolvedScheduleRow, akita_field::AkitaError> {
-                Self::select_schedule_for_key(
-                    &$crate::proof_optimized::proof_optimized_schedule_key(layout)?,
-                )
-            }
-
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
@@ -665,14 +595,6 @@ macro_rules! impl_proof_optimized_preset {
                         ),
                     )
                 }
-            }
-
-            fn select_schedule_for_opening(
-                layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_schedules::ResolvedScheduleRow, akita_field::AkitaError> {
-                Self::select_schedule_for_key(
-                    &$crate::proof_optimized::proof_optimized_schedule_key(layout)?,
-                )
             }
 
             impl_proof_optimized_preset!(@schedule_catalog ($feat, $family_name, $table));

@@ -162,12 +162,10 @@ macro_rules! small_field_test {
 
                 // An independent precommit commits with its own row without
                 // prior groups, so take the ring dimension from that row.
-                let pre_d = <$cfg as CommitmentConfig>::select_schedule_for_opening(
-                    &OpeningClaimsLayout::new(PRE_NV, 1).expect("pre opening layout"),
+                let pre_d = <$cfg as CommitmentConfig>::profile_without_prior_groups(
+                    PolynomialGroupLayout::new(PRE_NV, 1),
                 )
-                .expect("pre row without prior groups")
-                .profiles()
-                .final_group
+                .expect("pre profile without prior groups")
                 .inner_commit_matrix
                 .ring_dimension();
                 let pre_n = 1usize << PRE_NV;
@@ -230,7 +228,7 @@ macro_rules! small_field_test {
                     )
                     .expect("final dense poly");
                     let prior_group_profiles =
-                        PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]);
+                        PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty prior groups");
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
                         hint: final_hint,
@@ -240,8 +238,7 @@ macro_rules! small_field_test {
                         &stack,
                         akita_prover::GroupContext::scheduler_with_prior_groups(
                             &prior_group_profiles,
-                        )
-                        .expect("nonempty prior group context"),
+                        ),
                     )
                     .expect("final commit");
 
@@ -262,7 +259,6 @@ macro_rules! small_field_test {
                     let pre_refs = [&pre_poly];
                     let final_refs = [&final_poly];
                     let prover_data = selected_prover_data::<$cfg, _>(
-                        prior_group_profiles,
                         OpeningClaims::from_groups(vec![
                             PolynomialGroupClaims::new(
                                 point[..PRE_NV].to_vec(),
@@ -378,12 +374,10 @@ macro_rules! small_field_test {
 
                 // An independent precommit commits with its own row without
                 // prior groups, so take the ring dimension from that row.
-                let pre_d = <$cfg as CommitmentConfig>::select_schedule_for_opening(
-                    &OpeningClaimsLayout::new(PRE_NV, 1).expect("pre opening layout"),
+                let pre_d = <$cfg as CommitmentConfig>::profile_without_prior_groups(
+                    PolynomialGroupLayout::new(PRE_NV, 1),
                 )
-                .expect("pre row without prior groups")
-                .profiles()
-                .final_group
+                .expect("pre profile without prior groups")
                 .inner_commit_matrix
                 .ring_dimension();
                 let pre_chunks = (1usize << PRE_NV) / onehot_k;
@@ -446,7 +440,7 @@ macro_rules! small_field_test {
                     )
                     .expect("final onehot poly");
                     let prior_group_profiles =
-                        PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]);
+                        PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty prior groups");
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
                         hint: final_hint,
@@ -456,8 +450,7 @@ macro_rules! small_field_test {
                         &stack,
                         akita_prover::GroupContext::scheduler_with_prior_groups(
                             &prior_group_profiles,
-                        )
-                        .expect("nonempty prior group context"),
+                        ),
                     )
                     .expect("final commit");
 
@@ -488,7 +481,6 @@ macro_rules! small_field_test {
                     let pre_refs = [&pre_poly];
                     let final_refs = [&final_poly];
                     let prover_data = selected_prover_data::<$cfg, _>(
-                        prior_group_profiles,
                         OpeningClaims::from_groups(vec![
                             PolynomialGroupClaims::new(
                                 point[..PRE_NV].to_vec(),
@@ -662,7 +654,8 @@ fn fp32_onehot_multi_group() {
                 .expect("stack");
         let verifier_setup = SmallScheme::setup_verifier(&setup).expect("verifier setup");
 
-        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile]);
+        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty prior groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -670,8 +663,7 @@ fn fp32_onehot_multi_group() {
             &setup,
             std::slice::from_ref(&final_poly),
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles)
-                .expect("nonempty prior group context"),
+            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
         )
         .expect("final commit");
 
@@ -688,7 +680,6 @@ fn fp32_onehot_multi_group() {
         let pre_refs = [&pre_poly];
         let final_refs = [&final_poly];
         let prover_data = selected_prover_data::<SmallCfg, _>(
-            prior_group_profiles,
             OpeningClaims::from_groups(vec![
                 PolynomialGroupClaims::new(
                     pre_point.clone(),

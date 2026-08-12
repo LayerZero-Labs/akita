@@ -20,7 +20,7 @@ use akita_types::{
 };
 use akita_types::{
     AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PriorGroupProfiles,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -36,17 +36,6 @@ const ONEHOT_D: usize = OneHotCfg::D;
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 
-fn independent_profile<C: CommitmentConfig>(
-    group: akita_types::PolynomialGroupLayout,
-) -> akita_types::CommittedGroupProfile {
-    C::select_schedule_for_opening(
-        &OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())
-            .expect("opening layout"),
-    )
-    .expect("independent schedule")
-    .profiles()
-    .final_group
-}
 type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
@@ -65,7 +54,6 @@ mod onehot;
 mod single;
 
 fn selected_prover_data<'a, C, P>(
-    prior_group_profiles: PriorGroupProfiles,
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
     hints: Vec<AkitaCommitmentHint<C::Field>>,
     polynomials: Vec<&'a [&'a P]>,
@@ -74,12 +62,7 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<C>(
-        prior_group_profiles,
-        claims,
-        hints,
-        polynomials,
-    )
+    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials)
 }
 
 fn selected_statement<'a, C>(
@@ -126,13 +109,8 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    selected_prover_data::<Cfg, _>(
-        PriorGroupProfiles::default(),
-        opening_claims,
-        vec![hint],
-        vec![polynomials],
-    )
-    .expect("valid prover opening data")
+    selected_prover_data::<Cfg, _>(opening_claims, vec![hint], vec![polynomials])
+        .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a>(

@@ -187,16 +187,17 @@ jobs:
           shared-key: ci-test-all-schedules-drift
           add-job-id-key: false
           cache-on-failure: true
-      - name: Committed catalog coverage guard
+      - name: Committed catalog guards
+        # Runs the whole file rather than named filters, so a new guard is
+        # covered the moment it is written. `every_grouped_prior_descriptor_has
+        # _a_generated_producer` is the only check that a grouped row's frozen
+        # prior descriptor is reachable through `profile_without_prior_groups`.
         run: |
-          cargo test --release -p akita-config --features all-schedules generated_catalogs_cover_emitted_keys
+          cargo test --release -p akita-config --features all-schedules --test generated_tables
       - name: Generate schedule tables
         run: scripts/generate-schedule-tables.sh
       - name: Committed schedule tables match the generator
         run: git diff --exit-code -- crates/akita-schedules/src/generated
-      - name: Drift guard (all-schedules)
-        run: |
-          cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_key_planner
       - name: Recursive setup-prefix slots
         run: |
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests

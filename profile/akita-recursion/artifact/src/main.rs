@@ -326,7 +326,6 @@ fn run() -> Result<(), String> {
         PolynomialGroupClaims::new(opening_point.clone(), openings.to_vec(), commitment.clone())
             .map_err(|err| format!("invalid prover opening group: {err}"))?;
     let prove_input = SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        PriorGroupProfiles::default(),
         OpeningClaims::from_groups(vec![prove_group])
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         vec![hint],

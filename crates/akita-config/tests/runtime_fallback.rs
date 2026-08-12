@@ -14,24 +14,13 @@
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
-use akita_schedules::resolve_schedule;
 use akita_schedules::{
     resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
     PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, OpeningClaimsLayout,
-    PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
 };
-
-fn independent_profile<Cfg: CommitmentConfig>(
-    group: PolynomialGroupLayout,
-) -> Result<CommittedGroupProfile, akita_field::AkitaError> {
-    let layout = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-    Ok(Cfg::select_schedule_for_opening(&layout)?
-        .profiles()
-        .final_group)
-}
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
 /// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
@@ -306,7 +295,7 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 )))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
-    let descriptor = independent_profile::<fp128::OneHot>(precommitted_group)
+    let descriptor = fp128::OneHot::profile_without_prior_groups(precommitted_group)
         .expect("base OneHot precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
@@ -356,9 +345,14 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
     let reject = |mutate: fn(&mut PlannerPolicy)| {
         let mut policy = policy_of::<Cfg>();
         mutate(&mut policy);
-        resolve_schedule(key, &policy, Cfg::ring_challenge_config, catalog)
-            .expect_err("malformed extension geometry must reject")
-            .to_string()
+        select_generated_schedule_row(
+            &AkitaScheduleLookupKey::single(key),
+            &policy,
+            Cfg::ring_challenge_config,
+            catalog,
+        )
+        .expect_err("malformed extension geometry must reject")
+        .to_string()
     };
 
     assert!(reject(|policy| policy.claim_ext_degree = 0).contains("nonzero power of two"));
@@ -389,7 +383,8 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
     const FINAL_NV: usize = 20;
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
-    let pre_profile = independent_profile::<Cfg>(pre_group).expect("dense precommit profile");
+    let pre_profile =
+        Cfg::profile_without_prior_groups(pre_group).expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
         prior_group_profiles: vec![pre_profile],
@@ -456,7 +451,7 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
-    independent_profile::<Cfg>(group).expect("heterogeneous group must resolve")
+    Cfg::profile_without_prior_groups(group).expect("heterogeneous group must resolve")
 }
 
 #[test]

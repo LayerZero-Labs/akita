@@ -40,10 +40,20 @@ pub enum PriorGroupContext<'a> {
     WithPriorGroups(&'a PriorGroupProfiles),
 }
 
+impl PriorGroupContext<'_> {
+    /// Borrow the ordered prior profiles, empty when there are none.
+    fn as_slice(&self) -> &[CommittedGroupProfile] {
+        match self {
+            Self::NoPriorGroups => &[],
+            Self::WithPriorGroups(profiles) => profiles.as_slice(),
+        }
+    }
+}
+
 /// Authority for the current group's commitment parameters.
 #[derive(Debug, Clone, Copy)]
 pub enum GroupParameterSource<'a> {
-    /// Select an existing S or G row from the configured generated catalog.
+    /// Select an existing scalar or grouped row from the generated catalog.
     Scheduler,
     /// Use caller-supplied root parameters without catalog selection.
     Explicit(&'a CommittedGroupParams),
@@ -57,7 +67,7 @@ pub struct GroupContext<'a> {
 }
 
 impl<'a> GroupContext<'a> {
-    /// Select the scalar S row for a group with no prior groups.
+    /// Select the scalar row, the generated row for a group with no prior groups.
     #[must_use]
     pub const fn scheduler_without_prior_groups() -> Self {
         Self {
@@ -66,15 +76,13 @@ impl<'a> GroupContext<'a> {
         }
     }
 
-    /// Select the grouped G row for a group after exact ordered prior profiles.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `prior_group_profiles` is empty.
-    pub fn scheduler_with_prior_groups(
-        prior_group_profiles: &'a PriorGroupProfiles,
-    ) -> Result<Self, AkitaError> {
-        Self::with_prior_groups(prior_group_profiles, GroupParameterSource::Scheduler)
+    /// Select the grouped row keyed on these exact ordered prior profiles.
+    #[must_use]
+    pub const fn scheduler_with_prior_groups(prior_group_profiles: &'a PriorGroupProfiles) -> Self {
+        Self {
+            prior_groups: PriorGroupContext::WithPriorGroups(prior_group_profiles),
+            parameter_source: GroupParameterSource::Scheduler,
+        }
     }
 
     /// Use explicit scalar root parameters for a group with no prior groups.
@@ -87,30 +95,15 @@ impl<'a> GroupContext<'a> {
     }
 
     /// Use explicit grouped root parameters after exact ordered prior profiles.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `prior_group_profiles` is empty.
-    pub fn explicit_with_prior_groups(
+    #[must_use]
+    pub const fn explicit_with_prior_groups(
         prior_group_profiles: &'a PriorGroupProfiles,
         params: &'a CommittedGroupParams,
-    ) -> Result<Self, AkitaError> {
-        Self::with_prior_groups(prior_group_profiles, GroupParameterSource::Explicit(params))
-    }
-
-    fn with_prior_groups(
-        prior_group_profiles: &'a PriorGroupProfiles,
-        parameter_source: GroupParameterSource<'a>,
-    ) -> Result<Self, AkitaError> {
-        if prior_group_profiles.as_slice().is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "group context requires at least one prior group profile".to_string(),
-            ));
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             prior_groups: PriorGroupContext::WithPriorGroups(prior_group_profiles),
-            parameter_source,
-        })
+            parameter_source: GroupParameterSource::Explicit(params),
+        }
     }
 }
 
@@ -159,38 +152,6 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
     }
 }
 
-fn commit_only_setup_field_elements(geometry: CommitmentGeometry<'_>) -> Result<usize, AkitaError> {
-    let matrix_fields = |role: &str, output_rank: usize, input_width: usize, ring_d: usize| {
-        output_rank
-            .checked_mul(input_width)
-            .and_then(|elements| elements.checked_mul(ring_d))
-            .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} setup footprint overflow")))
-    };
-    let a_fields = matrix_fields(
-        "A",
-        geometry.inner_matrix.output_rank(),
-        geometry.inner_matrix.input_width(),
-        geometry.inner_matrix.ring_dimension(),
-    )?;
-    let b_fields = matrix_fields(
-        "B",
-        geometry.outer_matrix.output_rank(),
-        geometry.outer_matrix.input_width(),
-        geometry.outer_matrix.ring_dimension(),
-    )?;
-    let b_output_coefficients = geometry
-        .outer_matrix
-        .output_rank()
-        .checked_mul(geometry.outer_matrix.ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("B output width overflow".to_string()))?;
-    let compression_fields = CompressionChainPlan::for_complete_source(
-        geometry.outer_matrix.sis_table_key().modulus_profile,
-        b_output_coefficients,
-    )?
-    .max_setup_field_elements()?;
-    Ok(a_fields.max(b_fields).max(compression_fields))
-}
-
 fn validate_commitment_geometry<F>(
     geometry: CommitmentGeometry<'_>,
     setup: &AkitaExpandedSetup<F>,
@@ -237,7 +198,10 @@ where
         )));
     }
 
-    let required = commit_only_setup_field_elements(geometry)?;
+    let required = akita_types::commit_only_setup_field_elements(
+        geometry.inner_matrix,
+        geometry.outer_matrix,
+    )?;
     let available = setup.shared_matrix.num_field_elements();
     if required > available {
         return Err(AkitaError::InvalidSetup(format!(
@@ -601,54 +565,40 @@ where
     let opening_layout = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let group_layout = opening_layout.root_final_group_layout()?;
 
-    let scheduled_params;
+    let scheduled_row;
     let (params, profile): (&CommittedGroupParams, CommittedGroupProfile) =
-        match (context.prior_groups, context.parameter_source) {
-            (PriorGroupContext::NoPriorGroups, GroupParameterSource::Scheduler) => {
-                let row = Cfg::select_schedule_for_opening(&opening_layout)?;
-                let params = &row.schedule().root.params.final_group.commitment;
-                validate_commit_level_params::<Cfg::Field>(params, expanded)?;
-                let row_profile = row.profiles().final_group;
-                if row_profile.group != group_layout
-                    || row_profile != CommittedGroupProfile::from_params(group_layout, params)
-                {
-                    return Err(AkitaError::InvalidSetup(
-                        "scalar S row profile does not match its layout and root parameters"
-                            .to_string(),
-                    ));
-                }
-                scheduled_params = row.into_schedule().root.params.final_group.commitment;
-                (&scheduled_params, row_profile)
-            }
-            (
-                PriorGroupContext::WithPriorGroups(prior_group_profiles),
-                GroupParameterSource::Scheduler,
-            ) => {
-                let key = AkitaScheduleLookupKey {
-                    final_group: group_layout,
-                    prior_group_profiles: prior_group_profiles.as_slice().to_vec(),
-                };
-                let row = Cfg::select_schedule_for_key(&key)?;
+        if let GroupParameterSource::Explicit(params) = context.parameter_source {
+            let profile = validate_explicit_context::<Cfg::Field>(
+                group_layout,
+                context.prior_groups,
+                params,
+                expanded,
+            )?;
+            (params, profile)
+        } else {
+            let key = AkitaScheduleLookupKey {
+                final_group: group_layout,
+                prior_group_profiles: context.prior_groups.as_slice().to_vec(),
+            };
+            scheduled_row = Cfg::select_schedule_for_key(&key)?;
+
+            // A group with prior groups is the final group of the batch this
+            // row opens, so the setup must carry the row's whole schedule. A
+            // group without prior groups may instead be opened later under a
+            // grouped row, so it is admitted on its own A/B footprint alone.
+            if matches!(context.prior_groups, PriorGroupContext::WithPriorGroups(_)) {
                 ensure_prover_schedule_fits_setup::<Cfg>(
                     expanded,
-                    row.schedule(),
+                    scheduled_row.schedule(),
                     &key.opening_layout()?,
                 )?;
-                let params = &row.schedule().root.params.final_group.commitment;
-                validate_commit_level_params::<Cfg::Field>(params, expanded)?;
-                let row_profile = row.profiles().final_group;
-                scheduled_params = row.into_schedule().root.params.final_group.commitment;
-                (&scheduled_params, row_profile)
             }
-            (prior_groups, GroupParameterSource::Explicit(params)) => {
-                let profile = validate_explicit_context::<Cfg::Field>(
-                    group_layout,
-                    prior_groups,
-                    params,
-                    expanded,
-                )?;
-                (params, profile)
-            }
+
+            // `audit_resolved_schedule` already proved this row's profile
+            // agrees with its parameters, so no re-derivation happens here.
+            let params = &scheduled_row.schedule().root.params.final_group.commitment;
+            validate_commit_level_params::<Cfg::Field>(params, expanded)?;
+            (params, scheduled_row.profiles().final_group)
         };
 
     let geometry: CommitmentGeometry<'_> = params.into();

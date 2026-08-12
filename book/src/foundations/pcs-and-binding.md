@@ -15,7 +15,7 @@ rewinding access).
 **Sources to fold in**
 
 - Paper §2.6 `def:pcs`.
-- `crates/akita-types/src/proof/scheme.rs`, `crates/akita-prover/src/api/scheme.rs`.
+- `crates/akita-types/src/proof/scheme.rs`, `crates/akita-prover/src/api/commitment.rs`.
 
 ## The two-tier Ajtai commitment
 
