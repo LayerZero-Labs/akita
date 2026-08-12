@@ -1,64 +1,168 @@
 # Spec: Selective L2 Fold Security Sizing
 
-| Field         | Value |
-|---------------|-------|
-| Author(s)     | Quang Dao |
-| Created       | 2026-08-06 |
-| Status        | active |
-| PR            | [#369](https://github.com/LayerZero-Labs/akita/pull/369) |
-| Supersedes    | The physical A role embedding factor in `archive/2026-Q3/weak-binding-norm-fix.md` |
+| Field | Value |
+|---|---|
+| Author(s) | Quang Dao |
+| Created | 2026-08-06 |
+| Revised | 2026-08-12 |
+| Status | active |
+| PR | [#369](https://github.com/LayerZero-Labs/akita/pull/369) |
+| Supersedes | The physical A role embedding factor in `archive/2026-Q3/weak-binding-norm-fix.md` |
 | Superseded-by | |
-| Book-chapter  | book/src/how/security.md |
+| Book-chapter | book/src/how/security.md |
 
-## Summary
+## Purpose
 
-Akita currently sizes every committed A matrix from a coefficient L infinity
-bound on the folded response. This remains the default. This change adds a
-second candidate for selected later folds. That candidate proves a bound on the
-squared L2 norm of the physical folded response and sizes only that level's A
-matrix with the quantum ADPS16 Euclidean SIS table. A level that has no L2 proof
-continues to use the current L infinity table.
+This specification explains how Akita sizes the A matrix for a folded
+response. It covers two security routes:
 
-This change also removes an unrelated factor of two from physical A role
-security sizing in the small field profiles. The folding challenge and folded
-response are already expressed as physical ring coefficients when the weak
-binding argument uses them. Applying the Hachi logical to ring conversion at
-that point converts neither value. It counts a conversion that has already
-happened.
+1. A coefficient bound, written Linf.
+2. A bound on the sum of squared physical coefficients, written L2.
 
-The purpose of the selective L2 route is to reduce the A rank at later folds
-when the folded response has low total energy. Lowering A rank also shrinks the
-T witness that the next fold must carry. The planner must therefore compare
-complete suffixes, including any change in the number of folds, rather than
-compare one level in isolation.
+The planner treats these as separate candidates. A selected Linf route proves
+only the existing digit range statement. A selected L2 route also proves, or
+directly checks at the terminal boundary, a public squared norm cap. The
+verifier derives the selected route from the schedule. The prover cannot choose
+the route after seeing the witness.
 
-## Intent
+The specification also explains the planner model that predicts honest
+responses. That model affects completeness, proof size, and prover work. It is
+not a premise of the binding proof. The distinction is important:
 
-### Goal
+* The verifier-enforced cap and the SIS table determine soundness.
+* The response model predicts whether an honest prover will satisfy that cap.
+* Measurements test whether the prediction is useful in supported profiles.
 
-Add a sound optional L2 security route for selected nonterminal folds while
-keeping the current L infinity route available at every fold.
+This document is both an implementation contract for PR 369 and a design
+record for readers who need to understand this part of Akita without reading
+the full planner and proof implementation first.
 
-### Per level rule
+## Result in one page
 
-The planner constructs distinct candidates. It does not attach an L2 claim to
-every level and it does not choose a norm after the proof has been produced.
+Akita keeps the Linf route at every committed fold. It may add an L2 candidate
+at fold level 3 or later when all of these conditions hold:
 
-| Candidate | Proof obligation | A role security table |
-|-----------|------------------|-----------------------|
-| L infinity | Existing digit range proof | Quantum ADPS16 coefficient L infinity table |
-| L2 | Existing digit range proof and the new physical norm proof | Quantum ADPS16 Euclidean table |
+* The fold has one opening claim.
+* The response has one physical chunk.
+* The response basis is at least 8.
+* The typed response model produces a finite public cap.
+* The physical norm proof shape is valid.
+* The Euclidean SIS table contains the required cell.
+* The L2 route lowers the A matrix rank.
 
-Every planner state has an L infinity candidate. An L2 candidate exists only
-when the planner policy supplies a public squared norm cap for that candidate.
-If the planner selects the L infinity candidate, the proof contains no L2
-claim and pays no L2 proof cost.
+The terminal response may also use L2. Its coefficients are already public, so
+the verifier computes their exact integer squared norm directly. No recursive
+norm proof is needed at that boundary.
 
-The terminal response has no Stage 1 proof. This change does not add an L2
-route to the terminal response. A direct check on the clear terminal witness is
-a separate change.
+For a response cap `S_max` and a challenge multiplication bound `gamma`, the L2
+route prices the extracted collision with
 
-### Coordinate system
+```text
+C_2_sq = 64 * gamma^2 * S_max.
+```
+
+For D64 and D128 selective L2 challenges, `gamma` is a verifier-enforced
+operator norm threshold. Other supported dimensions use the deterministic
+challenge L1 norm. The coefficient route remains
+
+```text
+C_inf = 8 * kappa_1 * Z_inf.
+```
+
+Here `kappa_1` is the physical challenge L1 bound and `Z_inf` is the maximum
+physical response coefficient admitted by the scheduled digit depth.
+
+Both formulas act on the same physical A response. Neither formula applies a
+Hachi logical-to-physical embedding factor at this boundary. The Euclidean
+estimator also receives the complete collision length once. It does not
+multiply that length by the A matrix width a second time.
+
+The planner carries two source statistics through recursive folds:
+
+```text
+M = estimated total source squared L2 norm
+P = estimated largest coordinate second moment
+```
+
+It uses `M` for L2 response caps. It uses both `M` and `P` for a tighter Linf
+digit depth. The model follows the actual Z, E, T, R, compression, tensor, and
+setup-prefix components of `WitnessLayout`.
+
+The current calibration uses
+
+```text
+L2 cap = ceil(M * q_c * 1.03 * 1.06),
+```
+
+where `q_c` is the challenge squared L2 norm. The `1.03` factor covers measured
+source-model error. The `1.06` factor gives a distribution-free Markov lower
+bound on per-nonce acceptance, conditional on the source envelope being valid.
+
+Fresh end-to-end validation covers 14 production profiles and 52 selected L2
+responses. It includes dense and one-hot witnesses over fp32, fp64, and fp128,
+plus direct, recursive-setup, multi-group, and W2, W4, and W8 multi-chunk
+adapters. Observed L2 cap slack was 6.8998 to 18.1761 percent. Every proof
+passed both verifier modes.
+
+## Scope
+
+### Included protocol changes
+
+This specification covers the following changes.
+
+* Per-fold Linf and L2 A matrix security routes.
+* Removal of the physical A role Hachi norm double count.
+* A separate quantum ADPS16 Euclidean SIS table.
+* Certified D64 and D128 operator norm challenge rejection.
+* A hidden recursive proof of the complete physical response norm.
+* A direct terminal check of the clear physical response norm.
+* Typed recursive response models for L2 caps and Linf digit depth.
+* Complete-suffix planner selection and generated schedule audit.
+* Exact proof-size and response-bound reporting.
+
+### Supported families
+
+The typed response model is enabled for every generated scalar family in this
+PR. This includes dense and one-hot fp32, fp64, and fp128 profiles, recursive
+setup, multi-group, and multi-chunk adapters. A multi-chunk schedule can select
+L2 after its recursive state has become a single physical chunk. An individual
+L2 candidate never spans multiple chunks.
+
+The independent Euclidean table covers the three production modulus profiles
+and ring dimensions D32, D64, D128, D256, and D512. A geometry outside that
+table, including a future D1024 L2 geometry, has no L2 table row and therefore
+uses Linf until the audited Euclidean table is extended.
+
+### Bundled performance work
+
+The PR also contains stacked implementation work that makes the larger profile
+matrix practical. This includes ring-switch output reuse, faster one-hot and
+dense decomposition, sparse fold work, verifier selector optimization, and
+profile-report cleanup. Reviewers should inspect those changes, but none is a
+premise of the security argument in this specification.
+
+### Not included
+
+This change does not do the following.
+
+* It does not replace Linf with L2 globally.
+* It does not select L2 before fold level 3.
+* It does not remove the digit range proof from an L2 route.
+* It does not use a Gaussian response assumption for soundness.
+* It does not use an uncertified operator norm threshold.
+* It does not add operator norm rejection outside D64 and D128.
+* It does not force a particular rank or number of folds.
+* It does not add four-square slack, carry witnesses, or a field inequality
+  proof.
+* It does not symmetrize accepted challenges with an extra transcript draw.
+* It does not reject and resample setup seeds from a planner envelope.
+
+The last item remains a possible future completeness improvement. A verifier
+could reproduce exact digit-plane or cyclic peak statistics from a public
+setup seed and reject seeds outside a frozen envelope. This PR does not need
+that mechanism for soundness or for its measured completeness target.
+
+## Terms and coordinate system
 
 Let
 
@@ -66,694 +170,1080 @@ Let
 R = Z[X] / (X^D + 1)
 ```
 
-with centered integer coefficients. All security bounds in this spec use the
-physical coefficient vector obtained by flattening every ring row, chunk, and
-coefficient position in the A role response.
+with centered integer coefficients. The A matrix is a module matrix over this
+negacyclic ring.
 
-For one raw fold challenge and response, define
+The following terms have precise meanings in this document.
+
+| Term | Meaning |
+|---|---|
+| Physical coefficient | One centered base-field ring coefficient after all extension-field packing. |
+| Physical response | The complete coefficient vector consumed by the selected A matrix. |
+| Logical value | A value before extension-field coordinates are packed into physical ring coefficients. |
+| Response basis | The power-of-two basis used to decompose the folded response into Z digit planes. |
+| Source witness | The committed witness entering one fold. |
+| Folded response | The challenge-weighted sum produced by that fold. |
+| Recursive witness | The typed Z, E, T, R, compression, and related segments committed for the next fold. |
+
+For one fold, define
 
 ```text
-kappa_1 = maximum physical coefficient L1 norm of c
-Z_inf   = accepted physical coefficient L infinity bound on z
-S       = accepted complete physical squared L2 norm of z
+kappa_1 = maximum physical coefficient L1 norm of a challenge
+gamma   = accepted L2-to-L2 multiplication-operator bound for a challenge
+Z_inf   = accepted maximum physical coefficient magnitude of the response
+S       = accepted sum of squared physical response coefficients
 ```
 
-The complete norm is
+The complete squared norm is
 
 ```text
-S = sum over every physical A response coefficient of z_i^2.
+S = sum_i z_i^2,
 ```
 
-It is not a per row norm and it is not a per matrix column norm.
+where the index covers every physical A response coefficient exactly once. It
+is not a per-row norm, a per-chunk norm, or a matrix-column average.
 
-The sparse challenge type already represents a polynomial in the physical
-base field ring. Its `l1_norm()` already counts physical ring coefficients.
-The folded response is centered and decomposed into the physical Z digit
-planes before Stage 1 checks those planes.
+The `SparseChallenge` is already a physical polynomial in the base-field ring.
+Its `l1_norm()` counts physical coefficients. The prover also stores the folded
+response as centered physical coefficients before it decomposes those values
+into Z digit planes.
 
-### Security invariants
+## What is rigorous and what is modeled
 
-1. A level without an L2 proof must use L infinity A role sizing.
-2. An L2 candidate must bind its public norm cap into the schedule and proof
-   shape.
-3. The verifier must prove the norm of the same physical Z coefficients that
-   the A role Module SIS reduction uses.
-4. The planner, prover, verifier, schedule audit, and proof size code must use
-   one shared definition of the physical response domain.
-5. The physical A role collision formula must not apply a Hachi embedding
-   factor.
-6. The Euclidean SIS estimator must receive the norm of the complete scalar
-   collision vector exactly once.
-7. The existing digit range proof remains present on an L2 candidate.
-8. A proof must not move between L infinity and L2 schedules through a shape or
-   transcript ambiguity.
-9. Verifier reachable code must reject malformed norm claims and shapes with
-   `AkitaError` or `SerializationError`. It must not panic.
+The design uses several kinds of reasoning. They should not be conflated.
 
-### Non goals
+| Claim | Status | Consequence if wrong |
+|---|---|---|
+| Extracted collision formulas from accepted bounds | Rigorous, subject to the Akita weak-binding reduction | Security failure if implemented incorrectly |
+| Physical response mapping | Exact protocol definition | Security or correctness failure if inconsistent |
+| Direct and LimbGram integer reconstruction | Exact after public no-wrap checks | Soundness failure if implemented incorrectly |
+| D64 and D128 accepted-support certificates | Exact finite-family certificate with checked artifacts | Challenge entropy failure if incorrect |
+| Euclidean and Linf SIS tables | Audited concrete-security estimates under the chosen lattice cost model | Security estimate changes if the model changes |
+| One-hot root MGF cap | Analytic tail bound with directed floating-point inflation and a universal dominance guard | Honest rejection rate may increase if incorrect |
+| Universal balanced-source Linf cap | Tail bound from public source bounds and random challenge signs | Honest rejection rate may increase if incorrect |
+| Typed source moments | Component model plus empirical error envelope | Honest L2 or Linf grinding may take longer or exhaust |
+| Rounded-normal Z digit moments | Conditional approximation | Honest grinding or later schedule choices may be worse |
+| Typed Linf sub-Gaussian proxy | Planner heuristic, capped by the universal digit depth | Honest Linf grinding may take longer or exhaust |
+| Measured challenge covariance | Empirical validation, not a proof of exact symmetry | Source model may have more error than measured |
 
-This change does not add the following features.
+Only the first five rows are part of the verifier security contract. The
+remaining rows guide offline planning. The verifier never evaluates them.
 
-* It does not replace L infinity sizing at every fold.
-* It does not add an L2 check to the root or early folds.
-* It does not use a Gaussian assumption as part of security.
-* It does not use an uncertified operator norm cap of 17.
-* It does not add operator norm rejection above D128 without a separate
-  accepted support certificate.
-* It does not force terminal rank three.
-* It does not remove the digit range proof.
-* It does not add zero knowledge machinery, four square slack, carry witnesses,
-  or an inequality proof inside the field.
+## Security contract
 
-## Security argument
+### Extracted A collision
 
-### The extracted A collision
+The weak-binding extractor compares two accepted openings. If each challenge
+has physical L1 norm at most `kappa_1`, their difference has L1 norm at most
+`2 * kappa_1`. If each response has Linf norm at most `Z_inf`, their difference
+has Linf norm at most `2 * Z_inf`.
 
-The weak binding extractor compares two accepted openings. A raw challenge in
-either opening has physical L1 norm at most `kappa_1`. Their difference has L1
-norm at most `2 * kappa_1`.
+For an L2 route, let multiplication by each accepted challenge have operator
+norm at most `gamma`. The difference of two accepted challenge operators then
+has norm at most `2 * gamma`. If each response has squared L2 norm at most `S`,
+their difference has L2 norm at most `2 * sqrt(S)`.
 
-Likewise, if each raw response has physical L infinity norm at most `Z_inf`, a
-response difference has L infinity norm at most `2 * Z_inf`. If each raw
-response has squared L2 norm at most `S`, a response difference has L2 norm at
-most `2 * sqrt(S)`.
-
-Clearing the two weak opening denominators produces two negacyclic products.
-For physical ring coefficient vectors, Young's convolution inequalities give
+For physical negacyclic ring coefficients, Young's inequalities give
 
 ```text
 ||a * b||_inf <= ||a||_1 * ||b||_inf
-||a * b||_2   <= ||a||_1 * ||b||_2.
+||a * b||_2   <= ||M_a||_(2 to 2) * ||b||_2,
 ```
 
-Each product has one challenge difference and one response difference. The
-sum has two products. This gives the complete raw radius bounds
+where `M_a` is negacyclic multiplication by `a`. Clearing the two weak-opening
+denominators adds two products. The three factors of two come from:
+
+1. Taking the difference of two challenges.
+2. Taking the difference of two responses.
+3. Adding the two denominator-clearing products.
+
+The complete bounds are therefore
 
 ```text
-C_inf     = 8 * kappa_1 * Z_inf
-C_2_sq    = 64 * kappa_1^2 * S.
+C_inf  = 8 * kappa_1 * Z_inf
+C_2_sq = 64 * gamma^2 * S.
 ```
 
-The three factors of two have separate sources. One comes from the challenge
-difference. One comes from the response difference. One comes from adding the
-two products that clear the two weak opening denominators.
+When no certified operator norm policy exists, Akita sets
+`gamma = kappa_1`. This recovers the L1-to-L2 convolution bound. At D64 and
+D128, the selective L2 challenge sampler enforces a smaller certified `gamma`.
 
-The L infinity candidate rounds `C_inf` upward in the quantum ADPS16
-coefficient L infinity table. The L2 candidate rounds `C_2_sq` upward in the
-quantum ADPS16 Euclidean table.
+The selected route determines the table and the proof obligation. The planner
+may compare ranks from both routes, but one accepted schedule needs only its
+selected sound route.
 
-Both formulas describe the same extracted A kernel vector. A selected schedule
-needs one sound route. The planner may compare the ranks returned by the two
-routes, but the selected route determines the proof obligation and table used
-by the verifier's schedule audit.
+### Linf response admission
 
-### Why the Hachi factor is double counted today
+At a nonterminal Linf fold, the schedule stores a response digit depth. Stage 1
+proves that every Z digit lies in the scheduled balanced alphabet. The verifier
+therefore accepts every recomposed coefficient in the full range represented
+by that depth. A role security uses this representable range, not the smaller
+honest-prover cap that the planner used to choose the depth.
 
-The Hachi map `psi` packs logical extension field coordinates into a physical
-base field ring. A norm conversion factor is needed only for an argument that
-starts with a bound on the logical coordinates and then derives a bound on the
-packed ring coefficients.
+At the terminal boundary, the response is clear. The schedule stores a raw
+coefficient admission cap for codec and completeness sizing. The verifier
+decodes every centered coefficient and checks that cap directly.
 
-The current committed fold security path starts from physical values.
+An error in the planner's Linf response prediction can reject an honest proof.
+It cannot make the verifier accept a coefficient outside the range priced by
+the A matrix.
 
-First, the fold challenge `c` is sampled as a `SparseChallenge`. It is already
-a physical polynomial in the base field ring. Its L1 norm counts the nonzero
-physical coefficients and their magnitudes. There is no extension field
-challenge left to pack.
+### L2 response admission
 
-Second, the folded response `z` is stored as centered physical ring
-coefficients in `z_folded_centered_per_chunk`. The prover decomposes those same
-coefficients into the Z digit planes. Stage 1 checks the digit alphabet, and
-the verifier's accepted `Z_inf` is the integer envelope obtained by
-recomposing those physical digits.
-
-Third, the A role Module SIS kernel vector uses the same physical ring
-coordinates. The weak binding product inequalities act directly on the
-physical challenge and physical response.
-
-The current `ring_subfield_norm_bound` multiplication inside A role collision
-sizing therefore has no input to convert. For fp32 and fp64 it changes
+An L2 schedule stores `S_max`. The recursive verifier proves the exact physical
+square sum, or the terminal verifier computes it directly, and then checks
 
 ```text
-8 * kappa_1 * Z_inf
+S <= S_max.
 ```
 
-into
+The schedule audit recomputes
 
 ```text
-8 * kappa_1 * 2 * Z_inf.
+C_2_sq = 64 * gamma^2 * S_max
 ```
 
-That second expression treats `Z_inf` as if it were still a logical norm before
-`psi`. It is not. Stage 1 already bounds the packed coefficients. The factor of
-two is therefore counted after the conversion it was meant to cover.
+and checks the selected A rank against the generated Euclidean table. The
+planner response model is absent from this audit.
 
-This conclusion does not say that `psi` has no norm cost. A completeness or
-honest sizing argument may begin with a logical extension field source. Such an
-argument must apply the relevant logical to physical conversion once before it
-chooses a physical digit depth or physical response cap. Once the argument has
-reached `z_folded_centered_per_chunk` or the reconstructed Z digit planes, it
-must not apply that conversion again.
+An error in the planner's L2 prediction can make nonce search fail. It cannot
+make the verifier accept a response above `S_max`.
 
-The Hachi trace identity used for extension opening checks does not change this
-conclusion. That identity connects a logical opening claim to a ring trace. It
-does not rescale the physical A kernel vector produced by weak binding.
+### No Hachi factor at the physical boundary
 
-### The separate Euclidean width double count
+The Hachi map `psi` packs logical extension-field coordinates into physical
+base-field ring coefficients. A logical-to-physical norm factor belongs only
+in an argument that starts before this packing step.
 
-The Euclidean estimator uses the scalar SIS dimensions
+The A role weak-binding path starts after packing:
+
+1. The challenge is a physical sparse base-ring polynomial.
+2. The response is a centered physical base-ring vector.
+3. Stage 1 constrains the physical Z digits.
+4. The A role kernel vector uses those same physical coordinates.
+
+Applying `ring_subfield_norm_bound` here counts a conversion that has already
+happened. The old fp32 and fp64 path priced
 
 ```text
-n = rank * D
-m = width * D.
+8 * kappa_1 * 2 * Z_inf
 ```
 
-For the L2 route, `C_2_sq` bounds the complete scalar collision vector across
-all `width` input ring rows. The estimator must therefore use
+instead of
+
+```text
+8 * kappa_1 * Z_inf.
+```
+
+This PR removes that extra factor from physical A role sizing. Other code that
+starts from a logical extension-field norm must still apply the appropriate
+conversion once.
+
+### No Euclidean width factor in the length
+
+For A matrix rank `r`, ring dimension `D`, and input width `w`, the scalar SIS
+dimensions are
+
+```text
+n = r * D
+m = w * D.
+```
+
+`C_2_sq` already sums the collision over all `w * D` scalar input
+coefficients. The Euclidean estimator must use
 
 ```text
 length_bound = sqrt(C_2_sq).
 ```
 
-Using
+Using `sqrt(w * C_2_sq)` counts the input rows twice. The width remains in `m`,
+where it belongs.
+
+### Route identity and no-panic rule
+
+Every committed level has one typed security route:
 
 ```text
-length_bound = sqrt(width * C_2_sq)
-```
+InnerCommitSecurityRoute::Linf(SisTableKey)
 
-counts the rows twice. Their coefficients already appear in the sum that
-defines `S` and hence in `C_2_sq`. The scalar column count `m` records the width
-again for the lattice dimension, which is correct. It must not also enlarge the
-norm.
-
-### Security versus honest acceptance
-
-The scheduled cap is a public acceptance condition. Security does not require
-the honest folded witness to follow a Gaussian distribution. If the verifier
-accepts only responses with `S <= S_max`, then the L2 collision formula holds
-for every accepted proof.
-
-The response distribution affects completeness and prover cost. It determines
-how often the prover can find an allowed Fiat Shamir nonce whose response lies
-below `S_max`. The planner uses typed source moments and a separate model error
-envelope. Held out end to end measurements test that envelope and the final cap
-slack. Neither the model nor those measurements are assumptions in the binding
-proof.
-
-## Protocol design
-
-### Schedule representation
-
-The schedule needs one explicit A role security route for each committed
-level. The canonical type should have the following meaning.
-
-```text
-InnerCommitSecurityRoute::Linf
 InnerCommitSecurityRoute::L2 {
+    table_key,
     response_l2_sq_cap,
-    norm_subclaim_shape,
+    norm_proof_shape,
 }
 ```
 
-The exact Rust field names may change during implementation, but there must be
-one canonical route value. A collection of independent booleans is not
-acceptable because it permits impossible states.
+The route, cap, physical response length, proof shape, and table key are part of
+schedule identity and descriptor bytes. The proof stream stays headerless. The
+schedule tells the decoder exactly which values to read.
 
-The route and all L2 shape data are part of schedule identity, descriptor
-bytes, proof shape derivation, serialization context, and schedule audit. The
-proof stream remains headerless. The schedule tells the decoder whether norm
-claims are present and how many values to read.
+Verifier-reachable code validates lengths, integer ranges, allocation sizes,
+and shape consistency before use. Malformed input returns `AkitaError` or
+`SerializationError`. It must not panic.
 
-### Candidate eligibility
+## Certified challenge selection
 
-The planner always emits an L infinity candidate. It may emit an L2 candidate
-only when a production profile enables the typed response model and the
-canonical derivation supplies `S_max` and the norm proof shape for that physical
-response domain.
+### Why an operator norm helps
 
-There is no global L2 cap and no hard coded rule that every level after a fixed
-index must use L2. Different field profiles and witness geometries reach useful
-energy ranges at different levels. Generated schedules record the exact levels
-and concrete caps that select L2.
+The deterministic convolution inequality uses `||c||_1`. For L2, the tighter
+quantity is the spectral norm of negacyclic multiplication by `c`. The
+mathematical value is
 
-The model starts at level 3. The planner discards a candidate if it does not
-lower the A rank or if its complete suffix is not smaller than an L infinity
-suffix. The existing bounded nonce limit remains unchanged.
+```text
+Gamma(c) = max_j |c(zeta_j)|,
+```
 
-### Prover acceptance
+over the appropriate complex roots of `X^D + 1`. Rejecting challenges with
+large `Gamma(c)` lowers `gamma` in `C_2_sq` without changing the response cap.
 
-An L infinity candidate uses the existing fold nonce rule.
+The prover and verifier replay the same bounded rejection sampler from the
+transcript. The predicate uses a fixed-point upper enclosure. A challenge is
+accepted only when that checked enclosure is below the runtime threshold.
 
-An L2 candidate uses the same bounded nonce space. For each nonce, the prover
-derives the fold challenge, computes the physical folded response, checks the
-existing digit admission condition, and checks `S <= S_max`. The prover accepts
-the first nonce that satisfies both conditions.
+### Production certified families
 
-The verifier checks that the nonce lies within the scheduled attempt bound. It
-does not trust the prover's search. It derives the selected challenge from the
-nonce, verifies the physical norm proof, and checks the reconstructed integer
-norm against `S_max`.
+| Ring | Signed sparse shell | Squared L2 mass `q_c` | Certified true threshold | Runtime strict threshold `gamma` | Certified accepted support |
+|---|---:|---:|---:|---:|---:|
+| D64 | 31 coefficients at magnitude 1 and 11 at magnitude 2 | 75 | 18 | 19 | 128.062439 bits |
+| D128 | 31 coefficients at magnitude 1 | 31 | 13 | 14 | 128.563317 bits |
 
-### Stage 1 norm claim
+The support proof certifies a subset under the smaller mathematical threshold.
+The runtime uses the larger strict threshold so that fixed-point enclosure
+cannot reject any challenge in that certified subset. Security pricing uses
+the runtime threshold, not the smaller certificate threshold.
 
-For an L2 candidate, Stage 1 receives the integer claim
+Each challenge draw has at least 128 bits of accepted support. The schedule and
+transcript bind the sparse shell and both thresholds. D64 and D128 have
+separate certificate checkers under `scripts/operator_norm/`.
+
+Other ring dimensions use their production sparse shell without operator norm
+rejection. For those dimensions, L2 security sets `gamma` to the shell L1 norm.
+
+### Why this PR does not add orbit symmetrization
+
+Negacyclic shifts and odd ring automorphisms preserve the mathematical
+operator norm. Sampling a random element of that orbit after acceptance would
+make the covariance exactly scalar if the added orbit draw were uniform.
+
+The fixed-point predicate might, in principle, break orbit invariance. This PR
+measured that risk before changing the transcript. Five million random orbit
+pairs at each of D64 and D128 produced no acceptance mismatch. Thirty-two
+complete orbits at each dimension produced no mixed accepted and rejected
+orbit. The measured covariance defect was about 0.07 percent before and after
+explicit orbit randomization.
+
+The result does not prove exact covariance. It shows that transcript
+symmetrization would add protocol machinery without a measurable improvement
+at the tested precision. The planner's 3 percent source envelope covers the
+measured defect. Soundness does not depend on covariance because the verifier
+enforces `gamma` for every accepted challenge.
+
+## Physical L2 proof
+
+### One physical response authority
+
+`PhysicalResponsePlan` derives the norm domain from `WitnessLayout` and the
+Stage 2 range-image plan. It maps every physical response coefficient to its Z
+digit planes exactly once. Padding addresses map to zero.
+
+The plan also checks
+
+```text
+physical_response_len = A input width * A ring dimension.
+```
+
+The constructor, schedule validation, prover, verifier, and proof-size code use
+the same equality. A layout cannot change the A width while retaining an old
+norm-proof length.
+
+The recursive L2 path currently applies to one scalar opening claim, one chunk,
+one committed group, and no precommitted group at that fold. These restrictions
+match the candidate eligibility rule.
+
+### Direct shape
+
+If the largest square sum allowed by the response digit ranges is strictly
+below the base-field modulus, Stage 1 proves
 
 ```text
 S = sum_x z(x)^2
 ```
 
-over the canonical physical A response domain. The domain contains every live Z
-coefficient exactly once and gives every padding address value zero.
+directly in the field. The public digit bounds make the field equality an
+integer equality because wraparound is impossible.
 
-The prover adds a degree two sumcheck term to the final Stage 1 substage. A
-fresh transcript challenge batches it with the existing digit range term. The
-range term remains equality factored. The norm term is an unweighted sum over
-the physical response domain. The combined round message therefore uses the
-general degree bound required by both terms.
+The prover cannot justify direct mode merely by reporting a small `S`. The
+schedule derives the worst-case no-wrap bound before proof generation.
 
-At the final Stage 1 point, the norm term reduces to the square of one virtual
-evaluation of physical `z`. Stage 2 proves that this virtual value is the
-balanced basis recomposition of the committed Z digit plane evaluations at the
-same physical point. The selector and basis powers come from `WitnessLayout`
-and the selected level parameters. The prover cannot substitute a logical
-prepacking response or omit a physical segment.
+### LimbGram shape for small fields
 
-For the direct large field case, the expected wire change is one additional
-extension field coefficient in each round of the final Stage 1 substage, plus
-the integer norm claim and any final virtual evaluation needed by Stage 2. The
-proof shape and proof size code must compute the exact count. No comment or
-planner estimate may substitute for the serialized shape.
-
-### Integer soundness in small fields
-
-A field equation proves only a congruence. It proves an integer square sum only
-when the public bounds rule out wraparound.
-
-If the schedule derived worst case physical square sum is below the base field
-modulus, the verifier may use one direct norm claim. A prover supplied claim
-below the modulus is not enough by itself. The worst case value allowed by the
-digit ranges must also be below the modulus.
-
-Otherwise, write each physical response coefficient as
+When direct integer soundness does not fit in the field, write each centered
+response coefficient in balanced base `B`:
 
 ```text
 z(x) = sum_j B^j * z_hat_j(x).
 ```
 
-Then
+For a public address block, define
 
 ```text
-S = sum_j B^(2j) * I_jj
-    + 2 * sum_{j < k} B^(j+k) * I_jk,
-
 I_jk = sum_x z_hat_j(x) * z_hat_k(x).
 ```
 
-The protocol partitions the physical address domain into public blocks. Each
-block is short enough that the digit alphabet gives an absolute bound below
-half the base field modulus for every `I_jk` subclaim. The verifier takes the
-unique centered integer lift of each field value and reconstructs `S` with
-checked integer arithmetic.
-
-The block partition and limb pair list are schedule derived proof shape data.
-The prover does not choose them. The verifier rejects an overflow, a missing
-subclaim, a duplicate pair, an invalid block, or a reconstructed negative
-square sum.
-
-This construction certifies equality to the physical square sum. It does not
-prove a field inequality and it does not use four square slack. The verifier
-performs the final integer comparison `S <= S_max` after reconstruction.
-
-### Stage 2 virtualization
-
-Stage 2 already binds the final Stage 1 range image to the committed digit
-witness. The L2 route adds one more virtual relation for the Z segments. It
-uses the same physical address authority and digit source.
-
-For each required virtual value, Stage 2 checks the linear recomposition
+The exact block square sum is
 
 ```text
-z(r) = sum_j B^j * z_hat_j(r)
+S_block = sum_j B^(2j) * I_jj
+        + 2 * sum_(j < k) B^(j+k) * I_jk.
 ```
 
-with the correct group, chunk, row, and coefficient selectors. The final norm
-claim uses `z(r)^2`. Small field limb subclaims use the corresponding pairs of
-digit plane evaluations.
+The schedule chooses a block length that makes every allowed `I_jk` lie
+strictly inside the centered interval `(-q/2, q/2)`. The verifier takes the
+unique centered integer lift of each subclaim, reconstructs every block with
+checked integer arithmetic, sums the blocks, and compares the result with
+`S_max`.
 
-The Stage 2 batching challenge is sampled after all Stage 1 claims have been
-absorbed. This prevents a prover from choosing one false relation to cancel
-another.
+The schedule fixes all of this shape:
 
-### Proof and transcript shape
+* Physical response length.
+* Block length.
+* Response limb count.
+* Upper-triangular limb pairs.
+* Number and order of subclaims.
 
-The L2 route changes all of the following surfaces.
+The verifier rejects an invalid block, missing or extra subclaim, bad centered
+lift, integer overflow, inconsistent length, or reconstructed value above the
+cap.
 
-* `AkitaStage1Proof` and its shape need the norm claim and any small field
-  subclaims selected by the schedule.
-* The final Stage 1 round shape needs the additional coefficient count.
-* Transcript labels must separate norm claims from range image claims.
-* `FoldLevelProof` serialization remains schedule driven and headerless.
-* `Valid` and deserialization checks must bound every allocation before use.
-* `level_proof_bytes` and the profile reporter must count the exact serialized
-  values.
-* Logging transcript tests must show the same event order for prover and
-  verifier.
+This construction proves equality to the integer norm. It does not prove a
+field inequality and does not require four-square slack.
 
-## Planner and SIS estimator
+### Stage 1 fusion
 
-### Quantum ADPS16 Euclidean table
+The norm term is fused into the last Stage 1 range leaf.
 
-The production L2 route uses the 128 bit quantum ADPS16 reduction cost model.
-It does not use the older BDGL16 Euclidean profile.
+* Direct mode adds a degree-two square term.
+* LimbGram mode adds selector times limb times limb, which has degree three.
+* The fused round degree is the maximum degree required by the range and norm
+  terms.
 
-The estimator work includes the following changes.
+A fresh transcript scalar batches the norm relation with the existing digit
+range relation. The proof shape accounts for the exact extra coefficients,
+claims, and final evaluations. Planner byte estimates call the same proof-shape
+code used by serialization.
 
-* Enable the ADPS16 quantum cost in the Euclidean path.
-* Reject BDGL16 for production Euclidean table generation.
-* Use `sqrt(C_2_sq)` as the scalar length bound.
-* Generate a separate L2 table and digest. Do not overwrite the coefficient L
-  infinity table.
-* Store accepted cells and rejected successor evidence at the 128 bit boundary.
-* Add golden tests for each field family and supported ring dimension.
+### Stage 2 binding
 
-The verifier never runs the estimator. It uses checked schedule parameters and
-the generated table only.
+Stage 2 binds the final Stage 1 values to the committed Z digit witness. Direct
+mode checks balanced recomposition at the sampled physical point:
 
-The table generator emits a full audit CSV and hashes it into the generated
-Rust table. The CSV is reproducible and is not checked in. Run the following
-command to rebuild the Rust rows and the local audit file.
+```text
+z(r) = sum_j B^j * z_hat_j(r).
+```
+
+LimbGram mode binds the required limb evaluations instead. Group, chunk, row,
+coefficient, and padding selectors come from the shared physical plan.
+
+The transcript samples the Stage 2 batching challenge only after it has
+absorbed the Stage 1 claims. A prover cannot choose two false relations that
+cancel under a challenge known in advance.
+
+### Transcript and serialization
+
+`PhysicalL2NormProof` contains the public integer norm, the shape-derived field
+subclaims, virtual evaluations, and the norm sumcheck. Transcript absorption
+separates the integer claim, subclaims, batching scalars, sumcheck, and virtual
+evaluations.
+
+Serialization remains schedule driven and headerless. Mutation tests cover the
+norm, cap, route, subclaims, virtual evaluations, nonce, and Stage 2 values.
+
+## Terminal L2 check
+
+The terminal response has no recursive Stage 1 or Stage 2 proof. It is decoded
+in the clear. For a terminal L2 route, the verifier:
+
+1. Validates the terminal response shape and coefficient bounds.
+2. Reconstructs every centered physical coefficient.
+3. Computes the exact checked integer sum of squares.
+4. Rejects unless the result is at most the scheduled `S_max`.
+5. Audits the A matrix against `64 * gamma^2 * S_max`.
+
+The terminal schedule uses the same certified challenge family and Euclidean
+table as a recursive L2 level. It pays no hidden norm-proof bytes.
+
+## Planner model
+
+### Planner state
+
+The response model stores
+
+```text
+M = estimated total squared L2 norm of the source witness
+P = estimated largest per-coordinate second moment, in parts per million
+```
+
+The suffix memo key contains both values. This matters because two witnesses
+can have the same total energy but different high-energy components.
+
+Both values retain seven leading bits and round upward. The rounding creates a
+finite reusable dynamic-program state and adds less than `1/64` relative error.
+
+The planner constructs source moments after the root. Selective L2 admission
+starts at fold level 3. These are different boundaries. The typed Linf model
+can guide the fold immediately after the root even though L2 is not yet
+eligible.
+
+### Core response identity
+
+For a fixed source vector `s` and a random negacyclic challenge `c` with scalar
+coefficient covariance,
+
+```text
+E[||c * s||_2^2 | s] = E[||c||_2^2] * ||s||_2^2.
+```
+
+Write
+
+```text
+q_c = E[||c||_2^2].
+```
+
+The production sparse shells have fixed magnitudes, so `q_c` is also their
+exact squared L2 mass. The identity is exact when challenge covariance is
+scalar. The accepted operator norm sampler is only measured to be close to
+that symmetry. The model envelope covers the observed defect and the other
+approximations below.
+
+### Root sources
+
+The root policy depends on the declared witness type.
+
+#### Dense root
+
+A dense committed polynomial is caller controlled. The planner makes no
+distributional assumption about it. For every balanced digit plane, it uses
+the deterministic maximum magnitude `basis / 2` and sums the corresponding
+squares over the exact logical source length. The peak moment is the largest
+plane square.
+
+This root bound is conservative by design. Removing the old digit snaps exposed
+one unsupported fp128 dense `nv=50` key whose root response exceeded every
+audited A table bucket. The generated dense catalog now stops at the largest
+key supported without that heuristic.
+
+#### Unit one-hot root
+
+A unit one-hot source has exactly one unit entry per declared source chunk. Its
+total source energy is the exact number of unit entries, and its peak second
+moment is one.
+
+The Linf root policy also evaluates the exact one-coordinate moment generating
+function for the signed sparse challenge. Directed floating-point inflation
+makes each sampled Chernoff value an upper bound. The final digit depth is never
+larger than the universal bound and never relies on the exact policy outside
+its declared one-hot geometry.
+
+### Recursive witness components
+
+`next_source_moment` builds the exact `WitnessLayout` for the selected
+candidate, then models each typed component. It does not fit one constant to
+the final witness length.
+
+| Component | Count and model | Status |
+|---|---|---|
+| Z | Exact physical response count. The pre-decomposition variance is prior source energy times `q_c`, divided by that count. Balanced digit moments use centered residues of a rounded normal integer. | Conditional approximation |
+| E | Exact live count `claims * live blocks * d_a`. Each field digit plane uses the centered uniform second moment. | Exact for uniform power-of-two residues; approximate for protocol values |
+| T | Exact live E count times the A output row count. Uses the same field digit moments. | Same as E |
+| R | Exact row ranges from `WitnessLayout`. Uses full-width field digit moments. | Same as E |
+| Compression | Exact coefficient count. Negative-binary digits contribute expected energy `1/2` per coefficient. | Exact under a balanced bit model |
+| Tensor packing | Applies the multiplicity `(2K - 1) / K` for extension degree `K`. | Exact under exchangeable extension coordinates |
+| Padding | Contributes zero. | Exact |
+
+For a power-of-two digit basis `b`, a centered uniform digit in
+`[-b/2, b/2)` has second moment
+
+```text
+(b^2 + 2) / 12.
+```
+
+The top field digit plane uses its actual residual width. It is not treated as
+another full plane. The supported pseudo-Mersenne moduli differ negligibly from
+the matching power of two for this completeness estimate.
+
+For Z, let `sigma^2` be the modeled pre-decomposition variance per response
+coefficient. The model rounds a normal integer, reduces it into each balanced
+digit plane, and computes that digit's squared moment. When `sigma` spans at
+least one residue period, it uses the uniform digit moment. The first omitted
+Fourier coefficient is then below `3e-9`, far below the 3 percent source
+envelope.
+
+The normal approximation is not used in the current fold's L2 cap. It predicts
+the Z digits that become part of the next recursive witness. Correlations in E,
+T, R, and recursive setup values often make the uniform model conservative.
+
+### Setup offloading
+
+A recursively offloaded setup has two sources:
+
+1. A public setup prefix derived from a pseudorandom seed.
+2. The recursive witness produced by the preceding fold.
+
+The planner models the setup prefix with the exact balanced-digit moments of a
+uniform field element, including the residual top plane. This is a
+computational pseudorandomness model, not an information-theoretic statement
+about every seed. The recursive source keeps its propagated `M` and `P`.
+
+The setup-prefix search prices the direct setup capacity first when the profile
+uses the recursive-setup objective. Proof bytes and total setup field elements
+remain later tie-breakers according to that profile's declared selection
+policy. Direct scalar profiles minimize estimated proof bytes first.
+
+### Multi-group and multi-chunk states
+
+For multiple groups, the planner keeps one source moment per opening group
+until `WitnessLayout` constructs the next witness. It allocates each group's
+source energy in proportion to its public share of live blocks, then adds the
+typed component energies. The block counts are exact. The assumption that
+energy follows those counts is part of the completeness model.
+
+For chunks, the model uses the exact chunk layout. The Linf peak proxy scales by
+the ceiling of live blocks per chunk. L2 candidate construction still requires
+one chunk because the current physical norm proof and candidate audit are
+defined for that boundary. A multi-chunk profile can select L2 at a later
+single-chunk state.
+
+## L2 response cap
+
+Let `M` be the upward-bucketed source energy and `q_c` the exact challenge
+squared L2 mass. The planner freezes
+
+```text
+S_max = ceil(M * q_c * 1.03 * 1.06).
+```
+
+The factors have different meanings.
+
+* `1.03` is the source-model envelope. It covers observed unfavorable error
+  from typed components, pseudo-Mersenne field moments, approximate challenge
+  covariance, finite mixing, and rounded-normal Z digits.
+* `1.06` is the response allowance for one nonce attempt.
+
+Assume the first factor bounds the true conditional mean:
+
+```text
+E[S | source] <= 1.03 * M * q_c.
+```
+
+Since `S` is nonnegative, Markov's inequality gives
+
+```text
+Pr[S <= 1.06 * E[S | source]] >= 1 - 1 / 1.06 = 3 / 53.
+```
+
+The fold protocol permits 4096 nonce attempts. Under the random-oracle model,
+fresh nonces give fresh challenge draws, so even this loose per-attempt lower
+bound makes exhaustion negligible.
+
+This argument does not assume a Gaussian response tail. It is rigorous only
+conditional on the 3 percent source envelope. The empirical section tests that
+condition directly.
+
+## Linf response sizing
+
+### Universal balanced-source candidate
+
+The universal candidate uses public source bounds rather than typed moments.
+For one source ring row, let
+
+```text
+s_inf = maximum source digit magnitude
+s_1   = source ring L1 bound
+c_inf = maximum challenge coefficient magnitude
+c_1   = challenge L1 norm
+B     = number of claims * number of live blocks.
+```
+
+Negacyclic convolution gives the deterministic envelope
+
+```text
+beta_inf = B * min(c_inf * s_1, c_1 * s_inf).
+```
+
+Random challenge signs also give a Rademacher tail proxy
+
+```text
+t_star^2 = 2 * B * q_c * s_inf^2 * log_term,
+```
+
+where `log_term` is a conservative integer upper bound for
+`ln(2N / (1 - 1/8))` and `N` is the response coefficient count for one logical
+fold. The implementation computes `log_term` without floating point by
+rounding `ln(2)` upward.
+
+The honest-prover cap is
+
+```text
+min(beta_inf, ceil(sqrt(t_star^2))).
+```
+
+The planner converts that cap to the smallest balanced digit depth that can
+represent it. The verifier then prices the full range of that depth. Thus the
+tail calculation is a completeness policy, while the range proof and A matrix
+remain the soundness boundary.
+
+### Typed Linf candidate
+
+The typed model uses both source statistics. Let
+
+```text
+N = physical response coefficient count
+L = number of live blocks
+C = number of chunks
+```
+
+and interpret `P` as the largest source-coordinate second moment. It computes
+
+```text
+v_avg  = M * q_c / N
+v_peak = P * q_c * ceil(L / C)
+v       = 1.03 * max(v_avg, v_peak)
+t       = ceil(sqrt(2 * v * ln(16N / 7))).
+```
+
+If every response coordinate were sub-Gaussian with variance proxy at most
+`v`, a union bound would give
+
+```text
+Pr[||z||_inf <= t] >= 1 / 8.
+```
+
+The model tracks `P` so a small high-energy component cannot disappear inside
+the whole-witness average. The formula is theoretically motivated, but the
+implementation does not prove the required sub-Gaussian proxy from second
+moments alone. It is therefore a planner heuristic.
+
+The selected typed digit depth is capped by the universal depth. The suffix
+search also retains the relevant universal Linf alternative. No historical
+half-tail or three-quarter digit snap remains.
+
+### Terminal Linf sizing
+
+The terminal response is encoded as centered integers. Its raw admission cap
+is the smaller of the typed model cap and the certified universal cap when the
+typed model is available. If the typed model is unavailable, it uses the
+certified cap alone. Terminal byte pricing derives the Golomb parameters and
+segment sizes from this exact response shape.
+
+## Candidate generation and selection
+
+### L2 eligibility
+
+`selective_l2_inner_matrix` returns no candidate unless all required public
+conditions hold:
+
+```text
+fold_level >= 3
+num_claims == 1
+num_chunks == 1
+fold_basis >= 8
+response_l2_sq_cap is present
+physical response length is valid
+norm proof shape is valid
+Euclidean table lookup succeeds
+secure L2 rank exists
+```
+
+The recursive planner also requires the L2 rank to be strictly smaller than the
+corresponding Linf A rank. This avoids paying a norm proof without an immediate
+A rank reduction.
+
+For each basis and dimension state, the planner first finds the best modeled
+Linf split. It evaluates at most one L2 version of that split. It does not run a
+second exhaustive split search for L2. This bound keeps catalog generation
+tractable, but it can miss an L2 split that is worse under Linf and better after
+the Euclidean rank change. The complete-suffix comparison is exhaustive only
+over the candidates that this bounded geometry search emits.
+
+The response basis 8 route is supported. Earlier basis-8 failures came from a
+missing class-indexed range-image source when no product-stage prefix existed.
+The prover now prepares that source for the fused L2 leaf. There is no current
+basis-8 exclusion.
+
+### Complete suffix comparison
+
+A smaller A rank at one fold does not imply a smaller proof. Changing A rank
+also changes T width, the next witness, later fold geometry, the terminal
+response, and possibly the number of folds.
+
+The suffix dynamic program therefore prices complete schedules. Depending on
+the profile's declared objective, its comparison includes:
+
+* Exact serialized proof bytes.
+* Direct setup capacity or total setup field elements.
+* The current A, B, and D matrices.
+* Norm-proof bytes.
+* T decomposition and the next recursive witness.
+* Every later fold.
+* The terminal response and its encoding.
+* A canonical descriptor tie-break.
+
+Direct scalar profiles minimize proof bytes first. Mixed-dimension profiles
+minimize setup field elements before proof bytes. Recursive-setup profiles
+minimize the first direct setup capacity before proof bytes and total setup
+elements. These are product objectives, not security rules.
+
+The memo key includes `M`, `P`, ring dimensions, setup-prefix state, witness
+length, basis, level, and payload phase. Pareto pruning keeps candidates that a
+parent can still distinguish.
+
+### Fallback behavior
+
+The planner keeps Linf when any L2 prerequisite is absent. Common reasons are:
+
+* The fold is too early.
+* The fold has more than one claim or chunk.
+* The response basis is below 8.
+* The model cannot produce a finite cap.
+* The proof shape cannot certify integer equality.
+* The Euclidean table has no cell for the geometry and collision bound.
+* The L2 rank does not improve.
+* The complete selected objective prefers the Linf suffix.
+
+The generated schedule freezes the result. Runtime proving and verification do
+not rerun the response model or lattice estimator.
+
+## Euclidean SIS table
+
+The L2 route uses a separate 128-bit quantum ADPS16 table. It does not reuse the
+coefficient Linf table and does not use the retired BDGL16 Euclidean profile.
+
+The table domain is:
+
+```text
+modulus profiles: q32, q64, q128
+ring dimensions:  D32, D64, D128, D256, D512
+collision keys:   powers of two from 2^1 through 2^84
+```
+
+For each profile, dimension, rank, and collision bucket, generation records the
+largest secure A width and rejected successor evidence at the 128-bit
+boundary. Generated Rust rows carry a digest. Schedule validation requires the
+current digest.
+
+The verifier never runs the estimator. It checks the frozen table key and
+width against generated rows.
+
+Regenerate the table with
 
 ```sh
-cargo run -p akita-sis-estimator --release --example euclidean_width_table -- --format rust-split
+cargo run -p akita-sis-estimator --release \
+  --example euclidean_width_table -- --format rust-split
 ```
 
-### Calibrated response model admission
+The full audit CSV is reproducible and intentionally not committed. Golden
+tests compare estimator cells with the checked-in table and cover supported
+dimensions and boundary behavior.
 
-The planner keeps its ordinary L infinity search at every state. Every
-production family enables `TypedProtocolMomentsV1`. At level 3 and later, the
-planner evaluates the ordinary best block split under both security routes for
-response bases 8 and above. It keeps the L2 alternative only when it lowers the
-A rank. Basis 8 exposed a missing class-indexed range-image source when there
-was no product-stage prefix. The prover now prepares that source lazily for the
-fused L2 leaf, and the basis-8 route passes end-to-end proving and both verifier
-modes.
+## Empirical validation
 
-The typed model carries the expected squared norm of the recursive witness
-through the protocol. Dense roots use the deterministic maximum squared digit
-energy for every coefficient because the committed polynomial is arbitrary.
-One-hot roots use the exact number of unit entries. Later Z segments use
-rounded normal residue moments. Their variance is the previous source energy
-times the challenge energy, divided by the physical response length. E, T, and
-R use centered field digit moments for the exact live scalar counts. The last
-field digit plane uses its actual residual width. Negative binary compression
-uses a second moment of one half per coefficient. Extension tensor packing
-multiplies logical energy by `(2K - 1) / K`.
+### Questions the data must answer
 
-The challenge multiplication identity is exact under scalar challenge
-covariance. The accepted fixed point operator norm sampler is not assumed to be
-perfectly orbit invariant. Measurements cover five million random orbit pairs
-and 32 complete orbits at each of D64 and D128. They found no acceptance
-mismatches or mixed orbits. Raw and explicitly randomized covariance defects
-were both about 0.07 percent, so this change does not add transcript
-symmetrization.
+Measurements validate completeness, not soundness. They answer four separate
+questions.
 
-The suffix state retains seven leading bits of source energy and rounds upward.
-This loses less than `1/64` relative precision and prevents the dynamic program
-from creating a separate state for every integer energy. The planner computes
+1. Does the typed model predict the exact source energy closely enough?
+2. Does `M * q_c` predict the conditional response mean?
+3. Does the frozen cap leave enough room for nonce search?
+4. Do complete production proofs pass both verifier modes for every adapter
+   family?
 
-```text
-cap = ceil(bucketed_source_energy * challenge_l2_sq * 1.03 * 1.06).
-```
+A total proof size alone cannot answer these questions. The validation records
+source energy, modeled response mean, observed response norm, cap, nonce, route,
+and exact serialized bytes at each fold.
 
-The 1.03 factor covers source model error. The 1.06 factor is the per attempt
-response allowance. If the first factor bounds the true conditional mean,
-Markov's inequality gives
+### Current sample
 
-```text
-Pr[response_l2_sq <= 1.06 * conditional_mean] >= 3 / 53.
-```
+The current run contains 14 fresh production profiles. It covers:
 
-The protocol permits 4096 independent attempts. The resulting worst case
-exhaustion probability is negligible. The Markov statement does not assume a
-Gaussian response tail. The rounded normal hypothesis is only used to predict
-the Z digits of the next source witness.
+* Dense and one-hot fp32.
+* Dense and one-hot fp64.
+* Dense fp128.
+* One-hot fp128 direct and recursive setup.
+* Direct and recursive multi-group.
+* W2, W4, and W8 multi-chunk variants.
+* Recursive W8 and dense W8 adapters.
 
-Fresh end to end samples cover 13 fp32, fp64, and fp128 profile cases. They
-include dense, one-hot, direct, recursive, multi-group, and multi-chunk paths.
-All proofs passed both verifier modes. Across 44 selected L2 responses, cap
-slack was 1.85 to 13.26 percent and every response used nonce zero. Aggregate
-source estimates were 0.09 to 1.93 percent above the measured source energy.
-Separate typed-component validation found at most 2.24 percent unfavorable
-error. Recursive setup values can retain correlation that makes the uniform E,
-T, and R estimates conservative.
+Every proof passed multi-threaded and single-threaded verification.
 
-This is a completeness model, not a soundness assumption. The selected cap is
-frozen into the generated schedule and remains the verifier enforced SIS input.
-If model construction fails, the geometry is unsupported, the Euclidean table
-has no row, or the L2 rank does not improve, the planner keeps the universal L
-infinity candidate. When the typed Linf model is available, the planner keeps
-both its modeled digit depth and the universal depth until the complete suffix
-objective can compare them.
+Across 52 selected L2 responses:
 
-The suffix search prices the modeled and universal L infinity candidates and
-the modeled L2 candidate. This comparison includes the different A rank, T
-width, next witness length, later folds, and terminal response. Candidates with
-different total or peak source moments remain distinct in the suffix memo and
-Pareto frontier.
+| Measurement | Observed range |
+|---|---:|
+| Frozen cap above observed response | 6.8998% to 18.1761% |
+| Modeled source energy relative to exact source energy | -0.2029% to +8.9523% |
+| Observed response relative to `exact source energy * q_c` | -2.1843% to +2.4899% |
+| Nonce use | 51 used nonce 0; 1 used nonce 1 |
 
-The final planner comparison includes the norm proof bytes, changed A payload,
-changed T decomposition, changed next witness, all later folds, and the
-terminal response.
+For the second and third rows, a positive value means the model or observation
+is larger than the reference. The third row uses the conditional mean implied
+by scalar challenge covariance. The separate orbit measurement tests the small
+covariance approximation in that reference. The worst aggregate source
+underestimate was 0.2029 percent, below the 3 percent envelope.
 
-### Reporting
+Component-level checks covered 88 recursive witnesses. Model error relative to
+the measured component was:
 
-For every shipped fp128, fp64, and fp32 profile affected by the change, the PR
-must report the following values before and after the change.
+| Component | Error range |
+|---|---:|
+| Z | -1.00% to +16.10% |
+| E | -2.24% to +33.47% |
+| T | -1.33% to +33.50% |
+| R | -1.43% to +4.37% |
+| Compression | -1.24% to +2.12% |
 
-* Total proof bytes.
-* Number of recursive folds.
-* The selected security route at every fold.
-* A, B, and D ranks.
-* Ring dimensions.
-* Log bases and digit counts.
-* The public L2 cap and observed physical norm on every L2 level.
-* The norm proof bytes.
-* The next witness length after every fold.
-* Terminal response bytes.
-* Nonce attempts and the observed failure rate for each L2 cap.
+Negative values are underestimates. The worst unfavorable component error was
+2.24 percent. Large positive Z, E, and T values came from recursive multi-group
+W8 setup values that retained correlation instead of behaving as fully mixed
+uniform values. Those overestimates cost planner efficiency but do not threaten
+honest acceptance.
 
-The report must separate three effects. It must show the old main result, the
-result after removing only the physical Hachi double count, and the result after
-adding selective L2 candidates. This prevents the PR from attributing an L
-infinity correction to the new norm proof.
+The 52-response sample is strong evidence for the current generated profiles.
+It is not a proof that all future witness distributions fit the model. New
+field profiles, setup distributions, ring dimensions, challenge families, or
+layout components require new component and end-to-end measurements before
+they inherit the 3 percent envelope.
 
-## Evaluation
+### Current model limits
 
-### Acceptance criteria
+The current model remains intentionally conservative or heuristic in several
+places.
 
-* [x] A level with `InnerCommitSecurityRoute::Linf` serializes no L2 claim and
-      uses only coefficient L infinity A role sizing.
-* [x] A level with `InnerCommitSecurityRoute::L2` verifies the complete physical
-      square sum and rejects `S > S_max`.
-* [x] The prover and verifier derive the physical Z domain from one shared
-      `WitnessLayout` authority.
-* [x] Removing the Hachi factor changes physical A role collision sizing from
-      `8 * kappa_1 * 2 * Z_inf` to `8 * kappa_1 * Z_inf` for fp32 and fp64.
-* [x] Equal physical challenges and responses produce equal A role collision
-      bounds across field profiles, independent of extension degree.
-* [x] A separate test shows that a bound stated before `psi` still applies its
-      logical to physical conversion once in honest sizing.
-* [x] The Euclidean scalar mapping uses `sqrt(C_2_sq)` and never
-      `sqrt(width * C_2_sq)` for a complete collision norm.
-* [x] Production L2 table rows use quantum ADPS16 at 128 bits.
-* [x] At each calibrated suffix state, the planner prices the ordinary L
-      infinity candidate and at most one L2 alternative for its canonical
-      split.
-* [x] Root and early levels carry no L2 proof; a terminal level carries one
-      only when the complete suffix comparison selects it.
-* [x] Tampering with the norm, cap, route, subclaim, virtual evaluation, nonce,
-      or proof shape causes verification to fail.
-* [x] Small field tests cover positive and negative limb inner products,
-      centered lifting boundaries, block boundaries, and integer overflow.
-* [x] Headerless deserialization rejects oversized shapes before allocation.
-* [x] Proof size accounting equals actual serialization for every supported
-      field family.
-* [x] Generated schedules pass audit and the report contains all required
-      before and after values.
-* [x] All repository CI gates and verifier no panic checks pass.
+* A dense root uses a deterministic maximum, so it can be much larger than a
+  typical application witness.
+* Z digit moments assume an approximately normal folded coefficient before
+  balanced reduction.
+* E, T, and R use uniform field moments even when protocol correlations remain.
+* The typed Linf formula treats a second moment as a sub-Gaussian variance
+  proxy without proving that tail class.
+* The setup prefix is modeled as pseudorandom rather than checked against a
+  deterministic seed-admission envelope.
 
-### Testing strategy
+These limits explain why the universal Linf candidate remains necessary and
+why the L2 cap keeps a separate empirical source envelope.
 
-Unit tests cover the collision formulas, physical coordinate conversion, L2
-table mapping, integer reconstruction, and proof shape arithmetic.
+## Reporting contract
 
-Protocol tests produce valid L infinity and L2 proofs from the same witness.
-They then mutate each new transcript value and each schedule field. The
-verifier must reject every mutation without panic.
+All comparisons in the PR report use the current merge base, not an
+intermediate PR commit.
 
-Planner tests pin one case where the locally smaller A rank is not the cheapest
-suffix. They also pin one case where the L2 candidate removes a fold and one
-case where its proof cost makes the L infinity candidate win.
+The compact report should show only the information needed to identify the
+selected route and its cost:
 
-End to end tests cover fp128, fp64, and fp32. Small field tests must exercise a
-configuration that uses more than one limb inner product block.
+* Fold level and whether it consumes the current or terminal witness.
+* A, B, and D ring dimensions and module ranks.
+* Response and opening decomposition bases and digit counts.
+* Challenge ring dimension, signed sparse shell, and operator norm threshold
+  when present.
+* Folded-response bound type, written as maximum coefficient magnitude (Linf)
+  or sum of squared coefficients (L2).
+* Exact proof bytes and merge-base change.
+* Observed squared norm and frozen cap for selected L2 responses.
+* Terminal Z, E, and T byte totals.
 
-The final verification commands come from `AGENTS.md` and the current CI
-workflow. Documentation changes also run `scripts/check-doc-guardrails.sh`.
+The detailed report retains emitted terminal field-coefficient and ring-element
+counts, segment encoding, Golomb budget, Golomb parameters, packed-digit
+comparison, setup timing details, and nonce diagnostics. These details belong
+in the expandable report rather than the compact main comment.
 
-### Performance
+The report does not repeat values that are directly derivable from a displayed
+ratio. It also does not show duplicate verifier-core wrapper timings.
 
-An L infinity selected schedule must have no prover, verifier, or proof size
-cost from the L2 machinery.
+## Invariants and acceptance criteria
 
-An L2 selected large field level should add one field coefficient per final
-Stage 1 round, plus its fixed claims. The implementation must report the actual
-serialized count instead of assuming this estimate.
+### Security invariants
 
-The prover may perform an extra physical square sum while testing a nonce. It
-should compute that sum in the same pass that already materializes centered Z
-coefficients. A second full ring switch per nonce is not acceptable.
+1. Every committed level has exactly one typed A security route.
+2. A Linf route serializes no L2 proof values.
+3. An L2 route binds its cap, table key, challenge policy, response length, and
+   proof shape into schedule identity.
+4. The verifier proves or computes the norm of the same physical response that
+   the A role SIS reduction uses.
+5. The physical A collision formula applies no Hachi embedding factor.
+6. The Euclidean estimator receives the complete scalar collision norm once.
+7. The existing digit range proof remains on recursive L2 routes.
+8. Schedule audit derives its security bound from the verifier-enforced cap,
+   never from the planner model.
+9. Headerless deserialization validates shape and allocation bounds before
+   use.
+10. Verifier-reachable malformed input returns a typed error and never panics.
 
-Small field limb proofs may cost more. The planner must include those bytes and
-must be free to reject every small field L2 candidate if none improves the
-complete suffix.
+### Completed acceptance criteria
 
-## Design
+* [x] Linf and L2 schedules use separate typed routes and SIS tables.
+* [x] Recursive L2 verifies the complete physical integer square sum.
+* [x] Terminal L2 recomputes the clear complete physical integer square sum.
+* [x] D64 and D128 operator norm rejection has checked accepted-support
+      certificates above 128 bits.
+* [x] The shared physical plan covers each live response coefficient once and
+      padding with zero.
+* [x] Direct mode proves deterministic no-wrap before using a field square
+      sum.
+* [x] LimbGram mode checks every centered lift and reconstruction boundary.
+* [x] The Hachi physical double count is removed.
+* [x] The Euclidean scalar mapping does not multiply the complete norm by A
+      width.
+* [x] The planner propagates typed total and peak moments through all generated
+      profile families.
+* [x] The planner prices complete suffixes and keeps Linf fallback behavior.
+* [x] Generated schedules replay against the current planner and table digests.
+* [x] Proof-size accounting matches actual schedule-driven serialization.
+* [x] Transcript, cap, nonce, shape, and Stage 2 mutation tests reject.
+* [x] Production proofs cover direct, recursive, multi-group, multi-chunk,
+      dense, one-hot, fp32, fp64, and fp128 paths.
+* [x] Both verifier modes pass the production profile matrix.
 
-### Architecture
+## Architecture and reviewer map
 
-The change crosses the following canonical owners.
+| Concern | Canonical owner |
+|---|---|
+| Sparse challenge shells and operator norm rejection | `akita-challenges` |
+| Collision formulas and SIS table keys | `akita-types::sis` |
+| Physical response and witness geometry | `akita-types::layout` |
+| L2 proof values and schedule-driven shapes | `akita-types::proof` |
+| Physical norm construction and Stage 1 and Stage 2 proving | `akita-prover` |
+| Challenge replay, integer reconstruction, and cap checks | `akita-verifier` |
+| Typed response moments and complete-suffix selection | `akita-planner` |
+| Frozen routes, table lookup, and schedule audit | `akita-schedules` |
+| Quantum ADPS16 Euclidean table generation | `akita-sis-estimator` |
+| Exact bytes, geometry, norms, and timing presentation | profile tooling |
 
-* `akita-challenges` owns physical sparse challenge norms.
-* `akita-types::sis` owns the L infinity and L2 collision formulas and generated
-  table lookup.
-* `akita-types::layout` owns the physical Z address domain and norm subclaim
-  shape.
-* `akita-types::proof` owns route derived proof shapes and wire values.
-* `akita-prover` computes the physical norm, applies joint nonce admission,
-  proves Stage 1, and supplies Stage 2 virtual relations.
-* `akita-verifier` replays the same relations and performs the final integer cap
-  check.
-* `akita-planner` constructs separate L infinity and L2 candidates and prices
-  complete suffixes.
-* `akita-sis-estimator` generates the quantum ADPS16 Euclidean table.
-* `akita-schedules` stores and audits the selected route and cap.
-* The profile report accounts for proof bytes, ranks, fold count, norms, and
-  nonce attempts.
-
-The intended flow is
+The main data flow is
 
 ```text
-physical centered z
+source WitnessLayout
         |
-        +--> existing digit range proof --> L infinity candidate
+        +--> universal or typed honest response sizing
         |
-        +--> exact square sum proof ------> L2 candidate
-                    |
-                    +--> Stage 2 binds z to physical Z digit planes
+        +--> Linf candidate --> digit range --> Linf SIS table
+        |
+        +--> L2 candidate ----> physical norm --> Euclidean SIS table
+                                      |
+                                      +--> Stage 2 binds physical Z digits
 
-selected candidate --> A rank --> T width --> next witness --> suffix planner
+selected A rank --> T width --> next WitnessLayout --> next (M, P) --> suffix
 ```
 
-### Alternatives considered
+## Alternatives and deferred work
 
-#### Global L2 replacement
+### Global L2 replacement
 
-A global replacement charges norm proof bytes at levels where the tighter
-security route gives no suffix benefit. It also removes the proven L infinity
-fallback. This design keeps the routes as separate planner candidates.
+A global replacement would pay norm-proof bytes where the tighter table gives
+no complete-suffix benefit. It would also discard the established Linf route.
+Separate candidates avoid both problems.
 
-#### Prover reported norm without a proof
+### Prover-reported norm
 
-The old diagnostic bound a reported norm into the transcript but did not prove
-it. That was useful only for estimating planner changes. It cannot size a
-production A matrix.
+A transcript-bound diagnostic norm does not prove that the committed response
+has that norm. Production sizing requires the recursive proof or the direct
+terminal computation.
 
-#### One global cap
+### One global cap
 
-Witness geometry and fold history differ by level and field profile. One cap
-either fails honest proving or loses the expected rank reduction. Caps are
-schedule values attached only to checked candidates.
+Response geometry and source composition change at each fold. One cap would
+either reject honest proofs or lose rank reductions. Caps are candidate values
+frozen into generated schedules.
 
-#### Certified operator norm rejection
+### Gaussian security assumption
 
-A smaller challenge multiplication operator norm improves the L2 formula.
-The D64 continuation uses the `(31, 11)` shell with a certified true threshold
-of 18 and a strict integer threshold of 19. The D128 continuation reuses the
-production `(31, 0)` shell with a certified true threshold of 13 and a strict
-threshold of 14. The transcript binds the family and both thresholds. The
-prover and verifier replay the same rejection sequence. Each route has an exact
-accepted support certificate that retains at least 128 bits. Other dimensions
-continue to use the deterministic challenge L1 norm.
+The rounded-normal model is useful for predicting later Z digits. It is not
+needed for binding. The verifier's public cap makes the collision bound hold
+for every accepted response, regardless of its distribution.
 
-#### Direct terminal L2 check
+### Four-square inequality proof
 
-The terminal response is already clear. The verifier decodes every centered
-coefficient, computes its exact integer squared norm, and rejects a value above
-the scheduled cap. This route needs no recursive norm proof. It uses certified
-operator norm rejection and the same A role collision formula.
+The verifier needs an exact integer norm followed by a public integer
+comparison. Direct no-wrap sums and LimbGram reconstruction provide that
+statement without slack variables or carry witnesses.
 
-#### Four square inequality proof
+### Explicit challenge symmetrization
 
-The verifier only needs equality to the physical integer norm, followed by a
-public integer comparison. Exact square sums or bounded limb inner products do
-that directly. Four square slack and carry witnesses add proof state that this
-change does not need.
+Uniform negacyclic shifts and odd automorphisms would force scalar covariance.
+Measurements found no orbit mismatch and no useful covariance improvement, so
+this PR leaves the transcript unchanged. A future challenge family should
+repeat the orbit experiment or add explicit symmetrization.
 
-#### Apply the Hachi factor conservatively
+### Deterministic setup-seed admission
 
-Conservative factors are sound only when they bound a real conversion or
-operation. Here both values are already physical. Keeping the factor changes
-security parameters according to extension degree even when the physical SIS
-instance is identical. That is not a property of the extracted collision.
+A future setup generator could compute exact digit-plane energy or cyclic peak
+statistics while expanding the public seed, then resample seeds outside a
+frozen planner envelope. The verifier could reproduce the check. This would
+turn part of setup-prefix completeness sizing into a deterministic public
+condition. It is deferred because current profiles already meet the measured
+slack target and the mechanism would change setup generation and transcript
+identity.
 
-## Documentation
+### Larger Euclidean dimensions
 
-The implementation PR must update the following pages when the behavior lands.
+The production challenge ladder includes dimensions above D512, but the
+current Euclidean table does not. Adding D1024 or D2048 L2 requires new table
+rows, boundary evidence, digest regeneration, planner replay, and empirical
+profiles. Linf remains the fallback until that work is complete.
 
-* `book/src/how/security.md` must explain the two per level security routes and
-  the physical coordinate rule.
-* `book/src/how/proving/sumcheck-stages.md` must explain the optional Stage 1
-  norm term and Stage 2 virtualization.
-* `book/src/how/configuration.md` must explain how the planner selects a route
-  and cap.
-* `specs/archive/2026-Q3/weak-binding-norm-fix.md` must point to this correction
-  for physical A role sizing.
-* Generated schedule tables and their book presentation must be refreshed.
+## Testing and validation commands
 
-The implementation PR keeps this spec active. Mark it implemented when the PR
-merges. It can then be archived because its durable security and protocol text
-has been folded into the book.
+Unit tests cover collision factors, coordinate mapping, digit bounds, model
+moments, operator norm certificates, direct no-wrap checks, LimbGram centered
+lifts, table boundaries, shape validation, serialization, and proof-size
+arithmetic.
 
-## Execution
+Protocol tests generate valid Linf and L2 proofs, then mutate each new public
+value and transcript relation. Small-field tests exercise multiple LimbGram
+blocks. Large-field tests exercise recursive and terminal D128 routes.
 
-1. Land this spec and remove the stale global cutover design.
-2. Remove the Hachi factor from physical A role L infinity sizing and add
-   boundary tests.
-3. Add the quantum ADPS16 Euclidean table and fix the complete norm mapping.
-4. Add the schedule route, cap, descriptor binding, and exact proof size model.
-5. Add prover norm measurement and joint nonce admission.
-6. Add the large field Stage 1 norm term and Stage 2 virtual relation.
-7. Add small field limb inner products only where the no wrap test requires
-   them.
-8. Add verifier replay and malformed proof tests.
-9. Add the modeled L2 candidate to the existing suffix comparison.
-10. Regenerate schedules and produce the required three way report.
-11. Run the full repository gates and update the owning book pages.
+Planner tests cover local rank improvement versus complete-suffix choice,
+Linf fallback, recursive setup, multi-group and multi-chunk propagation, model
+memoization, and generated-catalog replay.
+
+Final validation follows `AGENTS.md` and the current CI workflow. Documentation
+changes also run
+
+```sh
+./scripts/check-doc-guardrails.sh
+```
+
+## Documentation lifecycle
+
+Durable user-facing explanations live in:
+
+* `book/src/how/security.md` for the security routes and physical collision
+  bounds.
+* `book/src/how/proving/sumcheck-stages.md` for the optional Stage 1 norm term
+  and Stage 2 binding.
+* `book/src/how/configuration.md` for planner models, eligibility, and fallback.
+* `book/src/usage/profiling.md` for the compact and detailed reports.
+
+This specification remains active while PR 369 is open. Mark it implemented
+when the PR merges. It can then be archived after the durable text is confirmed
+in the book.
 
 ## References
 
-* Akita paper, `sections/akita/9_core_security.tex`, especially the core weak
-  binding lemma and radius to collision corollary.
-* Akita paper, `sections/akita/3_preliminaries.tex`, for physical ring norm
-  inequalities and the logical to ring conversion boundary.
-* Hachi, Lemma 7, for weak binding after denominator clearing.
+* Akita paper, `sections/akita/9_core_security.tex`, for the weak-binding
+  extraction and radius-to-collision argument.
+* Akita paper, `sections/akita/3_preliminaries.tex`, for physical ring norms and
+  the logical-to-physical boundary.
+* Hachi, Lemma 7, for denominator clearing in weak binding.
 * `crates/akita-types/src/sis/norm_bound.rs`.
-* `crates/akita-prover/src/protocol/ring_switch/coeffs.rs`.
-* `crates/akita-types/src/proof/stage1.rs`.
-* `crates/akita-prover/src/protocol/sumcheck/digit_range/`.
-* `crates/akita-prover/src/protocol/sumcheck/relation_range_image/`.
+* `crates/akita-types/src/sis/physical_l2.rs`.
+* `crates/akita-challenges/src/config.rs`.
+* `crates/akita-challenges/src/sampler/mod.rs`.
+* `crates/akita-planner/src/response_model.rs`.
+* `crates/akita-planner/src/schedule_params/candidate/recursive.rs`.
+* `crates/akita-planner/src/schedule_params/suffix_dp/terminal.rs`.
 * `crates/akita-sis-estimator/src/euclidean.rs`.
-* `specs/fold-linf-rejection.md` for the separate digit depth policy.
+* `crates/akita-sis-estimator/src/euclidean_width_table.rs`.
+* `scripts/operator_norm/`.
+* `specs/fold-linf-rejection.md` for the base universal Linf policy.
 * `specs/sis-quantum128-scalar-n-table.md` for the production quantum security
   policy.
