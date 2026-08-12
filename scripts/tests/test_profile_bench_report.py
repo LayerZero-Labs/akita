@@ -209,10 +209,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
     def test_timing_and_size_events_parse_inside_profile_root_span(self) -> None:
-        from scripts.profile_bench_report import extract_summary
+        from scripts.profile_bench_report import SUMMARY_CSV_COLUMNS, extract_summary
 
         log = "\n".join(
             [
+                " INFO akita_profile_run: statement_prepare label=dense_fp128 elapsed_s=0.125",
                 " INFO akita_profile_run: setup_expand label=dense_fp128 elapsed_s=0.25",
                 " INFO akita_profile_run: backend_prepare label=dense_fp128 elapsed_s=0.75",
                 " INFO akita_profile_run: setup label=dense_fp128 elapsed_s=1.0",
@@ -225,6 +226,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         summary = extract_summary(log, "dense_fp128", 28, 1)
 
+        self.assertNotIn("statement_prepare_s", summary)
+        self.assertNotIn("statement_prepare_s", SUMMARY_CSV_COLUMNS)
         self.assertEqual(summary["setup_expand_s"], 0.25)
         self.assertEqual(summary["backend_prepare_s"], 0.75)
         self.assertEqual(summary["setup_s"], 1.0)
@@ -728,6 +731,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         report = output.getvalue()
 
         self.assertEqual(report.count("+100.0%"), 9)
+        self.assertNotIn("Statement preparation", report)
         self.assertNotIn("vs base</sub>", report)
         self.assertNotIn("vs merge base</sub>", report)
         self.assertIn("### Phase time", report)
