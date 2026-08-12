@@ -270,17 +270,17 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             )
         })
         .expect("schedule-selected small-field L2 fold");
-    assert_eq!(l2_step.params.witness.d_a(), 128);
+    assert_eq!(l2_step.params.witness.d_a(), 64);
     assert_eq!(
         l2_step.params.witness.fold_challenge_config,
-        akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+        akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
     assert_eq!(
         akita_challenges::selective_l2_operator_norm_rejection(
-            128,
+            64,
             &l2_step.params.witness.fold_challenge_config,
         ),
-        Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
+        Some(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2),
     );
     let akita_types::InnerCommitSecurityRoute::L2 {
         norm_proof_shape, ..
@@ -406,16 +406,16 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
 }
 
 #[test]
-fn fp32_nv28_shipped_d128_terminal_l2_roundtrip_and_rejections() {
-    const NUM_VARS: usize = 28;
-    const LABEL: &[u8] = b"test/fp32-nv28-shipped-d128-terminal-l2";
+fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
+    const NUM_VARS: usize = 20;
+    const LABEL: &[u8] = b"test/fp32-nv20-shipped-d128-terminal-l2";
 
     let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("terminal L2 layout");
     let schedule = SmallCfg::get_params_for_prove(&opening_layout).expect("shipped fp32 schedule");
     let terminal_params = &schedule.terminal.params.witness;
     let response_l2_sq_cap = terminal_params
         .response_l2_sq_cap()
-        .expect("nv28 must ship a direct terminal L2 cap");
+        .expect("nv20 must ship a direct terminal L2 cap");
     assert_eq!(terminal_params.d_a(), 128);
     assert_eq!(
         schedule.terminal.params.sparse_challenge_config,

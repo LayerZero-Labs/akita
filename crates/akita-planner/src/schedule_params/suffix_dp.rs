@@ -585,11 +585,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                 }
             }
         }
-        let candidates = prune::level_candidates(current_opening_layout, candidates)?;
-        if candidates.is_empty() {
-            continue;
-        }
-
+        let mut candidates_with_source = Vec::with_capacity(candidates.len());
         for (candidate_params, next_witness_len, eor_bytes) in candidates {
             let next_source_moment = if policy.selective_l2_response_model_enabled() {
                 let source_groups = if root_level_key.is_some() {
@@ -606,19 +602,14 @@ pub(crate) fn derive_selected_suffix_schedule(
                     )?
                 } else if let Some(natural_prefix_len) = incoming_setup_prefix {
                     let prefix_params = candidate_params.group_params(current_opening_layout, 0)?;
-                    let prefix_energy = crate::response_model::field_digit_energy(
+                    let prefix_moment = crate::response_model::uniform_field_source_moment(
                         natural_prefix_len,
                         policy.decomposition.field_bits(),
                         prefix_params.log_basis_inner(),
                         prefix_params.num_digits_inner(),
                     )?;
                     vec![
-                        crate::response_model::SourceMomentEstimate::new(prefix_energy)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "setup-prefix source has zero energy".into(),
-                                )
-                            })?,
+                        prefix_moment,
                         source_moment.ok_or_else(|| {
                             AkitaError::InvalidSetup("recursive response source is missing".into())
                         })?,
@@ -638,6 +629,19 @@ pub(crate) fn derive_selected_suffix_schedule(
             } else {
                 None
             };
+            candidates_with_source.push((
+                candidate_params,
+                next_witness_len,
+                eor_bytes,
+                next_source_moment,
+            ));
+        }
+        let candidates = prune::level_candidates(current_opening_layout, candidates_with_source)?;
+        if candidates.is_empty() {
+            continue;
+        }
+
+        for (candidate_params, next_witness_len, eor_bytes, next_source_moment) in candidates {
             if let Some(natural_prefix_len) = incoming_setup_prefix {
                 let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
                 if !offloaded_witness_contracts(

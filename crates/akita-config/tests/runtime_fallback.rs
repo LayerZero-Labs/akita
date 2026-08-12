@@ -469,13 +469,13 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
 
     let precommitted_honest_fold_policies = vec![
         akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+            akita_types::sis::UnitOneHotFoldPolicy::new(
                 Cfg::decomposition().field_bits(),
                 akita_types::sis::FoldWitnessNorms::new(1, 4),
             ),
         ),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-            akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+            akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                 Cfg::decomposition().field_bits(),
                 akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
             ),

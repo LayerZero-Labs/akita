@@ -59,20 +59,7 @@ impl CompactDigitSource {
         }
         let class_count = plan.basis() / 2;
         let ordered_range_class_pairs = if !plan.product_stage_arities().is_empty() {
-            digits
-                .chunks(2)
-                .map(|pair| {
-                    let left = RangeImageClass::from_balanced_digit(pair[0], class_count).index();
-                    let right = pair
-                        .get(1)
-                        .copied()
-                        .map(|digit| RangeImageClass::from_balanced_digit(digit, class_count))
-                        .unwrap_or(RangeImageClass::PADDING)
-                        .index();
-                    u16::try_from(left * class_count + right)
-                        .expect("supported ordered range-class pair fits u16")
-                })
-                .collect::<Arc<[u16]>>()
+            Self::ordered_range_class_pairs(&digits, class_count)
         } else {
             Arc::from([])
         };
@@ -82,6 +69,36 @@ impl CompactDigitSource {
             domain,
             class_count,
         })
+    }
+
+    /// Prepare the ordered class pairs consumed by the class-indexed leaf.
+    ///
+    /// Low-basis L-infinity routes use the direct leaf and deliberately avoid
+    /// this allocation. A physical L2 proof uses the class-indexed fused leaf
+    /// even when the range plan has no product-prefix stage, so it requests the
+    /// same pairs explicitly before entering that leaf.
+    pub(super) fn prepare_class_indexed_leaf(&mut self) {
+        if self.ordered_range_class_pairs.is_empty() && !self.digits.is_empty() {
+            self.ordered_range_class_pairs =
+                Self::ordered_range_class_pairs(&self.digits, self.class_count);
+        }
+    }
+
+    fn ordered_range_class_pairs(digits: &[i8], class_count: usize) -> Arc<[u16]> {
+        digits
+            .chunks(2)
+            .map(|pair| {
+                let left = RangeImageClass::from_balanced_digit(pair[0], class_count).index();
+                let right = pair
+                    .get(1)
+                    .copied()
+                    .map(|digit| RangeImageClass::from_balanced_digit(digit, class_count))
+                    .unwrap_or(RangeImageClass::PADDING)
+                    .index();
+                u16::try_from(left * class_count + right)
+                    .expect("supported ordered range-class pair fits u16")
+            })
+            .collect()
     }
 
     pub(super) fn digits(&self) -> Arc<[i8]> {
@@ -155,6 +172,24 @@ mod tests {
             DigitRangePlan::new(16).unwrap(),
         )
         .unwrap();
+        assert_eq!(source.pair_count(), 2);
+        assert_eq!(source.ordered_pair_index(0), 1);
+        assert_eq!(source.ordered_pair_index(1), 3 * source.class_count());
+    }
+
+    #[test]
+    fn low_basis_source_prepares_pairs_for_the_fused_l2_leaf_on_demand() {
+        let digits = Arc::<[i8]>::from([0, -2, 3]);
+        let mut source = CompactDigitSource::new(
+            digits,
+            FlatBooleanDomain::new(3, 2).unwrap(),
+            DigitRangePlan::new(8).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(source.pair_count(), 0);
+
+        source.prepare_class_indexed_leaf();
+
         assert_eq!(source.pair_count(), 2);
         assert_eq!(source.ordered_pair_index(0), 1);
         assert_eq!(source.ordered_pair_index(1), 3 * source.class_count());

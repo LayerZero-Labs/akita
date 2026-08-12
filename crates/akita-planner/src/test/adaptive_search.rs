@@ -321,23 +321,28 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
 
     // Literal oracle values, deliberately not derived through candidate
     // construction, SIS pricing, setup scoring, or the production selector.
-    // With A128 fixed, projecting the varied B or D role at D128 halves that
-    // role's native A-ring width relative to D64, so the setup-first objective
-    // selects the larger varied role while the other role remains D64.
+    // The response-model cutover makes the smaller B64/D64 carrier globally
+    // optimal in both domains. These literal role choices remain independent
+    // of the production selector, and the unpruned traversal below verifies
+    // the complete objective value and descriptor.
     let expected_root_dimensions = [
         CommitmentRingDims {
             inner: 128,
-            outer: 128,
+            outer: 64,
             opening: 64,
         },
         CommitmentRingDims {
             inner: 128,
             outer: 64,
-            opening: 128,
+            opening: 64,
         },
     ];
 
-    for (domain, expected_root) in domains.into_iter().zip(expected_root_dimensions) {
+    for (domain_index, (domain, expected_root)) in domains
+        .into_iter()
+        .zip(expected_root_dimensions)
+        .enumerate()
+    {
         let policy = policy_for_domain(policy_of::<OneHot>(), &domain);
         let key = PolynomialGroupLayout::singleton(14);
         let selected = find_schedule(
@@ -371,11 +376,13 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
 
         assert_eq!(
             selected.estimate.estimated_num_setup_field_elements,
-            unpruned.estimate.estimated_num_setup_field_elements
+            unpruned.estimate.estimated_num_setup_field_elements,
+            "domain {domain_index} setup"
         );
         assert_eq!(
             selected.estimate.estimated_proof_payload_bytes().unwrap(),
-            unpruned.estimate.estimated_proof_payload_bytes().unwrap()
+            unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
+            "domain {domain_index} payload"
         );
         assert_eq!(
             selected.schedule.canonical_descriptor_bytes(),
@@ -808,10 +815,10 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
 
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
-        22_544_384
+        20_971_520
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        88_888
+        126_192
     );
 }

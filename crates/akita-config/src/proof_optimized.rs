@@ -562,14 +562,14 @@ macro_rules! impl_proof_optimized_preset {
                 let legacy_witness = $fold_norms;
                 if $log_commit_bound == 1 {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::UnitOneHotFoldPolicy::new(
                             $field_bits,
                             legacy_witness,
                         ),
                     )
                 } else {
                     akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                        akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                             $field_bits,
                             legacy_witness,
                         ),
@@ -644,14 +644,14 @@ macro_rules! impl_proof_optimized_preset {
                 let legacy_witness = $fold_norms;
                 if $log_commit_bound == 1 {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::UnitOneHotFoldPolicy::new(
                             $field_bits,
                             legacy_witness,
                         ),
                     )
                 } else {
                     akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                        akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                             $field_bits,
                             legacy_witness,
                         ),

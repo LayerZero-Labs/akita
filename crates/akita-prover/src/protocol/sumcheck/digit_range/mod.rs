@@ -271,7 +271,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         T: Transcript<F>,
     {
         let Self {
-            digit_source,
+            mut digit_source,
             equality_point,
             plan,
             live_block_count,
@@ -317,6 +317,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
                 norm_proof: None,
             };
             return Ok((proof, stage1_point));
+        }
+
+        if physical_plan.is_some() {
+            digit_source.prepare_class_indexed_leaf();
         }
 
         let prefix =

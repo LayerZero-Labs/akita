@@ -52,24 +52,21 @@ pub use decomposition_digits::{
     num_digits_setup_prefix_commit, projected_role_ring_count,
 };
 pub use honest_fold_policy::{
-    BalancedSignedDigitFoldPolicy, DigitSnapCalibration, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, UnitOneHotFoldPolicy, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
+    BalancedSignedDigitFoldPolicy, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
+    UnitOneHotFoldPolicy, DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
 };
 pub use l2_table::{
     ceil_supported_l2_collision_sq, min_secure_l2_rank, sis_l2_table_key_for_collision_sq,
     SisL2TableDigest, SisL2TableKey,
 };
-pub use norm_bound::{
-    checked_centered_l2_sq, fold_witness_unsnapped_linf_cap,
-    max_response_linf_for_role_a_collision, rademacher_proxy_variance,
-    role_a_collision_inf_norm_for_response_bound, role_a_collision_l2_sq_for_response_bound,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
-    MAX_FOLD_GRIND_ATTEMPTS,
-};
 #[cfg(test)]
-pub(crate) use norm_bound::{fold_witness_beta_inf, fold_witness_digit_plan};
+pub(crate) use norm_bound::fold_witness_beta_inf;
+pub use norm_bound::{
+    checked_centered_l2_sq, fold_witness_linf_cap, max_response_linf_for_role_a_collision,
+    rademacher_proxy_variance, role_a_collision_inf_norm_for_response_bound,
+    role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, weak_binding_inf_norm, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+};
 pub use physical_l2::{InnerCommitSecurityRoute, LimbGramLayout, PhysicalL2NormProofShape};

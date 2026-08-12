@@ -17,6 +17,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     fold_level: usize,
     block_index_bits: usize,
     current_witness_len: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     if reduced_vars <= 2
         || reduced_vars >= 53
@@ -48,11 +49,11 @@ pub(crate) fn recursive_fold_level_params_candidate(
     else {
         return Ok(None);
     };
-    let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+    let fold_policy = BalancedSignedDigitFoldPolicy::universal(
         policy.decomposition.field_bits(),
         FoldWitnessNorms::bounded(log_basis_inner, d_a),
     );
-    let Ok(num_digits_fold) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
+    let sizing_query = HonestFoldSizingQuery {
         ring_dimension: d_a,
         num_claims: 1,
         num_live_blocks,
@@ -61,9 +62,25 @@ pub(crate) fn recursive_fold_level_params_candidate(
         witness_norms: FoldWitnessNorms::bounded(log_basis_inner, d_a),
         log_basis_response: log_basis_open,
         challenge_config: ring_challenge_cfg,
-    }) else {
+    };
+    let Ok(universal_digits) = fold_policy.num_digits_fold(sizing_query) else {
         return Ok(None);
     };
+    let num_digits_fold = source_moment
+        .and_then(|moment| {
+            moment.response_linf_cap(
+                ring_challenge_cfg.challenge_l2_sq_max(),
+                num_live_blocks,
+                num_chunks,
+                num_fold_coeffs,
+            )
+        })
+        .map(|cap| {
+            let log_cap = (u128::BITS - cap.leading_zeros()).saturating_add(1);
+            num_digits_for_bound(log_cap, policy.decomposition.field_bits(), log_basis_open)
+                .min(universal_digits)
+        })
+        .unwrap_or(universal_digits);
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
@@ -433,6 +450,7 @@ fn recursive_level_base_candidate_for_split(
     log_basis_open: u32,
     fold_level: usize,
     block_index_bits: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let Some(mut candidate_params) = recursive_fold_level_params_candidate(
         policy,
@@ -446,6 +464,7 @@ fn recursive_level_base_candidate_for_split(
         fold_level,
         block_index_bits,
         search.current_witness_len,
+        source_moment,
     )?
     else {
         return Ok(None);
@@ -471,6 +490,7 @@ fn walk_recursive_splits(
     log_basis_inner: u32,
     log_basis_open: u32,
     fold_level: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
     mut admit_split: impl FnMut(usize, RecursiveSplitBounds) -> bool,
     mut visit: impl FnMut(LayoutCandidateScore, usize, CommittedGroupParams, usize),
 ) -> Result<(), AkitaError> {
@@ -517,6 +537,7 @@ fn walk_recursive_splits(
             log_basis_open,
             fold_level,
             r,
+            source_moment,
         )?
         else {
             continue;
@@ -548,6 +569,7 @@ fn best_linf_candidate(
     log_basis_inner: u32,
     log_basis_open: u32,
     fold_level: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Option<(CommittedGroupParams, usize)>, AkitaError> {
     let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
     let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
@@ -561,6 +583,7 @@ fn best_linf_candidate(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        source_moment,
         |_, bounds| {
             best_score
                 .get()
@@ -617,6 +640,7 @@ fn append_selective_l2_candidates(
                 log_basis_open,
                 fold_level,
                 physical_response_len,
+                Some(source_moment),
                 source_moment.response_l2_sq_cap(l2_challenge_cfg.challenge_l2_sq_max()),
             )?;
         }
@@ -637,6 +661,7 @@ fn append_selective_l2_candidate(
     log_basis_open: u32,
     fold_level: usize,
     physical_response_len: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
     modeled_response_l2_sq_cap: Option<u128>,
 ) -> Result<(), AkitaError> {
     let fold_basis = 1usize
@@ -672,6 +697,7 @@ fn append_selective_l2_candidate(
         log_basis_open,
         fold_level,
         block_index_bits,
+        source_moment,
     )?
     else {
         return Ok(());
@@ -778,8 +804,27 @@ pub(crate) fn derive_candidate_level_params(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        source_moment,
     )?;
-    let mut candidates = best_linf.clone().into_iter().collect();
+    let mut candidates: Vec<_> = best_linf.clone().into_iter().collect();
+    if source_moment.is_some() {
+        if let Some(universal) = best_linf_candidate(
+            policy,
+            payload_mode,
+            ring_challenge_cfg,
+            dimensions,
+            &search,
+            source,
+            log_basis_inner,
+            log_basis_open,
+            fold_level,
+            None,
+        )? {
+            if !candidates.contains(&universal) {
+                candidates.push(universal);
+            }
+        }
+    }
     append_selective_l2_candidates(
         &mut candidates,
         best_linf.as_ref(),
@@ -835,6 +880,7 @@ pub(crate) fn derive_linf_candidate_level_params(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        None,
     )
 }
 
@@ -882,29 +928,36 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        source_moment,
     )?;
     let mut candidates = Vec::new();
-    walk_recursive_splits(
-        policy,
-        payload_mode,
-        ring_challenge_cfg,
-        dimensions,
-        &search,
-        source,
-        log_basis_inner,
-        log_basis_open,
-        fold_level,
-        |_, bounds| {
-            bounds
-                .witness_body
-                .is_none_or(|bound| bound < current_witness_len)
-        },
-        |_, _, params, next_witness_len| {
-            if next_witness_len < current_witness_len {
-                candidates.push((params, next_witness_len));
-            }
-        },
-    )?;
+    for (model_index, linf_source_moment) in [source_moment, None].into_iter().enumerate() {
+        if model_index == 1 && source_moment.is_none() {
+            break;
+        }
+        walk_recursive_splits(
+            policy,
+            payload_mode,
+            ring_challenge_cfg,
+            dimensions,
+            &search,
+            source,
+            log_basis_inner,
+            log_basis_open,
+            fold_level,
+            linf_source_moment,
+            |_, bounds| {
+                bounds
+                    .witness_body
+                    .is_none_or(|bound| bound < current_witness_len)
+            },
+            |_, _, params, next_witness_len| {
+                if next_witness_len < current_witness_len {
+                    candidates.push((params, next_witness_len));
+                }
+            },
+        )?;
+    }
     append_selective_l2_candidates(
         &mut candidates,
         best_linf.as_ref(),

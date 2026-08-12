@@ -4,7 +4,7 @@
 |-------|-------|
 | Author(s) | Quang Dao |
 | Created | 2026-07-30 |
-| Revised | 2026-08-10 |
+| Revised | 2026-08-11 |
 | Status | active |
 | PR | [#338](https://github.com/LayerZero-Labs/akita/pull/338), [#355](https://github.com/LayerZero-Labs/akita/pull/355) |
 | Supersedes | Earlier source-provider and fold-admission revisions of this specification |
@@ -36,11 +36,10 @@ the group distribution and the candidate fold geometry to select
 its exact protocol consequences. The planner MUST NOT reinterpret or reduce a
 policy result.
 
-The existing balanced signed digit sizing and snap behavior MUST remain
-unchanged. The new unit one-hot policy uses the exact one-coordinate moment
-generating function. Its initial snap calibration is `1/1`, which disables
-snap. The unit one-hot result MUST NOT be worse than the existing sizing result
-for the same row.
+The balanced signed digit policy uses the universal signed-sparse tail bound.
+The unit one-hot policy uses the exact one-coordinate moment generating
+function. Both policies retain the universal result as a completeness guard.
+Neither policy applies an empirical digit-boundary discount.
 
 Intermediate folds and terminal raw responses have different contracts.
 Intermediate folds are accepted through balanced digit decomposition, so their
@@ -61,10 +60,10 @@ This cut MUST do the following:
    sizing policy.
 3. Make `num_digits_fold` the only honest sizing output for an intermediate
    digitized fold.
-4. Preserve the existing balanced signed digit outputs, including the current
-   field-specific snap ratios.
-5. Add an exact unit one-hot sizing policy that can tighten existing rows but
-   cannot make them larger.
+4. Replace field-specific digit-boundary discounts with the universal
+   signed-sparse tail result.
+5. Add an exact unit one-hot sizing policy with the universal result as its
+   fallback and dominance guard.
 6. Move terminal admission and Golomb-Rice ownership into the terminal response
    shape.
 7. Remove all residual ZK grind probe behavior. Akita has one sequential probe
@@ -74,7 +73,8 @@ This cut MUST do the following:
 
 ### Non-goals
 
-This cut does not try to prove a tight model of honest prover behavior.
+This cut does not make an average-case source assumption for arbitrary dense
+root witnesses.
 
 This cut does not introduce per-group acceptance targets or allocate a miss
 budget across groups. All policies use the same fixed protocol sizing
@@ -86,14 +86,12 @@ per-group knob, a runtime field, or a verifier claim about observed acceptance.
 The policy architecture does not claim a joint acceptance probability for all
 groups that share one nonce.
 
-This cut does not tune the unit one-hot snap ratio from benchmark data. Its
-initial value is `1/1`.
-
 This cut does not change the challenge sampler, the shared fold nonce, or the
 nonce attempt limit.
 
-This cut does not change balanced signed digit proof size, terminal response
-admission, or terminal Golomb-Rice budgets. Any such drift is a regression.
+This cut can change balanced signed digit proof size by removing the historical
+digit-boundary discounts. Terminal response admission and Golomb-Rice budgets
+remain verifier-enforced schedule data.
 
 ## Ownership
 
@@ -118,7 +116,7 @@ The verifier MUST NOT know:
 - a one-hot chunk size;
 - honest witness norms;
 - an analytic tail cap;
-- a snap calibration input;
+- an empirical digit-depth calibration input;
 - a planner cost model;
 - a target acceptance probability;
 - a prover probe order choice.
@@ -133,7 +131,7 @@ the core planner evaluates a candidate row. The policy MAY use facts about the
 honest source that do not appear in runtime state.
 
 The policy result is authoritative. The core planner MUST NOT apply another
-snap, safety factor, discount, or source-specific correction to it.
+discount or source-specific correction to it.
 
 The core planner MUST still reject a result that fails a hard protocol check,
 including arithmetic capacity, matrix capacity, dimension validity, or SIS
@@ -194,9 +192,8 @@ field with the same meaning.
 The row MUST freeze every downstream consequence of `num_digits_fold`,
 including matrix widths, ranks, setup use, proof shape, and the row digest.
 
-The generator MAY report the analytic cap, the unsnapped digit depth, the snap
-ratio, and the final digit depth for audit. These diagnostics MUST NOT enter
-runtime types or protocol identity.
+The generator MAY report the analytic cap and final digit depth for audit.
+These diagnostics MUST NOT enter runtime types or protocol identity.
 
 ## Honest fold sizing contract
 
@@ -251,19 +248,18 @@ total physical coefficient count, not a single logical window or a padded
 allocation width. The count MUST divide evenly by `num_chunks` because every
 chunk response has the same physical width.
 
-The preserved balanced signed digit policy MAY reconstruct its historical
-single-window coefficient count by dividing `num_fold_coeffs` by `num_chunks`.
-This is an explicit compatibility rule for frozen balanced schedules, not the
-physical geometry used by new sizing policies.
+The balanced signed digit policy reconstructs one logical response-window
+coefficient count by dividing `num_fold_coeffs` by `num_chunks`. The unit
+one-hot MGF uses the complete emitted coefficient count because it bounds the
+maximum across every chunk response.
 
-`log_basis` is REQUIRED because the policy selects a balanced digit depth and
-snap acts on digit boundaries.
+`log_basis` is REQUIRED because the policy selects a balanced digit depth.
 
 `challenge_config` is REQUIRED because it defines the challenge law.
 
-`field_bits` MUST NOT appear in this query. A field-specific policy MUST carry
-its calibration when the group configuration constructs it. Hard field
-capacity remains a core planner check.
+`field_bits` MUST NOT appear in this query. A field-specific policy carries it
+when the group configuration constructs the policy. Hard field capacity
+remains a core planner check.
 
 `inner_width` MUST NOT appear under that ambiguous name. If the implementation
 can derive `num_fold_coeffs` from checked geometry without losing information,
@@ -273,8 +269,8 @@ equality.
 
 ### Policy result
 
-The policy MUST return the final `num_digits_fold` after it has applied its own
-analytic model and snap calibration.
+The policy MUST return the final `num_digits_fold` selected by its analytic
+model and universal completeness guard.
 
 The policy MUST NOT return an analytic infinity norm cap for an intermediate
 fold. That cap is an internal planning value. Once the policy has selected the
@@ -284,64 +280,17 @@ The planner MUST compute the accepted negative and positive coefficient bounds
 from `log_basis` and `num_digits_fold` through the canonical balanced digit
 functions.
 
-## Snap calibration
+## Universal completeness guard
 
-### Meaning
+The balanced signed digit policy sizes directly from the smaller of the
+deterministic ring-product envelope and the signed-sparse tail threshold. It
+does not multiply that threshold by an empirical constant before rounding to a
+digit depth.
 
-The analytic tail calculation is a conservative sizing baseline. It uses
-inequalities and a maximum over many coordinates. Akita does not treat it as a
-tight prediction of honest prover behavior.
-
-Snap is an explicit policy calibration. It lowers the digit depth when the next
-smaller balanced digit interval retains a configured fraction of the analytic
-cap.
-
-Snap MUST be applied inside the group policy. It MUST NOT be a generic planner
-operation.
-
-The implementation SHOULD use one validated value type:
-
-```rust
-pub struct DigitSnapCalibration {
-    pub retain_num: u32,
-    pub retain_den: u32,
-}
-```
-
-The type MUST reject a zero denominator, a zero numerator, and a numerator
-greater than its denominator.
-
-A calibration of `1/1` means no snap. A policy with `1/1` MUST return the
-minimum digit depth that covers its unsnapped cap.
-
-### Balanced signed digit policy
-
-The balanced signed digit policy MUST retain the behavior present before this
-architecture cutover.
-
-In particular:
-
-- Fp32 policies MUST retain the existing `3/4` snap ratio.
-- All existing wider field policies MUST retain the existing `1/2` snap ratio.
-- The signed-sparse tail formula MUST remain unchanged.
-
-The policy object owns the field-specific calibration. The query does not carry
-`field_bits`.
-
-For every existing balanced signed digit candidate, the new policy MUST return
-the same `num_digits_fold` as the pre-cutover implementation.
-
-### Unit one-hot policy
-
-The unit one-hot policy MUST accept a `DigitSnapCalibration`. Shipping policies
-MUST initially construct it with `1/1`.
-
-The implementation MUST NOT apply the balanced signed digit `1/2` or `3/4`
-snap ratio to the new exact unit one-hot estimate.
-
-The calibration remains explicit so a later protocol change can tune it after
-benchmark and grind data exist. Such a change requires schedule regeneration,
-proof size review, and a protocol identity change.
+The unit one-hot policy computes its exact MGF threshold and takes the smaller
+digit depth of that result and the universal balanced-policy result. The
+universal path is both a fallback when the exact model is unavailable and a
+dominance guard when the generic bound is tighter.
 
 ## Exact unit one-hot model
 
@@ -426,20 +375,15 @@ not understate its computed upper bound because of floating point rounding.
 The unit one-hot cutover is allowed to tighten sizing. It is not allowed to
 increase proof size.
 
-For every candidate row, the generator MUST also compute the pre-cutover sizing
-result using the preserved balanced signed digit path and its existing snap
-behavior. The selected unit one-hot digit depth MUST be no greater than that
-result.
-
-The exact MGF candidate itself uses snap calibration `1/1`. Choosing the better
-of the exact candidate and the preserved pre-cutover result is a regression
-guard. It is not an additional snap applied to the MGF estimate.
+For every candidate row, the generator MUST also compute the universal balanced
+signed digit result. The selected unit one-hot digit depth MUST be no greater
+than that result.
 
 The policy MUST also clamp any analytic threshold by the deterministic
 worst-case ring product bound before converting it to a digit depth.
 
 If the exact model is unavailable for a ring dimension or challenge
-configuration, the policy MUST use the preserved pre-cutover result.
+configuration, the policy MUST use the universal result.
 
 ## Intermediate fold admission
 
@@ -449,7 +393,7 @@ interval represented by `log_basis` and `num_digits_fold`.
 The prover MUST accept a candidate nonce only if every centered fold
 coefficient fits that interval and all other existing fold checks pass.
 
-The prover MUST NOT apply a second check against an analytic or snapped
+The prover MUST NOT apply a second check against an analytic
 `fold_witness_linf_cap`.
 
 The verifier MUST continue to enforce the balanced digit decomposition and
@@ -562,8 +506,7 @@ The descriptor MUST NOT bind:
 - balanced witness norms;
 - unit one-hot tags;
 - exact MGF coefficients as a separate runtime policy identity;
-- snap ratios;
-- field-specific snap selection;
+- empirical digit-depth calibration constants;
 - analytic caps;
 - a terminal average-case planner model identifier;
 - a cap-to-Rice conversion rule or delta;
@@ -577,9 +520,8 @@ row changes, its digest changes through those exact consequences.
 The implementation MUST complete these changes in one pass:
 
 1. Introduce the minimal group-owned `HonestFoldPolicy` boundary.
-2. Move the current balanced signed digit formula and snap behavior behind that
-   policy without changing its outputs.
-3. Add the exact unit one-hot policy with `1/1` snap and the dominance guard.
+2. Put the universal balanced signed digit formula behind that policy.
+3. Add the exact unit one-hot policy with the universal dominance guard.
 4. Make planner candidate construction consume only the returned
    `num_digits_fold`.
 5. Remove planner-facing `FoldWitnessNorms` and all source model fields from
@@ -613,7 +555,7 @@ The implementation MUST complete these changes in one pass:
 6. **Balanced behavior preservation.** Existing balanced signed digit rows and
    proof fixtures do not drift.
 7. **One-hot non-regression.** The exact unit one-hot policy never selects more
-   digits than the preserved pre-cutover result.
+   digits than the universal result.
 8. **One probe rule.** Every fold uses the same sequential shared nonce rule.
 9. **Planner-free verification.** The verifier does not execute honest sizing
    policies or planner search.
@@ -650,11 +592,9 @@ Tests MUST cover the following:
 - other ring dimensions derive their counts from their challenge config;
 - the exact MGF agrees with direct enumeration of the one-coordinate law;
 - the optimized tail expression is no larger than the deterministic bound;
-- shipping unit one-hot rows use snap calibration `1/1`;
-- every selected one-hot digit depth is no greater than the preserved
-  pre-cutover result;
+- every selected one-hot digit depth is no greater than the universal result;
 - at least one row tightens when the exact model supports a smaller depth;
-- unsupported source conditions use the preserved fallback.
+- unsupported source conditions use the universal fallback.
 
 ### Intermediate admission tests
 
@@ -687,10 +627,9 @@ The generated schedule drift guards MUST pass after regeneration.
 Dense, one-hot, extension field, mixed group, recursive, terminal, and
 setup prefix end-to-end tests MUST pass.
 
-The profile benchmark report MUST compare pre-cutover and post-cutover values
-for each affected mode. A balanced mode with changed proof size MUST fail the
-regression check. A one-hot mode MAY stay equal or become smaller. It MUST NOT
-become larger.
+The profile benchmark report MUST compare the new rows with the merge base for
+each affected mode and explain any proof-size movement caused by removing the
+historical discounts.
 
 All repository documentation guardrails and CI commands in `AGENTS.md` MUST
 pass.
@@ -703,11 +642,11 @@ An intermediate analytic cap has no independent protocol use after the policy
 selects the digit depth. Returning both values creates two facts that can drift.
 The policy returns the digit depth only.
 
-### Let the planner snap every policy result
+### Let the planner discount every policy result
 
-This makes the planner silently distrust group-owned results. It also makes
-source calibration a hidden global behavior. Each group policy owns its snap
-calibration.
+This makes the planner silently distrust group-owned results and hides an
+empirical calibration in a global planner operation. Policies instead return
+their complete analytic result.
 
 ### Store the intermediate cap for Golomb-Rice
 
@@ -715,17 +654,16 @@ This gives one field two unrelated owners. Intermediate admission uses balanced
 digits. Terminal coding uses raw response and wire parameters. The terminal
 shape stores the latter directly.
 
-### Apply the existing snap ratio to the exact one-hot estimate
+### Apply an empirical ratio to the exact one-hot estimate
 
-The new estimate has not yet been compared with production grind behavior.
-Shipping unit one-hot policies start with `1/1`. Later tuning is a separate
-protocol change.
+The exact MGF already has a stated probability target. Multiplying it by an
+unrelated ratio discards that interpretation and can silently under-size a
+digit interval.
 
 ### Carry `field_bits` in every sizing query
 
-Only the current calibration selection needs field width. The group
-configuration can construct the correct policy once. The planner separately
-checks hard field capacity.
+The group configuration can construct the correct field-specific policy once.
+The planner separately checks hard field capacity.
 
 ### Bind analytic policy inputs into protocol identity
 

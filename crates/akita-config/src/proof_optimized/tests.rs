@@ -74,10 +74,10 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     assert_eq!(
         step.params.witness.inner_commit_matrix.input_width()
             * step.params.witness.inner_commit_matrix.ring_dimension(),
-        65_536,
+        131_072,
     );
-    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 3);
-    assert_eq!(response_cap, 262_954_353);
+    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 4);
+    assert_eq!(response_cap, 2_640_276_358);
     let expected_collision = akita_types::sis::role_a_collision_l2_sq_for_response_bound(
         u128::from(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2.threshold),
         response_cap,
@@ -128,8 +128,8 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         terminal.sparse_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(2_618_810_696));
-    assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 7);
+    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(305_885_676));
+    assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 6);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
@@ -166,7 +166,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
 #[test]
 fn terminal_l2_preserves_its_own_fold_geometry() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(28));
-    let catalog = fp128::Dense::schedule_catalog().expect("fp128 dense catalog");
+    let catalog = fp64::OneHot::schedule_catalog().expect("fp64 one-hot catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
     assert_eq!(
         (
@@ -176,7 +176,7 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
         (6, 2)
     );
 
-    let schedule = fp128::Dense::runtime_schedule(key).expect("generated dense schedule");
+    let schedule = fp64::OneHot::runtime_schedule(key).expect("generated one-hot schedule");
     let predecessor = &schedule
         .recursive_folds
         .last()
@@ -185,7 +185,7 @@ fn terminal_l2_preserves_its_own_fold_geometry() {
         .witness;
     assert_eq!(
         (predecessor.log_basis_open, predecessor.num_digits_fold),
-        (5, 2)
+        (4, 3)
     );
     assert_eq!(
         (
@@ -350,7 +350,7 @@ fn setup_capacity_includes_terminal_inner_matrix() {
 }
 
 #[cfg(feature = "schedules-default")]
-fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usize>(
+fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
 ) -> (usize, usize) {
     let policy = crate::policy_of::<Cfg>();
@@ -369,15 +369,19 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
         )
         .expect("shipped entry should materialize");
         let terminal = &schedule.terminal.params.witness;
-        assert_eq!(terminal.d_a(), D);
         let width = terminal.inner_width();
         min_width = min_width.min(width);
         max_width = max_width.max(width);
+        let requires_i16_tail = match terminal.d_a() {
+            64 => ntt_cache_requires_i16_tail::<Cfg::Field, 64>(width, 1 << 15),
+            128 => ntt_cache_requires_i16_tail::<Cfg::Field, 128>(width, 1 << 15),
+            dimension => panic!("unsupported generated q32 terminal dimension D{dimension}"),
+        };
         assert!(
-            ntt_cache_requires_i16_tail::<Cfg::Field, D>(width, 1 << 15)
-                .expect("generated terminal i16 accumulation should fit"),
-            "generated q32 terminal unexpectedly fits the base CRT profile for {} key={key:?}, D={D}, width={width}",
+            requires_i16_tail.expect("generated terminal i16 accumulation should fit"),
+            "generated q32 terminal unexpectedly fits the base CRT profile for {} key={key:?}, D={}, width={width}",
             std::any::type_name::<Cfg>(),
+            terminal.d_a(),
         );
     }
     assert_ne!(min_width, usize::MAX, "generated table should not be empty");
@@ -388,8 +392,8 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
 #[cfg(feature = "schedules-default")]
 fn generated_q32_terminals_require_the_i16_tail() {
     assert_eq!(
-        assert_every_table_terminal_uses_i16_tail::<fp32::OneHot, 128>(fp32_onehot_table()),
-        (128, 128),
+        assert_every_table_terminal_uses_i16_tail::<fp32::OneHot>(fp32_onehot_table()),
+        (128, 256),
     );
 }
 

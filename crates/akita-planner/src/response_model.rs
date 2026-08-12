@@ -19,13 +19,13 @@ use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 
 /// Relative envelope for any underestimate by the typed moment model.
 ///
-/// Aggregate source measurements across fp32, fp64, and fp128 currently put the
-/// largest observed underestimate below 0.21 percent. Individual typed terms
-/// can differ by up to 2.24 percent in the unfavorable direction, but their
-/// errors did not align in the measured source vectors. Three percent keeps
-/// model error separate from the response allowance. It covers the rounded
-/// Gaussian, pseudo-Mersenne, challenge-covariance, and finite-mixing
-/// approximations. Conservative overestimates do not consume this envelope.
+/// Current aggregate source measurements across fp32, fp64, and fp128 are 0.09
+/// to 1.93 percent above the measured source energy. Separate typed-component
+/// validation found up to 2.24 percent error in the unfavorable direction.
+/// Three percent keeps model error separate from the response allowance. It
+/// covers the rounded Gaussian, pseudo-Mersenne, challenge-covariance, and
+/// finite-mixing approximations. Conservative overestimates do not consume
+/// this envelope.
 const SOURCE_MODEL_ENVELOPE_PPM: u128 = 1_030_000;
 
 /// Per-attempt response cap relative to the conditional response-energy mean.
@@ -36,12 +36,20 @@ const SOURCE_MODEL_ENVELOPE_PPM: u128 = 1_030_000;
 /// 4096 independent transcript attempts, even this worst-case bound makes
 /// exhaustion negligible.
 const RESPONSE_MEAN_MULTIPLIER_PPM: u128 = 1_060_000;
+/// Extra allowance for the sub-Gaussian peak approximation.
+///
+/// The whole-response threshold already includes the requested failure
+/// probability. This independent factor covers the largest measured negative
+/// residual of the Gaussian maximum model across supported profile families.
+const RESPONSE_PEAK_ENVELOPE_PPM: f64 = 1_100_000.0;
 const PPM: u128 = 1_000_000;
+const MOMENT_PPM: u128 = 1_000_000;
 
 /// Planner estimate of the squared Euclidean norm of one recursive witness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SourceMomentEstimate {
     mean_l2_sq: u128,
+    peak_second_moment_ppm: u128,
 }
 
 impl SourceMomentEstimate {
@@ -50,8 +58,17 @@ impl SourceMomentEstimate {
     /// This gives the suffix DP a bounded, reusable state domain while adding
     /// less than 1/64 relative error. The cap is conservative because the
     /// rounding direction is always upward.
+    #[cfg(test)]
     pub(crate) const fn new(mean_l2_sq: u128) -> Option<Self> {
-        if mean_l2_sq == 0 {
+        Self::from_moments(mean_l2_sq, mean_l2_sq.saturating_mul(MOMENT_PPM))
+    }
+
+    /// Build a bounded DP state from total and largest-coordinate moments.
+    pub(crate) const fn from_moments(
+        mean_l2_sq: u128,
+        peak_second_moment_ppm: u128,
+    ) -> Option<Self> {
+        if mean_l2_sq == 0 || peak_second_moment_ppm == 0 {
             None
         } else {
             let significant_bits = 7u32;
@@ -62,14 +79,26 @@ impl SourceMomentEstimate {
                 Some(value) => value & !(quantum - 1),
                 None => u128::MAX,
             };
+            let peak_bit_len = u128::BITS - peak_second_moment_ppm.leading_zeros();
+            let peak_discard = peak_bit_len.saturating_sub(significant_bits);
+            let peak_quantum = 1u128 << peak_discard;
+            let rounded_peak = match peak_second_moment_ppm.checked_add(peak_quantum - 1) {
+                Some(value) => value & !(peak_quantum - 1),
+                None => u128::MAX,
+            };
             Some(Self {
                 mean_l2_sq: rounded,
+                peak_second_moment_ppm: rounded_peak,
             })
         }
     }
 
     pub(crate) const fn mean_l2_sq(self) -> u128 {
         self.mean_l2_sq
+    }
+
+    pub(crate) const fn peak_second_moment_ppm(self) -> u128 {
+        self.peak_second_moment_ppm
     }
 
     /// Freeze the planner's response-energy cap for one challenge family.
@@ -83,6 +112,41 @@ impl SourceMomentEstimate {
         numerator
             .checked_add(scale - 1)
             .map(|rounded| rounded / scale)
+    }
+
+    /// Model a whole-response maximum at per-attempt acceptance probability 1/8.
+    ///
+    /// For a sub-Gaussian coordinate with variance proxy `v`, the selected
+    /// threshold makes `2 N exp(-t^2/(2v)) <= 7/8`. The maximum of the average
+    /// coordinate variance and the typed component peak prevents a large Z,
+    /// E, T, R, or compression class from being hidden by aggregate energy.
+    pub(crate) fn response_linf_cap(
+        self,
+        challenge_l2_sq: u128,
+        num_live_blocks: usize,
+        num_chunks: usize,
+        num_fold_coeffs: usize,
+    ) -> Option<u128> {
+        if challenge_l2_sq == 0 || num_live_blocks == 0 || num_chunks == 0 || num_fold_coeffs == 0 {
+            return None;
+        }
+        let average_variance =
+            self.mean_l2_sq.checked_mul(challenge_l2_sq)? as f64 / num_fold_coeffs as f64;
+        let blocks_per_chunk = num_live_blocks.div_ceil(num_chunks) as u128;
+        let peak_variance = self
+            .peak_second_moment_ppm
+            .checked_mul(challenge_l2_sq)?
+            .checked_mul(blocks_per_chunk)? as f64
+            / MOMENT_PPM as f64;
+        let variance =
+            average_variance.max(peak_variance) * SOURCE_MODEL_ENVELOPE_PPM as f64 / PPM as f64;
+        let union_log = (16.0 * num_fold_coeffs as f64 / 7.0).ln();
+        let threshold =
+            (2.0 * variance * union_log).sqrt() * RESPONSE_PEAK_ENVELOPE_PPM / PPM as f64;
+        if !threshold.is_finite() || threshold <= 0.0 || threshold > u128::MAX as f64 {
+            return None;
+        }
+        Some((threshold.ceil() as u128).max(1))
     }
 }
 
@@ -104,27 +168,23 @@ fn centered_uniform_digit_second_moment(basis: u128) -> Option<f64> {
     Some((basis.checked_mul(basis)?.checked_add(2)? as f64) / 12.0)
 }
 
-/// Modeled energy of a full-width finite-field balanced decomposition.
-///
-/// The model uses the uniform centered moment for each complete plane. This is
-/// exact for a uniform power-of-two residue. The last plane uses the residual
-/// field width rather than pretending that it is another full plane. The
-/// supported pseudo-Mersenne moduli differ from `2^field_bits` by a negligible
-/// fraction. Recursive E, T, and R values can also retain correlation instead
-/// of being fully mixed. The explicit model envelope covers unfavorable error;
-/// retained correlation usually makes this estimate conservative.
-pub(crate) fn field_digit_energy(
+fn moment_to_ppm(moment: f64, context: &str) -> Result<u128, AkitaError> {
+    checked_ceil_f64(moment * MOMENT_PPM as f64, context)
+}
+
+fn field_digit_moments(
     scalar_count: usize,
     field_bits: u32,
     log_basis: u32,
     digit_count: usize,
-) -> Result<u128, AkitaError> {
+) -> Result<(u128, u128), AkitaError> {
     if scalar_count == 0 || field_bits == 0 || log_basis == 0 || digit_count == 0 {
         return Err(AkitaError::InvalidSetup(
             "field digit moment requires positive geometry".into(),
         ));
     }
     let mut per_scalar = 0.0;
+    let mut peak = 0.0f64;
     for plane in 0..digit_count {
         let consumed = (plane as u32)
             .checked_mul(log_basis)
@@ -136,13 +196,91 @@ pub(crate) fn field_digit_energy(
         let basis = 1u128
             .checked_shl(plane_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane basis overflow".into()))?;
-        per_scalar += centered_uniform_digit_second_moment(basis)
+        let moment = centered_uniform_digit_second_moment(basis)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane basis is not supported".into()))?;
+        per_scalar += moment;
+        peak = peak.max(moment);
     }
-    checked_ceil_f64(
-        per_scalar * scalar_count as f64,
-        "finite-field digit energy",
-    )
+    Ok((
+        checked_ceil_f64(
+            per_scalar * scalar_count as f64,
+            "finite-field digit energy",
+        )?,
+        moment_to_ppm(peak, "finite-field digit peak moment")?,
+    ))
+}
+
+/// Modeled energy of a full-width finite-field balanced decomposition.
+///
+/// The model uses the uniform centered moment for each complete plane. This is
+/// exact for a uniform power-of-two residue. The last plane uses the residual
+/// field width rather than pretending that it is another full plane. The
+/// supported pseudo-Mersenne moduli differ from `2^field_bits` by a negligible
+/// fraction. Recursive E, T, and R values can also retain correlation instead
+/// of being fully mixed. The explicit model envelope covers unfavorable error;
+/// retained correlation usually makes this estimate conservative.
+#[cfg(test)]
+pub(crate) fn field_digit_energy(
+    scalar_count: usize,
+    field_bits: u32,
+    log_basis: u32,
+    digit_count: usize,
+) -> Result<u128, AkitaError> {
+    field_digit_moments(scalar_count, field_bits, log_basis, digit_count).map(|moments| moments.0)
+}
+
+/// Exact uniform-field source moments used by public setup prefixes.
+pub(crate) fn uniform_field_source_moment(
+    scalar_count: usize,
+    field_bits: u32,
+    log_basis: u32,
+    digit_count: usize,
+) -> Result<SourceMomentEstimate, AkitaError> {
+    let (energy, peak) = field_digit_moments(scalar_count, field_bits, log_basis, digit_count)?;
+    SourceMomentEstimate::from_moments(energy, peak)
+        .ok_or_else(|| AkitaError::InvalidSetup("uniform field source is empty".into()))
+}
+
+fn bounded_field_source_moment(
+    scalar_count: usize,
+    field_bits: u32,
+    log_basis: u32,
+    digit_count: usize,
+) -> Result<SourceMomentEstimate, AkitaError> {
+    if scalar_count == 0 || field_bits == 0 || log_basis == 0 || digit_count == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "bounded field source requires positive geometry".into(),
+        ));
+    }
+    let mut per_scalar = 0u128;
+    let mut peak = 0u128;
+    for plane in 0..digit_count {
+        let consumed = (plane as u32)
+            .checked_mul(log_basis)
+            .ok_or_else(|| AkitaError::InvalidSetup("digit-plane width overflow".into()))?;
+        if consumed >= field_bits {
+            break;
+        }
+        let plane_bits = log_basis.min(field_bits - consumed);
+        let half_basis = 1u128
+            .checked_shl(plane_bits - 1)
+            .ok_or_else(|| AkitaError::InvalidSetup("digit-plane bound overflow".into()))?;
+        let square = half_basis
+            .checked_mul(half_basis)
+            .ok_or_else(|| AkitaError::InvalidSetup("digit-plane energy overflow".into()))?;
+        per_scalar = per_scalar
+            .checked_add(square)
+            .ok_or_else(|| AkitaError::InvalidSetup("bounded source energy overflow".into()))?;
+        peak = peak.max(square);
+    }
+    let energy = per_scalar
+        .checked_mul(scalar_count as u128)
+        .ok_or_else(|| AkitaError::InvalidSetup("bounded source energy overflow".into()))?;
+    let peak_ppm = peak
+        .checked_mul(MOMENT_PPM)
+        .ok_or_else(|| AkitaError::InvalidSetup("bounded source peak overflow".into()))?;
+    SourceMomentEstimate::from_moments(energy, peak_ppm)
+        .ok_or_else(|| AkitaError::InvalidSetup("bounded field source is empty".into()))
 }
 
 fn centered_residue(value: i64, basis: i64) -> i64 {
@@ -219,6 +357,31 @@ pub(crate) fn gaussian_response_digit_energy(
     )
 }
 
+fn gaussian_response_digit_moments(
+    response_l2_sq: u128,
+    response_coeff_count: usize,
+    peak_response_second_moment_ppm: u128,
+    log_basis: u32,
+    digit_count: usize,
+) -> Result<(u128, u128), AkitaError> {
+    let energy = gaussian_response_digit_energy(
+        response_l2_sq,
+        response_coeff_count,
+        log_basis,
+        digit_count,
+    )?;
+    let basis = 1i64
+        .checked_shl(log_basis)
+        .ok_or_else(|| AkitaError::InvalidSetup("Gaussian digit basis overflow".into()))?;
+    let mut sigma = ((peak_response_second_moment_ppm as f64) / MOMENT_PPM as f64).sqrt();
+    let mut peak = 0.0f64;
+    for _ in 0..digit_count {
+        peak = peak.max(rounded_normal_digit_second_moment(sigma, basis));
+        sigma /= basis as f64;
+    }
+    Ok((energy, moment_to_ppm(peak, "Gaussian digit peak moment")?))
+}
+
 /// Expected energy of negative-binary compression digits.
 pub(crate) fn compression_digit_energy(coefficient_count: usize) -> u128 {
     coefficient_count.div_ceil(2) as u128
@@ -274,7 +437,7 @@ pub(crate) fn root_group_source_moments(
                 AkitaError::InvalidSetup("precommitted response policy is missing".into())
             })?
         };
-        let mean_l2_sq = match policy {
+        let moment = match policy {
             HonestFoldPolicySpec::UnitOneHot(onehot) => {
                 let chunk = onehot.source_chunk_size();
                 if chunk == 0 || !logical_len.is_multiple_of(chunk) {
@@ -283,18 +446,19 @@ pub(crate) fn root_group_source_moments(
                             .into(),
                     ));
                 }
-                (logical_len / chunk) as u128
+                SourceMomentEstimate::from_moments((logical_len / chunk) as u128, MOMENT_PPM)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("unit one-hot root source is empty".into())
+                    })?
             }
-            HonestFoldPolicySpec::BalancedSignedDigit(_) => field_digit_energy(
+            HonestFoldPolicySpec::BalancedSignedDigit(_) => bounded_field_source_moment(
                 logical_len,
                 field_bits,
                 group_params.log_basis_inner(),
                 group_params.num_digits_inner(),
             )?,
         };
-        moments.push(SourceMomentEstimate::new(mean_l2_sq).ok_or_else(|| {
-            AkitaError::InvalidSetup("root response source has zero modeled energy".into())
-        })?);
+        moments.push(moment);
     }
     Ok(moments)
 }
@@ -328,6 +492,7 @@ pub(crate) fn next_source_moment(
         quotient_depth,
     )?;
     let mut logical_energy = 0u128;
+    let mut logical_peak_ppm = 0u128;
 
     for unit in layout.units() {
         let group_index = unit.group_index();
@@ -353,15 +518,20 @@ pub(crate) fn next_source_moment(
             .ok_or_else(|| AkitaError::InvalidSetup("fold response energy overflow".into()))?;
         let response_coeff_count = unit.z_range().len() / group_params.num_digits_fold();
         if response_energy != 0 && response_coeff_count != 0 {
-            checked_add_energy(
-                &mut logical_energy,
-                gaussian_response_digit_energy(
-                    response_energy,
-                    response_coeff_count,
-                    group_params.log_basis_open(),
-                    group_params.num_digits_fold(),
-                )?,
+            let peak_response_second_moment_ppm = group_source
+                .peak_second_moment_ppm()
+                .checked_mul(group_params.fold_challenge_config().challenge_l2_sq_max())
+                .and_then(|value| value.checked_mul(unit.num_live_blocks() as u128))
+                .ok_or_else(|| AkitaError::InvalidSetup("fold response peak overflow".into()))?;
+            let (energy, peak) = gaussian_response_digit_moments(
+                response_energy,
+                response_coeff_count,
+                peak_response_second_moment_ppm,
+                group_params.log_basis_open(),
+                group_params.num_digits_fold(),
             )?;
+            checked_add_energy(&mut logical_energy, energy)?;
+            logical_peak_ppm = logical_peak_ppm.max(peak);
         }
 
         let num_claims = opening_layout.group_layout(group_index)?.num_polynomials();
@@ -377,15 +547,14 @@ pub(crate) fn next_source_moment(
             ));
         }
         if e_scalar_count != 0 {
-            checked_add_energy(
-                &mut logical_energy,
-                field_digit_energy(
-                    e_scalar_count,
-                    field_bits,
-                    group_params.log_basis_open(),
-                    group_params.num_digits_open(),
-                )?,
+            let (energy, peak) = field_digit_moments(
+                e_scalar_count,
+                field_bits,
+                group_params.log_basis_open(),
+                group_params.num_digits_open(),
             )?;
+            checked_add_energy(&mut logical_energy, energy)?;
+            logical_peak_ppm = logical_peak_ppm.max(peak);
         }
         let t_scalar_count = e_scalar_count
             .checked_mul(group_params.a_rows_len())
@@ -397,30 +566,28 @@ pub(crate) fn next_source_moment(
             ));
         }
         if t_scalar_count != 0 {
-            checked_add_energy(
-                &mut logical_energy,
-                field_digit_energy(
-                    t_scalar_count,
-                    field_bits,
-                    group_params.log_basis_outer(),
-                    group_params.num_digits_outer(),
-                )?,
+            let (energy, peak) = field_digit_moments(
+                t_scalar_count,
+                field_bits,
+                group_params.log_basis_outer(),
+                group_params.num_digits_outer(),
             )?;
+            checked_add_energy(&mut logical_energy, energy)?;
+            logical_peak_ppm = logical_peak_ppm.max(peak);
         }
     }
 
     for row in layout.r_rows() {
         let scalar_count = row.range().len() / quotient_depth;
         if scalar_count != 0 {
-            checked_add_energy(
-                &mut logical_energy,
-                field_digit_energy(
-                    scalar_count,
-                    field_bits,
-                    params.log_basis_open,
-                    quotient_depth,
-                )?,
+            let (energy, peak) = field_digit_moments(
+                scalar_count,
+                field_bits,
+                params.log_basis_open,
+                quotient_depth,
             )?;
+            checked_add_energy(&mut logical_energy, energy)?;
+            logical_peak_ppm = logical_peak_ppm.max(peak);
         }
     }
 
@@ -441,10 +608,13 @@ pub(crate) fn next_source_moment(
         &mut logical_energy,
         compression_digit_energy(compression_coefficients),
     )?;
+    if compression_coefficients != 0 {
+        logical_peak_ppm = logical_peak_ppm.max(MOMENT_PPM.div_ceil(2));
+    }
 
     let packed = tensor_packed_energy(logical_energy, extension_degree)
         .ok_or_else(|| AkitaError::InvalidSetup("tensor-packed response energy overflow".into()))?;
-    SourceMomentEstimate::new(packed)
+    SourceMomentEstimate::from_moments(packed, logical_peak_ppm)
         .ok_or_else(|| AkitaError::InvalidSetup("modeled recursive witness is empty".into()))
 }
 
@@ -514,80 +684,66 @@ mod tests {
     }
 
     #[test]
-    fn empirical_selected_l2_caps_cover_every_profile_with_twenty_percent_slack() {
+    fn empirical_selected_l2_caps_cover_all_profile_families_with_twenty_percent_slack() {
         // (actual source energy, challenge energy, actual response energy,
-        //  frozen cap, accepted nonce). These 52 observations come from fresh
-        //  honest proofs after regenerating every production catalog with the
-        //  typed model. The profiles cover dense and one-hot fp32, fp64, and
-        //  fp128, plus direct, recursive, multi-group, and W2/W4/W8 multi-chunk
-        //  adapters. Every proof passed both verifier modes.
-        let rows: [(u128, u128, u128, u128, u32); 52] = [
-            // dense fp128, nv28
-            (12_407_040, 75, 926_141_682, 1_019_618_919, 0),
-            (5_796_378, 75, 445_552_700, 477_610_968, 0),
-            (3_647_474, 75, 274_451_686, 300_519_261, 0),
-            (7_743_642, 75, 586_433_408, 638_603_428, 0),
-            // dense fp128 W8R2, nv16
-            (35_107_808, 75, 2_626_361_028, 2_919_329_956, 0),
-            // dense fp32, nv26
-            (40_629_192, 31, 1_239_850_532, 1_384_105_850, 0),
-            (57_099_436, 31, 1_768_110_122, 1_934_199_201, 0),
-            (40_125_119, 31, 1_244_482_641, 1_366_360_903, 0),
-            (33_318_735, 31, 1_049_730_223, 1_135_676_595, 0),
-            // dense fp64, nv26
-            (13_064_104, 75, 972_766_912, 1_073_283_072, 0),
-            (6_572_335, 75, 484_480_549, 542_007_952, 0),
-            (38_594_808, 75, 2_880_104_854, 3_219_849_216, 0),
-            (32_046_576, 75, 2_358_924_124, 2_618_810_696, 0),
-            // one-hot fp128 multi-group direct, nv32
-            (13_113_613, 75, 990_397_381, 1_084_015_903, 0),
-            (5_790_401, 75, 435_504_807, 477_610_968, 0),
-            (3_629_916, 75, 274_360_018, 300_519_261, 0),
-            (7_792_001, 75, 597_384_985, 638_603_428, 0),
-            // one-hot fp128 multi-group recursive, nv32
-            (5_238_923, 75, 389_262_109, 434_679_645, 0),
-            (3_643_002, 75, 273_006_474, 300_519_261, 0),
-            (7_690_060, 75, 576_160_576, 638_603_428, 0),
-            // one-hot fp128 multi-group recursive W8R2, nv32
-            (55_820_237, 75, 4_214_079_087, 4_980_033_455, 0),
-            (12_646_637, 75, 945_965_213, 1_041_084_580, 0),
-            (5_808_394, 75, 431_485_946, 477_610_968, 0),
-            (3_633_833, 75, 269_471_043, 300_519_261, 0),
-            (7_717_933, 75, 574_249_975, 638_603_428, 0),
-            // one-hot fp128 direct, nv36
-            (6_623_127, 75, 491_509_521, 547_374_367, 1),
-            (6_806_508, 75, 503_824_058, 563_473_613, 0),
-            (3_960_821, 75, 302_168_513, 327_351_337, 0),
-            (7_780_509, 75, 582_947_255, 638_603_428, 0),
-            // one-hot fp128 recursive, nv36
-            (5_824_305, 75, 439_023_783, 477_610_968, 0),
-            (3_646_029, 75, 271_086_421, 300_519_261, 0),
-            (7_700_743, 75, 579_984_205, 638_603_428, 0),
-            // one-hot fp128 W2R2, nv32
-            (7_711_639, 75, 575_828_653, 633_237_013, 0),
-            (7_395_059, 75, 560_656_609, 611_771_352, 0),
-            (4_128_110, 75, 306_830_462, 340_767_376, 0),
-            (7_767_427, 75, 578_967_153, 638_603_428, 0),
-            // one-hot fp128 W4R2, nv32
-            (6_962_796, 75, 523_336_068, 574_206_444, 0),
-            (7_496_134, 75, 575_021_712, 622_504_182, 0),
-            (4_151_889, 75, 308_980_429, 340_767_376, 0),
-            (7_770_129, 75, 582_553_175, 638_603_428, 0),
-            // one-hot fp128 W8R2, nv32
-            (3_689_784, 75, 280_924_824, 303_202_468, 0),
-            (5_084_626, 75, 379_634_330, 423_946_814, 0),
-            (3_635_868, 75, 272_623_976, 300_519_261, 0),
-            (7_648_184, 75, 575_044_430, 638_603_428, 0),
-            // one-hot fp32, nv30
-            (40_709_103, 31, 1_276_171_391, 1_384_105_850, 0),
-            (57_194_754, 31, 1_755_752_816, 1_934_199_201, 0),
-            (39_919_435, 31, 1_229_011_205, 1_366_360_903, 0),
-            (33_184_890, 31, 1_030_585_156, 1_135_676_595, 0),
-            // one-hot fp64, nv30
-            (4_789_769, 75, 367_508_391, 397_114_737, 0),
-            (21_440_544, 75, 1_607_978_058, 1_781_649_900, 0),
-            (39_747_250, 75, 2_915_927_368, 3_262_780_539, 0),
-            (31_824_799, 75, 2_357_368_597, 2_618_810_696, 0),
+        //  frozen cap, accepted nonce). These 44 observations come from fresh
+        //  honest proofs after the heuristic-free catalog regeneration. They
+        //  cover dense and one-hot fp32, fp64, and fp128, direct and recursive
+        //  setup, multi-group, and W2/W4/W8 multi-chunk adapters. Every proof
+        //  passed both verifier modes.
+        let rows: [(u128, u128, u128, u128, u32); 44] = [
+            // dense and one-hot fp32
+            (10_015_544, 75, 768_874_990, 826_427_966, 0),
+            (5_614_768, 75, 423_192_006, 461_511_721, 0),
+            (4_613_516, 75, 340_208_986, 381_015_491, 0),
+            (15_667_681, 31, 484_351_189, 532_348_404, 0),
+            // dense and one-hot fp64
+            (9_261_083, 75, 704_832_423, 772_763_812, 0),
+            (5_720_601, 75, 429_348_945, 472_244_552, 0),
+            (4_042_956, 75, 304_733_422, 332_717_753, 0),
+            (3_703_226, 75, 279_849_868, 305_885_676, 0),
+            (11_539_902, 75, 869_184_654, 955_221_935, 0),
+            (6_234_942, 75, 468_948_420, 515_175_875, 0),
+            (4_059_117, 75, 303_673_569, 332_717_753, 0),
+            (3_706_588, 75, 271_853_746, 305_885_676, 0),
+            // dense, direct one-hot, and recursive one-hot fp128
+            (5_768_500, 75, 428_283_744, 477_610_968, 0),
+            (3_432_873, 75, 254_190_731, 281_736_807, 0),
+            (4_144_476, 75, 308_723_092, 340_767_376, 0),
+            (1_859_475, 75, 142_560_067, 152_942_838, 0),
+            (4_119_465, 75, 309_590_121, 338_084_168, 0),
+            (3_032_670, 75, 226_764_894, 249_538_315, 0),
+            (3_137_086, 75, 233_424_472, 257_587_938, 0),
+            (4_466_256, 75, 335_391_510, 370_282_660, 0),
+            (3_394_786, 75, 250_031_170, 279_053_599, 0),
+            // direct and recursive multi-group
+            (4_764_050, 75, 384_612_644, 391_748_322, 0),
+            (1_940_240, 75, 143_777_206, 159_650_857, 0),
+            (4_107_945, 75, 309_801_927, 340_767_376, 0),
+            (3_026_122, 75, 224_172_600, 249_538_315, 0),
+            (4_764_050, 75, 384_612_644, 391_748_322, 0),
+            (1_940_240, 75, 143_777_206, 159_650_857, 0),
+            (4_107_945, 75, 309_801_927, 340_767_376, 0),
+            (3_026_122, 75, 224_172_600, 249_538_315, 0),
+            // recursive multi-group W8R2
+            (13_210_454, 75, 974_334_696, 1_084_015_903, 0),
+            (3_602_972, 75, 270_721_392, 297_836_053, 0),
+            (5_015_157, 75, 377_584_259, 418_580_399, 0),
+            (3_421_179, 75, 259_583_015, 281_736_807, 0),
+            // W2R2
+            (3_231_280, 75, 236_704_824, 265_637_561, 0),
+            (4_481_909, 75, 336_395_935, 370_282_660, 0),
+            (3_395_692, 75, 258_847_366, 279_053_599, 0),
+            // W4R2
+            (7_895_398, 75, 582_254_430, 649_336_259, 0),
+            (2_697_835, 75, 196_641_137, 222_706_238, 0),
+            (4_199_089, 75, 316_426_985, 348_816_999, 0),
+            (3_402_924, 75, 253_896_432, 279_053_599, 0),
+            // W8R2
+            (11_469_631, 75, 867_314_201, 944_489_104, 0),
+            (3_502_750, 75, 257_308_170, 287_103_222, 0),
+            (4_967_668, 75, 373_659_008, 413_213_983, 0),
+            (3_416_981, 75, 255_935_881, 281_736_807, 0),
         ];
 
         for (source, challenge, response, cap, nonce) in rows {
@@ -596,15 +752,15 @@ mod tests {
                 cap * 100 <= response * 120,
                 "frozen cap used more than twenty percent slack"
             );
-            assert!(nonce <= 1, "empirical proof required unexpected grinding");
+            assert_eq!(nonce, 0, "empirical proof required grinding");
 
             // Recover the planner's frozen source estimate from its cap. The
-            // rounding error is far below these bounds. This pins the observed
-            // aggregate model error to about -0.21 to +8.96 percent.
+            // current observations put aggregate source-model error between
+            // +0.09 and +1.93 percent.
             let implied_source = cap as f64 * (PPM * PPM) as f64
                 / (challenge * SOURCE_MODEL_ENVELOPE_PPM * RESPONSE_MEAN_MULTIPLIER_PPM) as f64;
             let source_ratio = implied_source / source as f64;
-            assert!((0.997..=1.09).contains(&source_ratio));
+            assert!((1.000..=1.020).contains(&source_ratio));
         }
     }
 }

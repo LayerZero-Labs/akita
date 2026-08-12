@@ -38,7 +38,7 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        80_644
+        86_275
     );
 }
 
@@ -94,13 +94,13 @@ fn scalar_recursive_nv36_selects_offloaded_schedule() {
             .role_dims(),
         CommitmentRingDims {
             inner: 256,
-            outer: 128,
-            opening: 128,
+            outer: 64,
+            opening: 64,
         }
     );
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        81_364
+        88_730
     );
 }
 

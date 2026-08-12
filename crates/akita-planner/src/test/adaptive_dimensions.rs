@@ -68,13 +68,13 @@ fn fp32_suffix_candidates_are_uniform_and_monotone() {
 }
 
 #[test]
-fn fp32_dense_nv14_uses_corrected_physical_a_bound() {
+fn fp32_dense_nv20_uses_corrected_physical_a_bound() {
     use akita_config::proof_optimized::fp32;
     use akita_types::InnerCommitSecurityRoute;
 
     let policy = akita_config::policy_of::<fp32::Dense>();
     let planned = crate::planner::find_schedule(
-        &akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14)),
+        &akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(20)),
         fp32::Dense::root_honest_fold_policy(),
         &[],
         &policy,
@@ -82,7 +82,10 @@ fn fp32_dense_nv14_uses_corrected_physical_a_bound() {
     )
     .expect("physical A sizing no longer double-counts the subfield embedding norm");
     let root = &planned.schedule.root.params.final_group.commitment;
-    assert_eq!(root.inner_commit_matrix.coeff_linf_bound(), Some(8_388_607));
+    assert_eq!(
+        root.inner_commit_matrix.coeff_linf_bound(),
+        Some(33_554_431)
+    );
     assert!(matches!(
         root.inner_commit_matrix.security_route(),
         InnerCommitSecurityRoute::Linf(_)

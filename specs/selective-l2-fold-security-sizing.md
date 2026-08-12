@@ -451,21 +451,23 @@ cargo run -p akita-sis-estimator --release --example euclidean_width_table -- --
 
 The planner keeps its ordinary L infinity search at every state. Every
 production family enables `TypedProtocolMomentsV1`. At level 3 and later, the
-planner evaluates the ordinary best block
-split under both security routes for response bases 16 and above. It keeps the
-L2 alternative only when it lowers the A rank. Response basis 8 is excluded
-because it caused deterministic stage 2 folded oracle consistency failures in
-two D64 production profiles. The protocol cause has not been fixed.
+planner evaluates the ordinary best block split under both security routes for
+response bases 8 and above. It keeps the L2 alternative only when it lowers the
+A rank. Basis 8 exposed a missing class-indexed range-image source when there
+was no product-stage prefix. The prover now prepares that source lazily for the
+fused L2 leaf, and the basis-8 route passes end-to-end proving and both verifier
+modes.
 
 The typed model carries the expected squared norm of the recursive witness
-through the protocol. Dense roots use centered field digit moments. One-hot
-roots use the exact number of unit entries. Later Z segments use rounded normal
-residue moments. Their variance is the previous source energy times the
-challenge energy, divided by the physical response length. E, T, and R use
-centered field digit moments for the exact live scalar counts. The last field
-digit plane uses its actual residual width. Negative binary compression uses a
-second moment of one half per coefficient. Extension tensor packing multiplies
-logical energy by `(2K - 1) / K`.
+through the protocol. Dense roots use the deterministic maximum squared digit
+energy for every coefficient because the committed polynomial is arbitrary.
+One-hot roots use the exact number of unit entries. Later Z segments use
+rounded normal residue moments. Their variance is the previous source energy
+times the challenge energy, divided by the physical response length. E, T, and
+R use centered field digit moments for the exact live scalar counts. The last
+field digit plane uses its actual residual width. Negative binary compression
+uses a second moment of one half per coefficient. Extension tensor packing
+multiplies logical energy by `(2K - 1) / K`.
 
 The challenge multiplication identity is exact under scalar challenge
 covariance. The accepted fixed point operator norm sampler is not assumed to be
@@ -496,26 +498,28 @@ exhaustion probability is negligible. The Markov statement does not assume a
 Gaussian response tail. The rounded normal hypothesis is only used to predict
 the Z digits of the next source witness.
 
-Held out end to end samples cover 14 fp32, fp64, and fp128 profile modes. They
+Fresh end to end samples cover 13 fp32, fp64, and fp128 profile cases. They
 include dense, one-hot, direct, recursive, multi-group, and multi-chunk paths.
-All proofs passed both verifier modes. Across 52 selected L2 responses, cap
-slack was 6.90 to 18.18 percent. One response needed one retry. Aggregate source
-model error was negative 0.20 to positive 8.95 percent. The largest unfavorable
-component error was 2.24 percent. A recursive multi-group W8 setup state retained
-enough correlation that its E and T energies were about 25 percent below the
-uniform model. This made the model conservative and produced the 18.18 percent
-maximum cap slack.
+All proofs passed both verifier modes. Across 44 selected L2 responses, cap
+slack was 1.85 to 13.26 percent and every response used nonce zero. Aggregate
+source estimates were 0.09 to 1.93 percent above the measured source energy.
+Separate typed-component validation found at most 2.24 percent unfavorable
+error. Recursive setup values can retain correlation that makes the uniform E,
+T, and R estimates conservative.
 
 This is a completeness model, not a soundness assumption. The selected cap is
 frozen into the generated schedule and remains the verifier enforced SIS input.
 If model construction fails, the geometry is unsupported, the Euclidean table
-has no row, or the L2 rank does not improve, the planner keeps the L infinity
-candidate.
+has no row, or the L2 rank does not improve, the planner keeps the universal L
+infinity candidate. When the typed Linf model is available, the planner keeps
+both its modeled digit depth and the universal depth until the complete suffix
+objective can compare them.
 
-The existing suffix search prices the ordinary L infinity candidate and the
-modeled L2 candidate. This comparison includes the different A rank, T width,
-next witness length, later folds, and terminal response. The planner does not
-keep extra predecessor splits merely to expose more modeled alternatives.
+The suffix search prices the modeled and universal L infinity candidates and
+the modeled L2 candidate. This comparison includes the different A rank, T
+width, next witness length, later folds, and terminal response. Candidates with
+different total or peak source moments remain distinct in the suffix memo and
+Pareto frontier.
 
 The final planner comparison includes the norm proof bytes, changed A payload,
 changed T decomposition, changed next witness, all later folds, and the

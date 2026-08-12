@@ -4,9 +4,9 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_open, rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams,
+    num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisMatrixRole,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
@@ -29,7 +29,7 @@ fn materialize_precommitted_group_for_open_basis(
     policy: &PlannerPolicy,
     ring_challenge_cfg: SparseChallengeConfig,
     log_basis_open: u32,
-) -> Result<PrecommittedLevelParams, AkitaError> {
+) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     let ring_dimension = layout.inner_commit_matrix.ring_dimension();
     let num_chunks = policy.chunks_at_level(0);
     let num_fold_coeffs = layout
@@ -50,6 +50,35 @@ fn materialize_precommitted_group_for_open_basis(
         log_basis_response: log_basis_open,
         challenge_config: &ring_challenge_cfg,
     })?;
+    let Some(required_a_bound) = rounded_up_role_a_inf_norm(
+        policy.sis_security_policy,
+        policy.sis_table_digest,
+        policy.sis_modulus_profile,
+        ring_dimension,
+        log_basis_open,
+        &ring_challenge_cfg,
+        num_digits_fold,
+    ) else {
+        return Ok(None);
+    };
+    let declared_a_bound = layout
+        .inner_commit_matrix
+        .coeff_linf_bound()
+        .ok_or_else(|| AkitaError::InvalidSetup("precommitted A cannot use an L2 route".into()))?;
+    let Some(required_b_bound) = rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
+        SisMatrixRole::Outer,
+        layout.outer_commit_matrix.ring_dimension(),
+        log_basis_open,
+    ) else {
+        return Ok(None);
+    };
+    if required_a_bound > declared_a_bound
+        || required_b_bound > layout.outer_commit_matrix.coeff_linf_bound()
+    {
+        return Ok(None);
+    }
     PrecommittedLevelParams::admit(
         *layout,
         num_digits_fold,
@@ -62,6 +91,7 @@ fn materialize_precommitted_group_for_open_basis(
         ring_challenge_cfg,
         log_basis_open,
     )
+    .map(Some)
 }
 
 struct MultiGroupRootCandidateCtx<'a> {
@@ -79,27 +109,29 @@ fn precommitted_groups_for_open_basis(
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
-) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
-    let groups = seeds
-        .iter()
-        .map(|group| {
-            let ring_challenge_cfg =
-                ring_challenge_config(group.0.inner_commit_matrix.ring_dimension())?;
-            materialize_precommitted_group_for_open_basis(
-                group,
-                policy,
-                ring_challenge_cfg,
-                log_basis_open,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+) -> Result<Option<(Vec<PrecommittedLevelParams>, usize)>, AkitaError> {
+    let mut groups = Vec::with_capacity(seeds.len());
+    for group in seeds {
+        let ring_challenge_cfg =
+            ring_challenge_config(group.0.inner_commit_matrix.ring_dimension())?;
+        let Some(materialized) = materialize_precommitted_group_for_open_basis(
+            group,
+            policy,
+            ring_challenge_cfg,
+            log_basis_open,
+        )?
+        else {
+            return Ok(None);
+        };
+        groups.push(materialized);
+    }
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
             .checked_add(group.d_segment_width(shared_opening_ring_dimension)?)
             .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
     }
-    Ok((groups, d_width))
+    Ok(Some((groups, d_width)))
 }
 
 pub(crate) fn root_batch_next_w_len(
@@ -205,14 +237,17 @@ pub(crate) fn root_level_candidates_for_basis(
     }) {
         return Ok(Vec::new());
     }
-    let (candidate_precommitted_groups, candidate_precommitted_d_width) =
+    let Some((candidate_precommitted_groups, candidate_precommitted_d_width)) =
         precommitted_groups_for_open_basis(
             &precommitted_groups,
             policy,
             ring_challenge_config,
             shared_opening_ring_dimension,
             candidate_log_basis_open,
-        )?;
+        )?
+    else {
+        return Ok(Vec::new());
+    };
     for block_index_bits in split_domain {
         let position_index_bits = reduced_vars - block_index_bits;
         let Some(mut candidate_params) = root_final_group_level_params_candidate(

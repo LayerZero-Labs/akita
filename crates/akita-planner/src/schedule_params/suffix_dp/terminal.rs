@@ -69,7 +69,7 @@ pub(crate) fn terminal_direct_suffix_cost(
             "terminal direct response must be a scalar flat fold".to_string(),
         ));
     }
-    let (mut terminal_params, admission_cap) =
+    let (mut terminal_params, certified_admission_cap) =
         akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
     let mut sparse_challenge_config = terminal_lp.fold_challenge_config;
     if let Some(l2_challenge) =
@@ -108,6 +108,21 @@ pub(crate) fn terminal_direct_suffix_cost(
             }
         }
     }
+    let num_fold_coeffs = terminal_params
+        .inner_width()
+        .checked_mul(terminal_params.d_a())
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal response length overflow".into()))?;
+    let modeled_admission_cap = source_moment.and_then(|moment| {
+        moment.response_linf_cap(
+            sparse_challenge_config.challenge_l2_sq_max(),
+            terminal_params.num_live_blocks,
+            1,
+            num_fold_coeffs,
+        )
+    });
+    let admission_cap = modeled_admission_cap
+        .map(|cap| cap.min(certified_admission_cap))
+        .unwrap_or(certified_admission_cap);
     let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
     let estimated_terminal_bytes = terminal_response_planner_bytes(
         field_bits,

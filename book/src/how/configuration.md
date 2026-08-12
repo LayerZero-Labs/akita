@@ -63,20 +63,19 @@ preset may also enable the typed `L2` response model. Every shipped
 fp32, fp64, and fp128 dense and one-hot family enables it. This includes each
 generated multi-chunk and recursive companion.
 
-The planner always retains its ordinary L infinity candidate. From level 3
-onward, an enabled family also evaluates the same canonical block split with
-an L2 A matrix for response bases 16 and above. Basis 8 is not admitted because
-it caused deterministic stage-2 folded-oracle consistency failures in two D64
-production profiles. That geometry remains unsupported until the protocol cause
-is fixed and validated. The planner keeps an eligible alternative only when it
-lowers the A rank. This adds at most one modeled L2 alternative per basis and
-dimension state, which keeps the suffix search bounded.
+The planner always retains the universal L infinity candidate. When typed
+moments are available, it also evaluates the modeled L infinity depth. From
+level 3 onward, an enabled family evaluates the same canonical block split with
+an L2 A matrix for response bases 8 and above. The planner keeps an eligible L2
+alternative only when it lowers the A rank. Basis 8 uses the same fused norm and
+range-image leaf as larger bases, with its class-indexed source prepared lazily
+because it has no product-stage prefix.
 
 The planner estimates the squared norm of the actual recursive witness. It
 applies the following rules.
 
-* A dense root uses the centered digit second moment for every field digit
-  plane. A one-hot root uses the exact number of unit entries.
+* A dense root uses the deterministic maximum squared digit energy for every
+  coefficient. A one-hot root uses the exact number of unit entries.
 * The Z part uses the centered residues of a rounded normal variable. Its
   variance comes from the previous source energy and the challenge energy.
 * The E, T, and R parts use the centered field digit moment for every live
@@ -96,18 +95,17 @@ protocol permits 4096 attempts.
 
 The 1.03 factor covers approximations in the normal, field digit, challenge
 covariance, and finite mixing models. It is an empirical completeness margin,
-not a soundness claim. In cross-profile validation proofs, the aggregate source
-estimate ranged from 0.20 percent below to 8.95 percent above the measured
-source energy. Across 52 selected L2 responses in 14 profile modes, every proof
-passed both verifier modes. Frozen cap slack ranged from 6.90 to 18.18 percent.
-One response used nonce one, while the other 51 used nonce zero.
+not a soundness claim. In fresh cross-profile validation proofs, aggregate
+source estimates were 0.09 to 1.93 percent above measured source energy. Across
+44 selected L2 responses in 13 profile cases, every proof passed both verifier
+modes. Frozen cap slack ranged from 1.85 to 13.26 percent, and every response
+used nonce zero.
 
 The field digit model is exact for uniform power of two residues, apart from
 the negligible pseudo-Mersenne boundary. Recursive setup values can retain
-correlation. This usually lowers their E and T energy, so the model is
-conservative. The widest observed E and T overestimates were about 33.5 percent
-in one recursive multi-group W8 setup state. Its aggregate cap still had 18.18
-percent slack.
+correlation. This usually lowers their E, T, and R energy, so the model is
+conservative. Separate component validation found at most 2.24 percent
+unfavorable error.
 
 The suffix comparison includes the norm proof, A payload, next witness, later
 folds, and terminal response. A smaller A rank can reduce the next witness

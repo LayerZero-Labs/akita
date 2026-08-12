@@ -97,7 +97,7 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn response_model_adds_at_most_one_best_split_l2_alternative() {
+fn response_model_deduplicates_equal_linf_and_adds_one_l2_split() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_types::InnerCommitSecurityRoute;
 

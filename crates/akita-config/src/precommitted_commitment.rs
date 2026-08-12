@@ -39,10 +39,10 @@ mod tests {
         let profile = committed_group_profile::<fp128::Dense>(&key).expect("dense profile");
         assert_eq!(profile.inner_commit_matrix.ring_dimension(), 64);
         assert_eq!(profile.outer_commit_matrix.ring_dimension(), 64);
-        assert_eq!(profile.log_basis_inner, 8);
+        assert_eq!(profile.log_basis_inner, 9);
         assert_eq!(profile.log_basis_outer, 3);
-        assert_eq!(profile.num_digits_inner, 16);
-        assert_eq!(profile.inner_commit_matrix.output_rank(), 6);
+        assert_eq!(profile.num_digits_inner, 15);
+        assert_eq!(profile.inner_commit_matrix.output_rank(), 7);
         assert_eq!(profile.outer_commit_matrix.output_rank(), 1);
     }
 }

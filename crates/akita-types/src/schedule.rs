@@ -607,7 +607,7 @@ impl TerminalCommittedGroupParams {
             crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(&sparse, num_fold_coeffs)?;
         let challenge = crate::sis::FoldChallengeNorms::new(&sparse);
         let witness = crate::sis::FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a());
-        let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
+        let (unconstrained_target, _) = crate::sis::fold_witness_linf_cap(
             params.num_live_blocks,
             1,
             challenge,

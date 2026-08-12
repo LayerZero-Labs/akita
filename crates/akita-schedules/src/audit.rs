@@ -660,13 +660,18 @@ mod tests {
             expanded_wrong_fold_digits.fold_digit_count,
             terminal.fold_digit_count
         );
-        let wrong_fold_basis = GeneratedTerminalFold {
+        let alternate_fold_basis = GeneratedTerminalFold {
             fold_log_basis: 3,
             ..generated
         };
-        assert!(wrong_fold_basis
+        let expanded_alternate_fold_basis = alternate_fold_basis
             .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
-            .is_err());
+            .expect("basis-eight L2 geometry must remain eligible");
+        assert_eq!(expanded_alternate_fold_basis.fold_log_basis, 3);
+        assert_ne!(
+            expanded_alternate_fold_basis.fold_log_basis,
+            terminal.fold_log_basis
+        );
 
         let response_shape =
             TerminalResponseShape::derive(&terminal, 10).expect("valid terminal response shape");

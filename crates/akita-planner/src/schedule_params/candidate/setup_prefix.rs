@@ -123,11 +123,11 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             else {
                 continue;
             };
-            let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+            let fold_policy = BalancedSignedDigitFoldPolicy::universal(
                 policy.decomposition.field_bits(),
                 FoldWitnessNorms::bounded(inner_decomp.log_basis, d),
             );
-            let Ok(num_digits_fold) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
+            let sizing_query = HonestFoldSizingQuery {
                 ring_dimension: d,
                 num_claims: 1,
                 num_live_blocks,
@@ -136,9 +136,29 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 witness_norms: FoldWitnessNorms::bounded(log_basis_inner, d),
                 log_basis_response: log_basis_open,
                 challenge_config: ring_challenge_cfg,
-            }) else {
+            };
+            let Ok(universal_digits) = fold_policy.num_digits_fold(sizing_query) else {
                 continue;
             };
+            let prefix_moment = crate::response_model::uniform_field_source_moment(
+                n_prefix,
+                policy.decomposition.field_bits(),
+                log_basis_inner,
+                num_digits_inner,
+            )?;
+            let num_digits_fold = prefix_moment
+                .response_linf_cap(
+                    ring_challenge_cfg.challenge_l2_sq_max(),
+                    num_live_blocks,
+                    num_chunks,
+                    num_fold_coeffs,
+                )
+                .map(|cap| {
+                    let log_cap = (u128::BITS - cap.leading_zeros()).saturating_add(1);
+                    num_digits_for_bound(log_cap, policy.decomposition.field_bits(), log_basis_open)
+                        .min(universal_digits)
+                })
+                .unwrap_or(universal_digits);
             let Some(norm_s) = rounded_up_role_a_inf_norm(
                 policy.sis_security_policy,
                 policy.sis_table_digest,

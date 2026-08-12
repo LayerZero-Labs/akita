@@ -7,10 +7,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use super::{
-    decomposition_digits::balanced_digit_max, fold_witness_unsnapped_linf_cap,
-    num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
+    fold_witness_linf_cap, num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig,
+    FoldWitnessNorms,
 };
 
 /// Exact candidate geometry supplied to an offline honest-fold policy.
@@ -32,76 +30,29 @@ pub struct HonestFoldSizingQuery<'a> {
 
 /// One group-owned offline rule for selecting its folded-witness digit depth.
 pub trait HonestFoldPolicy {
-    /// Return the final digit depth, including any policy-local calibration.
+    /// Return the final digit depth selected by the policy.
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError>;
 }
 
-/// Explicit calibration for snapping an analytic cap to a smaller digit depth.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct DigitSnapCalibration {
-    pub retain_num: u32,
-    pub retain_den: u32,
-}
-
-impl DigitSnapCalibration {
-    pub const NONE: Self = Self {
-        retain_num: 1,
-        retain_den: 1,
-    };
-
-    /// Build a validated retained-cap ratio.
-    pub fn new(retain_num: u32, retain_den: u32) -> Result<Self, AkitaError> {
-        let calibration = Self {
-            retain_num,
-            retain_den,
-        };
-        calibration.validate()?;
-        Ok(calibration)
-    }
-
-    fn validate(self) -> Result<(), AkitaError> {
-        if self.retain_num == 0 || self.retain_den == 0 || self.retain_num > self.retain_den {
-            return Err(AkitaError::InvalidSetup(
-                "digit snap calibration requires 0 < numerator <= denominator".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Preserved average-case sizing rule for balanced signed-digit witnesses.
+/// Distribution-free sizing rule for balanced signed-digit witnesses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BalancedSignedDigitFoldPolicy {
     field_bits: u32,
     witness: FoldWitnessNorms,
-    snap: DigitSnapCalibration,
 }
 
 impl BalancedSignedDigitFoldPolicy {
-    /// Construct the historical policy, including its field-specific snap.
+    /// Construct the distribution-free policy.
     #[must_use]
-    pub const fn preserving_existing_behavior(field_bits: u32, witness: FoldWitnessNorms) -> Self {
-        let snap = if field_bits == 32 {
-            DigitSnapCalibration {
-                retain_num: FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
-                retain_den: FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN,
-            }
-        } else {
-            DigitSnapCalibration {
-                retain_num: FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
-                retain_den: FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
-            }
-        };
+    pub const fn universal(field_bits: u32, witness: FoldWitnessNorms) -> Self {
         Self {
             field_bits,
             witness,
-            snap,
         }
     }
 
-    fn unsnapped_cap(&self, query: HonestFoldSizingQuery<'_>) -> Result<(u128, u128), AkitaError> {
+    fn universal_cap(&self, query: HonestFoldSizingQuery<'_>) -> Result<u128, AkitaError> {
         self.witness.validate()?;
-        self.snap.validate()?;
         validate_query(query)?;
         // This policy is the frozen pre-chunking baseline. Preserve its
         // logical single-fold geometry even though the query reports every
@@ -109,14 +60,14 @@ impl BalancedSignedDigitFoldPolicy {
         let logical_fold_coeffs = query.num_fold_coeffs / query.num_chunks;
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_coeffs(query.challenge_config, logical_fold_coeffs)?;
-        let (cap, tail_cap) = fold_witness_unsnapped_linf_cap(
+        let (cap, _) = fold_witness_linf_cap(
             query.num_live_blocks,
             query.num_claims,
             FoldChallengeNorms::new(query.challenge_config),
             query.witness_norms,
             &cap_config,
         )?;
-        Ok((cap, tail_cap))
+        Ok(cap)
     }
 
     fn digit_depth_for_cap(&self, cap: u128, log_basis: u32) -> usize {
@@ -127,15 +78,8 @@ impl BalancedSignedDigitFoldPolicy {
 
 impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-        let (cap, tail_cap) = self.unsnapped_cap(query)?;
-        let mut digits = self.digit_depth_for_cap(cap, query.log_basis_response);
-        let floor = tail_cap.saturating_mul(u128::from(self.snap.retain_num))
-            / u128::from(self.snap.retain_den);
-        let floor = floor.max(1);
-        while digits > 1 && balanced_digit_max(query.log_basis_response, digits - 1) >= floor {
-            digits -= 1;
-        }
-        Ok(digits)
+        let cap = self.universal_cap(query)?;
+        Ok(self.digit_depth_for_cap(cap, query.log_basis_response))
     }
 }
 
@@ -144,51 +88,26 @@ impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
 pub struct UnitOneHotFoldPolicy {
     field_bits: u32,
     source_chunk_size: usize,
-    snap: DigitSnapCalibration,
-    legacy_fallback: BalancedSignedDigitFoldPolicy,
+    universal_fallback: BalancedSignedDigitFoldPolicy,
 }
 
 /// Canonical logical chunk size of the shipping unit one-hot representation.
 pub const DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE: usize = 256;
 
 impl UnitOneHotFoldPolicy {
-    /// Construct the shipping no-snap policy with its historical dominance
-    /// guard. Configurations call this only after establishing the unit
-    /// one-hot source condition.
+    /// Construct the shipping policy with its universal dominance guard.
+    /// Configurations call this only after establishing the unit one-hot
+    /// source condition.
     #[must_use]
-    pub const fn preserving_existing_behavior(
-        field_bits: u32,
-        legacy_witness: FoldWitnessNorms,
-    ) -> Self {
+    pub const fn new(field_bits: u32, legacy_witness: FoldWitnessNorms) -> Self {
         Self {
             field_bits,
             source_chunk_size: DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
-            snap: DigitSnapCalibration::NONE,
-            legacy_fallback: BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+            universal_fallback: BalancedSignedDigitFoldPolicy::universal(
                 field_bits,
                 legacy_witness,
             ),
         }
-    }
-
-    /// Construct a one-hot policy with an explicit calibration and the exact
-    /// pre-cutover policy used by its dominance guard.
-    pub fn new(
-        field_bits: u32,
-        snap: DigitSnapCalibration,
-        legacy_witness: FoldWitnessNorms,
-    ) -> Result<Self, AkitaError> {
-        snap.validate()?;
-        legacy_witness.validate()?;
-        Ok(Self {
-            field_bits,
-            source_chunk_size: DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
-            snap,
-            legacy_fallback: BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
-                field_bits,
-                legacy_witness,
-            ),
-        })
     }
 
     /// Number of logical coefficients represented by one unit entry.
@@ -256,10 +175,9 @@ impl UnitOneHotFoldPolicy {
 impl HonestFoldPolicy for UnitOneHotFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
         validate_query(query)?;
-        self.snap.validate()?;
-        let legacy = self.legacy_fallback.num_digits_fold(query)?;
+        let universal = self.universal_fallback.num_digits_fold(query)?;
         let Some(mut cap) = self.exact_threshold(query) else {
-            return Ok(legacy);
+            return Ok(universal);
         };
         let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
         let challenge = FoldChallengeNorms::new(query.challenge_config);
@@ -271,14 +189,9 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
                 AkitaError::InvalidSetup("unit one-hot worst-case cap overflow".into())
             })?;
         cap = cap.min(worst_case).max(1);
-        let mut digits = self.digit_depth_for_cap(cap, query.log_basis_response);
-        let floor =
-            cap.saturating_mul(u128::from(self.snap.retain_num)) / u128::from(self.snap.retain_den);
-        while digits > 1 && balanced_digit_max(query.log_basis_response, digits - 1) >= floor.max(1)
-        {
-            digits -= 1;
-        }
-        Ok(digits.min(legacy))
+        Ok(self
+            .digit_depth_for_cap(cap, query.log_basis_response)
+            .min(universal))
     }
 }
 
@@ -305,7 +218,7 @@ impl HonestFoldPolicySpec {
             Self::BalancedSignedDigit(_) => {
                 FoldWitnessNorms::bounded(log_basis_inner, ring_dimension)
             }
-            Self::UnitOneHot(policy) => policy.legacy_fallback.witness,
+            Self::UnitOneHot(policy) => policy.universal_fallback.witness,
         }
     }
 }
@@ -457,36 +370,38 @@ mod tests {
     }
 
     #[test]
-    fn balanced_policy_preserves_legacy_digit_depth() {
+    fn balanced_policy_uses_the_universal_digit_depth() {
         let challenge = d64_challenge();
         let query = query(&challenge);
         let witness = FoldWitnessNorms::bounded(3, 64);
-        let policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(128, witness);
+        let policy = BalancedSignedDigitFoldPolicy::universal(128, witness);
         let actual = policy.num_digits_fold(query).expect("balanced policy");
         let cap_config =
             FoldWitnessLinfCapConfig::for_fold_coeffs(&challenge, query.num_fold_coeffs)
                 .expect("cap config");
-        let expected = super::super::fold_witness_digit_plan(
+        let expected_cap = fold_witness_linf_cap(
             query.num_live_blocks,
             query.num_claims,
-            128,
-            query.log_basis_response,
             FoldChallengeNorms::new(&challenge),
             witness,
             &cap_config,
         )
-        .expect("legacy digit plan")
+        .expect("universal cap")
         .0;
+        let expected = num_digits_for_bound(
+            (u128::BITS - expected_cap.leading_zeros()).saturating_add(1),
+            128,
+            query.log_basis_response,
+        );
         assert_eq!(actual, expected);
     }
 
     #[test]
-    fn unit_one_hot_never_exceeds_legacy() {
+    fn unit_one_hot_never_exceeds_the_universal_bound() {
         let challenge = d64_challenge();
         let legacy_witness = FoldWitnessNorms::new(1, 4);
-        let one_hot = UnitOneHotFoldPolicy::preserving_existing_behavior(128, legacy_witness);
-        let legacy =
-            BalancedSignedDigitFoldPolicy::preserving_existing_behavior(128, legacy_witness);
+        let one_hot = UnitOneHotFoldPolicy::new(128, legacy_witness);
+        let legacy = BalancedSignedDigitFoldPolicy::universal(128, legacy_witness);
         let flat = query(&challenge);
         let exact_digits = one_hot.num_digits_fold(flat).expect("one-hot policy");
         let legacy_digits = legacy.num_digits_fold(flat).expect("legacy policy");
@@ -504,9 +419,8 @@ mod tests {
         let challenge =
             SparseChallengeConfig::production_for_ring_dim(256).expect("D256 production challenge");
         let legacy_witness = FoldWitnessNorms::new(1, 4);
-        let one_hot = UnitOneHotFoldPolicy::preserving_existing_behavior(128, legacy_witness);
-        let legacy =
-            BalancedSignedDigitFoldPolicy::preserving_existing_behavior(128, legacy_witness);
+        let one_hot = UnitOneHotFoldPolicy::new(128, legacy_witness);
+        let legacy = BalancedSignedDigitFoldPolicy::universal(128, legacy_witness);
         let mut tightened = None;
 
         'geometry: for num_claims in [1, 2, 4] {
@@ -543,8 +457,7 @@ mod tests {
     #[test]
     fn chunked_query_uses_physical_emitted_geometry() {
         let challenge = d64_challenge();
-        let one_hot =
-            UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
+        let one_hot = UnitOneHotFoldPolicy::new(128, FoldWitnessNorms::new(1, 4));
         for (
             _label,
             num_chunks,
@@ -605,8 +518,7 @@ mod tests {
     #[test]
     fn chunked_query_uses_largest_uneven_window() {
         let challenge = d64_challenge();
-        let one_hot =
-            UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
+        let one_hot = UnitOneHotFoldPolicy::new(128, FoldWitnessNorms::new(1, 4));
         let uneven = HonestFoldSizingQuery {
             ring_dimension: 64,
             num_claims: 2,
@@ -632,8 +544,7 @@ mod tests {
     #[test]
     fn chunked_query_accepts_empty_physical_windows() {
         let challenge = d64_challenge();
-        let one_hot =
-            UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
+        let one_hot = UnitOneHotFoldPolicy::new(128, FoldWitnessNorms::new(1, 4));
         let query = HonestFoldSizingQuery {
             ring_dimension: 64,
             num_claims: 1,
@@ -648,12 +559,5 @@ mod tests {
         one_hot
             .num_digits_fold(query)
             .expect("empty physical windows have valid honest-fold sizing");
-    }
-
-    #[test]
-    fn shipping_one_hot_policy_has_no_snap() {
-        let policy =
-            UnitOneHotFoldPolicy::preserving_existing_behavior(128, FoldWitnessNorms::new(1, 4));
-        assert_eq!(policy.snap, DigitSnapCalibration::NONE);
     }
 }

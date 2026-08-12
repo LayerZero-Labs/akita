@@ -705,8 +705,8 @@ mod tests {
                 ))
                 .expect("generated fp64 dense schedule"),
                 512,
-                10,
-                7_168,
+                8,
+                8_192,
                 true,
             ),
         ] {
@@ -725,13 +725,19 @@ mod tests {
             });
             assert_eq!(has_i16_tail, expects_i16_tail);
             assert!(requirements.entries().iter().any(|entry| {
-                let expected_commit_domain = if expects_i16_tail {
-                    matches!(
+                let expected_commit_domain = match crate::validation::signed_digit_kernel_for_setup(
+                    expected_root_basis,
+                    "for adaptive cache-plan test",
+                )
+                .expect("supported generated root basis")
+                {
+                    akita_types::SignedDigitKernel::I8 => {
+                        entry.key.domain == NttTransformDomain::Negacyclic
+                    }
+                    akita_types::SignedDigitKernel::I16 => matches!(
                         entry.key.domain,
                         NttTransformDomain::ExactNegacyclicI16 { .. }
-                    )
-                } else {
-                    entry.key.domain == NttTransformDomain::Negacyclic
+                    ),
                 };
                 entry.fold_level == 0
                     && entry.cluster == NttOperationCluster::Commit

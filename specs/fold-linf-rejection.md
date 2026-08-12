@@ -73,15 +73,11 @@ The deterministic envelope is
 β_inf = B · min(‖c‖_∞ · ‖s‖_1, ‖c‖_1 · ‖s‖_∞).
 ```
 
-`fold_witness_unsnapped_linf_cap` returns `min(β_inf, t*)` together with `t*`.
-The balanced-digit policy may then snap `K` down while retaining at least:
-
-- `3/4 · t*` for Fp32;
-- `1/2 · t*` for the other supported base fields.
-
-These ratios and `p` are compile-time schedule-sizing constants. They are not
-fields of `FoldLinfProtocolBinding`. Their protocol effect is bound through the
-generated schedule, including its committed digit depths and response limits.
+`fold_witness_linf_cap` returns `min(β_inf, t*)` together with `t*`.
+The balanced-digit policy sizes directly from this cap. It does not discount
+the cap before selecting a digit depth. The target `p` is an offline schedule-sizing
+constant. Its protocol effect is bound through the generated schedule,
+including its committed digit depths and response limits.
 
 ## Fiat-Shamir grinding
 
@@ -148,7 +144,7 @@ for the current group and terminal ownership model.
 
 - exact `challenge_l2_sq_max` values for sparse configurations;
 - monotonicity, zero-input rejection, and overflow rejection in tail sizing;
-- `min(β_inf, t*)` and digit-boundary snap tests;
+- `min(β_inf, t*)` and universal digit-depth tests;
 - generated-schedule drift checks;
 - nonce wire round-trip and out-of-range rejection;
 - prover/verifier transcript-event equality;

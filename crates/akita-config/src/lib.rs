@@ -462,7 +462,7 @@ mod tests {
 
         fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
             akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                     32,
                     akita_types::sis::FoldWitnessNorms::bounded(8, Self::D),
                 ),
@@ -622,8 +622,9 @@ mod fp128_policy_tests {
         }
     }
 
-    /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
-    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
+    /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus each catalog maximum.
+    const CI_DENSE_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44];
+    const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
     fn fp128_onehot_uses_adaptive_schedule_policy() {
@@ -655,17 +656,23 @@ mod fp128_policy_tests {
 
     #[test]
     fn current_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(CI_SIS_WIDTH_NUM_VARS);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
+            CI_DENSE_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
     fn current_adaptive_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(CI_SIS_WIDTH_NUM_VARS);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
+            CI_DENSE_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
     fn current_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::OneHot>(CI_SIS_WIDTH_NUM_VARS);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::OneHot>(
+            CI_ONEHOT_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]

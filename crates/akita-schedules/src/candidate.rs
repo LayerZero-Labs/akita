@@ -35,13 +35,12 @@ pub fn selective_l2_inner_matrix(
     policy: &PlannerPolicy,
     geometry: SelectiveL2CandidateGeometry<'_>,
 ) -> Result<Option<InnerCommitMatrixParams>, AkitaError> {
-    // The physical-L2 route is validated end to end only for
-    // response bases 16 and above. Basis 8 reaches a different stage-2
-    // geometry and is not an eligible planning candidate.
+    // Basis 8 and above use the same L2 collision and norm-proof contract.
+    // Smaller response bases are outside the generated schedule domain.
     if geometry.fold_level < 3
         || geometry.num_claims != 1
         || geometry.num_chunks != 1
-        || geometry.fold_basis < 16
+        || geometry.fold_basis < 8
     {
         return Ok(None);
     }
@@ -254,8 +253,12 @@ mod tests {
                 norm_proof_shape: None,
             },
         )
-        .expect("basis-eight eligibility check");
-        assert!(basis_eight.is_none());
+        .expect("basis-eight eligibility check")
+        .expect("basis-eight L2 table coverage");
+        assert!(matches!(
+            basis_eight.security_route(),
+            akita_types::InnerCommitSecurityRoute::L2 { .. }
+        ));
         let candidate = selective_l2_inner_matrix(
             &policy,
             SelectiveL2CandidateGeometry {

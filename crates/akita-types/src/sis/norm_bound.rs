@@ -14,14 +14,12 @@ use super::ajtai_key::{
 };
 use super::decomposition_digits::balanced_digit_abs_max;
 #[cfg(test)]
-use super::decomposition_digits::{balanced_digit_max, num_digits_for_bound};
+use super::decomposition_digits::num_digits_for_bound;
 use crate::layout::digit_math::isqrt_ceil;
 
 pub use super::fold_linf_cap::{
-    rademacher_proxy_variance, FoldWitnessLinfCapConfig, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN,
-    FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN,
-    FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    rademacher_proxy_variance, FoldWitnessLinfCapConfig, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
 };
 
 /// Rounded-up SIS infinity norm when adding/subtracting two small digits. A
@@ -259,11 +257,10 @@ impl FoldWitnessNorms {
     }
 }
 
-/// Canonical fold-l∞ digit sizing: pre-snap tail cap, optional digit snap-down,
-/// and the grind cap aligned with the snapped `δ_fold`.
+/// Test oracle for universal fold-l∞ digit sizing.
 ///
 /// Returns `(decomposed_fold_digits, inf_norm_bound)`, where `inf_norm_bound` is
-/// the honest-prover per-coefficient `‖z‖_inf` target after any snap-down.
+/// the honest-prover per-coefficient `‖z‖_inf` target.
 ///
 /// # Errors
 ///
@@ -278,36 +275,10 @@ pub(crate) fn fold_witness_digit_plan(
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<(usize, u128), AkitaError> {
-    let (mut inf_norm_bound, rademacher_inf_norm_bound) = fold_witness_unsnapped_linf_cap(
-        num_live_blocks,
-        num_claims,
-        challenge,
-        witness,
-        cap_config,
-    )?;
+    let (inf_norm_bound, _) =
+        fold_witness_linf_cap(num_live_blocks, num_claims, challenge, witness, cap_config)?;
     let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
-    let mut fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
-
-    // Walk `δ_fold` downward while the symmetric
-    // honest-prover digit envelope at `δ-1` still clears
-    // `retain_num/retain_den · t*`.
-    //
-    // This pre-cutover regression oracle uses the historical field-specific
-    // retain floor. Production policy ownership lives in honest_fold_policy.
-    let (retain_num, retain_den): (u32, u32) = if field_bits == 32 { (3, 4) } else { (1, 2) };
-    if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
-        let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
-            / u128::from(retain_den))
-        .max(1);
-        while fold_decomposed_digits > 1 {
-            let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
-            if positive_lower < floor {
-                break;
-            }
-            fold_decomposed_digits -= 1;
-            inf_norm_bound = inf_norm_bound.min(positive_lower);
-        }
-    }
+    let fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
     Ok((fold_decomposed_digits, inf_norm_bound))
 }
 
@@ -340,12 +311,12 @@ pub(crate) fn fold_witness_beta_inf(
     Ok(beta)
 }
 
-/// Honest folded-response infinity-norm cap before any digit-boundary snap.
+/// Honest folded-response infinity-norm cap.
 ///
 /// Terminal responses are encoded as raw centered integers, so their
 /// completeness and codec sizing use this exact cap rather than a gadget
 /// boundary selected for recursive witnesses.
-pub fn fold_witness_unsnapped_linf_cap(
+pub fn fold_witness_linf_cap(
     num_live_blocks: usize,
     num_claims: usize,
     challenge: FoldChallengeNorms,
@@ -542,8 +513,7 @@ mod tests {
             count_pm1: D64_PRODUCTION_PM1_COUNT,
             count_pm2: D64_PRODUCTION_PM2_COUNT,
         };
-        // One-hot committed root (`log_commit_bound == 1`); `log_open_bound`
-        // sets `field_bits = 128` so the tail-bound snap-down engages.
+        // One-hot committed root (`log_commit_bound == 1`).
         let decomposition = DecompositionParams {
             log_basis: 3,
             log_commit_bound: 1,
@@ -603,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn fold_linf_digit_plan_applies_snap_for_tail_bound_levels() {
+    fn fold_linf_digit_plan_uses_the_universal_tail_cap() {
         use crate::DecompositionParams;
         use akita_challenges::{
             SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
@@ -632,24 +602,22 @@ mod tests {
             &cap_config,
         )
         .unwrap();
-        // Recompute the pre-snap cap independently: `t*` from the tail-bound
-        // config and `β_inf` from the worst-case plan, so `pre_snap = min(β, t*)`.
+        // Recompute the cap independently: `t*` from the tail-bound config and
+        // `β_inf` from the deterministic plan.
         let witness_linf_sq = witness
             .infinity_norm()
             .saturating_mul(witness.infinity_norm());
         let t_star =
             isqrt_ceil(rademacher_proxy_variance(5, 1, witness_linf_sq, &cap_config).unwrap());
         let beta = fold_witness_beta_inf(5, 1, challenge, witness).unwrap();
-        let pre_snap_cap = beta.min(t_star);
-        let delta_unsnapped = num_digits_for_bound(
-            (128 - pre_snap_cap.leading_zeros()).saturating_add(1),
+        let universal_cap = beta.min(t_star);
+        let expected_digits = num_digits_for_bound(
+            (128 - universal_cap.leading_zeros()).saturating_add(1),
             decomposition.field_bits(),
             decomposition.log_basis,
         );
-        if delta_fold < delta_unsnapped {
-            assert!(inf_norm_bound <= pre_snap_cap);
-            assert!(inf_norm_bound >= t_star / 2);
-        }
+        assert_eq!(delta_fold, expected_digits);
+        assert_eq!(inf_norm_bound, universal_cap);
     }
 
     #[test]

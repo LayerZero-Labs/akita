@@ -9,6 +9,7 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
         current_witness_len: 1024,
         current_lb: 3,
         source_mean_l2_sq: None,
+        source_peak_second_moment_ppm: None,
         incoming_setup_prefix: None,
         d_a: 64,
         d_b: 64,
