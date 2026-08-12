@@ -203,6 +203,9 @@ jobs:
       - name: Dense multi-chunk PCS e2e
         run: |
           cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-multi-chunk -- --exact fp128_dense_mc
+      - name: One-hot multi-chunk catalog wiring
+        run: |
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-onehot-multi-chunk -- --exact fp128_onehot_mc_catalog_resolves
       - name: Schedule catalog wiring
         run: |
           cargo test --release -p akita-config --no-default-features --test schedule_catalog_feature_off

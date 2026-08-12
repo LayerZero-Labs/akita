@@ -240,12 +240,23 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 // (production-sized schedule; run explicitly with --release)
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
+type Fp128OneHotMultiChunkCfg = fp128::OneHotMultiChunk;
+
+#[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
+#[test]
+fn fp128_onehot_mc_catalog_resolves() {
+    let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
+    Fp128OneHotMultiChunkCfg::get_params_for_batched_commitment(&opening_batch)
+        .expect("W8R2 multi-chunk catalog row");
+}
+
+#[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
 #[test]
 #[ignore = "production-sized; run explicitly with --release"]
 fn fp128_onehot_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        prove_verify_onehot_roundtrip::<fp128::OneHotMultiChunkW2R2>(
+        prove_verify_onehot_roundtrip::<Fp128OneHotMultiChunkCfg>(
             &[32],
             256,
             b"completeness/fp128_onehot_mc",
