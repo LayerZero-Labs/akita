@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 
+mod opening_oracles;
+
+pub(super) use opening_oracles::*;
+
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::RecursiveCommitmentConfig;
@@ -400,18 +404,18 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     out
 }
 
-fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
+pub(super) fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
     &schedule.root.params.final_group.commitment
 }
 
-fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
+pub(super) fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
     schedule
         .recursive_folds
         .iter()
         .any(|fold| fold.params.incoming_setup_prefix.is_some())
 }
 
-fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
+pub(super) fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
     proof.root.stage3_sumcheck_proof.is_some()
         || proof
             .recursive_folds
@@ -419,7 +423,7 @@ fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
             .any(|step| step.stage3_sumcheck_proof.is_some())
 }
 
-fn first_stage3_proof_mut(
+pub(super) fn first_stage3_proof_mut(
     proof: &mut AkitaBatchedProof<F, F>,
 ) -> Option<&mut SetupSumcheckProof<F>> {
     if let Some(stage3) = proof.root.stage3_sumcheck_proof.as_mut() {
@@ -508,11 +512,7 @@ fn verifier_setup_with_alternate_full_prefix(
         .expect("alternate verifier setup")
 }
 
-/// Drives the shared recursive setup-offload profile end to end: two precommitted
-/// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
-/// main group at `nv=32`, a recursive proof that offloads the setup contribution,
-/// a serialization round-trip, an honest verify, and a tampered-opening rejection.
-///
+/// Multi-group recursive roundtrip: two user precommitted groups plus one final group.
 /// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
 /// recursion adapter and standalone profiles are derived from it.
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
@@ -548,7 +548,6 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             "recursive profile must carry setup-prefix metadata"
         );
         on_schedule(&schedule);
-        let root_params = multi_group_root_params(&schedule);
 
         let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
             .expect("recursive setup");
@@ -594,21 +593,19 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         .expect("final generated-profile commitment");
 
         let point = random_point(FINAL_NV, 0xcafe_2026_0001);
+        // Independent oracles: sums of Lagrange weights at the hot indices.
         let pre_openings: Vec<Vec<F>> = pre_polys_by_group
             .iter()
             .map(|polys| {
                 polys
                     .iter()
-                    .map(|poly| {
-                        let pre_params = &root_params.precommitted_groups[0];
-                        opening_from_poly_for_layout(poly, &point[..PRE_NV], pre_params)
-                    })
+                    .map(|poly| onehot_opening_lagrange(poly, &point[..PRE_NV]))
                     .collect()
             })
             .collect();
         let final_openings: Vec<F> = final_polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &point, root_params))
+            .map(|poly| onehot_opening_lagrange(poly, &point))
             .collect();
 
         let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
@@ -784,6 +781,20 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             "recursive verify must reject a tampered final opening"
         );
     });
+}
+
+pub(super) fn make_onehot_poly_with_d_and_k(
+    nv: usize,
+    d: usize,
+    k: usize,
+    seed: u64,
+) -> OneHotPoly<F, u8> {
+    let total_chunks = (1usize << nv) / k;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let indices: Vec<Option<u8>> = (0..total_chunks)
+        .map(|_| Some(rng.gen_range(0..k) as u8))
+        .collect();
+    OneHotPoly::<F, u8>::new(k, d, indices).expect("onehot poly")
 }
 
 #[cfg(feature = "logging-transcript")]
