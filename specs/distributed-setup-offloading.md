@@ -7,7 +7,7 @@
 | Status        | implemented                                |
 | PR            |                                            |
 | Supersedes    |                                            |
-| Superseded-by | Setup-prefix content and capacity semantics superseded by `full-setup-prefix-compact-tail-weights.md` |
+| Superseded-by | Setup-prefix content and capacity semantics superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md` |
 | Book-chapter  | book/src/how/proving/distributed-prover.md |
 
 > **Stage-3 model update (2026-07-29).** The fused witness-carry details in the

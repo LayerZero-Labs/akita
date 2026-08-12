@@ -4,10 +4,10 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-31 |
-| Status        | implemented; setup-prefix zero-padding portions superseded by `full-setup-prefix-compact-tail-weights.md`; compact provenance certificates and large-artifact I/O are explicit follow-ups |
+| Status        | implemented; setup-prefix zero-padding portions superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md`; compact provenance certificates and large-artifact I/O are explicit follow-ups |
 | PR            | #341, stacked on #338 |
 | Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, `mixed-ring-dimension-per-level.md`, and `setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
-| Superseded-by | Setup-prefix offloading content and capacity semantics are superseded by `full-setup-prefix-compact-tail-weights.md` |
+| Superseded-by | Setup-prefix offloading content and capacity semantics are superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md` |
 | Book-chapter  | book/src/usage/commitment-api.md |
 
 ## Summary
@@ -508,7 +508,7 @@ hot-path public matrix is shorter.
 
 Setup-prefix offloading has two lengths with different meanings. The original
 zero-padded content rule in this spec has been superseded by
-[`full-setup-prefix-compact-tail-weights.md`](full-setup-prefix-compact-tail-weights.md):
+[`full-setup-prefix-compact-tail-weights.md`](archive/2026-Q3/full-setup-prefix-compact-tail-weights.md):
 
 ```text
 natural_len = active setup-weight support used by Stage 3
@@ -1088,10 +1088,10 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 
 #### Setup-prefix offloading
 
-- [x] Superseded by `full-setup-prefix-compact-tail-weights.md`: capacity
+- [x] Superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md`: capacity
   accounting now charges `n_prefix` for selected full-prefix setup sources and
   separately includes setup-prefix commitment matrices.
-- [x] Superseded by `full-setup-prefix-compact-tail-weights.md`: tests now cover
+- [x] Superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md`: tests now cover
   a non-power-of-two natural support and prove tail entries are actual
   public-stream coefficients rather than synthesized zeros.
 - [x] Setup-prefix preprocessing works for independently selected prefix A/B

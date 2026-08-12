@@ -107,8 +107,9 @@ replace or modify the next witness claim produced by Stage 2.
 A schedule may select an authenticated setup prefix slot. The verifier checks
 that the selected slot covers the active setup length required by the plan and
 the full power-of-two prefix needed by its commitment domain, absorbs the slot
-identity, and uses the proof's setup prefix evaluation. If no slot is selected,
-it evaluates the local public setup directly.
+identity, and uses the proof's setup prefix evaluation. Recursive Stage 3
+requires this selected slot and carried evaluation; direct setup contribution
+does not execute Stage 3.
 
 The slot changes where the public setup polynomial is opened. It does not
 change the setup index weights or relation geometry.
