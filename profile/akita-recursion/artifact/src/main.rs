@@ -30,7 +30,7 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
     CommittedGroupParams, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PriorGroupProfiles,
+    PolynomialGroupClaims,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
