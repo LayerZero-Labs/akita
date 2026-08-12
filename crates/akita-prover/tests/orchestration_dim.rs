@@ -24,7 +24,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
             key.final_group,
             &expected.schedule().root.params.final_group.commitment,
         ),
-        prior_group_profiles: Vec::new(),
+        precommitteds: Vec::new(),
     };
     let selected = Cfg::select_schedule_for_profiles(&profiles).expect("selected schedule");
     let actual = effective_batched_schedule::<Cfg>(selected, &batch, &final_group_point)

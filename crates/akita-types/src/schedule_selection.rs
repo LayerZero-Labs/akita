@@ -53,16 +53,15 @@ pub fn schedule_row_digest(
     profiles: &CommittedGroupBatchProfile,
     schedule: &FoldSchedule,
 ) -> Result<ScheduleRowDigest, AkitaError> {
-    let num_groups = profiles
-        .prior_group_profiles
-        .len()
-        .checked_add(1)
-        .ok_or_else(|| AkitaError::InvalidSetup("schedule row group count overflow".to_string()))?;
+    let num_groups =
+        profiles.precommitteds.len().checked_add(1).ok_or_else(|| {
+            AkitaError::InvalidSetup("schedule row group count overflow".to_string())
+        })?;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(SCHEDULE_ROW_DOMAIN_V2);
     bytes.push(1);
     push_usize(&mut bytes, num_groups);
-    for profile in &profiles.prior_group_profiles {
+    for profile in &profiles.precommitteds {
         let encoded = profile.canonical_descriptor_bytes();
         push_usize(&mut bytes, encoded.len());
         bytes.extend_from_slice(&encoded);

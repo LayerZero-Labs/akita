@@ -241,14 +241,14 @@ where
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    let (final_group, prior_group_profiles) = claims
+    let (final_group, precommitteds) = claims
         .groups()
         .split_last()
         .ok_or(AkitaError::InvalidProof)?;
     let final_descriptor = *final_group.commitment().profile();
     if final_descriptor.group.num_vars() != final_group.num_vars()
         || final_descriptor.group.num_polynomials() != final_group.num_evaluations()
-        || prior_group_profiles.iter().any(|group| {
+        || precommitteds.iter().any(|group| {
             let descriptor = group.commitment().profile();
             descriptor.group.num_vars() != group.num_vars()
                 || descriptor.group.num_polynomials() != group.num_evaluations()
@@ -280,7 +280,7 @@ where
     }
     let batch_profile = CommittedGroupBatchProfile {
         final_group: final_descriptor,
-        prior_group_profiles: prior_group_profiles
+        precommitteds: precommitteds
             .iter()
             .map(|group| *group.commitment().profile())
             .collect(),
@@ -307,11 +307,11 @@ where
         &root_params.final_group.commitment,
     );
     if final_descriptor != expected_final_descriptor
-        || root_params.precommitted_groups.len() != prior_group_profiles.len()
+        || root_params.precommitted_groups.len() != precommitteds.len()
         || root_params
             .precommitted_groups
             .iter()
-            .zip(prior_group_profiles)
+            .zip(precommitteds)
             .any(|(params, claims_group)| {
                 params.commitment.layout != *claims_group.commitment().profile()
             })

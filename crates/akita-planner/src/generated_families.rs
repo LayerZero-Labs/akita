@@ -195,14 +195,14 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
 }
 
-/// Frozen profile a group commits with when it has no prior groups.
+/// Frozen profile a group commits with when it has no precommitted groups.
 ///
 /// Generation cannot read the catalog it is producing, so this plans the row
-/// instead of selecting it. `CommitmentConfig::profile_without_prior_groups`
+/// instead of selecting it. `CommitmentConfig::profile_without_precommitted_groups`
 /// is the runtime counterpart, and
-/// `every_grouped_prior_descriptor_has_a_generated_producer` asserts the two
+/// `every_grouped_precommitted_descriptor_has_a_generated_producer` asserts the two
 /// agree on every shipped descriptor.
-fn planned_profile_without_prior_groups<Cfg: CommitmentConfig>(
+fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
     let schedule = regen::<Cfg>(group)?;
@@ -275,11 +275,11 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     type Cfg = fp128::OneHotMultiChunkW2R2;
     let group = PolynomialGroupLayout::new(14, 1);
-    let precommitted = planned_profile_without_prior_groups::<Cfg>(group)?;
+    let precommitted = planned_profile_without_precommitted_groups::<Cfg>(group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: group,
-            prior_group_profiles: vec![precommitted],
+            precommitteds: vec![precommitted],
         },
         vec![honest_fold_policy_of::<Cfg>()],
     )])
@@ -297,11 +297,11 @@ fn single_pre_group_batch_keys<Cfg: CommitmentConfig + 'static>(
     pre_group: PolynomialGroupLayout,
     final_group: PolynomialGroupLayout,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    let precommitted = planned_profile_without_prior_groups::<Cfg>(pre_group)?;
+    let precommitted = planned_profile_without_precommitted_groups::<Cfg>(pre_group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group,
-            prior_group_profiles: vec![precommitted],
+            precommitteds: vec![precommitted],
         },
         vec![honest_fold_policy_of::<Cfg>()],
     )])
@@ -355,11 +355,11 @@ fn fp128_dense_group_batch_keys(
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted = planned_profile_without_prior_groups::<BaseCfg>(precommitted_group)?;
+    let precommitted = planned_profile_without_precommitted_groups::<BaseCfg>(precommitted_group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
-            prior_group_profiles: vec![precommitted, precommitted],
+            precommitteds: vec![precommitted, precommitted],
         },
         vec![
             honest_fold_policy_of::<BaseCfg>(),
@@ -374,12 +374,12 @@ fn heterogeneous_onehot_catalog_key(
     let dense_group = PolynomialGroupLayout::new(15, 2);
     let onehot_policy = honest_fold_policy_of::<fp128::OneHot>();
     let dense_policy = honest_fold_policy_of::<fp128::Dense>();
-    let onehot = planned_profile_without_prior_groups::<fp128::OneHot>(onehot_group)?;
-    let dense = planned_profile_without_prior_groups::<fp128::Dense>(dense_group)?;
+    let onehot = planned_profile_without_precommitted_groups::<fp128::OneHot>(onehot_group)?;
+    let dense = planned_profile_without_precommitted_groups::<fp128::Dense>(dense_group)?;
     Ok((
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(16, 1),
-            prior_group_profiles: vec![onehot, dense],
+            precommitteds: vec![onehot, dense],
         },
         vec![onehot_policy, dense_policy],
     ))
@@ -388,36 +388,36 @@ fn heterogeneous_onehot_catalog_key(
 fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let singleton_pre =
-        planned_profile_without_prior_groups::<BaseCfg>(PolynomialGroupLayout::new(14, 1))?;
+        planned_profile_without_precommitted_groups::<BaseCfg>(PolynomialGroupLayout::new(14, 1))?;
     let pair_pre =
-        planned_profile_without_prior_groups::<BaseCfg>(PolynomialGroupLayout::new(14, 2))?;
+        planned_profile_without_precommitted_groups::<BaseCfg>(PolynomialGroupLayout::new(14, 2))?;
     let policy = honest_fold_policy_of::<BaseCfg>();
     Ok(vec![
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 2),
-                prior_group_profiles: vec![singleton_pre],
+                precommitteds: vec![singleton_pre],
             },
             vec![policy],
         ),
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 4),
-                prior_group_profiles: vec![singleton_pre, singleton_pre],
+                precommitteds: vec![singleton_pre, singleton_pre],
             },
             vec![policy, policy],
         ),
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 4),
-                prior_group_profiles: vec![singleton_pre, singleton_pre, singleton_pre],
+                precommitteds: vec![singleton_pre, singleton_pre, singleton_pre],
             },
             vec![policy, policy, policy],
         ),
         (
             AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(20, 1),
-                prior_group_profiles: vec![pair_pre],
+                precommitteds: vec![pair_pre],
             },
             vec![policy],
         ),
@@ -507,7 +507,7 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
     group: PolynomialGroupLayout,
 ) -> Result<(CommittedGroupProfile, HonestFoldPolicySpec), AkitaError> {
     Ok((
-        planned_profile_without_prior_groups::<Cfg>(group)?,
+        planned_profile_without_precommitted_groups::<Cfg>(group)?,
         honest_fold_policy_of::<Cfg>(),
     ))
 }

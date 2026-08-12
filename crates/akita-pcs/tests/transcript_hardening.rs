@@ -81,7 +81,7 @@ fn event_stream_equality_small() {
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
@@ -336,7 +336,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 
@@ -421,7 +421,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 

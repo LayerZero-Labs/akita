@@ -34,11 +34,11 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted = fp128::OneHotMultiChunk::profile_without_prior_groups(pre_group)
+    let precommitted = fp128::OneHotMultiChunk::profile_without_precommitted_groups(pre_group)
         .expect("independent profile");
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        prior_group_profiles: vec![precommitted, precommitted],
+        precommitteds: vec![precommitted, precommitted],
     }
 }
 
@@ -85,11 +85,11 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     assert_eq!(verifier.num_field_elements, 8_388_608);
 
     // `K=2` cannot reach the four-polynomial grouped root, and this family
-    // ships no row without prior groups. The only shape it can still serve is
+    // ships no row without precommitted groups. The only shape it can still serve is
     // an independent commitment of the frozen precommit descriptor, performed
     // under the base config. Provisioning must cover exactly that, so derive
     // the expectation from the same primitive commit-time admission uses.
-    let frozen_precommit = key.prior_group_profiles[0];
+    let frozen_precommit = key.precommitteds[0];
     let precommit_footprint = akita_types::commit_only_setup_field_elements(
         &frozen_precommit.inner_commit_matrix,
         &frozen_precommit.outer_commit_matrix,

@@ -176,11 +176,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-    let pre_descriptor = Cfg::profile_without_prior_groups(pre_key).expect("independent profile");
+    let pre_descriptor =
+        Cfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group,
-        prior_group_profiles: vec![pre_descriptor; PRE_GROUPS],
+        precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
     let opening_layout = multi_group_key
         .opening_layout()
@@ -266,7 +267,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 &setup,
                 &polys,
                 &stack,
-                akita_prover::GroupContext::scheduler_without_prior_groups(),
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit");
             pre_keys.push(pre_key);
@@ -290,9 +291,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .iter()
             .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
             .collect::<Vec<_>>();
-        let prior_group_profiles =
-            akita_types::PriorGroupProfiles::from_ordered_groups(pre_commitments.iter())
-                .expect("nonempty prior groups");
+        let precommitteds =
+            akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
+                .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -300,7 +301,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");
         report_timing(label, "commit", t_commit.elapsed().as_secs_f64());

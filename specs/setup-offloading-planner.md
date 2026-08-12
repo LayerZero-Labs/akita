@@ -12,9 +12,9 @@
 
 > **Commit-API update (2026-08-10).** The public commitment flow is one
 > `AkitaCommitmentScheme::commit` entry point taking a `GroupContext`:
-> `scheduler_without_prior_groups()` for each independent prior commitment and
-> `scheduler_with_prior_groups` for the grouped final commitment. A recursive
-> companion catalog ships no row without prior groups at a precommit layout, so
+> `scheduler_without_precommitted_groups()` for each independent prior commitment and
+> `scheduler_with_precommitted_groups` for the grouped final commitment. A recursive
+> companion catalog ships no row without precommitted groups at a precommit layout, so
 > the caller precommits under the base `Cfg` and proves the grouped root under
 > `RecursiveCommitmentConfig<Cfg>`. The recursive planning and setup-offloading
 > contracts in this document are unchanged.
@@ -50,7 +50,7 @@ suffix planning also assumes one commitment group, while complete offloading
 requires the successor to prove two openings together: its newly committed
 folded witness and the setup-prefix commitment selected by the preceding fold.
 
-This design adds `RecursiveCommitmentConfig<Cfg>`. Prior groups use the
+This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
 generated `CommittedGroupProfile` and the independent-commit flow specified in
 [`multi-group-batching.md`](multi-group-batching.md); the earlier conservative
 config adapter has been removed. The ordinary `Cfg` resolves a direct-only
@@ -206,7 +206,7 @@ An offloaded candidate exists when:
 
 ```text
 recursive config is selected
-the root schedule key is genuinely multi-group (prior_group_profiles is nonempty)
+the root schedule key is genuinely multi-group (precommitteds is nonempty)
 the producer has a nonterminal recursive successor
 the successor can commit the exact padded setup prefix
 the active role dimensions and witness partition are supported

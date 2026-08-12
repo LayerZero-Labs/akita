@@ -25,7 +25,7 @@ fn verify_rejects_wrong_opening() {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .unwrap();
 

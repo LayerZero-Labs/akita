@@ -311,7 +311,7 @@ fn fp128_onehot_batched() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let poly_refs: Vec<_> = polys.iter().collect();
@@ -387,7 +387,7 @@ fn fp128_dense_batched() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let poly_refs: Vec<_> = polys.iter().collect();
@@ -498,7 +498,7 @@ fn fp128_mixed_batched() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("mixed commit");
         let poly_refs: Vec<_> = polys.iter().collect();
@@ -583,7 +583,7 @@ fn fp128_onehot_oversized_setup() {
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let poly_refs = [&poly];
@@ -656,7 +656,7 @@ fn fp128_dense_monomial_basis() {
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let poly_refs = [&poly];

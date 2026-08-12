@@ -130,7 +130,7 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
         for entry in catalog.entries {
             let candidate = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
-                prior_group_profiles: entry
+                precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
@@ -159,10 +159,10 @@ mod tests {
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
         let precommitted =
-            fp128::OneHot::profile_without_prior_groups(pre).expect("independent profile");
+            fp128::OneHot::profile_without_precommitted_groups(pre).expect("independent profile");
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
-            prior_group_profiles: vec![precommitted, precommitted],
+            precommitteds: vec![precommitted, precommitted],
         }
     }
 
@@ -175,11 +175,11 @@ mod tests {
         assert!(
             candidates.iter().any(|key| {
                 key.final_group == profile.final_group
-                    && key.prior_group_profiles.len() == profile.prior_group_profiles.len()
+                    && key.precommitteds.len() == profile.precommitteds.len()
                     && key
-                        .prior_group_profiles
+                        .precommitteds
                         .iter()
-                        .zip(profile.prior_group_profiles.iter())
+                        .zip(profile.precommitteds.iter())
                         .all(|(a, b)| a.group == b.group)
             }),
             "capacity selected-key set must include the profiling recursive key"

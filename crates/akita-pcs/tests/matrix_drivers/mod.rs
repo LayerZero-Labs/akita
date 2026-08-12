@@ -75,7 +75,7 @@ where
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("recursive direct commit");
 
@@ -175,7 +175,7 @@ where
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         let poly_refs = [&poly];
@@ -249,7 +249,7 @@ where
             &setup,
             std::slice::from_ref(&poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         let poly_refs = [&poly];
@@ -315,7 +315,7 @@ where
             &setup,
             std::slice::from_ref(&pre_poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
 
@@ -323,8 +323,8 @@ where
         let final_evals = dense_field_evals(final_nv, final_seed);
         let final_poly = DensePoly::<F>::from_field_evals(final_nv, DENSE_D, &final_evals)
             .expect("final dense poly");
-        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile])
-            .expect("nonempty prior groups");
+        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -332,13 +332,13 @@ where
             &setup,
             std::slice::from_ref(&final_poly),
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final commit");
 
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, 1),
-            prior_group_profiles: vec![pre_commitment.profile],
+            precommitteds: vec![pre_commitment.profile],
         };
         // The openings come from independent oracles, so the schedule is not
         // needed to project them. Keep the lookup as a structural check that
@@ -439,8 +439,8 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         // An independent precommit commits with its own row without prior
         // groups, so take the pre-group ring dimension from exactly the row
         // `commit` will select below.
-        let pre_d = Cfg::profile_without_prior_groups(PolynomialGroupLayout::new(PRE_NV, 1))
-            .expect("pre profile without prior groups")
+        let pre_d = Cfg::profile_without_precommitted_groups(PolynomialGroupLayout::new(PRE_NV, 1))
+            .expect("pre profile without precommitted groups")
             .inner_commit_matrix
             .ring_dimension();
 
@@ -464,13 +464,13 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             &setup,
             std::slice::from_ref(&pre_poly),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
 
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, 1),
-            prior_group_profiles: vec![pre_commitment.profile],
+            precommitteds: vec![pre_commitment.profile],
         };
         let schedule = Cfg::select_schedule_for_key(&schedule_key)
             .expect("schedule")
@@ -480,8 +480,8 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
 
         let final_poly =
             make_onehot_poly_with_d_and_k(final_nv, final_d, k, 0x0bee_f001_u64 ^ final_nv as u64);
-        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![pre_commitment.profile])
-            .expect("nonempty prior groups");
+        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -489,7 +489,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             &setup,
             std::slice::from_ref(&final_poly),
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final commit");
 

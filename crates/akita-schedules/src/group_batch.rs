@@ -17,12 +17,12 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     log_basis_open: u32,
     open_ring_dimension: usize,
 ) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
-    if key.prior_group_profiles.is_empty() {
+    if key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root params require at least one precommitted group".to_string(),
         ));
     }
-    if key.prior_group_profiles.len() != generated_groups.len() {
+    if key.precommitteds.len() != generated_groups.len() {
         return Err(AkitaError::InvalidSetup(
             "generated precommitted group count does not match the schedule key".to_string(),
         ));
@@ -35,7 +35,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
         ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
     };
     let groups = key
-        .prior_group_profiles
+        .precommitteds
         .iter()
         .zip(generated_groups)
         .map(|(layout, generated)| {

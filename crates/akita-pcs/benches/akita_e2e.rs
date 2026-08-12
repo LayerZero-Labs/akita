@@ -132,7 +132,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                     &setup,
                     black_box(std::slice::from_ref(&poly)),
                     &stack,
-                    akita_prover::GroupContext::scheduler_without_prior_groups(),
+                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .unwrap(),
             )
@@ -146,7 +146,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .unwrap();
 
@@ -155,7 +155,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let openings = [opening];
     let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
         final_group: *commitments[0].profile(),
-        prior_group_profiles: Vec::new(),
+        precommitteds: Vec::new(),
     })
     .expect("select generated schedule row")
     .selection();
@@ -227,7 +227,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,
-                akita_prover::GroupContext::scheduler_without_prior_groups(),
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
             let cms = [cm];
@@ -316,7 +316,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                     &setup,
                     black_box(std::slice::from_ref(&onehot_poly)),
                     &stack,
-                    akita_prover::GroupContext::scheduler_without_prior_groups(),
+                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
                 .unwrap(),
             )
@@ -330,7 +330,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         &setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .unwrap();
 
@@ -339,7 +339,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     let openings = [opening];
     let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
         final_group: *commitments[0].profile(),
-        prior_group_profiles: Vec::new(),
+        precommitteds: Vec::new(),
     })
     .expect("select generated schedule row")
     .selection();
@@ -411,7 +411,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
                 &setup,
                 std::slice::from_ref(&onehot_poly),
                 &stack,
-                akita_prover::GroupContext::scheduler_without_prior_groups(),
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .unwrap();
             let cms = [cm];

@@ -3,7 +3,7 @@
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
 The smallest path to a working
-`commit(GroupContext::scheduler_without_prior_groups())` → `batched_prove` →
+`commit(GroupContext::scheduler_without_precommitted_groups())` → `batched_prove` →
 `batched_verify`, then how to pick the `CommitmentConfig` preset that matches
 your field and proof-size goals.
 

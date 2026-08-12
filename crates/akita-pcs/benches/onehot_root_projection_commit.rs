@@ -190,7 +190,7 @@ where
                     &polys,
                     setup.expanded.as_ref(),
                     &stack,
-                    GroupContext::explicit_without_prior_groups(&params),
+                    GroupContext::explicit_without_precommitted_groups(&params),
                 )
                 .expect("benchmark one hot commitment");
                 total += start.elapsed();

@@ -10,7 +10,7 @@
 ## Summary
 
 Akita supports commitments that are created separately and later opened in one
-root proof. Each prior group carries the exact public A and B geometry
+root proof. Each precommitted group carries the exact public A and B geometry
 that was used to commit it. The final root schedule is selected from the final
 group layout and the ordered list of those exact profiles.
 
@@ -20,7 +20,7 @@ separate scalar batch-commit entry point. Those APIs have been removed.
 
 ## Canonical types
 
-`CommittedGroupProfile` is the single source of truth for a prior group.
+`CommittedGroupProfile` is the single source of truth for a precommitted group.
 It freezes:
 
 - the polynomial group layout;
@@ -29,11 +29,11 @@ It freezes:
 - the exact inner and outer SIS matrices, including ranks and bounds.
 
 `AkitaScheduleLookupKey` contains one final group layout and an ordered list of
-exact `prior_group_profiles`. Profile order is part of the schedule and
+exact `precommitteds`. Profile order is part of the schedule and
 transcript identity.
 
 The final root must use every frozen profile exactly. It may choose fresh root
-opening and D geometry, but it must not reconstruct or change a prior group's A
+opening and D geometry, but it must not reconstruct or change a precommitted group's A
 or B relation.
 
 ## Standalone profile selection
@@ -59,13 +59,13 @@ Generated profile lookup is strict. An unlisted layout returns
 The current staggered flow is:
 
 1. Commit each early group with the unified `commit` method and
-   `GroupContext::scheduler_without_prior_groups()`; this resolves its exact
+   `GroupContext::scheduler_without_precommitted_groups()`; this resolves its exact
    scalar row. Retain the resulting committed group/profile for use as a
-   prior group.
-2. Build one ordered `PriorGroupProfiles` owner from those committed groups for
+   precommitted group.
+2. Build one ordered `PrecommittedGroupProfiles` owner from those committed groups for
    the final commitment.
 3. Commit the last group with
-   `GroupContext::scheduler_with_prior_groups(&prior)?`, borrowing that owner.
+   `GroupContext::scheduler_with_precommitted_groups(&prior)?`, borrowing that owner.
 4. Build the self-describing `OpeningClaims`, then pass them to
    `SelectedProverOpeningData::from_committed_claims`. Batch assembly derives
    the ordered profiles from the committed groups and selects the exact
@@ -105,10 +105,10 @@ from unchecked lengths, or invoke the planner.
 
 - Scalar generation emits exact S profiles for every supported layout.
 - Profile descriptor changes alter lookup and effective schedule identity.
-- `GroupContext::scheduler_without_prior_groups()` always uses the exact
+- `GroupContext::scheduler_without_precommitted_groups()` always uses the exact
   generated scalar-row profile, including when that commitment later becomes a
-  prior group.
-- `GroupContext::scheduler_with_prior_groups` selects from the exact ordered
+  precommitted group.
+- `GroupContext::scheduler_with_precommitted_groups` selects from the exact ordered
   profiles supplied by the caller and rejects an empty prefix.
 - Batch assembly derives the exact ordered profiles from the committed claims
   and selects the grouped row before it strips the profiles from prover data.

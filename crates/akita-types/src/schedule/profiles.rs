@@ -193,29 +193,29 @@ impl CommittedGroupProfile {
 
 /// Canonical runtime schedule lookup key.
 ///
-/// Openings without prior groups use an empty `prior_group_profiles` vector and
+/// Openings without precommitted groups use an empty `precommitteds` vector and
 /// store their only group in `final_group`. Multi-group roots list earlier
-/// groups in `prior_group_profiles` and the final group in `final_group`.
+/// groups in `precommitteds` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
-    pub prior_group_profiles: Vec<CommittedGroupProfile>,
+    pub precommitteds: Vec<CommittedGroupProfile>,
 }
 
 /// A non-empty ordered prefix of groups committed before a final group.
 ///
 /// The type is non-empty by construction, so a grouped commitment context
-/// cannot describe "no prior groups" — that state has its own spelling in
-/// `PriorGroupContext::NoPriorGroups`. Both constructors reject an empty
+/// cannot describe "no precommitted groups" — that state has its own spelling in
+/// `PrecommittedGroupContext::NoPrecommittedGroups`. Both constructors reject an empty
 /// input, which is why building a grouped context is infallible.
 #[derive(Debug, Clone)]
-pub struct PriorGroupProfiles {
+pub struct PrecommittedGroupProfiles {
     profiles: Vec<CommittedGroupProfile>,
 }
 
-impl PriorGroupProfiles {
+impl PrecommittedGroupProfiles {
     /// Take ownership of an already ordered profile vector without cloning it.
     ///
     /// # Errors
@@ -224,7 +224,7 @@ impl PriorGroupProfiles {
     pub fn from_profiles(profiles: Vec<CommittedGroupProfile>) -> Result<Self, AkitaError> {
         if profiles.is_empty() {
             return Err(AkitaError::InvalidInput(
-                "prior group profiles must describe at least one group".to_string(),
+                "precommitted group profiles must describe at least one group".to_string(),
             ));
         }
         Ok(Self { profiles })
@@ -258,7 +258,7 @@ impl AkitaScheduleLookupKey {
     pub fn single(final_group: PolynomialGroupLayout) -> Self {
         Self {
             final_group,
-            prior_group_profiles: Vec::new(),
+            precommitteds: Vec::new(),
         }
     }
 
@@ -267,8 +267,8 @@ impl AkitaScheduleLookupKey {
         let mut bytes = Vec::new();
         push_usize(&mut bytes, self.final_group.num_vars());
         push_usize(&mut bytes, self.final_group.num_polynomials());
-        push_usize(&mut bytes, self.prior_group_profiles.len());
-        for descriptor in &self.prior_group_profiles {
+        push_usize(&mut bytes, self.precommitteds.len());
+        for descriptor in &self.precommitteds {
             descriptor.append_descriptor_bytes(&mut bytes);
         }
         bytes
@@ -277,7 +277,7 @@ impl AkitaScheduleLookupKey {
     /// Build a multi-group opening layout from this schedule lookup key.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
         let mut groups: Vec<PolynomialGroupLayout> = self
-            .prior_group_profiles
+            .precommitteds
             .iter()
             .map(|layout| layout.group)
             .collect();
@@ -287,7 +287,7 @@ impl AkitaScheduleLookupKey {
 
     /// Number of commitment groups in this schedule key.
     pub fn num_commitment_groups(&self) -> usize {
-        self.prior_group_profiles.len() + 1
+        self.precommitteds.len() + 1
     }
 
     /// Maximum opening arity across the final and precommitted groups.
@@ -296,7 +296,7 @@ impl AkitaScheduleLookupKey {
     /// distinct from `final_group.num_vars()`, which remains the source arity
     /// used to size the final commitment and root witness.
     pub fn max_num_vars(&self) -> usize {
-        self.prior_group_profiles
+        self.precommitteds
             .iter()
             .map(|descriptor| descriptor.group.num_vars())
             .fold(self.final_group.num_vars(), usize::max)
@@ -305,7 +305,7 @@ impl AkitaScheduleLookupKey {
     /// Total number of polynomials across the final and precommitted groups.
     pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
         let mut total = self.final_group.num_polynomials();
-        for layout in &self.prior_group_profiles {
+        for layout in &self.precommitteds {
             total = total
                 .checked_add(layout.group.num_polynomials())
                 .ok_or_else(|| {
@@ -334,7 +334,7 @@ impl AkitaScheduleLookupKey {
                 "schedule lookup key dimensions must be at least 1".to_string(),
             ));
         }
-        for layout in &self.prior_group_profiles {
+        for layout in &self.precommitteds {
             layout.group.validate()?;
             layout.validate(field_bits)?;
         }
@@ -348,7 +348,7 @@ pub struct CommittedGroupBatchProfile {
     /// Final/new commitment group.
     pub final_group: CommittedGroupProfile,
     /// Earlier commitments in transcript order.
-    pub prior_group_profiles: Vec<CommittedGroupProfile>,
+    pub precommitteds: Vec<CommittedGroupProfile>,
 }
 
 impl CommittedGroupBatchProfile {
@@ -377,14 +377,14 @@ impl CommittedGroupBatchProfile {
         })?;
         Ok(Self {
             final_group,
-            prior_group_profiles: profiles,
+            precommitteds: profiles,
         })
     }
 
     /// Build the corresponding public opening layout.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
         let mut groups = self
-            .prior_group_profiles
+            .precommitteds
             .iter()
             .map(|profile| profile.group)
             .collect::<Vec<_>>();
@@ -395,7 +395,7 @@ impl CommittedGroupBatchProfile {
     /// Validate all frozen profiles.
     pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.final_group.validate_frozen_precommit(field_bits)?;
-        for profile in &self.prior_group_profiles {
+        for profile in &self.precommitteds {
             profile.validate_frozen_precommit(field_bits)?;
         }
         Ok(())

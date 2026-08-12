@@ -108,7 +108,7 @@ fn profiles_for_entry(
             entry.root.final_group.layout,
             &schedule.root.params.final_group.commitment,
         ),
-        prior_group_profiles: entry
+        precommitteds: entry
             .root
             .precommitted_groups
             .iter()

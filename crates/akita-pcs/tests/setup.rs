@@ -183,7 +183,7 @@ where
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .expect("commit");
 
@@ -299,7 +299,7 @@ where
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .expect("commit");
 
@@ -423,7 +423,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &setup,
         &polys,
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .expect("batched commit");
     let commitments = [commitment];
@@ -521,7 +521,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &setup,
         &polys,
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .expect("batched onehot commit");
     let commitments = [commitment];

@@ -318,7 +318,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         std::slice::from_ref(&contract),
         expanded,
         &contract_stack,
-        GroupContext::explicit_without_prior_groups(&params),
+        GroupContext::explicit_without_precommitted_groups(&params),
     )
     .expect("contract commit");
 
@@ -331,7 +331,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         std::slice::from_ref(&dense),
         expanded,
         &cpu_stack,
-        GroupContext::explicit_without_prior_groups(&params),
+        GroupContext::explicit_without_precommitted_groups(&params),
     )
     .expect("dense oracle commit");
 
@@ -349,7 +349,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         std::slice::from_ref(&contract),
         expanded,
         &contract_stack,
-        GroupContext::explicit_without_prior_groups(&malformed_params),
+        GroupContext::explicit_without_precommitted_groups(&malformed_params),
     )
     .expect_err("malformed explicit params must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));

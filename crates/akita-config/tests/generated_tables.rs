@@ -70,7 +70,7 @@ fn group_batch_requests_are_canonically_ordered() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn every_grouped_prior_descriptor_has_a_generated_producer() {
+fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
     let produced = ALL_GENERATED_FAMILIES
         .iter()
         .flat_map(|family| {
@@ -100,7 +100,7 @@ fn every_grouped_prior_descriptor_has_a_generated_producer() {
             for group in entry.root.precommitted_groups {
                 assert!(
                     produced.contains(&group.descriptor),
-                    "family {} embeds a grouped prior descriptor without an exact generated S producer: {:?}",
+                    "family {} embeds a grouped precommitted descriptor without an exact generated S producer: {:?}",
                     family.module_name,
                     group.descriptor.group
                 );

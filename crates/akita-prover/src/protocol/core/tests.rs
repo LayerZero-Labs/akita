@@ -104,11 +104,12 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let precommitted = OneHot::profile_without_prior_groups(PolynomialGroupLayout::new(16, 1))
-        .expect("independent profile");
+    let precommitted =
+        OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
+            .expect("independent profile");
     let schedule = OneHot::select_schedule_for_key(&AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        prior_group_profiles: vec![precommitted, precommitted],
+        precommitteds: vec![precommitted, precommitted],
     })
     .expect("multi-group schedule")
     .into_schedule();

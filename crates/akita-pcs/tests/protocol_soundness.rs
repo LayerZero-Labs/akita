@@ -159,7 +159,7 @@ fn selection_for<Cfg: CommitmentConfig>(
 ) -> OpeningScheduleSelection {
     Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
         final_group: *commitment.profile(),
-        prior_group_profiles: Vec::new(),
+        precommitteds: Vec::new(),
     })
     .expect("select schedule")
     .selection()
@@ -225,7 +225,7 @@ where
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .unwrap();
 
@@ -420,7 +420,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         let commitments = [commitment];
@@ -583,7 +583,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         let commitments = [commitment];
@@ -708,7 +708,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let selection = selection_for::<Cfg>(&commitment);
@@ -828,7 +828,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
             &setup,
             &[poly_a.clone(), poly_b.clone()],
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let selection = selection_for::<Cfg>(&commitment);
@@ -968,7 +968,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let selection = selection_for::<Cfg>(&commitment);

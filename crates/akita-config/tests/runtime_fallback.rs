@@ -295,11 +295,11 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 )))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     let precommitted_group = PolynomialGroupLayout::singleton(16);
-    let descriptor = fp128::OneHot::profile_without_prior_groups(precommitted_group)
+    let descriptor = fp128::OneHot::profile_without_precommitted_groups(precommitted_group)
         .expect("base OneHot precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        prior_group_profiles: vec![descriptor, descriptor],
+        precommitteds: vec![descriptor, descriptor],
     };
     assert!(matches!(
         akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::select_schedule_for_key(&key),
@@ -384,10 +384,10 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
     let pre_profile =
-        Cfg::profile_without_prior_groups(pre_group).expect("dense precommit profile");
+        Cfg::profile_without_precommitted_groups(pre_group).expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
-        prior_group_profiles: vec![pre_profile],
+        precommitteds: vec![pre_profile],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
     let planned = find_schedule(
@@ -418,7 +418,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
     );
     assert_eq!(
         planned.schedule.root.params.precommitted_groups[0].descriptor,
-        key.prior_group_profiles[0]
+        key.precommitteds[0]
     );
 }
 
@@ -451,7 +451,7 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
-    Cfg::profile_without_prior_groups(group).expect("heterogeneous group must resolve")
+    Cfg::profile_without_precommitted_groups(group).expect("heterogeneous group must resolve")
 }
 
 #[test]
@@ -461,7 +461,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     let dense = committed_descriptor::<fp128::Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
-        prior_group_profiles: vec![onehot_16, dense],
+        precommitteds: vec![onehot_16, dense],
     };
 
     let precommitted_honest_fold_policies = vec![
@@ -493,7 +493,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
 
     let reordered = AkitaScheduleLookupKey {
-        prior_group_profiles: vec![dense, onehot_16],
+        precommitteds: vec![dense, onehot_16],
         ..key
     };
     assert_ne!(

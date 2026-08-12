@@ -26,10 +26,10 @@ fn heterogeneous_group_types() {
 
         // Derive the OneHot pre-commit ring_d from the row without prior
         // groups, so the polynomial matches what `commit` selects below.
-        let pre_d = OneHotCfg::profile_without_prior_groups(
+        let pre_d = OneHotCfg::profile_without_precommitted_groups(
             akita_types::PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
         )
-        .expect("onehot pre profile without prior groups")
+        .expect("onehot pre profile without precommitted groups")
         .inner_commit_matrix
         .ring_dimension();
         let onehot_k_pre = 16usize;
@@ -69,7 +69,7 @@ fn heterogeneous_group_types() {
             &setup,
             std::slice::from_ref(&onehot_pre),
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("K=16 precommit");
 
@@ -93,15 +93,15 @@ fn heterogeneous_group_types() {
             &dense_setup,
             &dense_polys,
             &dense_stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("dense precommit");
 
-        let prior_group_profiles = PriorGroupProfiles::from_profiles(vec![
+        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![
             onehot_pre_commitment.profile,
             dense_commitment.profile,
         ])
-        .expect("nonempty prior groups");
+        .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
@@ -109,7 +109,7 @@ fn heterogeneous_group_types() {
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupContext::scheduler_with_prior_groups(&prior_group_profiles),
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final commit");
 
@@ -269,7 +269,7 @@ fn heterogeneous_compute_backends() {
             std::slice::from_ref(&poly),
             setup.expanded.as_ref(),
             &commit_stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
 

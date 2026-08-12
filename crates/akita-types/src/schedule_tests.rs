@@ -894,7 +894,7 @@ fn scalar_schedule_key_accepts_single_group_layout() {
     let key =
         AkitaScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
-    assert!(key.prior_group_profiles.is_empty());
+    assert!(key.precommitteds.is_empty());
     assert_eq!(key.num_commitment_groups(), 1);
 }
 
@@ -974,11 +974,11 @@ fn ordered_group_profile_extractor_rejects_empty_input() {
 }
 
 #[test]
-fn ordered_group_profile_extractor_handles_a_group_without_prior_groups() {
+fn ordered_group_profile_extractor_handles_a_group_without_precommitted_groups() {
     let final_group = committed_group_for_extractor(12);
     let batch = CommittedGroupBatchProfile::from_ordered_groups([&final_group])
-        .expect("profile without prior groups");
-    assert!(batch.prior_group_profiles.is_empty());
+        .expect("profile without precommitted groups");
+    assert!(batch.precommitteds.is_empty());
     assert_eq!(batch.final_group, *final_group.profile());
 }
 
@@ -990,31 +990,32 @@ fn ordered_group_profile_extractor_preserves_prefix_order() {
     let batch = CommittedGroupBatchProfile::from_ordered_groups([&first, &second, &final_group])
         .expect("ordered grouped profile");
     assert_eq!(
-        batch.prior_group_profiles,
+        batch.precommitteds,
         vec![*first.profile(), *second.profile()]
     );
     assert_eq!(batch.final_group, *final_group.profile());
 }
 
 #[test]
-fn prior_group_profiles_reject_an_empty_prefix() {
+fn precommitted_group_profiles_reject_an_empty_prefix() {
     let empty: [&CommittedGroup<F>; 0] = [];
     assert!(matches!(
-        PriorGroupProfiles::from_ordered_groups(empty).expect_err("empty prefix must reject"),
+        PrecommittedGroupProfiles::from_ordered_groups(empty)
+            .expect_err("empty prefix must reject"),
         AkitaError::InvalidInput(_)
     ));
     assert!(matches!(
-        PriorGroupProfiles::from_profiles(Vec::new()).expect_err("empty prefix must reject"),
+        PrecommittedGroupProfiles::from_profiles(Vec::new()).expect_err("empty prefix must reject"),
         AkitaError::InvalidInput(_)
     ));
 }
 
 #[test]
-fn prior_group_profiles_preserve_caller_order() {
+fn precommitted_group_profiles_preserve_caller_order() {
     let first = committed_group_for_extractor(12);
     let second = committed_group_for_extractor(13);
     let prefix =
-        PriorGroupProfiles::from_ordered_groups([&first, &second]).expect("nonempty prefix");
+        PrecommittedGroupProfiles::from_ordered_groups([&first, &second]).expect("nonempty prefix");
     assert_eq!(
         prefix.as_slice(),
         &[*first.profile(), *second.profile()][..]
@@ -1025,7 +1026,7 @@ fn prior_group_profiles_preserve_caller_order() {
 fn group_batch_key_separates_final_arity_from_max_opening_arity() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(14, 3),
-        prior_group_profiles: vec![precommitted_descriptor(20)],
+        precommitteds: vec![precommitted_descriptor(20)],
     };
 
     multi_group_key
@@ -1052,7 +1053,7 @@ fn group_batch_key_separates_final_arity_from_max_opening_arity() {
 fn group_batch_key_allows_independent_precommitted_num_vars() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        prior_group_profiles: vec![precommitted_descriptor(12)],
+        precommitteds: vec![precommitted_descriptor(12)],
     };
 
     multi_group_key
@@ -1064,7 +1065,7 @@ fn group_batch_key_allows_independent_precommitted_num_vars() {
 fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        prior_group_profiles: vec![precommitted_descriptor(20)],
+        precommitteds: vec![precommitted_descriptor(20)],
     };
 
     multi_group_key
@@ -1076,7 +1077,7 @@ fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
 fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        prior_group_profiles: vec![{
+        precommitteds: vec![{
             let mut descriptor = precommitted_descriptor(10);
             descriptor.group = PolynomialGroupLayout::new(10, 2);
             descriptor.outer_commit_matrix = crate::OuterCommitMatrixParams::try_new_with_min_rank(
@@ -1112,11 +1113,11 @@ fn group_batch_key_identity_binds_ordered_profiles() {
     let second = precommitted_descriptor(14);
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
-        prior_group_profiles: vec![first, second],
+        precommitteds: vec![first, second],
     };
 
     let mut reordered = key.clone();
-    reordered.prior_group_profiles.swap(0, 1);
+    reordered.precommitteds.swap(0, 1);
     assert_ne!(
         key.canonical_descriptor_bytes(),
         reordered.canonical_descriptor_bytes(),
@@ -1161,7 +1162,7 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),
-        prior_group_profiles: Vec::new(),
+        precommitteds: Vec::new(),
     };
     let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
     assert_eq!(

@@ -102,16 +102,16 @@ mod base_precommit_tests {
     use crate::proof_optimized::fp128;
     use akita_types::PolynomialGroupLayout;
 
-    /// A recursive companion ships no row without prior groups at a precommit
+    /// A recursive companion ships no row without precommitted groups at a precommit
     /// layout, so the caller precommits under `Cfg` and proves the grouped
     /// root under `RecursiveCommitmentConfig<Cfg>`. Assert both halves of that
     /// split: the base config produces the profile, and the recursive one
     /// rejects the same request.
     fn assert_nv16_precommit_needs_the_base_config<Cfg: CommitmentConfig>() {
         let group = PolynomialGroupLayout::new(16, 1);
-        Cfg::profile_without_prior_groups(group)
+        Cfg::profile_without_precommitted_groups(group)
             .expect("base catalog must expose its independent profile");
-        RecursiveCommitmentConfig::<Cfg>::profile_without_prior_groups(group)
+        RecursiveCommitmentConfig::<Cfg>::profile_without_precommitted_groups(group)
             .expect_err("a recursive companion must not self-derive a precommit profile");
     }
 
@@ -140,11 +140,11 @@ mod tests {
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
         let final_group = PolynomialGroupLayout::new(32, 2);
-        let expected =
-            fp128::OneHot::profile_without_prior_groups(precommitted).expect("independent profile");
+        let expected = fp128::OneHot::profile_without_precommitted_groups(precommitted)
+            .expect("independent profile");
         let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey {
             final_group,
-            prior_group_profiles: vec![expected, expected],
+            precommitteds: vec![expected, expected],
         })
         .expect("recursive schedule");
 

@@ -190,7 +190,7 @@ fn generated_entry(
     let root_fold = &schedule.root.params;
     let root_params = &root_fold.final_group.commitment;
     let precommitted_groups = key
-        .prior_group_profiles
+        .precommitteds
         .iter()
         .copied()
         .zip(&root_fold.precommitted_groups)
@@ -699,7 +699,7 @@ fn materialized_entry(
         Ok(schedule) => Ok(Some((key, schedule))),
         Err(akita_field::AkitaError::UnsupportedSchedule(_)) => Ok(None),
         Err(error) => {
-            let kind = if key.prior_group_profiles.is_empty() {
+            let kind = if key.precommitteds.is_empty() {
                 "regen"
             } else {
                 "regen multi-group"

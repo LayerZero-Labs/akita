@@ -18,7 +18,7 @@ use akita_types::{
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
     Commitment, CommitmentRingDims, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
     CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OuterCommitMatrixParams, PriorGroupProfiles, RingVec,
+    OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
 
 mod inner;
@@ -33,19 +33,19 @@ pub(crate) type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
 /// Ordered groups committed before the current group.
 #[derive(Debug, Clone, Copy)]
-enum PriorGroupContext<'a> {
+enum PrecommittedGroupContext<'a> {
     /// The current group has no earlier groups in its opening batch.
-    NoPriorGroups,
-    /// Exact prior profiles in opening-claim and transcript order.
-    WithPriorGroups(&'a PriorGroupProfiles),
+    NoPrecommittedGroups,
+    /// Exact precommitted profiles in opening-claim and transcript order.
+    WithPrecommittedGroups(&'a PrecommittedGroupProfiles),
 }
 
-impl PriorGroupContext<'_> {
-    /// Borrow the ordered prior profiles, empty when there are none.
+impl PrecommittedGroupContext<'_> {
+    /// Borrow the ordered precommitted profiles, empty when there are none.
     fn as_slice(&self) -> &[CommittedGroupProfile] {
         match self {
-            Self::NoPriorGroups => &[],
-            Self::WithPriorGroups(profiles) => profiles.as_slice(),
+            Self::NoPrecommittedGroups => &[],
+            Self::WithPrecommittedGroups(profiles) => profiles.as_slice(),
         }
     }
 }
@@ -62,46 +62,48 @@ enum GroupParameterSource<'a> {
 /// Complete context for committing one polynomial group.
 #[derive(Debug, Clone, Copy)]
 pub struct GroupContext<'a> {
-    prior_groups: PriorGroupContext<'a>,
+    precommitted_groups: PrecommittedGroupContext<'a>,
     parameter_source: GroupParameterSource<'a>,
 }
 
 impl<'a> GroupContext<'a> {
-    /// Select the scalar row, the generated row for a group with no prior groups.
+    /// Select the scalar row, the generated row for a group with no precommitted groups.
     #[must_use]
-    pub const fn scheduler_without_prior_groups() -> Self {
+    pub const fn scheduler_without_precommitted_groups() -> Self {
         Self {
-            prior_groups: PriorGroupContext::NoPriorGroups,
+            precommitted_groups: PrecommittedGroupContext::NoPrecommittedGroups,
             parameter_source: GroupParameterSource::Scheduler,
         }
     }
 
-    /// Select the grouped row keyed on these exact ordered prior profiles.
+    /// Select the grouped row keyed on these exact ordered precommitted profiles.
     #[must_use]
-    pub const fn scheduler_with_prior_groups(prior_group_profiles: &'a PriorGroupProfiles) -> Self {
+    pub const fn scheduler_with_precommitted_groups(
+        precommitteds: &'a PrecommittedGroupProfiles,
+    ) -> Self {
         Self {
-            prior_groups: PriorGroupContext::WithPriorGroups(prior_group_profiles),
+            precommitted_groups: PrecommittedGroupContext::WithPrecommittedGroups(precommitteds),
             parameter_source: GroupParameterSource::Scheduler,
         }
     }
 
-    /// Use explicit scalar root parameters for a group with no prior groups.
+    /// Use explicit scalar root parameters for a group with no precommitted groups.
     #[must_use]
-    pub const fn explicit_without_prior_groups(params: &'a CommittedGroupParams) -> Self {
+    pub const fn explicit_without_precommitted_groups(params: &'a CommittedGroupParams) -> Self {
         Self {
-            prior_groups: PriorGroupContext::NoPriorGroups,
+            precommitted_groups: PrecommittedGroupContext::NoPrecommittedGroups,
             parameter_source: GroupParameterSource::Explicit(params),
         }
     }
 
-    /// Use explicit grouped root parameters after exact ordered prior profiles.
+    /// Use explicit grouped root parameters after exact ordered precommitted profiles.
     #[must_use]
-    pub const fn explicit_with_prior_groups(
-        prior_group_profiles: &'a PriorGroupProfiles,
+    pub const fn explicit_with_precommitted_groups(
+        precommitteds: &'a PrecommittedGroupProfiles,
         params: &'a CommittedGroupParams,
     ) -> Self {
         Self {
-            prior_groups: PriorGroupContext::WithPriorGroups(prior_group_profiles),
+            precommitted_groups: PrecommittedGroupContext::WithPrecommittedGroups(precommitteds),
             parameter_source: GroupParameterSource::Explicit(params),
         }
     }
@@ -470,7 +472,7 @@ where
 
 fn validate_explicit_context<F>(
     group_layout: akita_types::PolynomialGroupLayout,
-    prior_groups: PriorGroupContext<'_>,
+    precommitted_groups: PrecommittedGroupContext<'_>,
     params: &CommittedGroupParams,
     expanded: &AkitaExpandedSetup<F>,
 ) -> Result<CommittedGroupProfile, AkitaError>
@@ -479,21 +481,21 @@ where
 {
     validate_commit_level_params::<F>(params, expanded)?;
 
-    match prior_groups {
-        PriorGroupContext::NoPriorGroups => {
+    match precommitted_groups {
+        PrecommittedGroupContext::NoPrecommittedGroups => {
             params.require_scalar_level("explicit commitment")?;
         }
-        PriorGroupContext::WithPriorGroups(prior_group_profiles) => {
+        PrecommittedGroupContext::WithPrecommittedGroups(precommitteds) => {
             if params.setup_prefix.is_some() {
                 return Err(AkitaError::InvalidSetup(
                     "explicit grouped root params must not contain a setup-prefix group"
                         .to_string(),
                 ));
             }
-            let profiles = prior_group_profiles.as_slice();
+            let profiles = precommitteds.as_slice();
             if params.precommitted_groups.len() != profiles.len() {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "explicit grouped root params contain {} prior groups, expected {}",
+                    "explicit grouped root params contain {} precommitted groups, expected {}",
                     params.precommitted_groups.len(),
                     profiles.len(),
                 )));
@@ -503,16 +505,16 @@ where
             {
                 if group.layout != *profile {
                     return Err(AkitaError::InvalidSetup(format!(
-                        "explicit grouped root prior profile {index} does not match its params"
+                        "explicit grouped root precommitted profile {index} does not match its params"
                     )));
                 }
             }
-            let prior_layouts = profiles
+            let precommitted_layouts = profiles
                 .iter()
                 .map(|profile| profile.group)
                 .collect::<Vec<_>>();
             let opening_layout =
-                OpeningClaimsLayout::from_root_groups(&prior_layouts, group_layout)?;
+                OpeningClaimsLayout::from_root_groups(&precommitted_layouts, group_layout)?;
             params.validate_opening_batch(&opening_layout)?;
         }
     }
@@ -563,7 +565,7 @@ where
         if let GroupParameterSource::Explicit(params) = context.parameter_source {
             let profile = validate_explicit_context::<Cfg::Field>(
                 group_layout,
-                context.prior_groups,
+                context.precommitted_groups,
                 params,
                 expanded,
             )?;
@@ -571,15 +573,18 @@ where
         } else {
             let key = AkitaScheduleLookupKey {
                 final_group: group_layout,
-                prior_group_profiles: context.prior_groups.as_slice().to_vec(),
+                precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };
             scheduled_row = Cfg::select_schedule_for_key(&key)?;
 
-            // A group with prior groups is the final group of the batch this
+            // A group with precommitted groups is the final group of the batch this
             // row opens, so the setup must carry the row's whole schedule. A
-            // group without prior groups may instead be opened later under a
+            // group without precommitted groups may instead be opened later under a
             // grouped row, so it is admitted on its own A/B footprint alone.
-            if matches!(context.prior_groups, PriorGroupContext::WithPriorGroups(_)) {
+            if matches!(
+                context.precommitted_groups,
+                PrecommittedGroupContext::WithPrecommittedGroups(_)
+            ) {
                 ensure_prover_schedule_fits_setup::<Cfg>(
                     expanded,
                     scheduled_row.schedule(),

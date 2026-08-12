@@ -71,13 +71,13 @@ fn selected_statement<'a, C>(
 where
     C: CommitmentConfig,
 {
-    let (final_group, prior_group_profiles) = claims
+    let (final_group, precommitteds) = claims
         .groups()
         .split_last()
         .ok_or_else(|| AkitaError::InvalidInput("opening statement requires a group".into()))?;
     let profiles = CommittedGroupBatchProfile {
         final_group: *final_group.commitment().profile(),
-        prior_group_profiles: prior_group_profiles
+        precommitteds: precommitteds
             .iter()
             .map(|group| *group.commitment().profile())
             .collect(),
@@ -178,7 +178,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &setup,
         std::slice::from_ref(&poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .unwrap();
 

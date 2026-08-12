@@ -206,7 +206,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             }
             let key = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
-                prior_group_profiles: entry
+                precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
@@ -334,7 +334,7 @@ where
     Cfg: CommitmentConfig,
 {
     // `setup_matrix_field_elements_for_schedule` already maxes over the root
-    // level's A/B/D matrices, every frozen prior group, the compression maps,
+    // level's A/B/D matrices, every frozen precommitted group, the compression maps,
     // and the fold tail, so it dominates any per-level recomputation here.
     schedule
         .root

@@ -101,7 +101,7 @@ fn run_prove<
             setup,
             std::slice::from_ref(poly),
             stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
@@ -109,7 +109,7 @@ fn run_prove<
         let commitments = [commitment];
         let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
-            prior_group_profiles: Vec::new(),
+            precommitteds: Vec::new(),
         })
         .expect("select generated schedule row")
         .selection();
@@ -212,7 +212,7 @@ fn run_prove<
         verifier_claims(
             Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
                 final_group: *commitments[0].profile(),
-                prior_group_profiles: Vec::new(),
+                precommitteds: Vec::new(),
             })
             .expect("select verifier schedule row")
             .selection(),

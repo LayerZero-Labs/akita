@@ -431,14 +431,14 @@ fn emit_spec_with_overrides(
         &mut precommitted_combinations,
     );
 
-    for (prior_group_profiles, precommitted_honest_fold_policies) in precommitted_combinations {
+    for (precommitteds, precommitted_honest_fold_policies) in precommitted_combinations {
         for final_layout in &final_layouts {
             push_unique_group_batch_key(
                 &mut spec.group_batch_keys,
                 (
                     AkitaScheduleLookupKey {
                         final_group: *final_layout,
-                        prior_group_profiles: prior_group_profiles.clone(),
+                        precommitteds: precommitteds.clone(),
                     },
                     precommitted_honest_fold_policies.clone(),
                 ),

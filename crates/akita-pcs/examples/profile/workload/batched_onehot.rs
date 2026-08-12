@@ -115,13 +115,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &setup,
             &polys,
             &stack,
-            akita_prover::GroupContext::scheduler_without_prior_groups(),
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         let commitments = [commitment];
         let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
-            prior_group_profiles: Vec::new(),
+            precommitteds: Vec::new(),
         })
         .expect("select generated schedule row")
         .selection();
@@ -234,7 +234,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         verifier_claims(
             Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
                 final_group: *commitments[0].profile(),
-                prior_group_profiles: Vec::new(),
+                precommitteds: Vec::new(),
             })
             .expect("select verifier schedule row")
             .selection(),

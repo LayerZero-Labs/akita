@@ -363,7 +363,7 @@ pub(crate) fn audit_resolved_schedule(
     let final_params = &root.final_group.commitment;
     if profiles.final_group
         != akita_types::CommittedGroupProfile::from_params(profiles.final_group.group, final_params)
-        || profiles.prior_group_profiles.len() != root.precommitted_groups.len()
+        || profiles.precommitteds.len() != root.precommitted_groups.len()
         || root.open_commit_matrix != final_params.open_commit_matrix
         || final_params.precommitted_groups.len() != root.precommitted_groups.len()
     {
@@ -374,7 +374,7 @@ pub(crate) fn audit_resolved_schedule(
     }
 
     for (index, ((profile, root_group), params_group)) in profiles
-        .prior_group_profiles
+        .precommitteds
         .iter()
         .zip(&root.precommitted_groups)
         .zip(&final_params.precommitted_groups)

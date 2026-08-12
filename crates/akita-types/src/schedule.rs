@@ -12,7 +12,8 @@ mod profiles;
 mod sizing;
 
 pub use profiles::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile, PriorGroupProfiles,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    PrecommittedGroupProfiles,
 };
 pub use sizing::{
     detect_field_modulus, intermediate_w_ring_element_count_for_chunks,

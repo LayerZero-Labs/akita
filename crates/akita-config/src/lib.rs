@@ -328,8 +328,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Select the exact generated row for `key`.
     ///
     /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
-    /// empty `prior_group_profiles` vector. Grouped roots supply frozen precommit
-    /// layouts in `prior_group_profiles`.
+    /// empty `precommitteds` vector. Grouped roots supply frozen precommit
+    /// layouts in `precommitteds`.
     ///
     /// Delegates to [`akita_schedules::select_generated_schedule_row`] with this
     /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
@@ -351,9 +351,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Select the exact row without prior groups for an opening layout.
+    /// Select the exact row without precommitted groups for an opening layout.
     ///
-    /// A layout carrying prior groups has no single row: grouped selection
+    /// A layout carrying precommitted groups has no single row: grouped selection
     /// needs the exact committed descriptors, so it goes through
     /// [`Self::select_schedule_for_key`] instead.
     ///
@@ -367,18 +367,18 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::select_schedule_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
     }
 
-    /// Frozen profile this config commits a group with when it has no prior groups.
+    /// Frozen profile this config commits a group with when it has no precommitted groups.
     ///
     /// This is the one runtime definition of an independent commitment's
-    /// parameters. A grouped row's frozen prior descriptor is the value this
+    /// parameters. A grouped row's frozen precommitted descriptor is the value this
     /// returns for the same group, which
-    /// `every_grouped_prior_descriptor_has_a_generated_producer` enforces.
+    /// `every_grouped_precommitted_descriptor_has_a_generated_producer` enforces.
     ///
     /// # Errors
     ///
-    /// Returns an error when no generated row without prior groups covers
+    /// Returns an error when no generated row without precommitted groups covers
     /// `group`.
-    fn profile_without_prior_groups(
+    fn profile_without_precommitted_groups(
         group: akita_types::PolynomialGroupLayout,
     ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
         let layout = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
@@ -399,7 +399,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         akita_schedules::select_generated_schedule_row_for_profiles(
             &AkitaScheduleLookupKey {
                 final_group: profiles.final_group.group,
-                prior_group_profiles: profiles.prior_group_profiles.clone(),
+                precommitteds: profiles.precommitteds.clone(),
             },
             profiles,
             &policy_of::<Self>(),
@@ -740,7 +740,7 @@ mod independent_commitment_tests {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
         let profile =
-            fp128::OneHot::profile_without_prior_groups(group).expect("independent profile");
+            fp128::OneHot::profile_without_precommitted_groups(group).expect("independent profile");
         assert_eq!(
             profile.inner_commit_matrix.ring_dimension(),
             256,

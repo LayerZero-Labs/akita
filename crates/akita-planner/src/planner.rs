@@ -141,14 +141,14 @@ pub(crate) fn root_level_candidates_for_basis(
         )));
     }
 
-    if precommitted_honest_fold_policies.len() != key.prior_group_profiles.len() {
+    if precommitted_honest_fold_policies.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(
             "group-batch planning requires one honest fold policy per precommitted profile"
                 .to_string(),
         ));
     }
     let precommitted_groups = key
-        .prior_group_profiles
+        .precommitteds
         .iter()
         .copied()
         .zip(precommitted_honest_fold_policies.iter().copied())
@@ -437,7 +437,7 @@ pub fn find_schedule(
     }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let scalar_policy;
-    let active_policy = if key.prior_group_profiles.is_empty() && !policy.recursive_setup_planning {
+    let active_policy = if key.precommitteds.is_empty() && !policy.recursive_setup_planning {
         // Ordinary scalar families use the direct objective. Recursive
         // companion families retain their setup-aware objective so a scalar
         // root may carry its setup opening into the first suffix fold.
@@ -451,7 +451,7 @@ pub fn find_schedule(
     } else {
         None
     };
-    let precommitted_honest_fold_policies = if key.prior_group_profiles.is_empty() {
+    let precommitted_honest_fold_policies = if key.precommitteds.is_empty() {
         &[]
     } else {
         precommitted_honest_fold_policies
@@ -515,7 +515,7 @@ pub fn find_schedule(
     };
 
     let Some(best) = best.cloned() else {
-        if key.prior_group_profiles.is_empty()
+        if key.precommitteds.is_empty()
             && matches!(
                 active_policy.ring_dimension_schedule_mode,
                 crate::RingDimensionScheduleMode::AdaptiveDimension { .. }

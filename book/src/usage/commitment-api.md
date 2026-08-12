@@ -14,15 +14,15 @@ let output = AkitaCommitmentScheme::<Cfg>::commit(
     &setup,
     &polynomials,
     &stack,
-    GroupContext::scheduler_without_prior_groups(),
+    GroupContext::scheduler_without_precommitted_groups(),
 )?;
 ```
 
-`GroupContext::scheduler_without_prior_groups()` selects the *scalar row*, the
-generated row for a group that has no prior groups. The resulting committed
-group may be opened alone or retained as a prior group for a later grouped
+`GroupContext::scheduler_without_precommitted_groups()` selects the *scalar row*, the
+generated row for a group that has no precommitted groups. The resulting committed
+group may be opened alone or retained as a precommitted group for a later grouped
 opening; both uses have exactly the same parameters.
-`GroupContext::scheduler_with_prior_groups(&prior)` selects the exact *grouped
+`GroupContext::scheduler_with_precommitted_groups(&prior)` selects the exact *grouped
 row*, the generated row keyed on that ordered prefix.
 
 All polynomials inside one group must have the same `num_vars`. A commit call
@@ -30,16 +30,16 @@ rejects a mixed-arity bundle rather than padding it to the widest polynomial.
 Polynomials of different arities belong in separate groups, and separate groups
 may have different arities.
 
-For a grouped lifecycle, construct one ordered `PriorGroupProfiles` and borrow
+For a grouped lifecycle, construct one ordered `PrecommittedGroupProfiles` and borrow
 it for the final commit:
 
 ```rust
-let prior = PriorGroupProfiles::from_ordered_groups(prior_commitments.iter())?;
+let prior = PrecommittedGroupProfiles::from_ordered_groups(prior_commitments.iter())?;
 let final_output = AkitaCommitmentScheme::<Cfg>::commit(
     &setup,
     &final_polynomials,
     &stack,
-    GroupContext::scheduler_with_prior_groups(&prior),
+    GroupContext::scheduler_with_precommitted_groups(&prior),
 )?;
 
 let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
@@ -50,8 +50,8 @@ let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
 let selection = prover_data.selection();
 ```
 
-`PriorGroupProfiles` is non-empty by construction, so both grouped constructors
-are infallible; the "no prior groups" case has its own spelling. Batch assembly
+`PrecommittedGroupProfiles` is non-empty by construction, so both grouped constructors
+are infallible; the "no precommitted groups" case has its own spelling. Batch assembly
 derives the prefix from the ordered claims, so it is not passed twice.
 
 The constructor derives the exact batch profile and selects its schedule before
@@ -59,31 +59,31 @@ stripping commitment profiles from prover-owned opening data. The same
 `selection` is placed in `GroupBatchStatement` for verification.
 
 Callers that already own audited root parameters use the same `commit` method
-with `GroupContext::explicit_without_prior_groups(&params)` or
-`GroupContext::explicit_with_prior_groups(&prior, &params)`. Explicit mode
+with `GroupContext::explicit_without_precommitted_groups(&params)` or
+`GroupContext::explicit_with_precommitted_groups(&prior, &params)`. Explicit mode
 does not select a catalog row. It validates the supplied parameters, while
 tensor projection follows the same field/root-geometry predicate as scheduler
 mode.
 
 ### Precommitting under a recursive configuration
 
-A `RecursiveCommitmentConfig<Cfg>` catalog ships no row without prior groups at
-a precommit layout. It carries only the grouped root. Committing a prior group
+A `RecursiveCommitmentConfig<Cfg>` catalog ships no row without precommitted groups at
+a precommit layout. It carries only the grouped root. Committing a precommitted group
 under the recursive configuration therefore fails with `UnsupportedSchedule`.
 
-Build the setup under the recursive configuration, commit each prior group
+Build the setup under the recursive configuration, commit each precommitted group
 under the base configuration `Cfg`, then commit the final group and prove under
 the recursive one. Both configurations share the same setup:
 
 ```rust
 let setup = AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, k)?;
 
-// Prior groups use the base configuration, which owns the scalar rows.
+// Precommitted groups use the base configuration, which owns the scalar rows.
 let pre = AkitaCommitmentScheme::<Cfg>::commit(
     &setup,
     &prior_polynomials,
     &stack,
-    GroupContext::scheduler_without_prior_groups(),
+    GroupContext::scheduler_without_precommitted_groups(),
 )?;
 
 // The grouped root uses the recursive configuration.
@@ -91,12 +91,12 @@ let root = AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::commit(
     &setup,
     &final_polynomials,
     &stack,
-    GroupContext::scheduler_with_prior_groups(&prior),
+    GroupContext::scheduler_with_precommitted_groups(&prior),
 )?;
 ```
 
-The frozen prior descriptor a recursive grouped row carries is exactly
-`Cfg::profile_without_prior_groups(group)`, which is what makes the split
+The frozen precommitted descriptor a recursive grouped row carries is exactly
+`Cfg::profile_without_precommitted_groups(group)`, which is what makes the split
 sound.
 
 Every `PolynomialGroupClaims` owns one complete opening point, its evaluations,

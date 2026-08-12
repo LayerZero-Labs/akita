@@ -87,7 +87,7 @@ where
 fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaScheduleLookupKey {
     AkitaScheduleLookupKey {
         final_group: profiles.final_group.group,
-        prior_group_profiles: profiles.prior_group_profiles.clone(),
+        precommitteds: profiles.precommitteds.clone(),
     }
 }
 
@@ -163,14 +163,14 @@ where
         for final_polys in 1..max_num_batched_polys {
             let pre_polys = max_num_batched_polys - final_polys;
             for pre_num_vars in [14usize, 15, 16].into_iter().filter(|&n| n <= max_num_vars) {
-                let Ok(precommitted) = Self::profile_without_prior_groups(
+                let Ok(precommitted) = Self::profile_without_precommitted_groups(
                     PolynomialGroupLayout::new(pre_num_vars, pre_polys),
                 ) else {
                     continue;
                 };
                 let Ok(schedule) = Self::select_schedule_for_key(&AkitaScheduleLookupKey {
                     final_group: PolynomialGroupLayout::new(max_num_vars, final_polys),
-                    prior_group_profiles: vec![precommitted],
+                    precommitteds: vec![precommitted],
                 }) else {
                     continue;
                 };
@@ -202,7 +202,7 @@ where
     fn select_schedule_for_key(
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        let (policy, ring_challenge_config) = if key.prior_group_profiles.is_empty() {
+        let (policy, ring_challenge_config) = if key.precommitteds.is_empty() {
             (
                 policy_of::<Envelope>(),
                 Envelope::ring_challenge_config
@@ -216,7 +216,7 @@ where
             )
         };
         let precommitted_honest_fold_policies =
-            vec![Envelope::root_honest_fold_policy(); key.prior_group_profiles.len()];
+            vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
         let schedule = akita_planner::find_schedule(
             key,
             Envelope::root_honest_fold_policy(),
@@ -230,7 +230,7 @@ where
                 key.final_group,
                 &schedule.root.params.final_group.commitment,
             ),
-            prior_group_profiles: key.prior_group_profiles.clone(),
+            precommitteds: key.precommitteds.clone(),
         };
         let selection = OpeningScheduleSelection {
             row_digest: schedule_row_digest(&profiles, &schedule)?,

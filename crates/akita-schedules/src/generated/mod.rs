@@ -106,7 +106,7 @@ impl GeneratedFoldScheduleEntry {
     pub fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
         akita_types::AkitaScheduleLookupKey {
             final_group: self.root.final_group.layout,
-            prior_group_profiles: self
+            precommitteds: self
                 .root
                 .precommitted_groups
                 .iter()
@@ -256,7 +256,7 @@ pub fn generated_schedule_key_cmp_runtime(
                 .root
                 .precommitted_groups
                 .len()
-                .cmp(&runtime.prior_group_profiles.len())
+                .cmp(&runtime.precommitteds.len())
         })
         .then_with(|| {
             let generated = generated
@@ -265,7 +265,7 @@ pub fn generated_schedule_key_cmp_runtime(
                 .iter()
                 .map(|group| &group.descriptor);
             generated
-                .zip(&runtime.prior_group_profiles)
+                .zip(&runtime.precommitteds)
                 .map(|(left, right)| {
                     precommitted_group_sort_key(left).cmp(&precommitted_group_sort_key(right))
                 })
@@ -289,21 +289,12 @@ pub fn runtime_schedule_key_cmp(
     );
     left_main
         .cmp(&right_main)
+        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
         .then_with(|| {
-            left.prior_group_profiles
-                .len()
-                .cmp(&right.prior_group_profiles.len())
-        })
-        .then_with(|| {
-            left.prior_group_profiles
+            left.precommitteds
                 .iter()
                 .map(precommitted_group_sort_key)
-                .cmp(
-                    right
-                        .prior_group_profiles
-                        .iter()
-                        .map(precommitted_group_sort_key),
-                )
+                .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
         })
 }
 
@@ -316,12 +307,12 @@ fn schedule_key_eq(
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
     generated.root.final_group.layout == key.final_group
-        && generated.root.precommitted_groups.len() == key.prior_group_profiles.len()
+        && generated.root.precommitted_groups.len() == key.precommitteds.len()
         && generated
             .root
             .precommitted_groups
             .iter()
-            .zip(&key.prior_group_profiles)
+            .zip(&key.precommitteds)
             .all(|(generated, layout)| precommitted_group_key_eq(&generated.descriptor, layout))
 }
 

@@ -313,7 +313,7 @@ fn run() -> Result<(), String> {
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
-        GroupContext::scheduler_without_prior_groups(),
+        GroupContext::scheduler_without_precommitted_groups(),
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");

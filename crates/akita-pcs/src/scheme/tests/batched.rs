@@ -27,7 +27,7 @@ fn batched_commit_matches_individual_commits() {
                 &setup,
                 group,
                 &stack,
-                akita_prover::GroupContext::scheduler_without_prior_groups(),
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
         })
         .collect::<Result<Vec<_>, _>>()
@@ -42,7 +42,7 @@ fn batched_commit_matches_individual_commits() {
         &setup,
         std::slice::from_ref(&poly_a),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .unwrap();
     let akita_prover::CommitOutput {
@@ -52,7 +52,7 @@ fn batched_commit_matches_individual_commits() {
         &setup,
         std::slice::from_ref(&poly_b),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .unwrap();
 
@@ -78,14 +78,14 @@ fn commit_rejects_mixed_group_arity() {
     )
     .expect("stack");
 
-    // An empty prior-group prefix is unrepresentable, so no grouped context
-    // can carry one. `PriorGroupProfiles` owns that rejection; see
-    // `prior_group_profiles_reject_an_empty_prefix`.
+    // An empty precommitted group prefix is unrepresentable, so no grouped context
+    // can carry one. `PrecommittedGroupProfiles` owns that rejection; see
+    // `precommitted_group_profiles_reject_an_empty_prefix`.
     let error = Scheme::commit(
         &setup,
         &[poly, smaller],
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .expect_err("one committed group must be homogeneous");
     assert!(matches!(error, AkitaError::InvalidInput(_)));

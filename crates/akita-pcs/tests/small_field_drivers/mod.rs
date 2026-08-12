@@ -78,7 +78,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
         &setup,
         std::slice::from_ref(poly),
         &stack,
-        akita_prover::GroupContext::scheduler_without_prior_groups(),
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
     .expect("commit");
     let poly_refs = [poly];

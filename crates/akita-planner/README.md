@@ -24,7 +24,7 @@ The public search entry point is
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
-leave `prior_group_profiles` empty:
+leave `precommitteds` empty:
 
 - `num_vars`: the number of Boolean variables in that group's opened
   polynomial domain.
@@ -32,10 +32,10 @@ leave `prior_group_profiles` empty:
   opened at that group's point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`CommittedGroupProfile` in `prior_group_profiles`. For a single-group batch,
+`CommittedGroupProfile` in `precommitteds`. For a single-group batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
-`final_group` plus `prior_group_profiles`.
+`final_group` plus `precommitteds`.
 
 `policy: PlannerPolicy` is the `Cfg`-free projection of a preset:
 
