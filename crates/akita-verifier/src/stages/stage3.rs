@@ -135,7 +135,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let required = self.setup_contribution_plan.required();
+        let setup_index_len = self
+            .setup_contribution_plan
+            .projection_geometry()
+            .setup_index_len();
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -159,7 +162,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 Some(value) => value,
                 None => setup_mle_at_eq_tables::<F, E, D>(
                     &setup.expanded,
-                    required,
+                    setup_index_len,
                     setup_eval_len,
                     rho_setup_idx,
                     &eq_y,
@@ -238,7 +241,7 @@ fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, Ak
 
 fn setup_mle_at_eq_tables<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
-    required: usize,
+    source_rows: usize,
     setup_eval_len: usize,
     rho_setup_idx: &[E],
     eq_y: &[E],
@@ -247,18 +250,15 @@ where
     F: FieldCore,
     E: ExtField<F> + akita_field::MulBaseUnreduced<F>,
 {
-    if required > setup_eval_len {
+    if source_rows > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
             "setup prefix is too small for selected verifier layout".into(),
         ));
     }
-    let setup_idx_len = required
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup MLE index length overflow".into()))?;
     let eq_setup_idx = SplitEqEvals::new(rho_setup_idx)?;
-    if eq_setup_idx.len() != setup_idx_len {
+    if eq_setup_idx.len() != source_rows {
         return Err(AkitaError::InvalidSize {
-            expected: setup_idx_len,
+            expected: source_rows,
             actual: eq_setup_idx.len(),
         });
     }
@@ -268,17 +268,15 @@ where
             actual: eq_y.len(),
         });
     }
-    // Read only the rows the scan actually uses: `setup_eval_len` is the
-    // padded evaluation-domain length and is explicit zero beyond `required`.
-    let setup_view = setup.shared_matrix().ring_view::<D>(1, required)?;
+    let setup_view = setup.shared_matrix().ring_view::<D>(1, source_rows)?;
     let setup_entries = setup_view.as_slice();
 
     // Scan the selected setup prefix once. Each entry contracts the ring with
-    // `eq_y` and the setup-index equality; the scan is `O(required · D)` and is
-    // the dominant recursive-mode verifier cost, so evaluate it in parallel.
-    let _span = tracing::info_span!("stage3_setup_mle_scan", required).entered();
+    // `eq_y` and the setup-index equality; the scan is `O(source_rows · D)` and
+    // is the dominant recursive-mode verifier cost, so evaluate it in parallel.
+    let _span = tracing::info_span!("stage3_setup_mle_scan", source_rows).entered();
     let inner_len = eq_setup_idx.in_len();
-    let required_outer = required.div_ceil(inner_len);
+    let required_outer = source_rows.div_ceil(inner_len);
     cfg_fold_reduce!(
         0..required_outer,
         || Ok(E::zero()),
@@ -286,7 +284,7 @@ where
             let start = outer_idx
                 .checked_mul(inner_len)
                 .ok_or(AkitaError::InvalidProof)?;
-            let end = start.saturating_add(inner_len).min(required);
+            let end = start.saturating_add(inner_len).min(source_rows);
             let entries = setup_entries
                 .get(start..end)
                 .ok_or(AkitaError::InvalidProof)?;
@@ -416,7 +414,8 @@ mod tests {
     #[test]
     fn setup_mle_scan_matches_dense_reference() {
         let required = 9usize;
-        let setup_eval_len = 12usize;
+        let source_rows = required.next_power_of_two();
+        let setup_eval_len = source_rows;
         let descriptor = AkitaSetupDescriptor {
             max_num_vars: 0,
             max_num_batched_polys: 0,
@@ -446,7 +445,7 @@ mod tests {
         let expected = rings
             .as_slice()
             .iter()
-            .take(required)
+            .take(source_rows)
             .enumerate()
             .map(|(index, ring)| {
                 eq_setup.eval_at(index).expect("setup equality entry")
@@ -456,7 +455,7 @@ mod tests {
         assert_eq!(
             setup_mle_at_eq_tables::<F, F, RING_D>(
                 &setup,
-                required,
+                source_rows,
                 setup_eval_len,
                 &rho_setup,
                 &eq_y,

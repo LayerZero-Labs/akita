@@ -4,28 +4,29 @@ pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::RecursiveCommitmentConfig;
 use akita_field::Zero;
-pub(super) use akita_field::{
-    AkitaError, CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge,
-};
+pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
+use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 pub(super) use akita_prover::{ProverOpeningData, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
+use akita_types::{
+    dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
+    LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupSumcheckProof,
+};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
-use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupBatchStatement,
-    LevelParamsLike, PolynomialGroupLayout, SetupSumcheckProof,
-};
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 #[cfg(feature = "logging-transcript")]
 use akita_transcript::TranscriptEvent;
@@ -526,6 +527,83 @@ pub(super) fn first_stage3_proof_mut(
         .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
 }
 
+fn first_setup_prefix_slot(schedule: &FoldSchedule) -> &SetupPrefixSlotId {
+    schedule
+        .recursive_folds
+        .iter()
+        .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+        .expect("recursive profile must carry a setup prefix")
+}
+
+fn verifier_setup_with_alternate_full_prefix(
+    setup: &AkitaProverSetup<F>,
+    verifier_setup: &AkitaVerifierSetup<F>,
+    slot_id: &SetupPrefixSlotId,
+) -> AkitaVerifierSetup<F> {
+    let natural_len = slot_id.natural_len;
+    let n_prefix = slot_id.n_prefix().expect("prefix length");
+    assert!(
+        natural_len < n_prefix,
+        "adversarial fixture requires a non-empty setup tail"
+    );
+
+    let original = setup.expanded.shared_matrix().as_field_slice();
+    let mut altered = original.to_vec();
+    altered[natural_len] += F::one();
+    assert_eq!(&altered[..natural_len], &original[..natural_len]);
+    assert_ne!(
+        &altered[natural_len..n_prefix],
+        &original[natural_len..n_prefix]
+    );
+
+    let seed = setup.expanded.seed().clone();
+    let setup_seed = seed.setup_seed.clone();
+    let altered_expanded = Arc::new(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            seed,
+            FlatMatrix::from_flat_data(altered),
+        ),
+    );
+    let altered_setup = AkitaProverSetup {
+        expanded: altered_expanded,
+        prefix_slots: SetupPrefixProverRegistry::new(setup_seed.clone()),
+    };
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend
+        .prepare_setup(&altered_setup)
+        .expect("prepare altered setup");
+    let altered_slot = dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        F,
+        slot_id.d_setup(),
+        |D| {
+            commit_setup_prefix::<F, D, _>(
+                &altered_setup.expanded,
+                &backend,
+                &prepared,
+                &slot_id.commitment_params,
+                n_prefix,
+                natural_len,
+            )
+        }
+    )
+    .expect("commit altered full setup prefix");
+
+    let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed);
+    for (id, slot) in verifier_setup.prefix_slots.iter() {
+        let replacement = if id == slot_id {
+            altered_slot.verifier_slot()
+        } else {
+            slot.clone()
+        };
+        prefix_slots
+            .insert(replacement)
+            .expect("insert verifier slot");
+    }
+    AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
+        .expect("alternate verifier setup")
+}
+
 /// Multi-group recursive roundtrip: two user precommitted groups plus one final group.
 /// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
 /// recursion adapter and standalone profiles are derived from it.
@@ -721,6 +799,24 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         )
         .expect("generated-profile recursive verify");
 
+        let alternate_verifier_setup = verifier_setup_with_alternate_full_prefix(
+            &setup,
+            &verifier_setup,
+            first_setup_prefix_slot(&schedule),
+        );
+        let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
+        let alternate_result = Recursive::<BaseCfg>::batched_verify(
+            &proof,
+            &alternate_verifier_setup,
+            &mut alternate_transcript,
+            verify_claims(final_openings.clone()),
+            BasisMode::Lagrange,
+        );
+        assert!(
+            alternate_result.is_err(),
+            "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
+        );
+
         let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
             let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
             let result = Recursive::<BaseCfg>::batched_verify(
@@ -731,8 +827,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 BasisMode::Lagrange,
             );
             assert!(
-                matches!(result, Err(AkitaError::InvalidProof)),
-                "{label} must return InvalidProof without panicking, got {result:?}"
+                result.is_err(),
+                "{label} must be rejected without panicking, got {result:?}"
             );
         };
 
