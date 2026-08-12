@@ -20,8 +20,8 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_types::{
-    embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding,
-    SubfieldMultiplierOpeningPoint,
+    psi_embed, tensor_column_partials_split_fold, FpExtEncoding, SubfieldMultiplierOpeningPoint,
+    SubfieldParams,
 };
 
 impl<F> DensePoly<F>
@@ -229,26 +229,41 @@ where
         F: CanonicalField + FromPrimitiveInt,
         E: FpExtEncoding<F>,
     {
-        let evals = self.tensor_packed_extension_evals::<E, D>()?;
-        let packed_len = D / E::EXT_DEGREE;
-        if packed_len == 0 {
-            return Err(AkitaError::InvalidInput(
-                "extension degree exceeds root ring dimension".to_string(),
-            ));
+        self.tensor_shape::<E, D>(None)?;
+        let source_rings = self.ring_coeffs::<D>()?;
+        let _span = tracing::info_span!(
+            "dense_tensor_root_projection",
+            table_len = self.live_coeff_len()?,
+            ring_dimension = D,
+            extension_degree = E::EXT_DEGREE,
+            output_rings = source_rings.len(),
+        )
+        .entered();
+        macro_rules! project {
+            ($k:expr) => {{
+                let params = SubfieldParams::<D, $k>::new()?;
+                cfg_iter!(source_rings)
+                    .map(|ring| {
+                        psi_embed::<F, D, $k>(params, ring.coefficients())
+                            .map(|projected| *projected.coefficients())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            }};
         }
-        let mut rings = Vec::with_capacity(evals.len().div_ceil(packed_len));
-        for chunk in evals.chunks(packed_len) {
-            let mut values = chunk.to_vec();
-            values.resize(packed_len, E::zero());
-            rings.push(embed_ring_subfield_vector::<F, E, D>(
-                &values,
-                AkitaError::InvalidInput(
-                    "root transformed witness does not encode in the ring-subfield basis"
-                        .to_string(),
-                ),
-            )?);
-        }
-        Ok(DensePoly::from_ring_coeffs::<D>(rings))
+        let coefficient_rows = match E::EXT_DEGREE {
+            1 => project!(1),
+            2 => project!(2),
+            4 => project!(4),
+            8 => project!(8),
+            degree => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "unsupported root tensor-projection extension degree {degree}"
+                )))
+            }
+        };
+        let projected = coefficient_rows.into_flattened();
+        let projected_num_vars = self.num_vars.max(D.trailing_zeros() as usize);
+        DensePoly::from_field_evals(projected_num_vars, D, projected)
     }
 
     pub(crate) fn tensor_packed_extension_root_poly<E, const D: usize>(
