@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | Status | active |
-| Updated | 2026-08-11 |
-| PR | #355 |
+| Updated | 2026-08-12 |
+| PR | #355, #385 |
 | Historical record | `archive/2026-Q3/multi-group-batching-legacy.md` |
 
 ## Summary
@@ -62,12 +62,14 @@ The current staggered flow is:
    `GroupContext::scheduler_without_prior_groups()`; this resolves its exact
    scalar row. Retain the resulting committed group/profile for use as a
    prior group.
-2. Build one ordered `PriorGroupProfiles` owner from those committed groups.
+2. Build one ordered `PriorGroupProfiles` owner from those committed groups for
+   the final commitment.
 3. Commit the last group with
    `GroupContext::scheduler_with_prior_groups(&prior)?`, borrowing that owner.
-4. Build the self-describing `OpeningClaims`, then pass the same owner to
-   `SelectedProverOpeningData::from_committed_claims`; batch assembly selects
-   the exact generated grouped row before profiles are stripped.
+4. Build the self-describing `OpeningClaims`, then pass them to
+   `SelectedProverOpeningData::from_committed_claims`. Batch assembly derives
+   the ordered profiles from the committed groups and selects the exact
+   generated grouped row before it strips those profiles from prover data.
 5. Prove with that selected row and verify against its explicit row identity.
 
 The scheduler-without-priors context commits a group under its scalar row.
@@ -108,8 +110,8 @@ from unchecked lengths, or invoke the planner.
   prior group.
 - `GroupContext::scheduler_with_prior_groups` selects from the exact ordered
   profiles supplied by the caller and rejects an empty prefix.
-- Batch assembly consumes the same `PriorGroupProfiles` allocation borrowed by
-  final commitment and checks it against the ordered committed claims.
+- Batch assembly derives the exact ordered profiles from the committed claims
+  and selects the grouped row before it strips the profiles from prover data.
 - Reordered, altered, unknown, or undersized profiles reject.
 - Scalar keys normalize through `AkitaScheduleLookupKey::single`.
 - Grouped roots hand one compact witness to the recursive suffix.
