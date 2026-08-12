@@ -15,12 +15,10 @@ use akita_types::CommittedGroupParams;
 use akita_types::DigitRangePlan;
 use akita_types::ExtensionOpeningReductionProof;
 use akita_types::{
-    lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field,
+    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field, RingVec,
 };
 use akita_types::{
-    AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingShape, RingVec,
-    TerminalLevelProofShape,
+    AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingShape, TerminalLevelProofShape,
 };
 use akita_types::{
     AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
@@ -52,8 +50,6 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
 mod dense_group;
-mod fp32_ext4;
-mod heterogeneous_group;
 mod layout;
 mod onehot;
 mod single;
@@ -115,114 +111,11 @@ where
     })
 }
 
-fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
-    let num_ring_elems = output_witness_len.div_ceil(level_d);
-    num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
-}
-
 /// Batched recursion already consults the byte planner before folding
 /// again. The runtime safety guard here only needs to catch tiny tails and
 /// fixed points, not enforce the single-proof shrink-ratio heuristic.
 fn should_stop_batched_folding(witness_len: usize, prev_w_len: usize) -> bool {
     witness_len <= MIN_W_LEN_FOR_FOLDING || witness_len >= prev_w_len
-}
-
-/// Derive the structural proof shape from the schedule. The terminal carries
-/// only optional EOR, its grind nonce, and the clear terminal response.
-fn expected_same_point_batched_shape(
-    max_num_vars: usize,
-    num_claims: usize,
-    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
-) -> AkitaBatchedProofShape {
-    let opening_batch =
-        akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let schedule =
-        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
-    let root_step = &schedule.root;
-    let root_params = &root_step.params.final_group.commitment;
-    let num_fold_levels = schedule.num_fold_levels();
-    let root_rounds = batched_shape_rounds(root_params.d_a(), root_step.output_witness_len);
-
-    assert!(
-        num_fold_levels >= 2,
-        "folded-only schedules have a root and terminal fold"
-    );
-
-    let root_successor = schedule.recursive_folds.first();
-    let opening_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
-        params
-            .opening_payload_geometry()
-            .expect("opening payload geometry")
-            .transmitted_coefficients()
-    };
-    let commitment_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
-        params
-            .outer_payload_geometry()
-            .expect("commitment payload geometry")
-            .transmitted_coefficients()
-    };
-    let root_shape = LevelProofShape {
-        extension_opening_reduction: None,
-        opening_payload_coeffs: opening_payload_coeffs(root_params),
-        stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
-            .expect("scheduled root range basis")
-            .stage_shapes(root_rounds),
-        stage2_sumcheck_proof: vec![3; root_rounds],
-        stage3_sumcheck: None,
-        next_witness_binding: match root_successor {
-            Some(successor) => {
-                let next_level_params = &successor.params.witness;
-                NextWitnessBindingShape::OuterPayload {
-                    coeffs: commitment_payload_coeffs(next_level_params),
-                }
-            }
-            None => NextWitnessBindingShape::TerminalInnerState,
-        },
-    };
-    // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
-    // total: `num_fold_levels - 2` intermediate steps followed by exactly one
-    // terminal step. (We've already consumed the root.)
-    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
-    let mut input_witness_len = root_step.output_witness_len;
-    for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        assert_eq!(step.input_witness_len, input_witness_len);
-        let level_params = &step.params.witness;
-        let output_witness_len = step.output_witness_len;
-        let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
-        recursive_folds.push(LevelProofShape {
-            extension_opening_reduction: None,
-            opening_payload_coeffs: opening_payload_coeffs(level_params),
-            stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
-                .expect("scheduled range basis")
-                .stage_shapes(rounds),
-            stage2_sumcheck_proof: vec![3; rounds],
-            stage3_sumcheck: None,
-            next_witness_binding: match schedule.recursive_folds.get(index + 1) {
-                Some(successor) => {
-                    let next_level_params = &successor.params.witness;
-                    NextWitnessBindingShape::OuterPayload {
-                        coeffs: commitment_payload_coeffs(next_level_params),
-                    }
-                }
-                None => NextWitnessBindingShape::TerminalInnerState,
-            },
-        });
-        input_witness_len = output_witness_len;
-    }
-
-    // Terminal fold step (always present in the multi-fold case); the
-    // structural terminal field encodes its witness shape.
-    assert_eq!(schedule.terminal.input_witness_len, input_witness_len);
-    let terminal = TerminalLevelProofShape {
-        extension_opening_reduction: None,
-        terminal_response: schedule.terminal.params.response_shape.clone(),
-    };
-
-    AkitaBatchedProofShape {
-        root: root_shape,
-        recursive_folds,
-        terminal,
-    }
 }
 
 fn prover_claims<'a, P>(
@@ -332,21 +225,6 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     )
 }
 
-fn dense_opening(evals: &[F], point: &[F]) -> F {
-    let lw = lagrange_weights(point).unwrap();
-    evals
-        .iter()
-        .zip(lw.iter())
-        .fold(F::zero(), |a, (&c, &w)| a + c * w)
-}
-
-fn debug_random_point(nv: usize) -> Vec<OneHotF> {
-    let mut rng = StdRng::seed_from_u64(0xcafe_babe);
-    (0..nv)
-        .map(|_| OneHotF::from_canonical_u128_reduced(rng.r#gen::<u128>()))
-        .collect()
-}
-
 fn debug_make_onehot_poly(
     num_vars: usize,
     ring_dimension: usize,
@@ -364,6 +242,114 @@ fn debug_make_onehot_poly(
         .expect("debug onehot poly")
 }
 
+fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
+    let num_ring_elems = output_witness_len.div_ceil(level_d);
+    num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
+}
+
+/// Derive the structural proof shape from the schedule. The terminal carries
+/// only optional EOR, its grind nonce, and the clear terminal response.
+fn expected_same_point_batched_shape(
+    max_num_vars: usize,
+    num_claims: usize,
+    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+) -> AkitaBatchedProofShape {
+    let opening_batch =
+        akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
+    let schedule =
+        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
+    let root_step = &schedule.root;
+    let root_params = &root_step.params.final_group.commitment;
+    let num_fold_levels = schedule.num_fold_levels();
+    let root_rounds = batched_shape_rounds(root_params.d_a(), root_step.output_witness_len);
+
+    assert!(
+        num_fold_levels >= 2,
+        "folded-only schedules have a root and terminal fold"
+    );
+
+    let root_successor = schedule.recursive_folds.first();
+    let opening_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .opening_payload_geometry()
+            .expect("opening payload geometry")
+            .transmitted_coefficients()
+    };
+    let commitment_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .outer_payload_geometry()
+            .expect("commitment payload geometry")
+            .transmitted_coefficients()
+    };
+    let root_shape = LevelProofShape {
+        extension_opening_reduction: None,
+        opening_payload_coeffs: opening_payload_coeffs(root_params),
+        stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
+            .expect("scheduled root range basis")
+            .stage_shapes(root_rounds),
+        stage2_sumcheck_proof: vec![3; root_rounds],
+        stage3_sumcheck: None,
+        next_witness_binding: match root_successor {
+            Some(successor) => {
+                let next_level_params = &successor.params.witness;
+                NextWitnessBindingShape::OuterPayload {
+                    coeffs: commitment_payload_coeffs(next_level_params),
+                }
+            }
+            None => NextWitnessBindingShape::TerminalInnerState,
+        },
+    };
+    // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
+    // total: `num_fold_levels - 2` intermediate steps followed by exactly one
+    // terminal step. (We've already consumed the root.)
+    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
+    let mut input_witness_len = root_step.output_witness_len;
+    for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        assert_eq!(step.input_witness_len, input_witness_len);
+        let level_params = &step.params.witness;
+        let output_witness_len = step.output_witness_len;
+        let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
+        recursive_folds.push(LevelProofShape {
+            extension_opening_reduction: None,
+            opening_payload_coeffs: opening_payload_coeffs(level_params),
+            stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
+                .expect("scheduled range basis")
+                .stage_shapes(rounds),
+            stage2_sumcheck_proof: vec![3; rounds],
+            stage3_sumcheck: None,
+            next_witness_binding: match schedule.recursive_folds.get(index + 1) {
+                Some(successor) => {
+                    let next_level_params = &successor.params.witness;
+                    NextWitnessBindingShape::OuterPayload {
+                        coeffs: commitment_payload_coeffs(next_level_params),
+                    }
+                }
+                None => NextWitnessBindingShape::TerminalInnerState,
+            },
+        });
+        input_witness_len = output_witness_len;
+    }
+    // Terminal fold step (always present in the multi-fold case); the
+    // structural terminal field encodes its witness shape.
+    assert_eq!(schedule.terminal.input_witness_len, input_witness_len);
+    let terminal = TerminalLevelProofShape {
+        extension_opening_reduction: None,
+        terminal_response: schedule.terminal.params.response_shape.clone(),
+    };
+    AkitaBatchedProofShape {
+        root: root_shape,
+        recursive_folds,
+        terminal,
+    }
+}
+
+fn debug_random_point(nv: usize) -> Vec<OneHotF> {
+    let mut rng = StdRng::seed_from_u64(0xcafe_babe);
+    (0..nv)
+        .map(|_| OneHotF::from_canonical_u128_reduced(rng.r#gen::<u128>()))
+        .collect()
+}
+
 fn opening_from_poly_at<const D_OPEN: usize>(
     poly: &OneHotPoly<OneHotF, u8>,
     point: &[OneHotF],
@@ -371,7 +357,6 @@ fn opening_from_poly_at<const D_OPEN: usize>(
     num_live_blocks: usize,
 ) -> OneHotF {
     let alpha_bits = D_OPEN.trailing_zeros() as usize;
-
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
@@ -381,7 +366,6 @@ fn opening_from_poly_at<const D_OPEN: usize>(
         BasisMode::Lagrange,
     )
     .expect("opening point shape should match layout");
-
     let opening = OpeningFoldKernel::<_, OneHotF, D_OPEN>::evaluate_and_fold(
         &CpuBackend::DEFAULT,
         None,

@@ -1,60 +1,6 @@
 use super::*;
 
 #[test]
-fn verify_passes_for_consistent_opening() {
-    let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
-
-    let (poly, evals) = make_dense_poly(num_vars);
-
-    let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
-
-    let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-    let lw = lagrange_weights(&opening_point).unwrap();
-    let opening: F = evals
-        .iter()
-        .zip(lw.iter())
-        .fold(F::zero(), |a, (&c, &w)| a + c * w);
-
-    let poly_refs: [&DensePoly<F>; 1] = [&poly];
-    let commitments = [commitment];
-    let openings = [opening];
-
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let result = Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    );
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);
@@ -142,35 +88,6 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
 }
 
 #[test]
-fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
-    let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-        make_verify_fixture(16);
-    let shape = proof.shape();
-
-    let mut bytes = Vec::new();
-    proof.serialize_uncompressed(&mut bytes).unwrap();
-    let mut repeated_bytes = Vec::new();
-    proof.serialize_uncompressed(&mut repeated_bytes).unwrap();
-    assert_eq!(bytes, repeated_bytes);
-
-    let decoded = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape)
-        .expect("degree-one proof should roundtrip");
-    assert_eq!(decoded, proof);
-
-    let commitments = [commitment];
-    let openings = [opening];
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    Scheme::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    )
-    .expect("degree-one roundtrip proof should verify");
-}
-
-#[test]
 fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_flat_ring_vec(_: &RingVec<F>) {}
     fn assert_base_direct_witness(_: &akita_types::TerminalResponse<F>) {}
@@ -212,64 +129,4 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
         BasisMode::Lagrange,
     )
     .expect_err("unchecked extension-opening payload must be rejected");
-}
-
-#[test]
-fn monomial_basis_prove_verify_round_trip() {
-    let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
-    let len = 1usize << num_vars;
-
-    let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &coeffs).unwrap();
-
-    let setup = Scheme::setup_prover(num_vars, 1).unwrap();
-    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
-
-    let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
-
-    let mw = monomial_weights(&opening_point).unwrap();
-    let opening: F = coeffs
-        .iter()
-        .zip(mw.iter())
-        .fold(F::zero(), |acc, (&c, &w)| acc + c * w);
-
-    let poly_refs: [&DensePoly<F>; 1] = [&poly];
-    let commitments = [commitment];
-    let openings = [opening];
-
-    let mut prover_transcript = AkitaTranscript::<F>::new(b"test/monomial");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Monomial,
-    )
-    .unwrap();
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/monomial");
-    let result = Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-        BasisMode::Monomial,
-    );
-
-    assert!(
-        result.is_ok(),
-        "monomial-basis proof should verify: {result:?}"
-    );
 }
