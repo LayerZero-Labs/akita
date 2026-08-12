@@ -332,7 +332,7 @@ mod tests {
             num_digits_open: 1,
             num_digits_fold: 1,
         };
-        setup
+        let err = setup
             .prefix_slots
             .insert(SetupPrefixSlot {
                 id: setup_prefix_slot_id(1, commitment_params),
@@ -344,11 +344,7 @@ mod tests {
                 },
                 hint,
             })
-            .expect("insert malformed slot");
-
-        let err = setup
-            .check()
-            .expect_err("prover setup check must reject invalid prefix slots");
-        assert!(err.to_string().contains("full_prefix_len"));
+            .expect_err("insert must reject malformed prefix slot");
+        assert!(err.to_string().contains("commitment row"));
     }
 }
