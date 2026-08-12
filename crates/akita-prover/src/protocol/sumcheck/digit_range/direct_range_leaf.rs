@@ -533,6 +533,7 @@ struct FoldedOctetRangeImage<E: FieldCore> {
     class_codes: Vec<u16>,
     class_values: Vec<E>,
     class_taylor_coefficients: Vec<[E; 4]>,
+    degree: usize,
 }
 
 impl<E: FieldCore + HasUnreducedOps> FoldedOctetRangeImage<E> {
@@ -547,13 +548,13 @@ impl<E: FieldCore + HasUnreducedOps> FoldedOctetRangeImage<E> {
     }
 
     #[inline]
-    fn entry_coefficients(&self, out: &mut [E], degree: usize, index: usize) {
+    fn entry_coefficients(&self, out: &mut [E], index: usize) {
         let left_class = self.class_codes[index] as usize;
         let right_class = self.class_codes[index + 1] as usize;
         let delta = self.class_values[right_class] - self.class_values[left_class];
         compute_entry_coefficients_from_taylor(
             out,
-            degree,
+            self.degree,
             self.class_taylor_coefficients[left_class],
             delta,
         );

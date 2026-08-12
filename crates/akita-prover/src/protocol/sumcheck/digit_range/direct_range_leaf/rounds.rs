@@ -78,11 +78,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 LowBasisRangeImageStorage::FoldedOctets(range_image) => {
                     debug_assert!(use_sparse_x_y_round);
                     self.compute_round_sparse_x_y(range_image.len(), |out, index| {
-                        range_image.entry_coefficients(
-                            out,
-                            self.polynomial_precomputation.degree_q,
-                            index,
-                        );
+                        range_image.entry_coefficients(out, index);
                     })
                 }
             }
@@ -287,11 +283,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                         );
                         let round_poly =
                             self.compute_round_sparse_x_y(range_image.len(), |out, index| {
-                                range_image.entry_coefficients(
-                                    out,
-                                    self.polynomial_precomputation.degree_q,
-                                    index,
-                                );
+                                range_image.entry_coefficients(out, index);
                             });
                         self.cached_round_poly = Some(round_poly);
                         LowBasisRangeImageStorage::FoldedOctets(range_image)

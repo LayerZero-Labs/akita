@@ -271,14 +271,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let left_index = octet_class >> 8;
         let right_index = octet_class & 0xff;
         let range_image_delta = folded_quads[right_index] - folded_quads[left_index];
-        let delta_squared = range_image_delta * range_image_delta;
-        let delta_cubed = delta_squared * range_image_delta;
-        let taylor_row = taylor_coefficients[left_index];
-        coefficients[0] = taylor_row[0];
-        coefficients[1] = taylor_row[1] * range_image_delta;
-        coefficients[2] = taylor_row[2] * delta_squared;
-        coefficients[3] = taylor_row[3] * delta_cubed;
-        coefficients[4] = delta_squared * delta_squared;
+        compute_entry_coefficients_from_taylor(
+            coefficients,
+            4,
+            taylor_coefficients[left_index],
+            range_image_delta,
+        );
     }
 
     #[tracing::instrument(
@@ -314,7 +312,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             let right_index = Self::stage1_b8_quad_lookup_index_from_row(row, base + 4);
             Some((left_index << 8) | right_index)
         };
-        let accumulated = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        // A 65,536-entry class histogram removes repeated quartic work on one
+        // worker, but Rayon would create one multi-megabyte histogram for each
+        // fold task and then merge every entry. With more than one worker the
+        // direct entry traversal is both faster and bounded-memory.
+        #[cfg(feature = "parallel")]
+        let use_class_histogram =
+            E::DELAYED_PRODUCT_SUM_IS_EXACT && rayon::current_num_threads() == 1;
+        #[cfg(not(feature = "parallel"))]
+        let use_class_histogram = E::DELAYED_PRODUCT_SUM_IS_EXACT;
+        let accumulated = if use_class_histogram {
             const OCTET_CLASS_COUNT: usize = 1 << 16;
             let class_weights = cfg_fold_reduce!(
                 0..e_second.len(),
@@ -490,6 +497,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             class_codes,
             class_values,
             class_taylor_coefficients,
+            degree: self.basis / 2,
         }
     }
 
