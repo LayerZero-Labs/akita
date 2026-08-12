@@ -35,7 +35,7 @@ cannot change ordinary relation alignment.
 
 **Sources to fold in**
 
-- `crates/akita-prover/src/api/commitment.rs:529-721` (`commit`, `batched_commit`).
+- `crates/akita-prover/src/api/commitment.rs` (role-aware `commit` and its shared kernel).
 - `crates/akita-prover/src/backend/onehot/inner_ajtai.rs`.
 - `crates/akita-types/src/sis/ajtai_key.rs`.
 - Paper §2.6 `sec:prelim-pcs` (two-tier Ajtai), §3.2 `sec:akita-layout` (commitment matrices, inner/outer commitments).
@@ -49,7 +49,7 @@ production choice; **D128** remains a comparison / legacy profile (see
 
 **Sources to fold in**
 
-- `crates/akita-prover/src/backend/dense.rs`, `backend/onehot/mod.rs`.
+- `crates/akita-prover/src/backend/dense/mod.rs`, `backend/onehot/mod.rs`.
 - `crates/akita-pcs/src/lib.rs:1-72`.
 - Paper App B.2.5 (one-hot commitment optimization), `sec:akita-crt-matvec`.
 - `specs/simd-ring-subfield-fp8.md` (technique note; primary consumer removed).

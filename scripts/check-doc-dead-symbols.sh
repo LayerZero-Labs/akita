@@ -60,6 +60,41 @@ removed_api_patterns=(
   'RingSwitchComputeBackend'
   'RingSwitchRelationRowsPlan'
   'RingSwitchQuotientRowsPlan'
+  'CommitmentProver'
+  'CommitmentWithHint'
+  'CommittedGroupWithHint'
+  'FinalCommittedGroupWithHint'
+  'batched_commit'
+  'commit_group\b'
+  'commit_final_group'
+  'commit_with_params'
+  'batched_commit_with_params'
+  'get_params_for_prove'
+  'get_params_for_batched_commitment'
+  'runtime_schedule\b'
+  'committed_group_profile'
+  'resolve_generated_precommitted_group_profile'
+  'resolve_group_batch_schedule'
+  'plan_standalone_precommit'
+  'StandalonePrecommitPlan'
+  'StandalonePrecommitCandidate'
+  'prepare_batched_commit_inputs'
+  'padded_scalar_batch_num_vars'
+  'validate_scalar_point_matches_poly_arity'
+  'emit_precommitted_profiles_module'
+  'prior_group_profiles'
+  'PriorGroupProfiles'
+  'PriorGroupContext'
+  'NoPriorGroups'
+  'WithPriorGroups'
+  'scheduler_without_prior_groups'
+  'scheduler_with_prior_groups'
+  'explicit_without_prior_groups'
+  'explicit_with_prior_groups'
+  'profile_without_prior_groups'
+  'sole_profile'
+  '_precommitted\.rs'
+  'api/scheme\.rs'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"
@@ -107,11 +142,19 @@ for f in crates/*/README.md; do
   fi
 done
 
-api_matches="$(rg -n \
+# Route this scan through `scan_file` too, so a doc marked as a historical
+# snapshot is exempt from both scans rather than only the first.
+api_matches=""
+for f in $(rg -l \
   --glob '*.md' \
   --glob '!**/archive/**' \
   --glob '!**/generated/**' \
-  "$api_pattern" "${api_paths[@]}" 2>/dev/null || true)"
+  "$api_pattern" "${api_paths[@]}" 2>/dev/null || true); do
+  hit="$(scan_file "$f" "$api_pattern")"
+  if [[ -n "$hit" ]]; then
+    api_matches+="$f"$'\n'"$hit"$'\n'
+  fi
+done
 
 if [[ -n "$api_matches" ]]; then
   echo "Deleted public API references in live docs. Review:" >&2

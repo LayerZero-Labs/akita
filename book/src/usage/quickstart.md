@@ -2,7 +2,8 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-The smallest path to a working `batched_commit` → `batched_prove` →
+The smallest path to a working
+`commit(GroupContext::scheduler_without_precommitted_groups())` → `batched_prove` →
 `batched_verify`, then how to pick the `CommitmentConfig` preset that matches
 your field and proof-size goals.
 
@@ -13,7 +14,7 @@ a newcomer should reach for first.
 
 **Sources to fold in**
 
-- `crates/akita-pcs/tests/single_poly_e2e.rs` (smallest E2E template).
+- `crates/akita-pcs/tests/akita_fp128_e2e.rs` (smallest E2E template).
 - `AGENTS.md` (Essential Commands); `crates/akita-pcs/examples/profile/main.rs`
   (`AKITA_MODE=onehot_fp128`, `AKITA_NUM_VARS=32`).
 

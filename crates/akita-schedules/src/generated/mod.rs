@@ -95,18 +95,6 @@ pub struct GeneratedTerminalFold {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedPrecommittedProfile {
-    pub group: akita_types::PolynomialGroupLayout,
-    pub commitment: GeneratedCommittedGroup,
-    pub num_digits_inner: u32,
-    pub inner_output_rank: u32,
-    pub inner_coeff_linf_bound: u128,
-    pub num_digits_outer: u32,
-    pub outer_output_rank: u32,
-    pub outer_coeff_linf_bound: u128,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedFoldScheduleEntry {
     pub root: GeneratedRootFold,
     pub recursive_folds: &'static [GeneratedRecursiveFold],
@@ -165,7 +153,6 @@ pub struct GeneratedScheduleCatalogIdentity {
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
     pub entries: &'static [GeneratedFoldScheduleEntry],
-    pub precommitted_profiles: &'static [GeneratedPrecommittedProfile],
     pub identity: GeneratedScheduleCatalogIdentity,
 }
 
@@ -384,57 +371,31 @@ pub(crate) fn validate_certified_bases(
 pub mod fp128_dense;
 #[cfg(feature = "fp128-dense-multi-chunk")]
 pub mod fp128_dense_multi_chunk;
-#[cfg(feature = "fp128-dense-multi-chunk")]
-pub mod fp128_dense_multi_chunk_precommitted;
-#[cfg(feature = "fp128-dense")]
-pub mod fp128_dense_precommitted;
 #[cfg(feature = "fp128-onehot")]
 pub mod fp128_onehot;
 #[cfg(feature = "fp128-onehot-multi-chunk")]
 pub mod fp128_onehot_multi_chunk;
-#[cfg(feature = "fp128-onehot-multi-chunk")]
-pub mod fp128_onehot_multi_chunk_precommitted;
 #[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
 pub mod fp128_onehot_multi_chunk_w2r2;
-#[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
-pub mod fp128_onehot_multi_chunk_w2r2_precommitted;
 #[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
 pub mod fp128_onehot_multi_chunk_w4r2;
-#[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
-pub mod fp128_onehot_multi_chunk_w4r2_precommitted;
-#[cfg(feature = "fp128-onehot")]
-pub mod fp128_onehot_precommitted;
 #[cfg(feature = "fp128-onehot-recursive")]
 pub mod fp128_onehot_recursive;
 #[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
 pub mod fp128_onehot_recursive_multi_chunk_w8r2;
-#[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
-pub mod fp128_onehot_recursive_multi_chunk_w8r2_precommitted;
-#[cfg(feature = "fp128-onehot-recursive")]
-pub mod fp128_onehot_recursive_precommitted;
 #[cfg(feature = "fp32-dense")]
 pub mod fp32_dense;
-#[cfg(feature = "fp32-dense")]
-pub mod fp32_dense_precommitted;
 #[cfg(feature = "fp32-onehot")]
 pub mod fp32_onehot;
-#[cfg(feature = "fp32-onehot")]
-pub mod fp32_onehot_precommitted;
 #[cfg(feature = "fp64-dense")]
 pub mod fp64_dense;
-#[cfg(feature = "fp64-dense")]
-pub mod fp64_dense_precommitted;
 #[cfg(feature = "fp64-onehot")]
 pub mod fp64_onehot;
-#[cfg(feature = "fp64-onehot")]
-pub mod fp64_onehot_precommitted;
 
 #[cfg(feature = "fp128-dense")]
 pub fn fp128_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_dense::FP128_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp128_dense_precommitted::FP128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_dense::CATALOG_IDENTITY,
     }
 }
@@ -443,7 +404,6 @@ pub fn fp128_dense_table() -> GeneratedScheduleTable {
 pub fn fp128_dense_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_dense_multi_chunk::FP128_DENSE_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_dense_multi_chunk_precommitted::FP128_DENSE_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_dense_multi_chunk::CATALOG_IDENTITY,
     }
 }
@@ -452,8 +412,6 @@ pub fn fp128_dense_multi_chunk_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot::FP128_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp128_onehot_precommitted::FP128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot::CATALOG_IDENTITY,
     }
 }
@@ -462,7 +420,6 @@ pub fn fp128_onehot_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_multi_chunk::FP128_ONEHOT_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_onehot_multi_chunk_precommitted::FP128_ONEHOT_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_multi_chunk::CATALOG_IDENTITY,
     }
 }
@@ -471,7 +428,6 @@ pub fn fp128_onehot_multi_chunk_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_multi_chunk_w2r2::FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
-        precommitted_profiles: fp128_onehot_multi_chunk_w2r2_precommitted::FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
     }
 }
@@ -480,7 +436,6 @@ pub fn fp128_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_multi_chunk_w4r2::FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
-        precommitted_profiles: fp128_onehot_multi_chunk_w4r2_precommitted::FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
     }
 }
@@ -489,7 +444,6 @@ pub fn fp128_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_recursive_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES,
-        precommitted_profiles: fp128_onehot_recursive_precommitted::FP128_ONEHOT_RECURSIVE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_recursive::CATALOG_IDENTITY,
     }
 }
@@ -498,7 +452,6 @@ pub fn fp128_onehot_recursive_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_recursive_multi_chunk_w8r2::FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
-        precommitted_profiles: fp128_onehot_recursive_multi_chunk_w8r2_precommitted::FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
     }
 }
@@ -507,7 +460,6 @@ pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable
 pub fn fp32_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp32_dense::FP32_DENSE_SCHEDULES,
-        precommitted_profiles: fp32_dense_precommitted::FP32_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp32_dense::CATALOG_IDENTITY,
     }
 }
@@ -516,8 +468,6 @@ pub fn fp32_dense_table() -> GeneratedScheduleTable {
 pub fn fp32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp32_onehot::FP32_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp32_onehot_precommitted::FP32_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp32_onehot::CATALOG_IDENTITY,
     }
 }
@@ -526,7 +476,6 @@ pub fn fp32_onehot_table() -> GeneratedScheduleTable {
 pub fn fp64_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp64_dense::FP64_DENSE_SCHEDULES,
-        precommitted_profiles: fp64_dense_precommitted::FP64_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp64_dense::CATALOG_IDENTITY,
     }
 }
@@ -535,8 +484,6 @@ pub fn fp64_dense_table() -> GeneratedScheduleTable {
 pub fn fp64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp64_onehot::FP64_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp64_onehot_precommitted::FP64_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp64_onehot::CATALOG_IDENTITY,
     }
 }

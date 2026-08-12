@@ -4,7 +4,7 @@ type DenseGroupCfg = Cfg;
 type DenseGroupScheme = AkitaCommitmentScheme<DenseGroupCfg>;
 
 #[test]
-fn dense_group_commit_freezes_uniform_precommit_profile() {
+fn dense_group_commit_freezes_scalar_s_profile() {
     const NUM_VARS: usize = 16;
 
     let setup = DenseGroupScheme::setup_prover(NUM_VARS, 1).expect("dense group setup");
@@ -23,16 +23,28 @@ fn dense_group_commit_freezes_uniform_precommit_profile() {
         .collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense polynomial");
 
-    let (commitment, _hint) =
-        DenseGroupScheme::commit_group(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("dense group commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint: _hint,
+    } = DenseGroupScheme::commit(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("dense group commit");
 
     assert_eq!(
         commitment.profile.group,
         akita_types::PolynomialGroupLayout::new(NUM_VARS, 1)
     );
-    assert_eq!(commitment.profile.inner_commit_matrix.ring_dimension(), 64);
-    assert_eq!(commitment.profile.outer_commit_matrix.ring_dimension(), 64);
+    assert_eq!(
+        commitment.profile,
+        DenseGroupCfg::profile_without_precommitted_groups(
+            akita_types::PolynomialGroupLayout::new(NUM_VARS, 1)
+        )
+        .expect("independent profile")
+    );
     assert_eq!(
         commitment.rows().count(),
         commitment.profile.outer_commit_matrix.output_rank()

@@ -54,12 +54,12 @@
 //! OneHot mc nonrec pre: NA. The catalog has no combined final=32, pre=14 row.
 //! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
-//!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits
-//!            (fp128_onehot_recursive_precommitted.rs).
+//!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits,
+//!            committed under the base config's scalar row.
 //! OneHot mc rec:     cfg=schedules-fp128-onehot-recursive-multi-chunk; nv=32 is production-sized (ign).
 //!   direct = RecursiveCommitmentConfig<OneHotMultiChunk> (fp128_onehot_recursive_multi_chunk_w8r2.rs).
-//!   pre    = same + two 16-variable user precommits
-//!            (fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs).
+//!   pre    = same + two 16-variable user precommits, committed under the
+//!            base config's scalar row.
 //!
 //! Every ✓ cell resolves against a real shipped catalog row; no cell here is
 //! backed by a schedule added solely to make a test pass.
@@ -68,6 +68,8 @@
 #![cfg(feature = "schedules-default")]
 
 mod common;
+#[path = "akita_fp128_e2e/heterogeneous.rs"]
+mod heterogeneous;
 mod matrix_drivers;
 
 use akita_config::proof_optimized::fp128;
@@ -80,7 +82,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    PolynomialGroupClaims,
 };
 use common::*;
 use matrix_drivers::*;
@@ -152,7 +154,7 @@ macro_rules! matrix_test {
             );
         }
     };
-    // recursive mode + user precommitted groups (fp128_onehot_recursive_precommitted.rs profiles)
+    // recursive mode + user precommitted groups (profiles from the base config's scalar row)
     (recursive_pre; $name:ident; $base_cfg:ty) => {
         #[test]
         #[ignore = "production-sized; run explicitly with --release"]
@@ -220,7 +222,7 @@ matrix_test!(recursive_direct; fp128_onehot_rec; fp128::OneHot);
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × precommitted × recursive    (production-sized, ignored)
-// RecursiveCommitmentConfig + user precommit; profiles from fp128_onehot_recursive_precommitted.rs.
+// RecursiveCommitmentConfig + user precommit; profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-onehot-recursive")]
 matrix_test!(recursive_pre; fp128_onehot_rec_pre; fp128::OneHot);
@@ -235,7 +237,7 @@ matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunk);
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × precommitted × recursive    (production-sized, ignored)
 // RecursiveCommitmentConfig<OneHotMultiChunk> + user precommit;
-// profiles from fp128_onehot_recursive_multi_chunk_w8r2_precommitted.rs.
+// profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk")]
 matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
@@ -251,7 +253,7 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
-    fp128::OneHotMultiChunk::get_params_for_batched_commitment(&opening_batch)
+    fp128::OneHotMultiChunk::select_schedule_for_opening(&opening_batch)
         .expect("W8R2 multi-chunk catalog row");
 }
 
@@ -302,9 +304,16 @@ fn fp128_onehot_batched() {
         let verifier_setup =
             AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, &polys, &stack)
-                .expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
         let poly_refs: Vec<_> = polys.iter().collect();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
@@ -371,9 +380,16 @@ fn fp128_dense_batched() {
         let verifier_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
-                .expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
         let poly_refs: Vec<_> = polys.iter().collect();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
@@ -420,7 +436,13 @@ fn fp128_mixed_batched() {
         const NV: usize = 17;
         const BATCH: usize = 4;
         let opening_batch = OpeningClaimsLayout::new(NV, BATCH).expect("opening batch");
-        let layout = DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+        let layout = DenseCfg::select_schedule_for_opening(&opening_batch)
+            .expect("layout")
+            .into_schedule()
+            .root
+            .params
+            .final_group
+            .commitment;
 
         let root_d = layout.d_a();
         let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
@@ -469,9 +491,16 @@ fn fp128_mixed_batched() {
         let verifier_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
-                .expect("mixed commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("mixed commit");
         let poly_refs: Vec<_> = polys.iter().collect();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_mixed_batched");
@@ -518,7 +547,13 @@ fn fp128_mixed_batched() {
 fn fp128_onehot_oversized_setup() {
     fn run(setup_nv: usize, poly_nv: usize) {
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
-        let layout = OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+        let layout = OneHotCfg::select_schedule_for_opening(&opening_batch)
+            .expect("layout")
+            .into_schedule()
+            .root
+            .params
+            .final_group
+            .commitment;
         let d = layout.d_a();
         let total_field = layout.num_live_blocks * layout.num_positions_per_block * d;
         let total_chunks = total_field / ONEHOT_K;
@@ -541,10 +576,14 @@ fn fp128_onehot_oversized_setup() {
         let verifier_setup =
             AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let poly_refs = [&poly];
@@ -610,10 +649,14 @@ fn fp128_dense_monomial_basis() {
         let verifier_setup =
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("commit");
         let poly_refs = [&poly];
@@ -649,327 +692,5 @@ fn fp128_dense_monomial_basis() {
             BasisMode::Monomial,
         )
         .expect("monomial verify");
-    });
-}
-
-// ============================================================================
-// GROUP E — Heterogeneous configurations (fp128)
-//
-// Tests that span multiple commitment groups with different polynomial types or
-// compute backends.  Orthogonal to the Group B matrix.
-// ============================================================================
-
-// fp128: three commitment groups with heterogeneous polynomial types
-// (one-hot precommit + dense precommit + one-hot final), proved jointly.
-// This is the key test for the heterogeneous-group code path.
-#[test]
-fn heterogeneous_group_types() {
-    init_rayon_pool();
-    run_on_large_stack(|| {
-        const ONEHOT_PRE_NV: usize = 14;
-        const DENSE_PRE_NV: usize = 15;
-        const FINAL_NV: usize = 16;
-
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 4).expect("setup");
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-        let stack =
-            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-                .expect("stack");
-
-        // Derive the OneHot pre-commit ring_d from the precommit profile so the
-        // polynomial is structured consistently with what commit_group uses.
-        let pre_d = akita_config::committed_group_profile::<OneHotCfg>(
-            &PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
-        )
-        .expect("onehot pre profile")
-        .inner_commit_matrix
-        .ring_dimension();
-        let onehot_k_pre = 16usize;
-        let pre_chunks = (1usize << ONEHOT_PRE_NV) / onehot_k_pre;
-        let onehot_pre = akita_prover::OneHotPoly::<F, u8>::new(
-            onehot_k_pre,
-            pre_d,
-            (0..pre_chunks)
-                .map(|i| (i % 3 == 0).then_some((i % onehot_k_pre) as u8))
-                .collect(),
-        )
-        .expect("K=16 precommitted poly");
-
-        let dense_evals_a = (0..(1usize << DENSE_PRE_NV))
-            .map(|i| F::from_u64((i % 257) as u64))
-            .collect::<Vec<_>>();
-        let dense_evals_b = (0..(1usize << DENSE_PRE_NV))
-            .map(|i| F::from_u64((i % 509) as u64))
-            .collect::<Vec<_>>();
-        let dense_a =
-            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_a)
-                .expect("dense a");
-        let dense_b =
-            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_b)
-                .expect("dense b");
-
-        let final_onehot = make_onehot_poly(FINAL_NV, 0x1701_0000);
-
-        let dense_polys = [dense_a.clone(), dense_b.clone()];
-        let final_polys = [MultilinearPolynomial::onehot(final_onehot.clone())];
-
-        // OneHot pre-group committed with OneHotCfg (matches catalog descriptor[0]).
-        let (onehot_pre_commitment, onehot_pre_hint) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit_group(
-                &setup,
-                std::slice::from_ref(&onehot_pre),
-                &stack,
-            )
-            .expect("K=16 precommit");
-
-        // Dense pre-group committed with DenseCfg so its profile matches the
-        // Dense descriptor in catalog entry {final_nv=16, pre=[onehot(14,1), dense(15,2)]}.
-        let dense_setup =
-            AkitaCommitmentScheme::<DenseCfg>::setup_prover(DENSE_PRE_NV, 2).expect("dense setup");
-        let dense_prepared = CpuBackend::DEFAULT
-            .prepare_setup(&dense_setup)
-            .expect("dense prepared");
-        let dense_stack = UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &dense_prepared,
-            dense_setup.expanded.as_ref(),
-        )
-        .expect("dense stack");
-        let (dense_commitment, dense_hint) = AkitaCommitmentScheme::<DenseCfg>::commit_group(
-            &dense_setup,
-            &dense_polys,
-            &dense_stack,
-        )
-        .expect("dense precommit");
-
-        let (final_commitment, final_hint, selection) =
-            AkitaCommitmentScheme::<OneHotCfg>::commit_final_group(
-                &setup,
-                &final_polys,
-                &stack,
-                vec![onehot_pre_commitment.profile, dense_commitment.profile],
-            )
-            .expect("final commit");
-
-        // The openings below come from independent oracles, so the resolved
-        // schedule is no longer needed to project them. Keep the resolution as
-        // a structural check that the heterogeneous selection binds to the
-        // two-precommit catalog entry.
-        let schedule = OneHotCfg::resolve_schedule_selection(selection)
-            .expect("heterogeneous schedule")
-            .schedule()
-            .clone();
-        assert_eq!(
-            schedule.root.params.precommitted_groups.len(),
-            2,
-            "heterogeneous selection must resolve to the two-precommit entry"
-        );
-
-        let onehot_pre_point: Vec<F> = (0..ONEHOT_PRE_NV)
-            .map(|i| F::from_u64((i + 2) as u64))
-            .collect();
-        let dense_point: Vec<F> = (0..DENSE_PRE_NV)
-            .map(|i| F::from_u64((i + 37) as u64))
-            .collect();
-        let final_point: Vec<F> = (0..FINAL_NV)
-            .map(|i| F::from_u64((i + 71) as u64))
-            .collect();
-
-        // Independent oracles for every group in the heterogeneous batch.
-        let onehot_pre_opening = onehot_opening_lagrange(&onehot_pre, &onehot_pre_point);
-        let dense_opening_a = dense_opening_lagrange(&dense_evals_a, &dense_point);
-        let dense_opening_b = dense_opening_lagrange(&dense_evals_b, &dense_point);
-        let final_opening = onehot_opening_lagrange(&final_onehot, &final_point);
-
-        let onehot_pre_refs = [&MultilinearPolynomial::onehot(onehot_pre.clone())];
-        let dense_refs = [
-            &MultilinearPolynomial::dense(dense_a.clone()),
-            &MultilinearPolynomial::dense(dense_b.clone()),
-        ];
-        let final_refs = [&final_polys[0]];
-
-        let prover_data = (
-            selection,
-            akita_prover::ProverOpeningData::new(
-                OpeningClaims::from_groups(vec![
-                    PolynomialGroupClaims::new(
-                        onehot_pre_point.clone(),
-                        vec![onehot_pre_opening],
-                        onehot_pre_commitment.clone(),
-                    )
-                    .expect("K=16 prover group"),
-                    PolynomialGroupClaims::new(
-                        dense_point.clone(),
-                        vec![dense_opening_a, dense_opening_b],
-                        dense_commitment.clone(),
-                    )
-                    .expect("dense prover group"),
-                    PolynomialGroupClaims::new(
-                        final_point.clone(),
-                        vec![final_opening],
-                        final_commitment.clone(),
-                    )
-                    .expect("final prover group"),
-                ])
-                .expect("prover claims"),
-                vec![onehot_pre_hint, dense_hint, final_hint],
-                vec![&onehot_pre_refs, &dense_refs, &final_refs],
-            )
-            .expect("prover opening data"),
-        );
-
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
-            &setup,
-            prover_data,
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("heterogeneous prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let verifier_setup =
-            AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
-        let verify_claims = OpeningClaims::from_groups(vec![
-            PolynomialGroupClaims::new(
-                onehot_pre_point,
-                vec![onehot_pre_opening],
-                &onehot_pre_commitment,
-            )
-            .expect("K=16 verifier group"),
-            PolynomialGroupClaims::new(
-                dense_point,
-                vec![dense_opening_a, dense_opening_b],
-                &dense_commitment,
-            )
-            .expect("dense verifier group"),
-            PolynomialGroupClaims::new(final_point, vec![final_opening], &final_commitment)
-                .expect("final verifier group"),
-        ])
-        .expect("verifier claims");
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
-        AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-            BasisMode::Lagrange,
-        )
-        .expect("heterogeneous verify");
-    });
-}
-
-// Compute backend heterogeneity: commit uses CpuBackend, prove uses a split
-// ProverComputeStack with separate backends for each phase.
-#[test]
-fn heterogeneous_compute_backends() {
-    init_rayon_pool();
-    run_on_large_stack(|| {
-        const NV: usize = 16;
-        type Cfg = fp128::Dense;
-        type Scheme = AkitaCommitmentScheme<Cfg>;
-
-        let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
-        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals).unwrap();
-
-        let setup = Scheme::setup_prover(NV, 1).unwrap();
-        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
-
-        let commit_backend = CommitCluster;
-        let opening_backend = OpeningCluster;
-        let tensor = TensorCluster;
-        let ring = RingSwitchCluster;
-        let stack = ProverComputeStack::new(
-            (&commit_backend, &prepared),
-            (&opening_backend, &prepared),
-            (&tensor, &prepared),
-            (&ring, &prepared),
-            setup.expanded.as_ref(),
-        )
-        .expect("heterogeneous stack");
-
-        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-        let commit_stack =
-            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-                .expect("commit stack");
-        let (commitment, hint) =
-            akita_prover::commit::<Cfg, akita_prover::DensePoly<F>, CpuBackend>(
-                std::slice::from_ref(&poly),
-                setup.expanded.as_ref(),
-                &commit_stack,
-            )
-            .expect("commit");
-
-        let pt: Vec<F> = (0..NV).map(|i| F::from_u64((i + 2) as u64)).collect();
-        let expected_opening = dense_opening_lagrange(&evals, &pt);
-
-        let poly_refs = [&poly];
-        let commitments = [commitment];
-        let prover_data = selected_prover_data::<Cfg, _>(
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                pt.clone(),
-                vec![expected_opening],
-                commitments[0].clone(),
-            )
-            .expect("prover group")])
-            .expect("prover claims"),
-            vec![hint],
-            vec![&poly_refs[..]],
-        );
-        let (selection, prover_claims) = prover_data;
-
-        let mut prover_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
-            &setup.expanded,
-            &setup.prefix_slots,
-            &stack,
-            selection,
-            prover_claims,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("heterogeneous prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        Scheme::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            GroupBatchStatement::new(
-                selection,
-                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                    pt.clone(),
-                    vec![expected_opening],
-                    &commitments[0],
-                )
-                .expect("verifier group")])
-                .expect("verifier claims"),
-            )
-            .expect("statement"),
-            BasisMode::Lagrange,
-        )
-        .expect("heterogeneous verify");
     });
 }

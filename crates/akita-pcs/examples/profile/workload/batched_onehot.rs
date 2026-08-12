@@ -108,8 +108,16 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
                 .expect("prepared setup CRT profile"),
         );
         let t0 = Instant::now();
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
         let commitments = [commitment];
         let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
@@ -130,7 +138,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
-            prover_claims(
+            prover_claims::<Cfg, _>(
                 selection,
                 &pt[..],
                 &poly_refs[..],
@@ -152,7 +160,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
     let opening_batch = OpeningClaimsLayout::new(nv, num_polys).expect("same-point opening batch");
-    let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
+    let schedule = Cfg::select_schedule_for_opening(&opening_batch)
+        .expect("batched schedule")
+        .into_schedule();
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,

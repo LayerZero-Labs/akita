@@ -13,9 +13,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
+pub(super) use akita_prover::SelectedProverOpeningData;
 use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-pub(super) use akita_prover::{ProverOpeningData, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
     dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
@@ -25,7 +25,7 @@ use akita_types::{
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
+    BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
@@ -41,7 +41,7 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 // Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
-// `runtime_schedule` fallback.
+// `select_schedule_for_key` fallback.
 pub(super) type OneHotCfg = fp128::OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
@@ -188,18 +188,12 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    let profiles = CommittedGroupBatchProfile {
-        final_group: *commitment.profile(),
-        precommitteds: Vec::new(),
-    };
-    let selection = Cfg::select_schedule_for_profiles(&profiles)
-        .expect("select prover schedule")
-        .selection();
-    (
-        selection,
-        ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
-            .expect("valid prover opening data"),
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(
+        opening_claims,
+        vec![hint],
+        vec![polynomials],
     )
+    .expect("valid prover opening data")
 }
 
 pub(super) fn selected_prover_data<'a, Cfg, P>(
@@ -216,24 +210,8 @@ where
     Cfg: CommitmentConfig,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    let (final_group, precommitteds) = claims
-        .groups()
-        .split_last()
-        .expect("prover data requires a group");
-    let profiles = CommittedGroupBatchProfile {
-        final_group: *final_group.commitment().profile(),
-        precommitteds: precommitteds
-            .iter()
-            .map(|group| *group.commitment().profile())
-            .collect(),
-    };
-    let selection = Cfg::select_schedule_for_profiles(&profiles)
-        .expect("select prover schedule")
-        .selection();
-    (
-        selection,
-        ProverOpeningData::new(claims, hints, polynomials).expect("valid selected prover data"),
-    )
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials)
+        .expect("valid selected prover data")
 }
 
 pub(super) fn selected_statement<'a, Cfg>(
@@ -535,14 +513,15 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
         let pre_frozen =
-            akita_config::committed_group_profile::<BaseCfg>(&pre_key).expect("precommit profile");
+            BaseCfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
         };
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule = RecursiveCommitmentConfig::<BaseCfg>::runtime_schedule(schedule_key)
-            .expect("recursive profile schedule resolves");
+        let schedule = RecursiveCommitmentConfig::<BaseCfg>::select_schedule_for_key(&schedule_key)
+            .expect("recursive profile schedule resolves")
+            .into_schedule();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive profile must carry setup-prefix metadata"
@@ -570,10 +549,14 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut pre_hints = Vec::new();
         for group_idx in 0..PRE_GROUPS {
             let poly = make_onehot_poly(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
-            let (commitment, hint) = AkitaCommitmentScheme::<BaseCfg>::commit_group(
+            let akita_prover::CommitOutput {
+                committed_group: commitment,
+                hint,
+            } = AkitaCommitmentScheme::<BaseCfg>::commit(
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             )
             .expect("precommit group");
             pre_polys_by_group.push(vec![poly]);
@@ -584,11 +567,16 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|poly_idx| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
             .collect();
-        let (final_commitment, final_hint, _selection) = Recursive::<BaseCfg>::commit_final_group(
+        let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
+            .expect("nonempty precommitted groups");
+        let akita_prover::CommitOutput {
+            committed_group: final_commitment,
+            hint: final_hint,
+        } = Recursive::<BaseCfg>::commit(
             &setup,
             &final_polys,
             &stack,
-            pre_commitments.iter().map(|group| group.profile).collect(),
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final generated-profile commitment");
 
@@ -647,7 +635,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             prover_hints,
             prover_polys,
         );
-        let selection = prover_claims.0;
+        let selection = prover_claims.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = Recursive::<BaseCfg>::batched_prove(

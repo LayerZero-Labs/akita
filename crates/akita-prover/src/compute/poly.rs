@@ -149,8 +149,8 @@ where
 /// One opening-point polynomial bundle passed to commit entry points.
 ///
 /// The wrapper pins the polynomial type `P` for inference through generic
-/// `crate::api::commit` and `CommitmentProver::commit`. Scheme-level
-/// `CommitmentProver::commit` takes this bundle before `backend` so `P` is known when the
+/// `crate::api::commit` and the scheme-level commit entry point. The scheme
+/// method takes this bundle before `backend` so `P` is known when the
 /// compiler checks [`RootCommitBackend`].
 #[derive(Clone, Copy, Debug)]
 pub struct RootCommitPolys<'a, P> {
@@ -182,8 +182,8 @@ impl<'a, P> RootCommitPolys<'a, P> {
 /// Marker bundle for scheme-level commit entry points that may tensor-project.
 ///
 /// Algorithms live on [`RootCommitKernel`] / [`TensorProjectionKernel`], not here.
-/// Lower-level helpers such as [`crate::api::commitment::batched_commit_with_params`]
-/// should bound only [`RootCommitSource`].
+/// Private commitment arithmetic remains generic over [`RootCommitSource`],
+/// while this public root capability includes tensor projection.
 pub trait RootCommitPoly<F, const D: usize>:
     RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>
 where

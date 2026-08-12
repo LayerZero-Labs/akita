@@ -22,16 +22,71 @@ fn batched_commit_matches_individual_commits() {
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
-        .map(|group| Scheme::commit::<_, _>(&setup, group, &stack))
+        .map(|group| {
+            Scheme::commit::<_, _>(
+                &setup,
+                group,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+        })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
+        .map(|output| (output.committed_group, output.hint))
         .unzip();
-    let (commitment_a, hint_a) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
-    let (commitment_b, hint_b) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment_a,
+        hint: hint_a,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly_a),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment_b,
+        hint: hint_b,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly_b),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
     assert_eq!(batched_hints, vec![hint_a, hint_b]);
+}
+
+#[test]
+fn commit_rejects_mixed_group_arity() {
+    let layout = singleton_layout::<Cfg>(16);
+    let num_vars =
+        layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
+    let evals = vec![F::one(); 1usize << num_vars];
+    let smaller_evals = vec![F::one(); 1usize << (num_vars - 1)];
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
+    let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, D, &smaller_evals).unwrap();
+    let setup = Scheme::setup_prover(num_vars, 2).unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
+
+    // An empty precommitted group prefix is unrepresentable, so no grouped context
+    // can carry one. `PrecommittedGroupProfiles` owns that rejection; see
+    // `precommitted_group_profiles_reject_an_empty_prefix`.
+    let error = Scheme::commit(
+        &setup,
+        &[poly, smaller],
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect_err("one committed group must be homogeneous");
+    assert!(matches!(error, AkitaError::InvalidInput(_)));
 }

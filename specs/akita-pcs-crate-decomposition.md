@@ -1,4 +1,10 @@
-# Spec: Akita PCS Crate Decomposition and Naming Cutover
+# Historical spec: Akita PCS Crate Decomposition and Naming Cutover
+
+> **Historical design record.** This spec records the decomposition as it
+> landed in #64. Commitment-API names below, such as `CommitmentProver`,
+> `batched_commit`, `commit_with_params`, and `get_params_for_prove`, describe
+> that implementation. The current surface is one `commit` entry point taking a
+> `GroupContext`; see [`book/src/usage/commitment-api.md`](../book/src/usage/commitment-api.md).
 
 | Field       | Value        |
 |-------------|--------------|

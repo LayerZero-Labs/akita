@@ -688,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn from_root_groups_appends_final_group_after_precommitteds() {
+    fn from_root_groups_appends_final_group_after_precommitted_groups() {
         let precommitteds = [
             PolynomialGroupLayout::new(2, 1),
             PolynomialGroupLayout::new(3, 2),

@@ -12,7 +12,7 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, the schedule-search DP, and the offline table emitter. It sits *below* `akita-config`.
 - `akita-schedules` owns feature-gated generated schedule table wiring. The large family table modules are not checked in; generate them locally or in CI before compiling schedule-enabled crates.
-- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-schedules` (`runtime_schedule` delegates to strict generated-catalog resolution).
+- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-schedules` (`select_schedule_for_key` delegates to strict generated-catalog resolution).
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
 - `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches generated schedule expansion transitively.
 - `akita-prover` owns commitment, proving, setup expansion, recursive/ring-switch witness construction, and polynomial backends.

@@ -5,8 +5,100 @@ verify, plus the setup and transcript objects those calls thread through.
 
 ## Commit, prove, verify
 
-The `batched_commit`, `batched_prove`, and `batched_verify` entry points operate
-on ordered commitment groups.
+The `commit`, `batched_prove`, and `batched_verify` entry points operate on
+ordered commitment groups. Every commit call creates exactly one homogeneous
+polynomial group and supplies its complete parameter context:
+
+```rust
+let output = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &polynomials,
+    &stack,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+```
+
+`GroupContext::scheduler_without_precommitted_groups()` selects the *scalar row*, the
+generated row for a group that has no precommitted groups. The resulting committed
+group may be opened alone or retained as a precommitted group for a later grouped
+opening; both uses have exactly the same parameters.
+`GroupContext::scheduler_with_precommitted_groups(&prior)` selects the exact *grouped
+row*, the generated row keyed on that ordered prefix.
+
+All polynomials inside one group must have the same `num_vars`. A commit call
+rejects a mixed-arity bundle rather than padding it to the widest polynomial.
+Polynomials of different arities belong in separate groups, and separate groups
+may have different arities.
+
+For a grouped lifecycle, construct one ordered `PrecommittedGroupProfiles` and borrow
+it for the final commit:
+
+```rust
+let prior = PrecommittedGroupProfiles::from_ordered_groups(prior_commitments.iter())?;
+let final_output = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &final_polynomials,
+    &stack,
+    GroupContext::scheduler_with_precommitted_groups(&prior),
+)?;
+
+let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
+    opening_claims,
+    hints,
+    polynomial_groups,
+)?;
+let selection = prover_data.selection();
+```
+
+`PrecommittedGroupProfiles` is non-empty by construction, so both grouped constructors
+are infallible; the "no precommitted groups" case has its own spelling. Batch assembly
+derives the prefix from the ordered claims, so it is not passed twice.
+
+The constructor derives the exact batch profile and selects its schedule before
+stripping commitment profiles from prover-owned opening data. The same
+`selection` is placed in `GroupBatchStatement` for verification.
+
+Callers that already own audited root parameters use the same `commit` method
+with `GroupContext::explicit_without_precommitted_groups(&params)` or
+`GroupContext::explicit_with_precommitted_groups(&prior, &params)`. Explicit mode
+does not select a catalog row. It validates the supplied parameters, while
+tensor projection follows the same field/root-geometry predicate as scheduler
+mode.
+
+### Precommitting under a recursive configuration
+
+A `RecursiveCommitmentConfig<Cfg>` catalog ships no row without precommitted groups at
+a precommit layout. It carries only the grouped root. Committing a precommitted group
+under the recursive configuration therefore fails with `UnsupportedSchedule`.
+
+Build the setup under the recursive configuration, commit each precommitted group
+under the base configuration `Cfg`, then commit the final group and prove under
+the recursive one. Both configurations share the same setup:
+
+```rust
+let setup = AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, k)?;
+
+// Precommitted groups use the base configuration, which owns the scalar rows.
+let pre = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &prior_polynomials,
+    &stack,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+
+// The grouped root uses the recursive configuration.
+let root = AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::commit(
+    &setup,
+    &final_polynomials,
+    &stack,
+    GroupContext::scheduler_with_precommitted_groups(&prior),
+)?;
+```
+
+The frozen precommitted descriptor a recursive grouped row carries is exactly
+`Cfg::profile_without_precommitted_groups(group)`, which is what makes the split
+sound.
+
 Every `PolynomialGroupClaims` owns one complete opening point, its evaluations,
 and its commitment.
 Polynomials within one group share that point.
@@ -27,8 +119,8 @@ setup and schedule selection do not depend on point values.
 
 On the prover side, `ProverOpeningData` privately binds each commitment hint to
 one `PreparedProverGroup<P>` in the same protocol-visible order as the public
-claims. `SelectedProverOpeningData` pairs that material with the one exact
-`OpeningScheduleSelection` returned by the final commit. Akita treats the
+claims. `SelectedProverOpeningData` privately pairs that material with the one
+exact `OpeningScheduleSelection` derived during batch assembly. Akita treats the
 concrete polynomial representation as a caller contract: callers must supply
 groups with the arity and shape claimed by the public statement. Bad prover
 material is a completeness failure, not a verifier soundness input.
@@ -39,25 +131,20 @@ recursive heterogeneous wrappers. The verifier receives a
 `GroupBatchStatement` containing only the exact generated-row selection and
 self-describing public claims.
 
-`commit_group` takes a raw polynomial group. `commit_final_group` takes the
-exact ordered precommitted profiles and atomically returns the final
-`CommittedGroup`, its hint, and the `OpeningScheduleSelection` that must be used
-for proving and verification.
-
 There is no ambient shared point, global polynomial type for the batch, or
 coordinate-routing object.
 
 **Sources to fold in**
 
 - `crates/akita-pcs/src/scheme/mod.rs`.
-- `crates/akita-prover/src/api/scheme.rs` (`CommitmentProver`).
+- `crates/akita-prover/src/api/commitment.rs` (`GroupContext`, `CommitOutput`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
 - `crates/akita-types/src/opening_claims.rs` (`OpeningClaims`, `OpeningClaimsLayout`).
 - `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`,
   `SelectedProverOpeningData`).
 - `crates/akita-prover/src/api/prepared_group.rs` (coarse prepared group
   carrier).
-- `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
+- `crates/akita-pcs/tests/akita_fp128_e2e.rs`, `batched_aggregated_e2e.rs`.
 
 ## Setup and caching
 
