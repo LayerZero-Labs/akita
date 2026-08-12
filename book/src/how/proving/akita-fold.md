@@ -1287,116 +1287,191 @@ evaluation row, and the range-image binding into one Stage-2 sumcheck.
 
 ## Code reference
 
-The current prover uses canonical entry points that also support more general
-layouts. With one group, one chunk, and one common ring dimension, they reduce
-to the construction above:
+The implementation follows the same semantic relations in both payload modes,
+then selects different public right-hand sides and witness suffixes. The
+functions below also support multiple groups, chunks, and role-specific ring
+dimensions; in the basic setting they reduce to the construction on this
+page.
 
-1. **Build the partial-evaluation and fold witnesses.**
-   [`RingRelationProver::new`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation.rs#L433-L760)
-   decomposes $E_b$ into $\hat e$, computes
+### Prover flow
+
+1. **Create and retain the commitment-side material.** The standalone/root
+   commitment paths in
+   [`commitment.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/api/commitment.rs)
+   compute the semantic outer commitment
+   $\mathbf u=\mathbf B\hat{\mathbf t}$ and compress it. The recursive
+   [`commit_w`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/commit.rs)
+   computes the same semantic value, then follows the payload mode selected
+   for that level. A raw recursive level exposes $\mathbf u$ directly. A
+   compressed commitment passes it to
+   [`execute_compression_chains`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/compute/compression.rs),
+   exposes only $p_F$, and retains the two packed $\mathbf F$ digit layers and
+   their quotient rows in the commitment hint.
+2. **Build the fold-side objects.**
+   [`RingRelationProver::new`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation.rs)
+   decomposes the position-folded values into $\hat{\mathbf e}$, computes
    $\mathbf v_D=\mathbf D\hat{\mathbf e}$, samples the fold challenges, and
-   builds $\mathbf z$.
-2. **Assemble the public relation statement.**
-   [`assemble_relation_rhs`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/relation.rs#L286-L353)
-   lays out $\mathbf y$ as
-   `consistency | A | B | D`, while
-   [`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/ring_relation.rs#L82-L220)
-   carries the public challenges, points, and right-hand side.
-3. **Prepare the digit segments.**
-   [`ring_switch_build_w`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_switch/coeffs.rs#L253-L455)
-   extracts $\hat t$ from the commitment hint and prepares
-   $\hat z\Vert\hat e\Vert\hat t$ in the canonical witness layout.
-4. **Compute the row quotients.**
-   [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs#L412-L690)
-   computes one quotient for each `consistency`, $\mathbf A$, $\mathbf B$, and
-   $\mathbf D$ row. Despite its general name, this is also the canonical
-   single-group path. `ring_switch_build_w` decomposes the quotients and
-   appends $\hat r$.
-5. **Evaluate the extended relation.**
-   [`build_relation_weight_events`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L398-L870)
-   emits the contributions of all four row families and the quotient columns
-   after evaluation at $\alpha$ and batching by $\tau_1$.
+   builds $\mathbf z$. In compressed mode,
+   [`materialize_compression_witness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation/compression_witness.rs)
+   combines the retained $\mathbf F$ material with a newly computed
+   $\mathbf H$ chain for $\mathbf v_D$, producing the terminal payload $p_H$
+   and storing both chains as `CompressionWitnessMaterialization`.
+3. **Assemble the mode-selected public statement.** Raw mode calls
+   [`assemble_relation_rhs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/relation.rs)
+   with $\mathbf u$ and $\mathbf v_D$. Compressed mode instead calls
+   [`assemble_compressed_relation_rhs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/relation.rs)
+   with $p_F$ and $p_H$. The latter emits zero ordinary $\mathbf B/\mathbf D$
+   and first-map right-hand sides, followed by the terminal payloads on the
+   $\mathbf F_2/\mathbf H_2$ rows.
+4. **Construct the committed relation witness.**
+   [`ring_switch_build_w`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/coeffs.rs)
+   derives $\hat{\mathbf t}$ from the semantic inner rows stored in the hint,
+   emits $\hat{\mathbf z}$, $\hat{\mathbf e}$, and $\hat{\mathbf t}$, and
+   invokes
+   [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs)
+   to compute one quotient in every physical row's native ring. In compressed
+   mode it also emits the two $\mathbf F/\mathbf H$ digit layers. `WitnessLayout`
+   determines the quotient placement and alignment.
+5. **Prepare the Stage 2 relation evaluators.** The ordinary
+   [`build_relation_weight_events`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs)
+   path handles the `consistency`, $\mathbf A$, $\mathbf B$, and $\mathbf D$
+   contributions. Compressed mode additionally uses
+   [`build_compression_relation_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/compression_relation_weights.rs)
+   for the recomposition, $\mathbf F/\mathbf H$, and compression-quotient
+   contributions, and
+   [`NegativeBinarySupport`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/compression_relation_weights.rs)
+   restricts the separate $w(w+1)=0$ check to the compression-digit spans.
+   `EvaluationTrace` remains a separate $\tau_1$-weighted virtual row after
+   every physical row.
 
-The main data flow is:
+The mode split can be summarized as follows:
 
 ```text
-old polynomial blocks and commitment hints
-                  |
-                  v
-RingRelationProver::new
-|-- position-folded rings E_b --> e_hat
-|-- inner-image hints ----------> t_hat
-|-- fold challenges ------------> z
-|-- D * e_hat ------------------> v_D
-`-- [0 | 0_A | u | v_D] -------> relation rhs y
-                  |
-                  v
-ring_switch_build_w
-|-- compute relation quotients ----------> r
-|-- decompose z -------------------------> z_hat
-|-- decompose r -------------------------> r_hat
-`-- emit [z_hat | e_hat | t_hat | r_hat] --> committed witness w
-                  |
-                  v
-build_relation_weight_events
-`-- M_ext(alpha), row-batched by tau_1 ------> Stage 2
+semantic inner rows
+        |
+        v
+derive t_hat and u = B t_hat
+        |
+        +---------------- raw ----------------> public u
+        |
+        `-- compressed --> F chain ----------> public p_F
+                             |
+                             `--> retained F digits and quotients
+
+position-folded values E_b
+        |
+        v
+e_hat and v_D = D e_hat
+        |
+        +---------------- raw ----------------> public v_D
+        |
+        `-- compressed --> H chain ----------> public p_H
+
+raw:        assemble_relation_rhs(u, v_D)
+compressed: assemble_compressed_relation_rhs(p_F, p_H)
+                         |
+                         v
+             RingRelationInstance + prover witness
+                         |
+                         v
+                ring_switch_build_w
+                         |
+                         v
+          ordinary evaluator
+          + optional compression evaluator
+          + optional {-1, 0} support evaluator
+          + EvaluationTrace virtual row
+                         |
+                         v
+                       Stage 2
 ```
 
 ### Public statement: `RingRelationInstance`
 
-[`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/ring_relation.rs#L82-L220)
-contains the public relation statement. It contains only values that the
-verifier can reconstruct:
+[`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/ring_relation.rs)
+is the common relation-statement carrier constructed independently by the
+prover and verifier. Its statement fields are verifier-reconstructible; the
+prover may additionally retain a private intermediate needed while preparing
+its witness:
 
-| Field | Mathematical meaning |
+| Field or accessor | Mathematical meaning |
 |---|---|
 | `group_challenges()[0]` | fold challenges $c_b$ |
-| `group_opening_point(0)` | ordinary opening weights, including $Q_p$ and $B_b$ |
 | `group_ring_multiplier_point(0)` | ring multipliers used by the physical consistency row |
-| `rhs()` | $\mathbf y=[0\mid\mathbf 0_A\mid\mathbf u\mid\mathbf v_D]$ in the basic setting |
-| `v()` | $\mathbf v_D=\mathbf D\hat{\mathbf e}$ |
+| `opening_batch()` | authenticated group and claim geometry |
+| `role_dims()` | native $\mathbf A/\mathbf B/\mathbf D$ ring dimensions |
+| `rhs()` in raw mode | $[0\mid\mathbf 0_A\mid\mathbf u\mid\mathbf v_D]$ in the basic setting |
+| `rhs()` in compressed mode | zero ordinary and first-map targets, followed by terminal $p_F,p_H$ targets |
+| `v()` in raw mode | public $\mathbf v_D=\mathbf D\hat{\mathbf e}$ |
+| `v()` in the compressed prover instance | the privately computed $\mathbf v_D$, retained locally after constructing the $\mathbf H$ chain |
+| `v()` in compressed verifier replay | empty; the verifier uses $p_H$ rather than reconstructing $\mathbf v_D$ |
+
+Full opening points are not owned by `RingRelationInstance`. They are prepared
+separately for the evaluation trace. For example, the verifier consumes them
+through its
+[`evaluation_trace.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/evaluation_trace.rs)
+path. Only the ring-multiplier projections needed by the physical consistency
+relation remain in this instance.
 
 ### Prover witness: `RingRelationWitness`
 
-[`RingRelationWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L141-L220)
+[`RingRelationWitness`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_relation_witness.rs)
 is the prover-only aggregate witness. In the basic setting, its `groups`
 vector contains one
-[`RingRelationGroupWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L8-L140):
+`RingRelationGroupWitness`:
 
 | Field | Mathematical meaning |
 |---|---|
 | `z_folded_rings` | folded response $\mathbf z$, before decomposition into $\hat z$ |
 | `e_folded` | recomposed position-folded rings $E_b$ |
 | `e_hat` | opening digits $\hat{\mathbf e}$ |
-| `hint` | commitment hint containing $\hat{\mathbf t}$ |
+| `hint` | semantic inner rows, plus retained $\mathbf F$ stages and quotients when the incoming payload is compressed |
 
-The quotient output $\mathbf r$ is computed after these structures are built.
-Its digits are appended when `ring_switch_build_w` emits the flat
-$\hat z\Vert\hat e\Vert\hat t\Vert\hat r$ witness.
+The
+[`AkitaCommitmentHint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/hints.rs)
+does not store a materialized $\hat{\mathbf t}$ or a separate copy of
+$\mathbf u$. `ring_switch_build_w` derives $\hat{\mathbf t}$ from its semantic
+inner rows. At the aggregate level, `RingRelationWitness::compression` holds
+the optional materialized $\mathbf F/\mathbf H$ chains used by this fold. The
+quotient output is computed afterward and placed together with the ordinary
+and optional compression digits according to `WitnessLayout`.
 
 ### Verifier reconstruction
 
-The verifier does not receive a serialized `RingRelationInstance`. In
-[`verify_fold`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-verifier/src/protocol/core/fold.rs#L646-L741),
-it reconstructs the public instance from the transcript and public proof data:
+The verifier does not receive a serialized `RingRelationInstance` or any
+`RingRelationWitness`. In
+[`verify_fold`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/core/fold/mod.rs),
+it reconstructs the public instance from the schedule-selected payload and
+transcript data, then calls
+[`ring_switch_verifier`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/ring_switch.rs):
 
 ```text
-public commitment rows, opening points, v_D, and transcript
-                            |
-                            v
-rederive the fold challenges
-                            |
-                            v
+schedule-selected payload mode
+              |
+       +------+------+
+       |             |
+      raw        compressed
+    u, v_D         p_F, p_H
+       |             |
 assemble_relation_rhs
-                            |
-                            v
-RingRelationInstance::new
-                            |
-                            v
-ring_switch_verifier --------------------------------------> Stage 2 verifier
+                 assemble_compressed_relation_rhs
+       |             |
+       +------+------+
+              |
+     RingRelationInstance::new
+              |
+     ring_switch_verifier
+       |-- ordinary relation evaluator
+       |-- optional compact F/H evaluator
+       `-- optional {-1, 0} support evaluator
+              |
+          Stage 2 verifier
 ```
 
-Only the public instance is reconstructed on the verifier. The
-`RingRelationWitness` remains prover-only. [Opening points and digit-innermost
-layout](./opening-points-layout.md#witness-order) specifies the canonical
-physical source and digit order used by the implementation.
+Compressed replay deliberately sets `RingRelationInstance::v()` to an empty
+carrier: the zero $\mathbf D$ rows and terminal $p_H$ row are already encoded
+in the compressed right-hand side. The separate evaluation-trace preparation
+retains the full opening-point data needed to bind the claimed evaluation.
+[Opening points and digit-innermost
+layout](./opening-points-layout.md#witness-order) describes the canonical
+physical source and witness order.
