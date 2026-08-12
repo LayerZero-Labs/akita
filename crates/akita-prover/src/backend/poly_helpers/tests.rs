@@ -289,6 +289,76 @@ fn large_basis_partitioned_fold_preserves_i16_digits() {
     assert_eq!(actual, expected);
 }
 
+#[test]
+fn large_basis_d64_chunks_ring_and_falls_back_for_oversized_term() {
+    type F = Prime128Offset275;
+    const D: usize = 64;
+    const POSITIONS: usize = 2;
+    let log_basis = 11;
+    let num_digits = compute_num_digits_field_width(128, log_basis);
+    let rings = (0..4)
+        .map(|ring| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                F::from_canonical_u128_reduced(((ring * D + coefficient) as u128 + 1) * 2053)
+            }))
+        })
+        .collect::<Vec<_>>();
+    let challenges = vec![
+        SparseChallenge {
+            positions: (0..41).map(|index| ((index * 13) % D) as u32).collect(),
+            coeffs: (0usize..41)
+                .map(|index| {
+                    let magnitude = if index < 31 { 1 } else { 2 };
+                    if index.is_multiple_of(2) {
+                        magnitude
+                    } else {
+                        -magnitude
+                    }
+                })
+                .collect(),
+        },
+        SparseChallenge {
+            positions: vec![7].into(),
+            coeffs: vec![127].into(),
+        },
+    ];
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let threshold =
+        akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
+    let params = DecomposeParams {
+        threshold,
+        q,
+        mask: (1i128 << log_basis) - 1,
+        half_b: 1i128 << (log_basis - 1),
+        b_val: 1i128 << log_basis,
+        log_basis,
+        overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+    };
+
+    let actual = balanced_ring_decompose_fold_partitioned(
+        &rings,
+        &challenges,
+        POSITIONS,
+        num_digits,
+        &params,
+    );
+    let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
+    for (block, challenge) in challenges.iter().enumerate() {
+        for position in 0..POSITIONS {
+            let digits = rings[block * POSITIONS + position]
+                .balanced_decompose_pow2_i16(num_digits, log_basis);
+            for digit in 0..num_digits {
+                sparse_mul_acc_i16_scalar(
+                    &digits[digit],
+                    challenge,
+                    &mut expected[position * num_digits + digit],
+                );
+            }
+        }
+    }
+    assert_eq!(actual, expected);
+}
+
 /// Edge case: challenge with `pos == 0` so `split == D` and the second
 /// (wrap) segment is empty.
 #[test]

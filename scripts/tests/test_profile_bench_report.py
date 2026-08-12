@@ -220,6 +220,31 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
+    def test_timing_and_size_events_parse_inside_profile_root_span(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        log = "\n".join(
+            [
+                " INFO akita_profile_run: setup_expand label=dense_fp128 elapsed_s=0.25",
+                " INFO akita_profile_run: backend_prepare label=dense_fp128 elapsed_s=0.75",
+                " INFO akita_profile_run: setup label=dense_fp128 elapsed_s=1.0",
+                " INFO akita_profile_run: setup sizes label=dense_fp128 num_setup_field_elements=4096 setup_vector_bytes=65536 setup_ntt_cache_bytes=131072",
+                " INFO akita_profile_run: commit label=dense_fp128 elapsed_s=2.0",
+                " INFO akita_profile_run: prove label=dense_fp128 elapsed_s=3.0",
+                " INFO akita_profile_run: verifier NTT cache size label=dense_fp128 verifier_ntt_cache_bytes=8192",
+            ]
+        )
+
+        summary = extract_summary(log, "dense_fp128", 28, 1)
+
+        self.assertEqual(summary["setup_expand_s"], 0.25)
+        self.assertEqual(summary["backend_prepare_s"], 0.75)
+        self.assertEqual(summary["setup_s"], 1.0)
+        self.assertEqual(summary["setup_vector_bytes"], 65536)
+        self.assertEqual(summary["commit_s"], 2.0)
+        self.assertEqual(summary["prove_total_s"], 3.0)
+        self.assertEqual(summary["verifier_ntt_cache_bytes"], 8192)
+
     def test_onehot_commit_schedule_is_recorded(self) -> None:
         from scripts.profile_bench_report import extract_summary
 

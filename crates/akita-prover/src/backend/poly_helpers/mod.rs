@@ -3,9 +3,9 @@
 //! Contains balanced-digit decomposition, sparse multiply-accumulate kernels,
 //! position-partitioned accumulation strategies, and the final witness
 //! construction used by dense, one-hot, and sparse-ring backends.
-//! implementations.
 
 mod decompose_fold_partitioned;
+mod narrow_accum;
 mod rotated_accum;
 
 pub use decompose_fold_partitioned::{
@@ -645,20 +645,10 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
     centered_coeffs: Vec<[i32; D]>,
     modulus: u128,
 ) -> DecomposeFoldWitness<F> {
-    let centered_inf_norm = centered_coeffs
-        .iter()
-        .flat_map(|row| row.iter())
-        .map(|coeff| coeff.unsigned_abs())
-        .max()
-        .unwrap_or(0);
     let z_folded_coeffs = cfg_iter!(centered_coeffs)
         .map(|coeff_accum| signed_accum_to_coefficients::<F, D>(*coeff_accum, modulus))
         .collect();
-    DecomposeFoldWitness::from_coefficient_parts(
-        z_folded_coeffs,
-        centered_coeffs,
-        centered_inf_norm,
-    )
+    DecomposeFoldWitness::from_coefficient_parts(z_folded_coeffs, centered_coeffs)
 }
 
 /// Fused base-field fold + evaluation shared by backends that do not specialize it.

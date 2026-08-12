@@ -7,7 +7,7 @@
 | Status        | implemented                                |
 | PR            |                                            |
 | Supersedes    |                                            |
-| Superseded-by |                                            |
+| Superseded-by | Setup-prefix content and capacity semantics superseded by `full-setup-prefix-compact-tail-weights.md` |
 | Book-chapter  | book/src/how/proving/distributed-prover.md |
 
 > **Stage-3 model update (2026-07-29).** The fused witness-carry details in the
@@ -268,8 +268,9 @@ materializes exactly the setup-prefix slots the mix schedule references, at
   schedule's `Recursive` folds and records each successor's
   `params.setup_prefix` slot id).
 - `crates/akita-prover/src/api/setup_prefix.rs::commit_setup_prefix` commits the
-  flat prefix `S^flat[0..natural_len]` (zero-padded to `n_prefix`) using the slot
-  id's frozen `PrecommittedLevelParams` geometry.
+  full flat prefix `S^flat[0..n_prefix]` using the slot id's frozen
+  `PrecommittedLevelParams` geometry. The active support remains `natural_len`;
+  inactive tail rows are zeroed by the setup-index weight.
 
 **Why it should work.** `natural_len` is chunk-independent (setup-matrix
 footprint), and the slot id's block geometry is exactly the planner's

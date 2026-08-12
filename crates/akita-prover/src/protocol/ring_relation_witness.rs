@@ -6,13 +6,144 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{AkitaCommitmentHint, CommitmentRingDims, DigitBlocks, RingRole, RingVec};
 
+/// One distributed fold window's centered coefficients and signed extrema.
+pub(crate) struct CenteredFoldChunk {
+    coefficients: Vec<i32>,
+    min: i32,
+    max: i32,
+}
+
+impl CenteredFoldChunk {
+    /// Retain one chunk's centered coefficients and the extrema computed by
+    /// its canonical fold-witness constructor.
+    pub(crate) fn from_witness<F: FieldCore>(witness: &DecomposeFoldWitness<F>) -> Self {
+        let (min, max) = witness.centered_signed_extrema();
+        Self {
+            coefficients: witness.centered_coeffs_flat().to_vec(),
+            min,
+            max,
+        }
+    }
+
+    pub(crate) fn coefficients(&self) -> &[i32] {
+        &self.coefficients
+    }
+
+    pub(crate) fn signed_extrema(&self) -> (i32, i32) {
+        (self.min, self.max)
+    }
+}
+
+/// Centered fold coefficients retained for ring-switch witness emission.
+///
+/// A single fold reuses the global centered buffer in [`DecomposeFoldWitness`].
+/// A distributed fold owns at least two independently bounded chunk buffers.
+pub(crate) struct FoldChunkCoefficients {
+    storage: FoldChunkStorage,
+}
+
+enum FoldChunkStorage {
+    Single,
+    Chunked(Vec<CenteredFoldChunk>),
+}
+
+impl FoldChunkCoefficients {
+    pub(crate) fn single() -> Self {
+        Self {
+            storage: FoldChunkStorage::Single,
+        }
+    }
+
+    pub(crate) fn chunked(chunks: Vec<CenteredFoldChunk>) -> Result<Self, AkitaError> {
+        if chunks.len() < 2 {
+            return Err(AkitaError::InvalidInput(
+                "distributed fold must retain at least two coefficient chunks".into(),
+            ));
+        }
+        Ok(Self {
+            storage: FoldChunkStorage::Chunked(chunks),
+        })
+    }
+
+    pub(crate) fn num_chunks(&self) -> usize {
+        match &self.storage {
+            FoldChunkStorage::Single => 1,
+            FoldChunkStorage::Chunked(chunks) => chunks.len(),
+        }
+    }
+
+    pub(crate) fn coefficient_count(&self, global: &[i32]) -> usize {
+        match &self.storage {
+            FoldChunkStorage::Single => global.len(),
+            FoldChunkStorage::Chunked(chunks) => {
+                chunks.iter().map(|chunk| chunk.coefficients.len()).sum()
+            }
+        }
+    }
+
+    pub(crate) fn all_extrema_within(
+        &self,
+        global: &DecomposeFoldWitness<impl FieldCore>,
+        mut accepts: impl FnMut(i32, i32) -> bool,
+    ) -> bool {
+        match &self.storage {
+            FoldChunkStorage::Single => {
+                let (min, max) = global.centered_signed_extrema();
+                accepts(min, max)
+            }
+            FoldChunkStorage::Chunked(chunks) => chunks.iter().all(|chunk| {
+                let (min, max) = chunk.signed_extrema();
+                accepts(min, max)
+            }),
+        }
+    }
+
+    fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
+        if let FoldChunkStorage::Chunked(chunks) = &self.storage {
+            for chunk in chunks {
+                if !chunk.coefficients.len().is_multiple_of(D) {
+                    return Err(AkitaError::InvalidSize {
+                        expected: D,
+                        actual: chunk.coefficients.len(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn try_for_each(
+        &self,
+        global: &[i32],
+        expected_chunks: usize,
+        mut visit: impl FnMut(&[i32]) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let actual_chunks = match &self.storage {
+            FoldChunkStorage::Single => 1,
+            FoldChunkStorage::Chunked(chunks) => chunks.len(),
+        };
+        if actual_chunks != expected_chunks {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_chunks,
+                actual: actual_chunks,
+            });
+        }
+        match &self.storage {
+            FoldChunkStorage::Single => visit(global),
+            FoldChunkStorage::Chunked(chunks) => {
+                for chunk in chunks {
+                    visit(chunk.coefficients())?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Per-group secret witness for the ring relation at one fold level.
 pub struct RingRelationGroupWitness<F: FieldCore> {
     pub z_folded_rings: DecomposeFoldWitness<F>,
-    /// Per-window centered fold responses `z_i = Σ_{j∈I_i} c_j s_j` emitted
-    /// z-first per chunk by `build_w_coeffs`. Length `num_chunks` (one element
-    /// equal to the global centered fold response for the single-chunk case).
-    pub z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
+    pub(crate) z_folded_coefficients: FoldChunkCoefficients,
     pub e_hat: DigitBlocks,
     pub e_folded: RingVec<F>,
     pub hint: AkitaCommitmentHint<F>,
@@ -21,9 +152,9 @@ pub struct RingRelationGroupWitness<F: FieldCore> {
 
 impl<F: FieldCore> RingRelationGroupWitness<F> {
     /// Construct one group witness from D-free carriers.
-    pub fn from_parts(
+    pub(crate) fn from_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
-        z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
+        z_folded_coefficients: FoldChunkCoefficients,
         e_hat: DigitBlocks,
         e_folded: RingVec<F>,
         hint: AkitaCommitmentHint<F>,
@@ -31,7 +162,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
     ) -> Self {
         Self {
             z_folded_rings,
-            z_folded_centered_per_chunk,
+            z_folded_coefficients,
             e_hat,
             e_folded,
             hint,
@@ -61,16 +192,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
                         actual: self.e_folded.coeff_len(),
                     });
                 }
-                for chunk in &self.z_folded_centered_per_chunk {
-                    for row in chunk {
-                        if row.len() != D {
-                            return Err(AkitaError::InvalidSize {
-                                expected: D,
-                                actual: row.len(),
-                            });
-                        }
-                    }
-                }
+                self.z_folded_coefficients.ensure_ring_dim::<D>()?;
             }
             RingRole::Opening => {
                 if self.e_hat.digit_stride() != D {
@@ -111,31 +233,6 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
         self.ensure_role_dim::<D>(RingRole::Inner)?;
         Ok(self.e_folded.as_ring_slice_trusted::<D>())
     }
-
-    /// Borrow per-chunk centered fold responses after [`Self::ensure_role_dim`].
-    pub fn z_folded_centered_per_chunk_trusted<const D: usize>(
-        &self,
-    ) -> Result<Vec<Vec<[i32; D]>>, AkitaError> {
-        self.ensure_role_dim::<D>(RingRole::Inner)?;
-        self.z_folded_centered_per_chunk
-            .iter()
-            .map(|chunk| {
-                chunk
-                    .iter()
-                    .map(|row| {
-                        let arr: [i32; D] =
-                            row.as_slice()
-                                .try_into()
-                                .map_err(|_| AkitaError::InvalidSize {
-                                    expected: D,
-                                    actual: row.len(),
-                                })?;
-                        Ok(arr)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .collect()
-    }
 }
 
 /// Prover secret for the per-fold ring relation (never built on the verifier).
@@ -152,7 +249,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_flat_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
-        z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
+        z_folded_coefficients: FoldChunkCoefficients,
         fold_grind_nonce: u32,
         e_hat: DigitBlocks,
         e_folded: RingVec<F>,
@@ -165,7 +262,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
             fold_grind_nonce,
             groups: vec![RingRelationGroupWitness::from_parts(
                 z_folded_rings,
-                z_folded_centered_per_chunk,
+                z_folded_coefficients,
                 e_hat,
                 e_folded,
                 hint,

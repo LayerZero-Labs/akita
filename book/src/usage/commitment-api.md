@@ -93,21 +93,24 @@ change `AkitaSetupSeed`, transcript bytes, or proof validity. A proof made with
 one materialized capacity can therefore be verified with a larger covering
 prefix carrying the same public matrix identity.
 
-Setup-prefix offloading follows the same rule. If Stage 3 needs
-`natural_len` coefficients, setup storage covers exactly that many source
-coefficients. The committed setup polynomial still has the power-of-two length
-`n_prefix`; preprocessing constructs
-`S[0..natural_len] || 0^(n_prefix-natural_len)` explicitly. Later random stream
-coefficients are never used as padding. The prefix commitment's A and B matrix
-dimensions are ordinary planner-owned commitment parameters, independent of
-the dimensions used by the producing or consuming fold.
+Setup-prefix offloading follows the same one-stream rule, but the committed
+object is now the actual power-of-two setup prefix. If Stage 3 has active
+support `natural_len`, setup storage for the selected prefix covers
+`n_prefix = next_power_of_two(natural_len)` source coefficients, and
+preprocessing commits `S[0..n_prefix]`. The tail after `natural_len` is real
+public setup data; it contributes zero because the setup-index weight is zero
+there. The prefix commitment's A and B matrix dimensions are ordinary
+planner-owned commitment parameters, independent of the dimensions used by the
+producing or consuming fold.
 
 After a concrete schedule is selected, callers may use
 `setup_verifier_for_schedule` to keep only the public-matrix prefix that proof
-verification can read. A producer followed by an incoming setup-prefix
-commitment is offloaded, so the verifier does not scan that producer's natural
-source prefix. The retained matrix is the maximum of the terminal A matrix and
-the active setup fields of every producer that remains direct. This is a
+verification can read directly. A producer followed by an incoming setup-prefix
+commitment is offloaded, so the verifier does not scan that producer's active
+source prefix during Stage 3; it authenticates the carried full-prefix opening
+against the setup-prefix commitment in the successor opening. The retained
+matrix is the maximum of the terminal A matrix and the active setup fields of
+every producer that remains direct. This is a
 schedule-derived capacity, not necessarily the length of any stored setup
 prefix. The complete setup-prefix commitment registry remains in the verifier
 artifact.
