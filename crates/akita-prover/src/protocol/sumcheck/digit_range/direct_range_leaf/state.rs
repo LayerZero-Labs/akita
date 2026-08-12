@@ -80,6 +80,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("range_image remained compact after final fold")
             }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("range_image remained octet-coded after final fold")
+            }
         }
     }
 
@@ -166,6 +169,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness.as_ref(),
                 LowBasisRangeImageStorage::Materialized(_) => {
                     panic!("two-round prefix can only build from compact table")
+                }
+                LowBasisRangeImageStorage::FoldedOctets(_) => {
+                    panic!("two-round prefix cannot build from folded octets")
                 }
             };
             let proof = build_stage1_bivariate_skip_proof_from_compact_range_image(

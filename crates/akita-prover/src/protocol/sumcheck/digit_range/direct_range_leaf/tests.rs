@@ -1,7 +1,13 @@
 use super::*;
 use akita_field::Prime128Offset275;
-use akita_sumcheck::{advance_eq_factored_claim, multilinear_eval};
+use akita_serialization::AkitaSerialize;
+use akita_sumcheck::{
+    advance_eq_factored_claim, multilinear_eval, EqFactoredSumcheckInstanceProverExt,
+};
+use akita_transcript::{labels as transcript_labels, AkitaTranscript, Transcript};
 use akita_types::DigitRangeEqualityPoint;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 type F = Prime128Offset275;
 
@@ -325,6 +331,9 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("expected fused stage1 transition to materialize full table")
             }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("two-round transition must not produce folded octets")
+            }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
     }
@@ -346,6 +355,7 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
     let r0 = F::from_u64(223);
     let r1 = F::from_u64(227);
     let r2 = F::from_u64(229);
+    let r3 = F::from_u64(233);
     for basis in [4usize, 8] {
         let half = (basis / 2) as i8;
         let digit_witness: Vec<i8> = (0..live_x_cols * y_len)
@@ -391,23 +401,58 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
         reference.split_eq.bind(r0);
         reference.split_eq.bind(r1);
         reference.rounds_completed = 2;
-        let reference_round2 = reference.compute_round_materialized_sparse_x_y(&round2_range_image);
+        let reference_round2 =
+            reference.compute_round_sparse_x_y(round2_range_image.len(), |out, index| {
+                let left = round2_range_image[index];
+                compute_entry_coefficients(
+                    out,
+                    &reference.polynomial_precomputation,
+                    left,
+                    round2_range_image[index + 1] - left,
+                );
+            });
         assert_eq!(deferred_round2, reference_round2);
 
         let expected_round3_range_image =
             LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
-                &round2_range_image,
+                round2_range_image.len(),
+                |index| round2_range_image[index],
                 live_x_cols,
                 y_len / 4,
                 r2,
             );
         deferred.ingest_challenge(2, r2);
         match &deferred.range_image {
-            LowBasisRangeImageStorage::Materialized(actual) => {
-                assert_eq!(actual, &expected_round3_range_image)
-            }
+            LowBasisRangeImageStorage::FoldedOctets(actual) => assert_eq!(
+                (0..actual.len())
+                    .map(|index| actual.value(index))
+                    .collect::<Vec<_>>(),
+                expected_round3_range_image
+            ),
             LowBasisRangeImageStorage::Compact(_) => {
-                panic!("low-basis range image must materialize after round three")
+                panic!("low-basis range image must fold after round three")
+            }
+            LowBasisRangeImageStorage::Materialized(_) => {
+                panic!("low-basis range image materialized before it was necessary")
+            }
+        }
+
+        let expected_round4_range_image =
+            LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
+                expected_round3_range_image.len(),
+                |index| expected_round3_range_image[index],
+                live_x_cols,
+                y_len / 8,
+                r3,
+            );
+        deferred.compute_round_eq_factored(3);
+        deferred.ingest_challenge(3, r3);
+        match &deferred.range_image {
+            LowBasisRangeImageStorage::Materialized(actual) => {
+                assert_eq!(actual, &expected_round4_range_image)
+            }
+            LowBasisRangeImageStorage::Compact(_) | LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("the last sparse fold must materialize its output")
             }
         }
     }
@@ -487,6 +532,9 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("expected later prefix state to be full")
             }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("x-prefix state cannot contain folded octets")
+            }
         };
         let current_y_len = current_range_image.len() / expected.live_x_cols;
         let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_prefix_x(
@@ -510,6 +558,9 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
             }
             LowBasisRangeImageStorage::Compact(_) => {
                 panic!("expected fused later prefix stage to stay full")
+            }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("x-prefix state cannot contain folded octets")
             }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
@@ -597,10 +648,14 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
                     r1,
                 )
             }
+            LowBasisRangeImageStorage::FoldedOctets(_) => {
+                panic!("reference has not ingested the third challenge")
+            }
         };
         let current_y_len = current_range_image.len() / expected.live_x_cols;
         let expected_next_range_image = LowBasisRangeCheckProver::<F>::fold_range_image_sparse_x_y(
-            &current_range_image,
+            current_range_image.len(),
+            |index| current_range_image[index],
             expected.live_x_cols,
             current_y_len,
             r2,
@@ -608,18 +663,440 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         expected.split_eq.bind(r2);
         expected.rounds_completed += 1;
         let expected_round3 =
-            expected.compute_round_materialized_sparse_x_y(&expected_next_range_image);
+            expected.compute_round_sparse_x_y(expected_next_range_image.len(), |out, index| {
+                let left = expected_next_range_image[index];
+                compute_entry_coefficients(
+                    out,
+                    &expected.polynomial_precomputation,
+                    left,
+                    expected_next_range_image[index + 1] - left,
+                );
+            });
 
         prover.ingest_challenge(2, r2);
 
         match &prover.range_image {
-            LowBasisRangeImageStorage::Materialized(range_image) => {
-                assert_eq!(range_image, &expected_next_range_image)
-            }
+            LowBasisRangeImageStorage::FoldedOctets(range_image) => assert_eq!(
+                (0..range_image.len())
+                    .map(|index| range_image.value(index))
+                    .collect::<Vec<_>>(),
+                expected_next_range_image
+            ),
             LowBasisRangeImageStorage::Compact(_) => {
-                panic!("expected sparse-x/y fusion to stay full")
+                panic!("expected sparse-x/y transition to fold octets")
+            }
+            LowBasisRangeImageStorage::Materialized(_) => {
+                panic!("sparse-x/y transition materialized before it was necessary")
             }
         }
         assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
+    }
+}
+
+fn scalar_range_entry_coefficients(basis: usize, left: F, right: F) -> Vec<F> {
+    let delta = right - left;
+    match basis {
+        4 => {
+            let twice_left = left + left;
+            vec![
+                left * (left - F::from_u64(2)),
+                delta * (twice_left - F::from_u64(2)),
+                delta * delta,
+            ]
+        }
+        8 => {
+            let twice_left = left + left;
+            let sixteen_times_left = twice_left + twice_left;
+            let sixteen_times_left = sixteen_times_left + sixteen_times_left;
+            let sixteen_times_left = sixteen_times_left + sixteen_times_left;
+            let left_squared = left * left;
+            let first_quadratic = left_squared - twice_left;
+            let second_quadratic =
+                left_squared - (sixteen_times_left + twice_left) + F::from_u64(72);
+            let delta_squared = delta * delta;
+            let first_linear = delta * (twice_left - F::from_u64(2));
+            let second_linear = delta * (twice_left - F::from_u64(18));
+            vec![
+                first_quadratic * second_quadratic,
+                first_quadratic * second_linear + first_linear * second_quadratic,
+                first_quadratic * delta_squared
+                    + first_linear * second_linear
+                    + delta_squared * second_quadratic,
+                delta_squared * (first_linear + second_linear),
+                delta_squared * delta_squared,
+            ]
+        }
+        _ => unreachable!("scalar Stage 1 reference only supports basis 4 or 8"),
+    }
+}
+
+struct ScalarStage1Reference {
+    range_image: Vec<F>,
+    split_eq: GruenSplitEq<F>,
+    basis: usize,
+    num_vars: usize,
+    rounds_completed: usize,
+}
+
+impl ScalarStage1Reference {
+    fn new(
+        digit_witness: &[i8],
+        tau: &[F],
+        basis: usize,
+        live_x_cols: usize,
+        col_bits: usize,
+        ring_bits: usize,
+    ) -> Self {
+        let padded = pad_compact_witness(digit_witness, live_x_cols, col_bits, ring_bits);
+        Self {
+            range_image: build_compact_range_image(&padded)
+                .into_iter()
+                .map(|value| F::from_i64(i64::from(value)))
+                .collect(),
+            split_eq: GruenSplitEq::new(tau).unwrap(),
+            basis,
+            num_vars: col_bits + ring_bits,
+            rounds_completed: 0,
+        }
+    }
+
+    fn round_polynomial(&self) -> EqFactoredUniPoly<F> {
+        let (e_first, e_second) = self.split_eq.remaining_eq_tables();
+        let first_bits = e_first.len().trailing_zeros();
+        let mut coefficients = vec![F::zero(); self.basis / 2 + 1];
+        for (pair_index, pair) in self.range_image.chunks_exact(2).enumerate() {
+            let inner_index = pair_index & (e_first.len() - 1);
+            let outer_index = pair_index >> first_bits;
+            let weight = e_first[inner_index] * e_second[outer_index];
+            let entry = scalar_range_entry_coefficients(self.basis, pair[0], pair[1]);
+            for (coefficient, entry_coefficient) in coefficients.iter_mut().zip(entry) {
+                *coefficient += weight * entry_coefficient;
+            }
+        }
+        EqFactoredUniPoly::from_q_coeffs(coefficients)
+    }
+
+    fn fold(&mut self, challenge: F) {
+        let mut next = Vec::with_capacity(self.range_image.len() / 2);
+        for pair in self.range_image.chunks_exact(2) {
+            next.push(pair[0] + challenge * (pair[1] - pair[0]));
+        }
+        self.range_image = next;
+        self.split_eq.bind(challenge);
+        self.rounds_completed += 1;
+    }
+
+    fn final_range_image_eval(&self) -> F {
+        assert_eq!(self.range_image.len(), 1);
+        self.range_image[0]
+    }
+}
+
+impl EqFactoredSumcheckInstanceProver<F> for ScalarStage1Reference {
+    fn num_rounds(&self) -> usize {
+        self.num_vars
+    }
+
+    fn degree_bound(&self) -> usize {
+        self.basis / 2
+    }
+
+    fn input_claim(&self) -> F {
+        F::zero()
+    }
+
+    fn current_linear_factor_evals(&self) -> (F, F) {
+        self.split_eq.linear_factor_evals()
+    }
+
+    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<F> {
+        assert_eq!(round, self.rounds_completed);
+        self.round_polynomial()
+    }
+
+    fn ingest_challenge(&mut self, round: usize, challenge: F) {
+        assert_eq!(round, self.rounds_completed);
+        self.fold(challenge);
+    }
+}
+
+fn scalar_fold_octet_class(basis: usize, class: usize, challenges: [F; 3]) -> F {
+    let mut values = match basis {
+        4 => (0..8)
+            .map(|index| F::from_u64(((class >> index) & 1) as u64 * 2))
+            .collect::<Vec<_>>(),
+        8 => {
+            let range_values = [0u64, 2, 6, 12];
+            let left = class >> 8;
+            let right = class & 0xff;
+            (0..4)
+                .map(|index| F::from_u64(range_values[(left >> (2 * index)) & 3]))
+                .chain((0..4).map(|index| F::from_u64(range_values[(right >> (2 * index)) & 3])))
+                .collect()
+        }
+        _ => unreachable!("folded octets only support basis 4 or 8"),
+    };
+    for challenge in challenges {
+        values = values
+            .chunks_exact(2)
+            .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+            .collect();
+    }
+    values[0]
+}
+
+fn expected_octet_class_code(basis: usize, octet: &[i16]) -> u16 {
+    match basis {
+        4 => octet.iter().enumerate().fold(0u16, |code, (index, value)| {
+            code | (u16::from(*value == 2) << index)
+        }),
+        8 => {
+            let digit_code = |values: &[i16]| {
+                values
+                    .iter()
+                    .enumerate()
+                    .fold(0u16, |code, (index, value)| {
+                        let digit = match value {
+                            0 => 0,
+                            2 => 1,
+                            6 => 2,
+                            12 => 3,
+                            _ => unreachable!("basis-8 range image"),
+                        };
+                        code | (digit << (2 * index))
+                    })
+            };
+            (digit_code(&octet[..4]) << 8) | digit_code(&octet[4..])
+        }
+        _ => unreachable!("folded octets only support basis 4 or 8"),
+    }
+}
+
+fn assert_folded_octets_match_scalar(
+    folded: &FoldedOctetRangeImage<F>,
+    scalar_range_image: &[F],
+    compact_range_image: &[i16],
+    basis: usize,
+    live_x_cols: usize,
+    y_len: usize,
+    challenges: [F; 3],
+) {
+    let next_y_len = y_len / 8;
+    let expected_codes = compact_range_image
+        .chunks_exact(y_len)
+        .flat_map(|column| {
+            column
+                .chunks_exact(8)
+                .map(|octet| expected_octet_class_code(basis, octet))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(expected_codes.len(), live_x_cols * next_y_len);
+    assert_eq!(folded.class_codes, expected_codes);
+
+    for (class, (&value, taylor)) in folded
+        .class_values
+        .iter()
+        .zip(&folded.class_taylor_coefficients)
+        .enumerate()
+    {
+        let expected_value = scalar_fold_octet_class(basis, class, challenges);
+        assert_eq!(
+            value, expected_value,
+            "class value mismatch for class={class}"
+        );
+        let expected_taylor =
+            scalar_range_entry_coefficients(basis, expected_value, expected_value + F::one());
+        let expected_taylor = match basis {
+            4 => [expected_taylor[0], expected_taylor[1], F::zero(), F::zero()],
+            8 => [
+                expected_taylor[0],
+                expected_taylor[1],
+                expected_taylor[2],
+                expected_taylor[3],
+            ],
+            _ => unreachable!("folded octets only support basis 4 or 8"),
+        };
+        assert_eq!(
+            *taylor, expected_taylor,
+            "Taylor row mismatch for class={class}"
+        );
+    }
+
+    assert_eq!(
+        (0..folded.len())
+            .map(|index| folded.value(index))
+            .collect::<Vec<_>>(),
+        scalar_range_image
+    );
+}
+
+fn new_stage1_transcript() -> AkitaTranscript<F> {
+    AkitaTranscript::new(transcript_labels::DOMAIN_AKITA_PROTOCOL)
+}
+
+fn sample_stage1_challenge(transcript: &mut AkitaTranscript<F>) -> F {
+    transcript.challenge_scalar(transcript_labels::CHALLENGE_SUMCHECK_ROUND)
+}
+
+#[test]
+fn stage1_compact_pipeline_randomized_scalar_transcript_and_bytes_differential() {
+    let shapes = [
+        (6usize, 3usize, 4usize),
+        (1, 3, 4),
+        (7, 3, 4),
+        (8, 3, 4),
+        (5, 3, 5),
+    ];
+    for basis in [4usize, 8] {
+        for (case, &(live_x_cols, col_bits, ring_bits)) in shapes.iter().enumerate() {
+            let seed = 0x5a17_0000_u64 | ((basis as u64) << 8) | case as u64;
+            let mut rng = StdRng::seed_from_u64(seed);
+            let y_len = 1usize << ring_bits;
+            let half = (basis / 2) as i8;
+            let digit_witness = (0..live_x_cols * y_len)
+                .map(|_| rng.gen_range(0..basis) as i8 - half)
+                .collect::<Vec<_>>();
+            let compact_range_image = build_compact_range_image(&digit_witness);
+            let column_then_ring_tau = (0..col_bits + ring_bits)
+                .map(|_| F::from_u64(rng.gen_range(2..u64::MAX)))
+                .collect::<Vec<_>>();
+            let tau = ordered_equality_point(&column_then_ring_tau, col_bits, ring_bits);
+            let manual_challenges = (0..col_bits + ring_bits)
+                .map(|_| F::from_u64(rng.gen_range(2..u64::MAX)))
+                .collect::<Vec<_>>();
+
+            let mut optimized = LowBasisRangeCheckProver::new(
+                std::sync::Arc::from(digit_witness.as_slice()),
+                &tau,
+                DigitRangePlan::new(basis).unwrap(),
+                live_x_cols,
+                col_bits,
+                ring_bits,
+            )
+            .unwrap();
+            let mut scalar = ScalarStage1Reference::new(
+                &digit_witness,
+                &tau,
+                basis,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+            );
+
+            for (round, &challenge) in manual_challenges.iter().enumerate() {
+                let optimized_poly = optimized.compute_round_eq_factored(round);
+                let scalar_poly = scalar.compute_round_eq_factored(round);
+                assert_eq!(
+                    optimized_poly, scalar_poly,
+                    "round polynomial mismatch basis={basis} case={case} round={round}"
+                );
+                assert_eq!(
+                    optimized.current_linear_factor_evals(),
+                    scalar.current_linear_factor_evals(),
+                    "linear factor mismatch basis={basis} case={case} round={round}"
+                );
+
+                optimized.ingest_challenge(round, challenge);
+                scalar.ingest_challenge(round, challenge);
+                if round == 2 {
+                    match &optimized.range_image {
+                        LowBasisRangeImageStorage::FoldedOctets(folded)
+                            if live_x_cols < 1usize << col_bits =>
+                        {
+                            assert_folded_octets_match_scalar(
+                                folded,
+                                &scalar.range_image[..live_x_cols * (y_len / 8)],
+                                &compact_range_image,
+                                basis,
+                                live_x_cols,
+                                y_len,
+                                [
+                                    manual_challenges[0],
+                                    manual_challenges[1],
+                                    manual_challenges[2],
+                                ],
+                            );
+                        }
+                        LowBasisRangeImageStorage::Compact(_) => {
+                            panic!("round three must leave compact digit storage")
+                        }
+                        LowBasisRangeImageStorage::FoldedOctets(_) => {
+                            panic!("full-width round must not use the sparse folded state")
+                        }
+                        LowBasisRangeImageStorage::Materialized(actual)
+                            if live_x_cols == 1usize << col_bits =>
+                        {
+                            assert_eq!(actual, &scalar.range_image);
+                        }
+                        LowBasisRangeImageStorage::Materialized(_) => {
+                            panic!("round three must retain folded octet classes")
+                        }
+                    }
+                } else if round >= 3 {
+                    match &optimized.range_image {
+                        LowBasisRangeImageStorage::Materialized(actual) => {
+                            let live_len = actual.len();
+                            assert_eq!(actual, &scalar.range_image[..live_len]);
+                        }
+                        LowBasisRangeImageStorage::Compact(_)
+                        | LowBasisRangeImageStorage::FoldedOctets(_) => {
+                            panic!("folded octets must materialize after the next fold")
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                optimized.final_range_image_eval(),
+                scalar.final_range_image_eval(),
+                "final evaluation mismatch basis={basis} case={case}"
+            );
+
+            let mut optimized_for_proof = LowBasisRangeCheckProver::new(
+                std::sync::Arc::from(digit_witness.as_slice()),
+                &tau,
+                DigitRangePlan::new(basis).unwrap(),
+                live_x_cols,
+                col_bits,
+                ring_bits,
+            )
+            .unwrap();
+            let mut scalar_for_proof = ScalarStage1Reference::new(
+                &digit_witness,
+                &tau,
+                basis,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+            );
+            let mut optimized_transcript = new_stage1_transcript();
+            let mut scalar_transcript = new_stage1_transcript();
+            let (optimized_proof, optimized_challenges, optimized_claim) = optimized_for_proof
+                .prove::<F, _, _>(&mut optimized_transcript, sample_stage1_challenge)
+                .unwrap();
+            let (scalar_proof, scalar_challenges, scalar_claim) = scalar_for_proof
+                .prove::<F, _, _>(&mut scalar_transcript, sample_stage1_challenge)
+                .unwrap();
+            assert_eq!(optimized_proof, scalar_proof);
+            assert_eq!(optimized_challenges, scalar_challenges);
+            assert_eq!(optimized_claim, scalar_claim);
+            assert_eq!(
+                optimized_for_proof.final_range_image_eval(),
+                scalar_for_proof.final_range_image_eval()
+            );
+
+            let mut optimized_bytes = Vec::new();
+            optimized_proof
+                .serialize_compressed(&mut optimized_bytes)
+                .unwrap();
+            let mut scalar_bytes = Vec::new();
+            scalar_proof
+                .serialize_compressed(&mut scalar_bytes)
+                .unwrap();
+            assert_eq!(optimized_bytes, scalar_bytes);
+            assert_eq!(
+                optimized_transcript.challenge_scalar(b"stage1-differential-after-proof"),
+                scalar_transcript.challenge_scalar(b"stage1-differential-after-proof")
+            );
+        }
     }
 }

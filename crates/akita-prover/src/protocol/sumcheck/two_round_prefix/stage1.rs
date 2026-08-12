@@ -234,27 +234,35 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
         }
         8 => {
             let class_weights = cfg_fold_reduce!(
-                0..live_x_cols,
+                0..y_quads,
                 || [E::zero(); 256],
-                |mut histogram, x_col| {
-                    let col = &s_compact[x_col * y_len..(x_col + 1) * y_len];
-                    let eq_x_weight = eq_x[x_col];
-                    for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
-                        let base = 4 * y_quad;
+                |mut histogram, y_quad| {
+                    let base = 4 * y_quad;
+                    let mut x_class_weights = [E::zero(); 256];
+                    for (x_col, &eq_x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
+                        let col_base = x_col * y_len + base;
                         let lookup_idx = stage1_b8_lookup_index_from_digits([
-                            stage1_b8_digit_from_compact_range_image(col[base].range_image_value()),
                             stage1_b8_digit_from_compact_range_image(
-                                col[base + 1].range_image_value(),
+                                s_compact[col_base].range_image_value(),
                             ),
                             stage1_b8_digit_from_compact_range_image(
-                                col[base + 2].range_image_value(),
+                                s_compact[col_base + 1].range_image_value(),
                             ),
                             stage1_b8_digit_from_compact_range_image(
-                                col[base + 3].range_image_value(),
+                                s_compact[col_base + 2].range_image_value(),
+                            ),
+                            stage1_b8_digit_from_compact_range_image(
+                                s_compact[col_base + 3].range_image_value(),
                             ),
                         ]);
-                        let weight = eq_x_weight * eq_y_weight;
-                        histogram[lookup_idx] += weight;
+                        x_class_weights[lookup_idx] += eq_x_weight;
+                    }
+                    let eq_y_weight = eq_y_suffix[y_quad];
+                    for (class_weight, x_class_weight) in histogram.iter_mut().zip(x_class_weights)
+                    {
+                        if !x_class_weight.is_zero() {
+                            *class_weight += x_class_weight * eq_y_weight;
+                        }
                     }
                     histogram
                 },
