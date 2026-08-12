@@ -177,15 +177,15 @@ where
         )?
     };
 
-    let required = geometry.required();
+    let active_weight_rows = geometry.required();
     let ring_d = geometry.base_ring_dim();
     let _source_span = tracing::info_span!(
         "stage3_setup_source_select",
-        required_rows = required,
+        active_weight_rows,
         ring_dim = ring_d,
     )
     .entered();
-    ensure_setup_envelope(expanded, required, ring_d)?;
+    ensure_setup_envelope(expanded, active_weight_rows, ring_d)?;
     let natural_field_len = geometry.natural_field_len();
     let setup_len = expanded.shared_matrix().num_field_elements() / ring_d;
     let setup_eval_len = if next_fold_level_params.setup_prefix.is_some() {
@@ -216,32 +216,31 @@ where
     };
     // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
     // the flat shared matrix; read them directly instead of building a typed
-    // ring view that would immediately be flattened back into the table. A
-    // setup-prefix slot may have a padded evaluation domain larger than this
-    // source: only `required` natural rows are read, and the table remainder is
-    // explicit zero padding.
+    // ring view that would immediately be flattened back into the table. The
+    // setup weight is zero after `active_weight_rows`, but the committed and
+    // opened setup source is the actual full power-of-two prefix.
     let setup_field = expanded.shared_matrix().as_field_slice();
-    if required > setup_eval_len {
+    let setup_idx_len = active_weight_rows
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
+    if setup_idx_len > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
             "setup product exceeds selected setup view".to_string(),
         ));
     }
 
-    let setup_idx_len = required
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
     setup_index_weight.resize(setup_idx_len, E::zero());
-    let required_source_len = required
+    let source_len = setup_idx_len
         .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product source length overflow".into()))?;
-    let setup_source = setup_field.get(..required_source_len).ok_or_else(|| {
+    let setup_source = setup_field.get(..source_len).ok_or_else(|| {
         AkitaError::InvalidSetup("setup source is shorter than product view".into())
     })?;
     drop(_source_span);
 
     RectangularSetupProductTerm::new(
         setup_source,
-        required,
+        active_weight_rows,
         setup_index_weight,
         alpha_pows.to_vec(),
     )

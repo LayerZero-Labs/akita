@@ -21,6 +21,8 @@ use crate::generated::{
 };
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
+const SETUP_PREFIX_CONTENT_MODE_FULL_PREFIX: u64 = u64::from_le_bytes(*b"SPF1\0\0\0\0");
+
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
@@ -550,6 +552,7 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
             write_generated_partition(&mut h, fold.witness_partition);
             h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
             if let Some(prefix) = fold.incoming_setup_prefix {
+                h.write_u64(SETUP_PREFIX_CONTENT_MODE_FULL_PREFIX);
                 h.write_u64(prefix.natural_len);
                 write_generated_group(&mut h, prefix.commitment);
             }
@@ -699,5 +702,95 @@ impl Fnv64 {
 
     fn finish(self) -> u64 {
         self.state
+    }
+}
+
+#[cfg(all(test, feature = "fp128-onehot-recursive"))]
+mod tests {
+    use super::*;
+    use crate::generated::GeneratedFoldScheduleEntry;
+    use akita_challenges::SparseChallengeConfig;
+
+    fn old_zero_padded_entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
+        let mut entries = entries.to_vec();
+        entries.sort_by(generated_schedule_key_cmp);
+        let mut h = Fnv64::new();
+        for entry in entries {
+            write_generated_schedule_key(&mut h, entry.root.final_group.layout);
+            write_generated_group(&mut h, entry.root.final_group.commitment);
+            h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
+            h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
+            h.write_u64(entry.root.precommitted_groups.len() as u64);
+            for group in entry.root.precommitted_groups {
+                write_generated_precommitted_group_key(&mut h, &group.descriptor);
+                write_generated_group(&mut h, group.commitment);
+                h.write_u64(u64::from(group.num_digits_fold));
+            }
+            write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
+            write_generated_partition(&mut h, entry.root.witness_partition);
+            h.write_u64(entry.recursive_folds.len() as u64);
+            for fold in entry.recursive_folds {
+                write_generated_group(&mut h, fold.witness);
+                write_generated_open_matrix(&mut h, fold.open_commit_matrix);
+                write_generated_partition(&mut h, fold.witness_partition);
+                h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
+                if let Some(prefix) = fold.incoming_setup_prefix {
+                    h.write_u64(prefix.natural_len);
+                    write_generated_group(&mut h, prefix.commitment);
+                }
+            }
+            write_generated_geometry(&mut h, entry.terminal.geometry);
+            h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
+            h.write_u64(u64::from(entry.terminal.inner_commit_matrix.log_basis));
+        }
+        h.finish()
+    }
+
+    #[test]
+    fn full_prefix_catalog_identity_rejects_old_zero_padded_digest() {
+        let table = crate::generated::fp128_onehot_recursive_table();
+        let old_digest = old_zero_padded_entries_key_digest(table.entries);
+        assert_ne!(
+            old_digest, table.identity.key_digest,
+            "full-prefix setup content mode must change the generated key digest"
+        );
+
+        let stale = GeneratedScheduleTable {
+            identity: GeneratedScheduleCatalogIdentity {
+                key_digest: old_digest,
+                ..table.identity
+            },
+            ..table
+        };
+        let policy = PlannerPolicy {
+            cost_model: stale.identity.cost_model,
+            selection_policy: stale.identity.selection_policy,
+            recursive_split_search_policy: stale.identity.recursive_split_search_policy,
+            setup_field_budget: stale.identity.setup_field_budget,
+            min_offloaded_witness_contraction: stale.identity.min_offloaded_witness_contraction,
+            sis_modulus_profile: stale.identity.sis_modulus_profile,
+            sis_security_policy: stale.identity.sis_security_policy,
+            sis_table_digest: stale.identity.sis_table_digest,
+            uniform_ring_dimension: stale.identity.uniform_ring_dimension,
+            setup_prefix_inner_ring_dimension: stale.identity.setup_prefix_inner_ring_dimension,
+            decomposition: stale.identity.decomposition,
+            ring_subfield_norm_bound: stale.identity.ring_subfield_norm_bound,
+            claim_ext_degree: stale.identity.claim_ext_degree,
+            chal_ext_degree: stale.identity.chal_ext_degree,
+            inner_basis_range: stale.identity.inner_basis_range,
+            opening_basis_range: stale.identity.opening_basis_range,
+            witness_chunk: stale.identity.witness_chunk,
+            recursive_setup_planning: stale.identity.recursive_setup_planning,
+            ring_dimension_schedule_mode: stale.identity.ring_dimension_schedule_mode,
+        };
+        let err = validate_catalog_identity(&stale, &policy, |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        })
+        .expect_err("old zero-padded catalog identity must reject");
+        assert!(err
+            .to_string()
+            .contains("schedule catalog identity mismatch"));
     }
 }

@@ -349,6 +349,6 @@ mod tests {
         let err = setup
             .check()
             .expect_err("prover setup check must reject invalid prefix slots");
-        assert!(err.to_string().contains("padded_len"));
+        assert!(err.to_string().contains("full_prefix_len"));
     }
 }
