@@ -698,9 +698,9 @@ mod tests {
                 ))
                 .expect("generated fp32 dense schedule")
                 .into_schedule(),
-                1024,
-                8,
-                4096,
+                512,
+                5,
+                5376,
                 false,
             ),
             (
@@ -709,9 +709,9 @@ mod tests {
                 ))
                 .expect("generated fp64 dense schedule")
                 .into_schedule(),
-                512,
-                6,
-                11_264,
+                256,
+                8,
+                16_384,
                 false,
             ),
         ] {

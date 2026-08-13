@@ -126,13 +126,29 @@ impl UnitOneHotFoldPolicy {
         Ok(self)
     }
 
+    fn contributions_per_emitted_coordinate(
+        &self,
+        query: HonestFoldSizingQuery<'_>,
+    ) -> Option<usize> {
+        let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
+        let logical_fold_coeffs = query.num_fold_coeffs.checked_div(query.num_chunks)?;
+        if !logical_fold_coeffs.is_multiple_of(query.ring_dimension) {
+            return None;
+        }
+        let source_positions_per_block = logical_fold_coeffs.checked_div(query.ring_dimension)?;
+        let one_hot_entries_per_block = source_positions_per_block.div_ceil(self.source_chunk_size);
+        query
+            .num_claims
+            .checked_mul(live_blocks_per_chunk)?
+            .checked_mul(one_hot_entries_per_block)
+    }
+
     fn exact_threshold(&self, query: HonestFoldSizingQuery<'_>) -> Option<u128> {
         let cfg = query.challenge_config;
         if cfg.weight() > query.ring_dimension || query.ring_dimension == 0 {
             return None;
         }
-        let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
-        let contributions = query.num_claims.checked_mul(live_blocks_per_chunk)?;
+        let contributions = self.contributions_per_emitted_coordinate(query)?;
         let worst_case = contributions.checked_mul(cfg.infinity_norm() as usize)? as u128;
         const MAX_EXACT_F64_INTEGER: usize = 1usize << 52;
         if contributions > MAX_EXACT_F64_INTEGER || query.num_fold_coeffs > MAX_EXACT_F64_INTEGER {
@@ -177,12 +193,15 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
         let Some(mut cap) = self.exact_threshold(query) else {
             return Ok(universal);
         };
-        let live_blocks_per_chunk = query.num_live_blocks.div_ceil(query.num_chunks);
         let challenge = FoldChallengeNorms::new(query.challenge_config);
         let worst_case = challenge
             .l1_norm
-            .checked_mul(query.num_claims as u128)
-            .and_then(|value| value.checked_mul(live_blocks_per_chunk as u128))
+            .checked_mul(
+                self.contributions_per_emitted_coordinate(query)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("unit one-hot contribution count overflow".into())
+                    })? as u128,
+            )
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("unit one-hot worst-case cap overflow".into())
             })?;
@@ -400,12 +419,34 @@ mod tests {
         let exact_digits = one_hot.num_digits_fold(flat).expect("one-hot policy");
         let legacy_digits = legacy.num_digits_fold(flat).expect("legacy policy");
         assert!(exact_digits <= legacy_digits);
-        let deterministic_cap = flat
-            .num_claims
-            .checked_mul(flat.num_live_blocks)
+        let deterministic_cap = one_hot
+            .contributions_per_emitted_coordinate(flat)
             .and_then(|count| count.checked_mul(challenge.infinity_norm() as usize))
             .unwrap() as u128;
         assert!(one_hot.exact_threshold(flat).unwrap() <= deterministic_cap);
+    }
+
+    #[test]
+    fn wide_one_hot_blocks_price_every_packed_unit_entry() {
+        let challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
+        let one_hot = UnitOneHotFoldPolicy::new(32, FoldWitnessNorms::new(1, 4));
+        let query = HonestFoldSizingQuery {
+            ring_dimension: 512,
+            num_claims: 1,
+            num_live_blocks: 512,
+            num_chunks: 1,
+            num_fold_coeffs: 4_096 * 512,
+            witness_norms: FoldWitnessNorms::new(1, 4),
+            log_basis_response: 3,
+            challenge_config: &challenge,
+        };
+
+        assert_eq!(
+            one_hot.contributions_per_emitted_coordinate(query),
+            Some(8_192)
+        );
+        assert!(one_hot.exact_threshold(query).unwrap() > 31);
+        assert!(one_hot.num_digits_fold(query).unwrap() >= 3);
     }
 
     #[test]

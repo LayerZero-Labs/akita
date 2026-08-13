@@ -338,17 +338,37 @@ The constants 31 and 10 are specific to `D = 64`. Other ring dimensions MUST
 derive their counts from the selected `SparseChallengeConfig`. They MUST NOT
 reuse the `D = 64` constants.
 
+One physical planner block can pack more than one canonical one-hot source
+chunk. Let
+
+\[
+p =
+\frac{\mathtt{num\_fold\_coeffs}}
+     {\mathtt{num\_chunks}\,D}
+\]
+
+be its logical source-position width and let `s` be the configured one-hot
+source chunk size. The number of unit one-hot entries packed into one live
+block is
+
+\[
+u=\left\lceil\frac{p}{s}\right\rceil.
+\]
+
 At most
 
 \[
 m = \mathtt{num\_claims}\left\lceil
 \frac{\mathtt{num\_live\_blocks}}{\mathtt{num\_chunks}}
-\right\rceil
+\right\rceil u
 \]
 
 independent unit contributions enter one coordinate of a physical chunk
-response. The ceiling prices the largest response window when blocks do not
-divide evenly across chunks. Then
+response. The first ceiling prices the largest response window when blocks do
+not divide evenly across chunks. The factor `u` is required because every
+packed one-hot entry contributes separately. Omitting it understates both the
+Chernoff threshold and the deterministic worst-case cap whenever `p > s`.
+Then
 
 \[
 M_Z(\lambda)=M_X(\lambda)^m.
