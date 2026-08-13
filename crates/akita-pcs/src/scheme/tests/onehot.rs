@@ -967,8 +967,16 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     )
     .expect("L2 stack");
     let verifier_setup = L2Scheme::setup_verifier(&setup).expect("L2 verifier setup");
-    let (commitment, hint) =
-        L2Scheme::commit::<_, _>(&setup, &polys, &stack).expect("L2 commitment");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = L2Scheme::commit::<_, _>(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("L2 commitment");
     let commitments = [commitment];
     let prover_group = PolynomialGroupClaims::new(
         point.clone(),
