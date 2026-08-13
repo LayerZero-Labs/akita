@@ -355,9 +355,9 @@ incorporate the range-image and opening-consistency terms.
 
 ### Start with the ring relation
 
-The four physical row families and the quotient extension are derived in
-[Ring relation in an Akita fold](./akita-fold.md). Here we start from their
-extended relation and explain how Stage 2 proves it.
+The physical row families and the quotient extension are derived in [Raw and
+compressed realizations of an Akita fold](./akita-fold-realizations.md). Here
+we start from their extended relation and explain how Stage 2 proves it.
 
 Let $w_j(X)$ be the $j$-th ring element encoded by the digit witness, and let
 row $i$ of the extended fold relation be

@@ -308,7 +308,7 @@ the ring element $Y$ and the witness polynomials $\hat e_{b,h}(X)$. Hachi
 sends $Y$ to the verifier, which checks Equation (13) directly. The prover
 then proves Equation (15) using the same ring-relation machinery as the other
 constraints that bind the previous witness to the next witness, as described
-in [Ring relation in an Akita fold](./akita-fold.md).
+in [Semantic relations in an Akita fold](./akita-fold.md).
 
 ### Akita: compose the two checks
 
