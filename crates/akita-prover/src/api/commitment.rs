@@ -445,7 +445,7 @@ where
                         .ok_or(AkitaError::InvalidProof)?
                         .ring_dimension();
                     let payload = RingVec::from_coeffs_with_ring_dim(
-                        output.terminal.coefficients().to_vec(),
+                        output.terminal.into_coefficients(),
                         terminal_ring_dim,
                     )?;
                     Ok::<_, AkitaError>((
