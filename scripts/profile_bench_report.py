@@ -321,10 +321,10 @@ def parse_kvs(line: str) -> dict[str, str]:
 def parse_tracing_optional_int(value: str | None) -> int | None:
     if value is None or value == "None":
         return None
-    match = re.fullmatch(r"Some\((\d+)\)", value)
+    match = re.fullmatch(r"(?:Some\((\d+)\)|(\d+))", value)
     if match is None:
         raise ValueError(f"invalid tracing optional integer: {value}")
-    return int(match.group(1))
+    return int(match.group(1) or match.group(2))
 
 
 def is_info_event(line: str, event: str) -> bool:

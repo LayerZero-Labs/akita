@@ -337,6 +337,14 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
+    def test_tracing_optional_integer_accepts_debug_and_structured_values(self) -> None:
+        from scripts.profile_bench_report import parse_tracing_optional_int
+
+        self.assertIsNone(parse_tracing_optional_int(None))
+        self.assertIsNone(parse_tracing_optional_int("None"))
+        self.assertEqual(parse_tracing_optional_int("Some(4096)"), 4096)
+        self.assertEqual(parse_tracing_optional_int("4096"), 4096)
+
     def test_planned_fold_level_parses_physical_geometry(self) -> None:
         from scripts.profile_bench_report import extract_summary
 
