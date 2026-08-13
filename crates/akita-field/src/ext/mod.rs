@@ -10,6 +10,7 @@ mod fp_ext4;
 mod fp_ext8;
 pub(crate) mod lift;
 mod native_algebra;
+mod serde_support;
 #[cfg(test)]
 mod tests;
 
