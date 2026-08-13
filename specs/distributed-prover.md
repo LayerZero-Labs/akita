@@ -114,7 +114,7 @@ within each window, with the single shared quotient appended:
 
 This is the layout the [planner](distributed-planner.md) prices
 (`w_ring_element_count_for_chunks`) and the
-[verifier](distributed-verifier-row-eval.md) evaluates (`segment_layout` /
+[verifier](digit-innermost-layout.md) evaluates (`segment_layout` /
 `eval_flat_at_point`). The per-window segment lengths are:
 
 - `z_len_i = num_digits_fold · num_digits_inner · num_positions_per_block` (replicated, full),
@@ -244,7 +244,7 @@ prover-internal column evaluation `compute_relation_matrix_col_evals`
   $\mathbf A$ acts identically on every $\mathbf z_i$.
 
 This is the column-MLE counterpart of the verifier's chunked row-MLE
-(specified in [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)).
+(specified in [`digit-innermost-layout.md`](digit-innermost-layout.md)).
 The prover and verifier share checked `WitnessLayout` geometry while the verifier's
 structured contraction is owned by
 `crates/akita-types/src/setup_contribution/plan/structured.rs`; chunked support is a
@@ -445,7 +445,7 @@ do not grow); the verifier's dominant cost is unchanged (verifier spec).
   [`book/src/how/verifying/distributed-relation-verifier.md`](../book/src/how/verifying/distributed-relation-verifier.md)
   (partitioned vs replicated components).
 - Planner (prices the relation): [`specs/distributed-planner.md`](distributed-planner.md)
-- Verifier (evaluates the relation): [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
+- Verifier (evaluates the relation): [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)
 - Prover surfaces: `crates/akita-prover` (`protocol/core/fold.rs`,
   `protocol/ring_switch/{coeffs,evals,finalize}.rs`, `protocol/ring_relation.rs`,
   `backend/poly_helpers/decompose_fold_partitioned.rs`)

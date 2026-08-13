@@ -6,8 +6,8 @@
 | Created | 2026-05-06 (originally as the umbrella for PRs #69, #71, and this completion work) |
 | Status | baseline extension path, generic multipoint incidence packaging, recursive and root-level tensor-algebra extension-opening reduction, field-family SIS accounting, generated small-field schedule tables, and first small-field prover optimizations have landed in the worktree; the old dense/one-hot Frobenius multipoint route has been removed from the live implementation; root tensor projection now moves the transformed witness to the root commitment boundary for same-width `E = L` small-field roots; remaining work is true-tower E2E coverage, deeper planner tuning, profile reruns, and full CI validation |
 | PR | #71 (`quang/general-field-final`) |
-| Companion spec | `specs/extension-field-trace-cutover.md` (#71 first slice) |
-| Earlier slices | `specs/general-field-support.md` (#60), `specs/extension-claim-incidence-cutover.md` (#69) |
+| Companion spec | #71 first slice (spec deleted; see git history) |
+| Earlier slices | #60 and #69 (specs deleted; see git history) |
 
 ## Summary
 
@@ -1390,10 +1390,9 @@ configs.
 
 ## References
 
-- Earliest predecessor (field-role split): `specs/general-field-support.md`
-- Predecessor (claim incidence + ClaimField API + extension arithmetic in flow):
-  `specs/extension-claim-incidence-cutover.md`
-- Companion #71 trace primitive spec: `specs/extension-field-trace-cutover.md`
+- Predecessor slices (#60 field-role split, #69 claim incidence + `ClaimField`
+  API, #71 first-slice trace primitive): specs deleted in the 2026-Q3 stale-spec
+  pass; recover from git history if needed.
 - Diamond and Posen, `Diamond_Posen_FRI_Binius_2024_504.pdf`, ePrint
   2024/504: FRI-Binius tensor-algebra ring-switching compiler and Hashcaster
   comparison.
