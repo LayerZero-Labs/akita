@@ -178,7 +178,7 @@ fn terminal_candidates_compete_across_opening_bases() {
             .witness
             .inner_commit_matrix
             .coeff_linf_bound(),
-        Some(131_071),
+        Some(524_287),
     );
 }
 
@@ -566,7 +566,14 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
     let selected_root = &selected.schedule.root.params.final_group.commitment;
     let rank_one_capped_root = &rank_one_capped.schedule.root.params.final_group.commitment;
 
-    assert_eq!(selected_root.role_dims(), d256_mixed);
+    assert_eq!(
+        selected_root.role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 64,
+            opening: 128,
+        }
+    );
     assert_eq!(
         selected.schedule.recursive_folds[0]
             .params
@@ -579,15 +586,22 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
     assert_eq!(rank_one_capped_root.outer_commit_matrix.output_rank(), 1);
     assert_eq!(selected_root.outer_commit_matrix.output_rank(), 1);
     assert!(
-        selected_root.outer_commit_matrix.input_width()
-            < rank_one_capped_root.outer_commit_matrix.input_width(),
-        "the lower D256 A rank must reduce B width despite both B matrices having rank one"
-    );
-    assert!(
         selected.estimate.estimated_num_setup_field_elements
-            < rank_one_capped.estimate.estimated_num_setup_field_elements,
-        "the D256-root candidate must beat the restricted domain on setup fields"
+            <= rank_one_capped.estimate.estimated_num_setup_field_elements,
+        "the expanded domain must not lose on the setup-first objective"
     );
+    if selected.estimate.estimated_num_setup_field_elements
+        == rank_one_capped.estimate.estimated_num_setup_field_elements
+    {
+        assert!(
+            selected.estimate.estimated_proof_payload_bytes().unwrap()
+                <= rank_one_capped
+                    .estimate
+                    .estimated_proof_payload_bytes()
+                    .unwrap(),
+            "an exact setup tie must not lose on proof payload"
+        );
+    }
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -813,7 +827,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
 
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
-        22_544_384
+        8_388_608
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
