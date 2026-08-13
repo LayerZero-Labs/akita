@@ -344,14 +344,16 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+        let level_params = Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(16),
         ))
         .expect("scalar schedule")
+        .schedule()
         .root
         .params
         .final_group
-        .commitment;
+        .commitment
+        .clone();
         let natural_field_len = level_params
             .inner_commit_matrix
             .ring_dimension()

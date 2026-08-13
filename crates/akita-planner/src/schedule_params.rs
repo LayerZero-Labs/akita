@@ -18,13 +18,14 @@ use akita_types::sis::{
     OuterCommitMatrixParams,
 };
 use akita_types::{
-    active_setup_field_len, dyadic_block_ranges, padded_setup_prefix_len, AkitaScheduleLookupKey,
-    CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedLevelParams,
+    active_setup_field_len, dyadic_block_ranges, padded_setup_prefix_len, CommitmentRingDims,
+    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedLevelParams,
 };
 #[cfg(test)]
 use akita_types::{
-    level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
+    level_proof_bytes, try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey,
+    PlannedFoldSchedule,
 };
 
 use crate::{InnerBasisSource, PlannerPolicy};
@@ -385,164 +386,6 @@ pub(crate) fn layout_candidate_score(
         .and_then(|cost| cost.checked_add(imbalance))
         .ok_or_else(|| AkitaError::InvalidSetup("layout candidate score overflow".to_string()))?;
     Ok((combined, physical_width, chunk_work, imbalance))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StandalonePrecommitCandidate {
-    pub profile: CommittedGroupProfile,
-    pub next_witness_len: usize,
-    pub ab_setup_field_elements: usize,
-    pub padded_ab_setup_field_elements: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StandalonePrecommitPlan {
-    pub selected: StandalonePrecommitCandidate,
-    pub pareto_frontier: Vec<StandalonePrecommitCandidate>,
-}
-
-fn matrix_field_elements(
-    output_rank: usize,
-    input_width: usize,
-    ring_dimension: usize,
-) -> Result<usize, AkitaError> {
-    output_rank
-        .checked_mul(input_width)
-        .and_then(|elements| elements.checked_mul(ring_dimension))
-        .ok_or_else(|| AkitaError::InvalidSetup("standalone matrix size overflow".into()))
-}
-
-fn ab_setup_field_elements(params: &CommittedGroupParams) -> Result<usize, AkitaError> {
-    let inner = matrix_field_elements(
-        params.inner_commit_matrix.output_rank(),
-        params.inner_commit_matrix.input_width(),
-        params.inner_commit_matrix.ring_dimension(),
-    )?;
-    let outer = matrix_field_elements(
-        params.outer_commit_matrix.output_rank(),
-        params.outer_commit_matrix.input_width(),
-        params.outer_commit_matrix.ring_dimension(),
-    )?;
-    Ok(inner.max(outer))
-}
-
-/// Exhaustively plan the standalone A/B geometry and retain its Pareto frontier.
-pub fn plan_standalone_precommit(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    honest_fold_policy: HonestFoldPolicySpec,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-) -> Result<StandalonePrecommitPlan, AkitaError> {
-    key.validate()?;
-    let schedule_key = AkitaScheduleLookupKey::single(key);
-    let mut direct_policy = crate::policy::direct_only_policy(*policy);
-    let precommit_dimension = match policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => ring_dimension,
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            suffix_dimensions, ..
-        } => suffix_dimensions.last().copied().ok_or_else(|| {
-            AkitaError::InvalidSetup("adaptive suffix dimension domain must be nonempty".into())
-        })?,
-    };
-    direct_policy.uniform_ring_dimension = precommit_dimension;
-    direct_policy.ring_dimension_schedule_mode =
-        crate::RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: precommit_dimension,
-        };
-    direct_policy.selection_policy =
-        crate::SelectionPolicyId::for_policy(false, direct_policy.ring_dimension_schedule_mode);
-    akita_schedules::planner_support::validate_policy(&direct_policy)?;
-    let witness_len = 1usize
-        .checked_shl(key.num_vars() as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("precommit witness too large".into()))?;
-    let (min_open_basis, max_open_basis) =
-        crate::policy::log_basis_search_range_at_level(&direct_policy, 0);
-    let inner_source = root_inner_basis_source(
-        honest_fold_policy,
-        direct_policy.decomposition.log_commit_bound,
-    );
-    let (min_inner_basis, max_inner_basis) = inner_source.search_range(&direct_policy)?;
-    let dimensions = CommitmentRingDims::uniform(precommit_dimension);
-    let ring_challenge_cfg = ring_challenge_config(precommit_dimension)?;
-    let mut frontier: Vec<(StandalonePrecommitCandidate, Vec<u8>)> = Vec::new();
-    let objective_coords = |candidate: &StandalonePrecommitCandidate| {
-        [
-            candidate.next_witness_len,
-            candidate.padded_ab_setup_field_elements,
-            candidate.ab_setup_field_elements,
-        ]
-    };
-
-    for candidate_open_basis in min_open_basis..=max_open_basis {
-        for candidate_inner_basis in min_inner_basis..=max_inner_basis {
-            for (candidate_params, next_witness_len) in
-                crate::planner::root_level_candidates_for_basis(
-                    &schedule_key,
-                    honest_fold_policy,
-                    &[],
-                    &direct_policy,
-                    dimensions,
-                    &ring_challenge_cfg,
-                    &ring_challenge_config,
-                    witness_len,
-                    candidate_inner_basis,
-                    candidate_open_basis,
-                    false,
-                )?
-            {
-                let setup = ab_setup_field_elements(&candidate_params)?;
-                let candidate = StandalonePrecommitCandidate {
-                    profile: CommittedGroupProfile::from_params(key, &candidate_params),
-                    next_witness_len,
-                    ab_setup_field_elements: setup,
-                    padded_ab_setup_field_elements: padded_setup_prefix_len(setup),
-                };
-                let descriptor = candidate.profile.canonical_descriptor_bytes();
-                pareto::insert(
-                    &mut frontier,
-                    (candidate, descriptor),
-                    |(left, left_descriptor), (right, right_descriptor)| {
-                        pareto::canonical_dominates(
-                            &objective_coords(left),
-                            left_descriptor,
-                            &objective_coords(right),
-                            right_descriptor,
-                        )
-                    },
-                );
-            }
-        }
-    }
-
-    frontier.sort_by(|(left, left_descriptor), (right, right_descriptor)| {
-        (
-            left.next_witness_len,
-            left.padded_ab_setup_field_elements,
-            left.ab_setup_field_elements,
-            left_descriptor,
-        )
-            .cmp(&(
-                right.next_witness_len,
-                right.padded_ab_setup_field_elements,
-                right.ab_setup_field_elements,
-                right_descriptor,
-            ))
-    });
-    let selected = frontier
-        .first()
-        .map(|(candidate, _)| candidate.clone())
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "no standalone precommit profile found for layout {key:?} under this policy"
-            ))
-        })?;
-    Ok(StandalonePrecommitPlan {
-        selected,
-        pareto_frontier: frontier
-            .into_iter()
-            .map(|(candidate, _)| candidate)
-            .collect(),
-    })
 }
 
 #[cfg(test)]

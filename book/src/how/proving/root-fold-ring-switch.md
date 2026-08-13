@@ -13,7 +13,7 @@ from a recursive fold.
 
 **Sources to fold in**
 
-- `crates/akita-prover/src/protocol/flow/root_fold.rs:352-544` (`prove_root`, terminal root fold).
+- `crates/akita-verifier/src/protocol/core/root_fold.rs:352-544` (`prove_root`, terminal root fold).
 - `crates/akita-prover/src/protocol/ring_relation.rs`.
 - `crates/akita-types/src/opening_claims.rs`.
 - Paper §3.2 `sec:akita-layout` (the batched root relation; `eq:batched-root-*`), §3.5 `sec:akita-one-step`.

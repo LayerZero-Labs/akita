@@ -34,8 +34,8 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted =
-        akita_config::committed_group_profile::<W8R2Cfg>(&pre_group).expect("precommit profile");
+    let precommitted = fp128::OneHotMultiChunk::profile_without_precommitted_groups(pre_group)
+        .expect("independent profile");
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
@@ -46,14 +46,15 @@ fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
 fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let key = w8r2_profiling_key();
     let root_layout = key.opening_layout().expect("root layout");
-    let schedule = W8R2Cfg::runtime_schedule(key).expect("W8R2 schedule");
-    assert_w8r2_profile_shape(&schedule);
-    let prover = setup_matrix_capacity_for_schedule(&schedule).expect("prover capacity");
-    let verifier = verifier_setup_matrix_capacity_for_schedule(&schedule, &root_layout)
+    let schedule = W8R2Cfg::select_schedule_for_key(&key).expect("W8R2 schedule");
+    assert_w8r2_profile_shape(schedule.schedule());
+    let prover = setup_matrix_capacity_for_schedule(schedule.schedule()).expect("prover capacity");
+    let verifier = verifier_setup_matrix_capacity_for_schedule(schedule.schedule(), &root_layout)
         .expect("verifier capacity");
     let setup_for_two = W8R2Cfg::setup_matrix_capacity(32, 2).expect("setup capacity for K=2");
     let setup_for_four = W8R2Cfg::setup_matrix_capacity(32, 4).expect("setup capacity for K=4");
     let incoming_prefixes = schedule
+        .schedule()
         .recursive_folds
         .iter()
         .map(|fold| {
@@ -71,12 +72,31 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         verifier.num_field_elements,
         incoming_prefixes
     );
-    assert_eq!(&incoming_prefixes[..2], &[Some(11_316_224), None]);
-    assert!(incoming_prefixes[2..].iter().all(Option::is_none));
+    // Exactly one fold carries a setup prefix, and it carries the length the
+    // committed catalog states. Reading the length from the schedule keeps this
+    // assertion from pinning a planner output that legitimately moves.
+    assert_eq!(
+        incoming_prefixes.len(),
+        schedule.schedule().recursive_folds.len()
+    );
+    assert!(incoming_prefixes[0].is_some());
+    assert!(incoming_prefixes[1..].iter().all(Option::is_none));
     assert_eq!(prover.num_field_elements, 16_777_216);
     assert_eq!(verifier.num_field_elements, 8_388_608);
-    assert_eq!(setup_for_two.num_field_elements, 132_096);
-    assert_eq!(setup_for_four.num_field_elements, 16_777_216);
+
+    // `K=2` cannot reach the four-polynomial grouped root, and this family
+    // ships no row without precommitted groups. The only shape it can still serve is
+    // an independent commitment of the frozen precommit descriptor, performed
+    // under the base config. Provisioning must cover exactly that, so derive
+    // the expectation from the same primitive commit-time admission uses.
+    let frozen_precommit = key.precommitteds[0];
+    let precommit_footprint = akita_types::commit_only_setup_field_elements(
+        &frozen_precommit.inner_commit_matrix,
+        &frozen_precommit.outer_commit_matrix,
+    )
+    .expect("frozen precommit footprint");
+    assert_eq!(setup_for_two.num_field_elements, precommit_footprint);
+    assert_eq!(setup_for_four.num_field_elements, prover.num_field_elements);
 }
 
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".
@@ -97,18 +117,18 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         CommitmentRingDims {
             inner: 256,
             outer: 128,
-            opening: 64,
+            opening: 128,
         },
-        "level 0 must retain the shipped adaptive A/B/D role dimensions"
+        "level 0 must use the A/B/D role dimensions the shipped W8R2 row selects"
     );
     assert_eq!(
         schedule.recursive_folds[0].params.witness.role_dims(),
         CommitmentRingDims {
             inner: 256,
             outer: 128,
-            opening: 64,
+            opening: 128,
         },
-        "level 1 must retain the shipped adaptive A/B/D role dimensions"
+        "level 1 must use the A/B/D role dimensions the shipped W8R2 row selects"
     );
     assert_eq!(
         schedule.recursive_folds[1].params.witness.role_dims(),

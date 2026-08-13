@@ -10,10 +10,11 @@ use akita_types::{
 };
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
-    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+    Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(num_vars),
     ))
     .expect("runtime schedule")
+    .into_schedule()
 }
 
 fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {

@@ -45,10 +45,11 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     nv: usize,
 ) {
     let layout = resolve_layout::<F, Cfg>(nv);
-    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+    let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
-    .expect("schedule plan");
+    .expect("schedule plan")
+    .into_schedule();
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan), true);
@@ -82,10 +83,11 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     // is the singleton root the prover actually resolves via
     // `new_from_opening_batch`.
     let layout = resolve_layout::<FF, Cfg>(nv);
-    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+    let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
-    .expect("schedule plan");
+    .expect("schedule plan")
+    .into_schedule();
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     run_dense_for::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
@@ -133,19 +135,22 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 "[{label}] fixed onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
             );
         }
-        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
         ))
-        .expect("schedule plan");
+        .expect("schedule plan")
+        .into_schedule();
         print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
     } else {
         let lookup_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, num_polys));
-        let plan = Cfg::runtime_schedule(lookup_key.clone()).expect("schedule plan");
-        let layout = Cfg::get_params_for_batched_commitment(
-            &lookup_key.opening_layout().expect("opening layout"),
-        )
-        .expect("layout");
+        let plan = Cfg::select_schedule_for_key(&lookup_key)
+            .expect("schedule plan")
+            .into_schedule();
+        let layout =
+            Cfg::select_schedule_for_opening(&lookup_key.opening_layout().expect("opening layout"))
+                .map(|row| row.schedule().root.params.final_group.commitment.clone())
+                .expect("layout");
         let required_vars = layout.position_index_bits()
             + layout.block_index_bits()
             + layout.d_a().trailing_zeros() as usize;
@@ -404,10 +409,11 @@ fn run_profile_onehot_fp128_with_cfg<
     );
     assert_singleton_mode(label, num_polys);
 
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
-    .expect("generated fp128 one-hot schedule");
+    .expect("generated fp128 one-hot schedule")
+    .into_schedule();
     let selected_dims = std::iter::once(schedule.root.params.final_group.commitment.role_dims())
         .chain(
             schedule
@@ -598,10 +604,16 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
 }
 
 fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> CommittedGroupParams {
-    Cfg::get_params_for_batched_commitment(
+    Cfg::select_schedule_for_opening(
         &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("layout")
+    .schedule()
+    .root
+    .params
+    .final_group
+    .commitment
+    .clone()
 }
 #[cfg(feature = "profile-onehot-fp128")]
 pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {

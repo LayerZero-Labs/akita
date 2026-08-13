@@ -25,11 +25,11 @@ struct Snapshot {
 }
 
 fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(26),
     ))
     .expect("generated dense nv=26 schedule");
-    let root = &schedule.root.params.final_group.commitment;
+    let root = &schedule.schedule().root.params.final_group.commitment;
     Snapshot {
         inner_basis: root.log_basis_inner,
         opening_basis: root.log_basis_open,
@@ -46,7 +46,7 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
         b_output_raw: root.outer_commit_matrix.raw_output_dimension().unwrap(),
         d_input_raw: root.open_commit_matrix.raw_input_dimension().unwrap(),
         d_output_raw: root.open_commit_matrix.raw_output_dimension().unwrap(),
-        next_witness: schedule.root.output_witness_len,
+        next_witness: schedule.schedule().root.output_witness_len,
     }
 }
 

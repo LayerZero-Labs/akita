@@ -6,9 +6,7 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{
-    DensePoly, OneHotPoly, PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
-};
+use akita_prover::{DensePoly, OneHotPoly, PreparedProverGroup, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
@@ -37,6 +35,7 @@ const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
+
 type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
@@ -63,12 +62,7 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    let profiles = batch_profiles::<C>(&claims)?;
-    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
-    Ok((
-        selection,
-        ProverOpeningData::new(claims, hints, polynomials)?,
-    ))
+    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials)
 }
 
 fn selected_statement<'a, C>(
@@ -90,25 +84,6 @@ where
     };
     let selection = C::select_schedule_for_profiles(&profiles)?.selection();
     GroupBatchStatement::new(selection, claims)
-}
-
-fn batch_profiles<C>(
-    claims: &OpeningClaims<'_, C::ExtField, CommittedGroup<C::Field>>,
-) -> Result<CommittedGroupBatchProfile, AkitaError>
-where
-    C: CommitmentConfig,
-{
-    let (final_group, precommitteds) = claims
-        .groups()
-        .split_last()
-        .ok_or_else(|| AkitaError::InvalidInput("opening data requires a group".into()))?;
-    Ok(CommittedGroupBatchProfile {
-        final_group: *final_group.commitment().profile(),
-        precommitteds: precommitteds
-            .iter()
-            .map(|group| *group.commitment().profile())
-            .collect(),
-    })
 }
 
 /// Batched recursion already consults the byte planner before folding
@@ -162,7 +137,14 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
     let opening_batch = OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
+    C::select_schedule_for_opening(&opening_batch)
+        .expect("singleton commitment layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone()
 }
 
 type VerifyFixture = (
@@ -189,8 +171,16 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     )
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -256,8 +246,9 @@ fn expected_same_point_batched_shape(
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let schedule =
-        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
+    let schedule = OneHotCfg::select_schedule_for_opening(&opening_batch)
+        .expect("batched root runtime plan")
+        .into_schedule();
     let root_step = &schedule.root;
     let root_params = &root_step.params.final_group.commitment;
     let num_fold_levels = schedule.num_fold_levels();

@@ -42,7 +42,8 @@ use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
-    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
+    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule,
+    PolynomialGroupLayout,
 };
 
 type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>);
@@ -64,6 +65,47 @@ fn group_batch_requests_are_canonically_ordered() {
             akita_planner::runtime_schedule_key_cmp(&pair[0].0, &pair[1].0)
                 == std::cmp::Ordering::Less
         }));
+    }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
+    let produced = ALL_GENERATED_FAMILIES
+        .iter()
+        .flat_map(|family| {
+            emitted_scalar_keys(family)
+                .unwrap_or_else(|error| {
+                    panic!("{} S-key enumeration failed: {error}", family.module_name)
+                })
+                .into_iter()
+                .map(|group| {
+                    let schedule =
+                        (family.select_schedule_for_key)(AkitaScheduleLookupKey::single(group))
+                            .unwrap_or_else(|error| {
+                                panic!("{} S-row lookup failed: {error}", family.module_name)
+                            });
+                    CommittedGroupProfile::from_params(
+                        group,
+                        &schedule.root.params.final_group.commitment,
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+
+    for family in ALL_GENERATED_FAMILIES {
+        let catalog = (family.schedule_catalog)()
+            .unwrap_or_else(|| panic!("{} generated catalog is unavailable", family.module_name));
+        for entry in catalog.entries {
+            for group in entry.root.precommitted_groups {
+                assert!(
+                    produced.contains(&group.descriptor),
+                    "family {} embeds a grouped precommitted descriptor without an exact generated S producer: {:?}",
+                    family.module_name,
+                    group.descriptor.group
+                );
+            }
+        }
     }
 }
 
@@ -100,69 +142,7 @@ fn prepare_family_catalog(
         "family {module_name} catalog entries must be sorted for binary lookup"
     );
     assert_table_hit(module_name, &catalog, keys);
-    assert_precommit_registry(family, &catalog);
     catalog
-}
-
-#[cfg(feature = "all-schedules")]
-fn assert_precommit_registry(
-    family: &GeneratedFamily,
-    catalog: &akita_schedules::GeneratedScheduleTable,
-) {
-    let expected = (family.precommitted_profiles)().unwrap_or_else(|e| {
-        panic!(
-            "{} precommit registry regen failed: {e}",
-            family.module_name
-        )
-    });
-    for expected_profile in expected {
-        let found = catalog
-            .precommitted_profiles
-            .iter()
-            .copied()
-            .map(|row| row.expand_to_committed_profile(&(family.policy)()))
-            .any(|profile| {
-                profile.unwrap_or_else(|e| {
-                    panic!("{} generated precommit row failed: {e}", family.module_name)
-                }) == expected_profile
-            });
-        assert!(
-            found,
-            "family {} generated precommit registry is missing {:?}",
-            family.module_name, expected_profile.group
-        );
-    }
-    for &row in catalog.precommitted_profiles {
-        let profile = row
-            .expand_to_committed_profile(&(family.policy)())
-            .unwrap_or_else(|e| {
-                panic!("{} generated precommit row failed: {e}", family.module_name)
-            });
-        let runtime = (family.runtime_precommitted_profile)(&profile.group).unwrap_or_else(|e| {
-            panic!(
-                "{} runtime precommit lookup failed: {e}",
-                family.module_name
-            )
-        });
-        assert_eq!(
-            runtime, profile,
-            "family {} runtime precommit profile must match generated registry exactly",
-            family.module_name
-        );
-    }
-    for entry in catalog.entries {
-        for group in entry.root.precommitted_groups {
-            group
-                .descriptor
-                .validate((family.policy)().sis_modulus_profile.field_bits())
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "{} schedule row references an invalid precommit descriptor: {e}",
-                        family.module_name
-                    )
-                });
-        }
-    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -257,7 +237,6 @@ fn equal_lookup_keys_form_one_contiguous_candidate_range() {
     let entries = Box::leak(vec![entry, entry].into_boxed_slice());
     let duplicate_table = akita_schedules::GeneratedScheduleTable {
         entries,
-        precommitted_profiles: catalog.precommitted_profiles,
         identity: catalog.identity,
     };
     let key = entry.to_runtime_lookup_key();
@@ -324,7 +303,6 @@ fn adaptive_catalog_identity_rejects_terminal_dimension_growth() {
 
     let mutated = akita_schedules::GeneratedScheduleTable {
         entries: Box::leak(vec![entry].into_boxed_slice()),
-        precommitted_profiles: catalog.precommitted_profiles,
         identity: catalog.identity,
     };
     let error = validate_catalog_identity(&mutated, &policy, fp32::Dense::ring_challenge_config)
@@ -424,7 +402,7 @@ fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
-    (family.runtime_schedule)(request.0.clone())
+    (family.select_schedule_for_key)(request.0.clone())
 }
 
 #[cfg(feature = "all-schedules")]
@@ -532,7 +510,7 @@ fn compare_scalar_key(family: &GeneratedFamily, key: PolynomialGroupLayout) -> O
     compare_schedule_results(
         family,
         key,
-        (family.runtime_schedule)(AkitaScheduleLookupKey::single(key)),
+        (family.select_schedule_for_key)(AkitaScheduleLookupKey::single(key)),
         (family.regen)(key),
     )
 }

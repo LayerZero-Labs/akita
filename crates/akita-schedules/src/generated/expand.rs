@@ -15,7 +15,7 @@ use akita_field::AkitaError;
 
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
-    GeneratedPrecommittedProfile, GeneratedSetupPrefixInput, GeneratedTerminalFold,
+    GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
@@ -100,6 +100,13 @@ impl GeneratedSetupPrefixInput {
         let num_positions_per_block =
             generated_count(geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
+        let outer_slice_count =
+            CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
+        outer_slice_count.validate_for_commitment(
+            0,
+            akita_types::CommitmentPayloadMode::Compressed,
+            num_live_blocks,
+        )?;
         let n_prefix = num_live_ring_elements_per_claim
             .checked_mul(d_a)
             .ok_or_else(|| {
@@ -176,13 +183,6 @@ impl GeneratedSetupPrefixInput {
             log_basis_open,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let outer_slice_count =
-            CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
-        outer_slice_count.validate_for_commitment(
-            0,
-            akita_types::CommitmentPayloadMode::Compressed,
-            num_live_blocks,
-        )?;
         let outer_width = CommitmentSliceGeometry::try_new(
             outer_slice_count,
             num_live_blocks,
@@ -243,96 +243,6 @@ impl GeneratedSetupPrefixInput {
             num_digits_open: num_digits_open_val,
             num_digits_fold,
         })
-    }
-}
-
-impl GeneratedPrecommittedProfile {
-    /// Expand this compact generated standalone precommit descriptor into its
-    /// canonical runtime profile.
-    pub fn expand_to_committed_profile(
-        self,
-        policy: &PlannerPolicy,
-    ) -> Result<CommittedGroupProfile, AkitaError> {
-        self.group.validate()?;
-        let geometry = self.commitment.geometry;
-        let num_live_ring_elements_per_claim = generated_count(
-            geometry.live_ring_elements_per_claim,
-            "live ring-element count",
-        )?;
-        let num_positions_per_block =
-            generated_count(geometry.positions_per_block, "positions per block")?;
-        let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
-        let d_a = self.commitment.inner_commit_matrix.ring_dimension as usize;
-        let d_b = self.commitment.outer_commit_matrix.ring_dimension as usize;
-        validate_role_dims(CommitmentRingDims {
-            inner: d_a,
-            outer: d_b,
-            opening: d_b,
-        })?;
-        let outer_slice_count =
-            CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
-        outer_slice_count.validate_for_commitment(
-            0,
-            akita_types::CommitmentPayloadMode::Compressed,
-            num_live_blocks,
-        )?;
-        let num_digits_inner = generated_count(self.num_digits_inner as u64, "inner digit depth")?;
-        let num_digits_outer = generated_count(self.num_digits_outer as u64, "outer digit depth")?;
-        if num_digits_inner == 0 || num_digits_outer == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "generated precommit digit depths must be nonzero".to_string(),
-            ));
-        }
-        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated precommit A width overflow".to_string())
-            })?;
-        let n_a = generated_count(self.inner_output_rank as u64, "A output rank")?;
-        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            n_a,
-            inner_width,
-            self.inner_coeff_linf_bound,
-            d_a,
-        )?;
-        let outer_width = CommitmentSliceGeometry::try_new(
-            outer_slice_count,
-            num_live_blocks,
-            self.group.num_polynomials(),
-            n_a,
-            num_digits_outer,
-            d_a,
-            d_b,
-        )?
-        .physical_input_width();
-        let n_b = generated_count(self.outer_output_rank as u64, "B output rank")?;
-        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            n_b,
-            outer_width,
-            self.outer_coeff_linf_bound,
-            d_b,
-        )?;
-        let profile = CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
-            group: self.group,
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-            outer_slice_count,
-            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
-            num_digits_inner,
-            inner_commit_matrix,
-            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
-            num_digits_outer,
-            outer_commit_matrix,
-        };
-        profile.validate_frozen_precommit(policy.decomposition.field_bits())?;
-        Ok(profile)
     }
 }
 

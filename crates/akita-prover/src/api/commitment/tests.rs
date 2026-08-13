@@ -72,15 +72,6 @@ fn commit_level_params_reject_log_basis_above_i8_range() {
 
 #[test]
 fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
-    let expanded = AkitaProverSetup::<F>::generate_with_capacity(
-        5,
-        1,
-        SetupMatrixCapacity {
-            num_field_elements: D,
-        },
-    )
-    .unwrap()
-    .expanded;
     let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
@@ -102,6 +93,20 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
         d_key.coeff_linf_bound,
         D,
     );
+    let commit_only_fields = akita_types::commit_only_setup_field_elements(
+        &params.inner_commit_matrix,
+        &params.outer_commit_matrix,
+    )
+    .unwrap();
+    let expanded = AkitaProverSetup::<F>::generate_with_capacity(
+        5,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: commit_only_fields,
+        },
+    )
+    .unwrap()
+    .expanded;
 
     validate_commit_level_params::<F>(&params, &expanded, 0, 1)
         .expect("standalone commitment only materializes A and B");
@@ -499,11 +504,14 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         .collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense polynomial");
 
-    let production = commit_with_params::<F, DensePoly<F>, CpuBackend>(
+    let production_geometry =
+        validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
+            .expect("production S=1 geometry");
+    let production = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&poly),
-        setup.expanded.as_ref(),
         &ctx,
-        &params,
+        (&params).into(),
+        &production_geometry,
     )
     .expect("production S=1 commitment");
     let (reference, compression_plan) =
@@ -536,11 +544,16 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
 
     for slice_count in akita_types::CommitmentSliceCount::ALL {
         let sliced_params = commitment_params_for_slice_count(slice_count);
-        let (commitment, hint) = commit_with_params::<F, DensePoly<F>, CpuBackend>(
+        let slice_geometry =
+            validate_commit_level_params::<F>(&sliced_params, setup.expanded.as_ref(), 0, 1)
+                .unwrap_or_else(|error| {
+                    panic!("real S={} geometry failed: {error}", slice_count.get())
+                });
+        let (commitment, hint) = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
             std::slice::from_ref(&poly),
-            setup.expanded.as_ref(),
             &ctx,
-            &sliced_params,
+            (&sliced_params).into(),
+            &slice_geometry,
         )
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count
