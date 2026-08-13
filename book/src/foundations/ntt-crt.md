@@ -41,7 +41,6 @@ DIT-inverse pairing that avoids bit-reversal.
 
 - Paper App B.2.1-B.2.2 (`sec:akita-crt-profiles`, `tab:akita-crt-profiles`).
 - `crates/akita-algebra/src/ring/crt_ntt_repr.rs`, `ntt/`.
-- `specs/crt-ntt-prime-profiles.md`.
 
 ## Accumulation capacity and chunking
 

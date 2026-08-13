@@ -2,7 +2,8 @@
 
 > **Superseded (schedule keys):** portions of this spec that describe schedule lookup
 > keys, shipped-table selection, or preset↔table binding are superseded by
-> [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md) and the exact
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md)
+> and the exact
 > profile/row-selection design now implemented by `CommittedGroupProfile` and
 > `OpeningScheduleSelection`. Private polynomial representations are not public
 > key fields. This file remains for historical witness-layout / incidence notes

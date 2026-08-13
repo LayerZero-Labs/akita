@@ -690,4 +690,3 @@ The implementation MUST update:
 - [`fold-linf-rejection.md`](fold-linf-rejection.md)
 - [`tail-wire-encoding.md`](tail-wire-encoding.md)
 - [`multi-group-batching.md`](multi-group-batching.md)
-- [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md)

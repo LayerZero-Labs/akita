@@ -102,7 +102,7 @@ Each (library, field, arch, SIMD) cell measures the same operation set, matching
 - No change to Akita field arithmetic, representations, proof formats, transcript bytes, schedules, or public APIs. This is additive bench-only code plus one new spec.
 - Correctness of the benchmarked Akita types is already covered by `crates/akita-field` scalar/packed parity tests; correctness of Plonky3 types is upstream. The bench asserts nothing about cryptographic soundness; the security framing is documentation.
 - Verifier no-panic contract is untouched by Phase 1: no verifier-reachable code changes.
-- Phase 2 constraint: any Akita field/kernel change must preserve canonical field representation (values stay in `[0, P)`), keep packed-vs-scalar lane parity, leave proof formats / transcript bytes / schedules / public APIs unchanged, and uphold the verifier no-panic contract. Every Phase 2 change must be gated by a measurable win on the Phase 1 benches (latency and/or throughput, per arch), mirroring the benchmark-gated discipline in `specs/fp31-field-optimization-retrospective.md`. Phase 2 borrows Plonky3 techniques only where they translate cleanly to Akita's Solinas representation; it does not adopt Montgomery representation (consistent with the prior fp31 decision).
+- Phase 2 constraint: any Akita field/kernel change must preserve canonical field representation (values stay in `[0, P)`), keep packed-vs-scalar lane parity, leave proof formats / transcript bytes / schedules / public APIs unchanged, and uphold the verifier no-panic contract. Every Phase 2 change must be gated by a measurable win on the Phase 1 benches (latency and/or throughput, per arch), mirroring the benchmark-gated discipline in `book/src/how/optimizations.md`. Phase 2 borrows Plonky3 techniques only where they translate cleanly to Akita's Solinas representation; it does not adopt Montgomery representation (consistent with the prior fp31 decision).
 
 ### Non-Goals
 
@@ -207,7 +207,7 @@ Candidate areas to examine (the data decides which are worth pursuing; this list
 - AVX-512 opportunities already flagged but not taken in `specs/avx-simd-port.md` (for example IFMA52 for narrow primes, packed-type alignment), re-evaluated against the fresh AVX-512 numbers from the x86_64 server.
 - Inversion batching patterns if inversion shows up as a hot cell.
 
-Each candidate follows the same loop: measure baseline on the Phase 1 benches, implement under the Phase 2 invariants (canonical Solinas representation, parity, no format/transcript/API change, no Montgomery cutover), re-measure on the affected arch(es), and keep only on a clear win. Findings (kept and rejected, with numbers) are written up so the paper and a follow-up retrospective spec can cite them; this mirrors the structure of `specs/fp31-field-optimization-retrospective.md`.
+Each candidate follows the same loop: measure baseline on the Phase 1 benches, implement under the Phase 2 invariants (canonical Solinas representation, parity, no format/transcript/API change, no Montgomery cutover), re-measure on the affected arch(es), and keep only on a clear win. Findings (kept and rejected, with numbers) are written up so the paper and a follow-up retrospective spec can cite them; this mirrors the structure of `book/src/how/optimizations.md`.
 
 ### Phase 2 Findings
 
@@ -371,7 +371,7 @@ Phase 2 (after all Phase 1 data is committed):
 
 10. From the summary, rank Akita's largest ns/lane gaps versus Plonky3 on packed `mul`, `mul_add`, `square`, and degree-4 extension multiply, per arch.
 11. For each candidate (see the Phase 2 design map), read the corresponding Plonky3 kernel, implement under the Phase 2 invariants, re-measure on the affected arch(es), and keep only on a clear benchmark win.
-12. Write up kept and rejected candidates with numbers (a follow-up retrospective spec in the style of `specs/fp31-field-optimization-retrospective.md`); land wins as separate benchmark-gated commits.
+12. Write up kept and rejected candidates with numbers (a follow-up retrospective spec in the style of `book/src/how/optimizations.md`); land wins as separate benchmark-gated commits.
 
 ### Risks To Resolve First
 
@@ -383,9 +383,9 @@ Phase 2 (after all Phase 1 data is committed):
 ## References
 
 - Existing Akita field microbench suite: `crates/akita-pcs/benches/field_arith/` (`arithmetic.rs`, `base.rs`, `ext2.rs`, `ext4.rs`, `params.rs`, `comparison.rs`).
-- `specs/fp31-field-optimization-retrospective.md`: Akita 31-bit optimization, Plonky3 Monty31/Mersenne31 references, recorded packed-mul numbers.
+- `book/src/how/optimizations.md`: Akita 31-bit optimization, Plonky3 Monty31/Mersenne31 references, recorded packed-mul numbers.
 - `specs/avx-simd-port.md`: AVX2/AVX-512/NEON packed backends, target-cpu flag convention, and the noted Mersenne31 ext4 bench gap this spec closes.
-- `specs/general-field-support.md`, `specs/extension-claim-incidence-cutover.md`: Akita extension-field representations (`Fp2`, tower/power/ring-subfield `Fp4`).
+- `specs/extension-field-opening-batching.md`: Akita extension-field representations (`Fp2`, tower/power/ring-subfield `Fp4`).
 - Plonky3 0.5.3: `p3-field`, `p3-mersenne-31`, `p3-baby-bear`, `p3-koala-bear`. `p3-field`, `p3-koala-bear`, `p3-monty-31` (plus poseidon/challenger/dft/matrix/util) are already in `Cargo.lock` via `spongefish`; `p3-mersenne-31` and `p3-baby-bear` are added at the same 0.5.3 version.
 - Sumcheck soundness `<= v*d / |F|` over `v` rounds: Lund-Fortnow-Karloff-Nisan, "Algebraic Methods for Interactive Proof Systems" (LFKN, 1992); Thaler, *Proofs, Arguments, and Zero-Knowledge*, Prop. 2.9.
 - FRI / Reed-Solomon proximity-gap soundness and its field-size dependence (distinct from the query/PoW term): Ben-Sasson, Carmon, Ishai, Kopparty, Saraf, "Proximity Gaps for Reed-Solomon Codes" (BCIKS, 2020), ePrint 2020/654.

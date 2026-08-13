@@ -26,7 +26,7 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
-# small-field profiles by name (see crt-ntt-prime-profiles, remove-fp16).
+# small-field profiles by name (see remove-fp16).
 dead_patterns=(
   'akita-scheme'
   'akita-cfg'
@@ -110,17 +110,15 @@ live_specs=(
   specs/setup-offloading-planner.md
   specs/eor-streamed-prover.md
   specs/packed-sumcheck.md
-  specs/schedule-catalog-ownership.md
   specs/planner-incidence-generalization.md
   specs/multi-group-batching.md
   specs/akita-pcs-crate-decomposition.md
   specs/akita-field-refactor.md
-  specs/crt-ntt-prime-profiles.md
   specs/eor-sumcheck-prover-acceleration.md
   specs/cross-repo-field-microbench.md
 )
 # Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:
-# specs/akita-compute-backend-metal.md, specs/transcript-immediate-fixes.md
+# specs/akita-compute-backend-metal.md
 
 missing_live=()
 for f in "${live_specs[@]}"; do

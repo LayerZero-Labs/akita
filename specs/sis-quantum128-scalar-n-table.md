@@ -591,5 +591,5 @@ Durable narrative belongs in `book/src/how/security.md`.
   `third_party/lattice-estimator` checkout used by the estimator goldens.
 - Langlois, Stehle, *Worst Case to Average Case Reductions for Module Lattices*,
   [IACR ePrint 2012/090](https://eprint.iacr.org/2012/090).
-- [`sis-infinity-estimator-crate.md`](sis-infinity-estimator-crate.md), Rust
-  infinity estimator profiles and reduction model APIs.
+- `crates/akita-sis-estimator/` — Rust infinity estimator profiles and
+  reduction model APIs.
