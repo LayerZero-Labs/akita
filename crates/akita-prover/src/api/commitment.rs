@@ -16,14 +16,17 @@ use akita_field::{
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommitmentRingDims, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
-    CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
+    Commitment, CommitmentRingDims, CommitmentSliceCount, CommittedGroup, CommittedGroupParams,
+    CommittedGroupProfile, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
 
 mod inner;
+#[cfg(test)]
+use inner::outer_slice_inputs;
 use inner::prepare_inner_commit_group;
 pub(crate) use inner::validate_commit_inner_shape;
+pub(crate) use inner::{commit_outer_slices, for_each_outer_slice_input};
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 ///
@@ -129,6 +132,7 @@ struct CommitmentGeometry<'a> {
     log_basis_outer: u32,
     num_digits_outer: usize,
     outer_matrix: &'a OuterCommitMatrixParams,
+    outer_slice_count: CommitmentSliceCount,
 }
 
 impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
@@ -143,6 +147,7 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
             log_basis_outer: params.log_basis_outer,
             num_digits_outer: params.num_digits_outer,
             outer_matrix: &params.outer_commit_matrix,
+            outer_slice_count: params.outer_slice_count,
         }
     }
 }
@@ -196,6 +201,7 @@ where
     let required = akita_types::commit_only_setup_field_elements(
         geometry.inner_matrix,
         geometry.outer_matrix,
+        geometry.outer_slice_count,
     )?;
     let available = setup.shared_matrix.num_field_elements();
     if required > available {
@@ -210,10 +216,13 @@ where
 pub(crate) fn validate_commit_level_params<F>(
     params: &CommittedGroupParams,
     setup: &AkitaExpandedSetup<F>,
-) -> Result<(), AkitaError>
+    fold_level: usize,
+    num_polynomials: usize,
+) -> Result<akita_types::CommitmentSliceGeometry, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
+    let slice_geometry = params.validate_commitment_request(fold_level, num_polynomials)?;
     if params.num_live_blocks == 0 || params.num_positions_per_block == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
@@ -248,16 +257,7 @@ where
     // that row's shared D geometry, which is consumed only if the group later
     // participates in the selected opening schedule. Charging D here would
     // reject a setup that exactly fits the standalone commitment profile.
-    Ok(())
-}
-
-pub(crate) fn validate_commit_outer_input_nonempty(active_len: usize) -> Result<(), AkitaError> {
-    if active_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "commit B input must be nonempty".to_string(),
-        ));
-    }
-    Ok(())
+    Ok(slice_geometry)
 }
 
 /// Validate a singleton commitment request against prover setup capacity.
@@ -343,6 +343,7 @@ fn commit_with_validated_geometry<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
     geometry: CommitmentGeometry<'_>,
+    slice_geometry: &akita_types::CommitmentSliceGeometry,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore
@@ -401,28 +402,14 @@ where
                         num_digits_open,
                         log_basis,
                     )?;
-                    let total_planes =
-                        prepared_polynomials
-                            .iter()
-                            .try_fold(0usize, |total, (_, digits)| {
-                                total.checked_add(digits.total_planes()).ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "commit B input plane count overflow".to_string(),
-                                    )
-                                })
-                            })?;
-                    validate_commit_outer_input_nonempty(total_planes)?;
-                    let mut b_input_digits = Vec::with_capacity(total_planes);
-                    for (_, digits) in &prepared_polynomials {
-                        b_input_digits.extend_from_slice(digits.typed_planes::<D_B>()?);
-                    }
-                    let u = backend.digit_rows::<D_B>(prepared, n_b, &b_input_digits, log_basis)?;
-                    if u.len() != n_b {
-                        return Err(AkitaError::InvalidSetup(format!(
-                            "backend returned {} B commitment rows, expected {n_b}",
-                            u.len(),
-                        )));
-                    }
+                    let u = commit_outer_slices::<F, _, D_B>(
+                        backend,
+                        prepared,
+                        n_b,
+                        prepared_polynomials.iter().map(|(_, digits)| digits),
+                        slice_geometry,
+                        log_basis,
+                    )?;
                     let source = RingVec::from_ring_elems(&u);
                     let plan = CompressionChainPlan::for_complete_source(
                         geometry.outer_matrix.sis_table_key().modulus_profile,
@@ -474,13 +461,10 @@ fn validate_explicit_context<F>(
     group_layout: akita_types::PolynomialGroupLayout,
     precommitted_groups: PrecommittedGroupContext<'_>,
     params: &CommittedGroupParams,
-    expanded: &AkitaExpandedSetup<F>,
 ) -> Result<CommittedGroupProfile, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    validate_commit_level_params::<F>(params, expanded)?;
-
     match precommitted_groups {
         PrecommittedGroupContext::NoPrecommittedGroups => {
             params.require_scalar_level("explicit commitment")?;
@@ -567,7 +551,6 @@ where
                 group_layout,
                 context.precommitted_groups,
                 params,
-                expanded,
             )?;
             (params, profile)
         } else {
@@ -595,10 +578,11 @@ where
             // `audit_resolved_schedule` already proved this row's profile
             // agrees with its parameters, so no re-derivation happens here.
             let params = &scheduled_row.schedule().root.params.final_group.commitment;
-            validate_commit_level_params::<Cfg::Field>(params, expanded)?;
             (params, scheduled_row.profiles().final_group)
         };
 
+    let slice_geometry =
+        validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
     let geometry: CommitmentGeometry<'_> = params.into();
     let transform_ring_d = geometry.inner_matrix.ring_dimension();
     let (commitment, hint) = if root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
@@ -614,9 +598,15 @@ where
             &transformed,
             stack.commit(),
             geometry,
+            &slice_geometry,
         )?
     } else {
-        commit_with_validated_geometry::<Cfg::Field, P, B>(polys, stack.commit(), geometry)?
+        commit_with_validated_geometry::<Cfg::Field, P, B>(
+            polys,
+            stack.commit(),
+            geometry,
+            &slice_geometry,
+        )?
     };
 
     Ok(CommitOutput {

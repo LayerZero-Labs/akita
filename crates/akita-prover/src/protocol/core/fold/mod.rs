@@ -369,11 +369,7 @@ where
             logical_w.live_coeff_len()
         )));
     }
-    let logical_w = if E::EXT_DEGREE == 1 {
-        logical_w.align_for_commitment_ring_dim(next_opening_ring_dim)?
-    } else {
-        logical_w
-    };
+    let logical_w = logical_w.align_for_commitment_ring_dim(next_opening_ring_dim)?;
     let _span = tracing::info_span!("commit_w_level", level).entered();
     let next_commitment = match next_params {
         FoldSuccessorParams::Recursive(params) => {
@@ -382,7 +378,15 @@ where
                     "recursive successor requires outer-payload binding".into(),
                 ));
             }
-            crate::commit_w::<Cfg, C>(&params.witness, expanded, stack.commit(), &logical_w)?
+            crate::commit_w::<Cfg, C>(
+                &params.witness,
+                level
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?,
+                expanded,
+                stack.commit(),
+                &logical_w,
+            )?
         }
         FoldSuccessorParams::Terminal(params) => {
             if next_witness_binding

@@ -6,6 +6,8 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
+use crate::CommitmentSliceCount;
+
 use super::{
     decomposition_digits::balanced_digit_max, fold_witness_unsnapped_linf_cap,
     num_digits_for_bound, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
@@ -23,6 +25,8 @@ pub struct HonestFoldSizingQuery<'a> {
     pub num_chunks: usize,
     /// Total coefficients emitted across all physical response windows.
     pub num_fold_coeffs: usize,
+    /// Number of logical B images carried by this commitment witness.
+    pub outer_slice_count: CommitmentSliceCount,
     /// Exact source-plane norms after the selected inner decomposition.
     pub witness_norms: FoldWitnessNorms,
     /// Basis used to decompose the emitted folded response.
@@ -235,6 +239,12 @@ impl HonestFoldPolicy for UnitOneHotFoldPolicy {
         validate_query(query)?;
         self.snap.validate()?;
         let legacy = self.legacy_fallback.num_digits_fold(query)?;
+        // The q32 MGF calibration covers the historical one-image witness.
+        // Reusing B introduces several logical B images and their compression
+        // witness, so retain the conservative balanced bound for that geometry.
+        if self.field_bits == 32 && query.outer_slice_count != CommitmentSliceCount::ONE {
+            return Ok(legacy);
+        }
         let Some(mut cap) = self.exact_threshold(query) else {
             return Ok(legacy);
         };
@@ -376,6 +386,7 @@ mod tests {
             num_live_blocks: 16,
             num_chunks: 1,
             num_fold_coeffs: 4_096,
+            outer_slice_count: CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::bounded(3, 64),
             log_basis_response: 3,
             challenge_config: challenge,
@@ -496,6 +507,7 @@ mod tests {
                             num_live_blocks,
                             num_chunks: 1,
                             num_fold_coeffs,
+                            outer_slice_count: CommitmentSliceCount::ONE,
                             witness_norms: legacy_witness,
                             log_basis_response: log_basis,
                             challenge_config: &challenge,
@@ -514,6 +526,50 @@ mod tests {
         assert!(
             tightened.is_some(),
             "supported grid must include a tighter row"
+        );
+    }
+
+    #[test]
+    fn fp32_sliced_one_hot_uses_the_policy_owned_conservative_bound() {
+        let challenge = d64_challenge();
+        let legacy_witness = FoldWitnessNorms::new(1, 4);
+        let one_hot = UnitOneHotFoldPolicy::preserving_existing_behavior(32, legacy_witness);
+        let legacy =
+            BalancedSignedDigitFoldPolicy::preserving_existing_behavior(32, legacy_witness);
+        let mut exercised_tightening = false;
+
+        'geometry: for num_live_blocks in [4, 16, 64, 256, 1_024] {
+            for num_fold_coeffs in [256, 1_024, 4_096, 16_384] {
+                for log_basis_response in 1..=8 {
+                    let unsliced = HonestFoldSizingQuery {
+                        ring_dimension: 64,
+                        num_claims: 1,
+                        num_live_blocks,
+                        num_chunks: 1,
+                        num_fold_coeffs,
+                        outer_slice_count: CommitmentSliceCount::ONE,
+                        witness_norms: legacy_witness,
+                        log_basis_response,
+                        challenge_config: &challenge,
+                    };
+                    let exact_digits = one_hot.num_digits_fold(unsliced).unwrap();
+                    let legacy_digits = legacy.num_digits_fold(unsliced).unwrap();
+                    if exact_digits < legacy_digits {
+                        let sliced = HonestFoldSizingQuery {
+                            outer_slice_count: CommitmentSliceCount::TWO,
+                            ..unsliced
+                        };
+                        assert_eq!(one_hot.num_digits_fold(sliced).unwrap(), legacy_digits);
+                        exercised_tightening = true;
+                        break 'geometry;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            exercised_tightening,
+            "the regression grid must exercise the fp32 sliced fallback"
         );
     }
 
@@ -540,6 +596,7 @@ mod tests {
                 num_live_blocks: logical_num_live_blocks,
                 num_chunks,
                 num_fold_coeffs: physical_num_fold_coeffs,
+                outer_slice_count: CommitmentSliceCount::ONE,
                 witness_norms: FoldWitnessNorms::new(1, 4),
                 log_basis_response: 3,
                 challenge_config: &challenge,
@@ -561,6 +618,7 @@ mod tests {
             num_live_blocks: 64,
             num_chunks: 1,
             num_fold_coeffs: 512,
+            outer_slice_count: CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::new(1, 4),
             log_basis_response: 3,
             challenge_config: &challenge,
@@ -590,6 +648,7 @@ mod tests {
             num_live_blocks: 10,
             num_chunks: 4,
             num_fold_coeffs: 512,
+            outer_slice_count: CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::new(1, 4),
             log_basis_response: 3,
             challenge_config: &challenge,
@@ -617,6 +676,7 @@ mod tests {
             num_live_blocks: 4,
             num_chunks: 8,
             num_fold_coeffs: 4_096,
+            outer_slice_count: CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::new(1, 4),
             log_basis_response: 3,
             challenge_config: &challenge,

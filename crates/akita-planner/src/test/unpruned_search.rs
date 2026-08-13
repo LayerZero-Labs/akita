@@ -8,7 +8,7 @@ struct UnprunedCtx<'a> {
     key: PolynomialGroupLayout,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct UnprunedState {
     level: usize,
     input_witness_len: usize,
@@ -17,10 +17,16 @@ struct UnprunedState {
     payload_phase: akita_types::CommitmentPayloadPhase,
 }
 
+type UnprunedMemo = Vec<(UnprunedState, Arc<Vec<ScheduleCandidate>>)>;
+
 fn enumerate_suffixes(
     ctx: &UnprunedCtx<'_>,
     state: UnprunedState,
-) -> Result<Vec<ScheduleCandidate>, AkitaError> {
+    memo: &mut UnprunedMemo,
+) -> Result<Arc<Vec<ScheduleCandidate>>, AkitaError> {
+    if let Some((_, suffixes)) = memo.iter().find(|(cached, _)| *cached == state) {
+        return Ok(Arc::clone(suffixes));
+    }
     let UnprunedCtx {
         policy,
         dimensions,
@@ -35,7 +41,7 @@ fn enumerate_suffixes(
         payload_phase,
     } = state;
     if level > MAX_RECURSION_DEPTH {
-        return Ok(Vec::new());
+        return Ok(Arc::new(Vec::new()));
     }
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
@@ -162,7 +168,10 @@ fn enumerate_suffixes(
                             dimension_ceiling: child_ceiling,
                             payload_phase: payload_phase.after(params.payload_mode),
                         },
-                    )? {
+                        memo,
+                    )?
+                    .iter()
+                    {
                         let child_is_terminal = child.folds.is_empty();
                         let direct_bytes = level_proof_bytes(
                             field_bits,
@@ -206,13 +215,15 @@ fn enumerate_suffixes(
                             setup_field_elements: level_setup_field_elements(&params)?
                                 .max(child.setup_field_elements),
                             folds,
-                            terminal: child.terminal,
+                            terminal: Arc::clone(&child.terminal),
                         });
                     }
                 }
             }
         }
     }
+    let schedules = Arc::new(schedules);
+    memo.push((state, Arc::clone(&schedules)));
     Ok(schedules)
 }
 
@@ -239,6 +250,10 @@ pub(super) fn find_schedule(
         ring_challenge_config: &ring_challenge_config,
         key,
     };
+    // This remains an exhaustive oracle: memoization only reuses the complete
+    // candidate set for an identical suffix state. In particular, it applies
+    // none of the dominance or lower-bound pruning used by the production DP.
+    let mut memo = UnprunedMemo::new();
     let inner_source =
         root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
@@ -289,7 +304,10 @@ pub(super) fn find_schedule(
                             dimension_ceiling: *root_dimensions,
                             payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
                         },
-                    )? {
+                        &mut memo,
+                    )?
+                    .iter()
+                    {
                         let child_is_terminal = suffix.folds.is_empty();
                         let root_bytes = level_proof_bytes(
                             field_bits,
@@ -328,7 +346,7 @@ pub(super) fn find_schedule(
                             setup_field_elements: level_setup_field_elements(&root_params)?
                                 .max(suffix.setup_field_elements),
                             folds,
-                            terminal: suffix.terminal,
+                            terminal: Arc::clone(&suffix.terminal),
                         });
                     }
                 }

@@ -2,8 +2,9 @@
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{
-    CommittedGroup, CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OuterCommitMatrixParams, PolynomialGroupLayout, SignedDigitKernel,
+    CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroup, CommittedGroupParams,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
+    SignedDigitKernel,
 };
 use akita_field::{AkitaError, FieldCore};
 
@@ -20,6 +21,8 @@ pub struct CommittedGroupProfile {
     pub num_positions_per_block: usize,
     /// Exact number of live blocks (`B = ceil(N / M)`).
     pub num_live_blocks: usize,
+    /// Number of logical B inputs committed through one physical B matrix.
+    pub outer_slice_count: CommitmentSliceCount,
     /// Gadget basis selected for the standalone A/source digits.
     pub log_basis_inner: u32,
     /// Exact gadget depth used by the standalone A/source relation.
@@ -46,6 +49,7 @@ impl CommittedGroupProfile {
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
+            outer_slice_count: params.outer_slice_count,
             log_basis_inner: params.log_basis_inner,
             num_digits_inner: params.num_digits_inner,
             inner_commit_matrix: params.inner_commit_matrix,
@@ -69,6 +73,7 @@ impl CommittedGroupProfile {
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
+        self.outer_slice_count.append_descriptor_bytes(bytes);
         push_u32(bytes, self.log_basis_inner);
         push_usize(bytes, self.num_digits_inner);
         self.inner_commit_matrix.append_descriptor_bytes(bytes);
@@ -114,6 +119,11 @@ impl CommittedGroupProfile {
                 "commitment group layout requires nonzero outer basis and digit depth".to_string(),
             ));
         }
+        self.outer_slice_count.validate_for_commitment(
+            0,
+            crate::CommitmentPayloadMode::Compressed,
+            self.num_live_blocks,
+        )?;
         if self.inner_commit_matrix.sis_modulus_profile().field_bits() != field_bits
             || self.outer_commit_matrix.sis_modulus_profile().field_bits() != field_bits
         {
@@ -125,15 +135,16 @@ impl CommittedGroupProfile {
             .num_positions_per_block
             .checked_mul(self.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("committed-group A width overflow".into()))?;
-        let projection_ratio = inner_ring_dimension / outer_ring_dimension;
-        let expected_b_width = self
-            .inner_commit_matrix
-            .output_rank()
-            .checked_mul(self.num_digits_outer)
-            .and_then(|width| width.checked_mul(self.num_live_blocks))
-            .and_then(|width| width.checked_mul(self.group.num_polynomials()))
-            .and_then(|width| width.checked_mul(projection_ratio))
-            .ok_or_else(|| AkitaError::InvalidSetup("committed-group B width overflow".into()))?;
+        let expected_b_width = CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            self.num_live_blocks,
+            self.group.num_polynomials(),
+            self.inner_commit_matrix.output_rank(),
+            self.num_digits_outer,
+            inner_ring_dimension,
+            outer_ring_dimension,
+        )?
+        .physical_input_width();
         if self.inner_commit_matrix.input_width() != expected_a_width
             || self.outer_commit_matrix.input_width() != expected_b_width
         {

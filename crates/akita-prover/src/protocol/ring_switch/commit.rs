@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::commitment::commit_outer_slices;
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
@@ -36,6 +37,7 @@ pub struct NextWitnessStateOutput<F: FieldCore> {
 #[inline(never)]
 pub fn commit_w<Cfg, B>(
     commit_params: &CommittedGroupParams,
+    fold_level: usize,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
     logical_w: &RecursiveWitnessFlat,
@@ -49,7 +51,12 @@ where
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;
-    validate_commit_level_params::<Cfg::Field>(commit_params, expanded.as_ref())?;
+    let slice_geometry = validate_commit_level_params::<Cfg::Field>(
+        commit_params,
+        expanded.as_ref(),
+        fold_level,
+        1,
+    )?;
 
     let (packed_witness, inner_rows, commitment, compression_witness) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -113,17 +120,14 @@ where
                         commit_params.num_digits_outer,
                         commit_params.log_basis_outer,
                     )?;
-                    validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
-                    let outer_input = decomposed_inner_rows.typed_planes::<D_B>()?;
-                    let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = backend.digit_rows::<D_B>(
+                    let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = commit_outer_slices(
+                        backend,
                         prepared,
                         commit_params.outer_commit_matrix.output_rank(),
-                        outer_input,
+                        std::iter::once(&decomposed_inner_rows),
+                        &slice_geometry,
                         commit_params.log_basis_outer,
                     )?;
-                    if u.len() != commit_params.outer_commit_matrix.output_rank() {
-                        return Err(AkitaError::InvalidProof);
-                    }
                     let source = RingVec::from_ring_elems(&u);
                     if !commit_params.payload_mode.is_compressed() {
                         Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows(), source, None))

@@ -1,6 +1,8 @@
 //! Relation row identities and shared layout data.
 
-use crate::{CommitmentRingDims, CompressionChainPlan};
+use akita_field::AkitaError;
+
+use crate::{CommitmentRingDims, CommitmentSliceCount, CompressionChainPlan};
 
 /// Per-group row-count inputs for assembling the relation rhs vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,8 +10,18 @@ pub struct RelationGroupRows {
     /// This group's A/B dimensions completed by the level-shared D dimension.
     pub role_dims: CommitmentRingDims,
     pub n_a: usize,
-    pub commit_rows: usize,
-    pub b_inner_rows: usize,
+    /// Rows in the one physical B matrix reused by every slice.
+    pub physical_b_rows: usize,
+    /// Number of logical B images stacked in canonical slice order.
+    pub outer_slice_count: CommitmentSliceCount,
+}
+
+impl RelationGroupRows {
+    /// Complete logical B row count for this relation group.
+    pub fn logical_b_rows(&self) -> Result<usize, AkitaError> {
+        self.outer_slice_count
+            .logical_output_rows(self.physical_b_rows)
+    }
 }
 
 /// Row-count inputs for assembling the relation rhs vector.
@@ -39,7 +51,8 @@ pub enum RelationRowFamily {
     /// B matrix row.
     Outer {
         group_index: usize,
-        row: usize,
+        slice_index: usize,
+        physical_row: usize,
         ring_dim: usize,
     },
     /// Level-shared D matrix row.

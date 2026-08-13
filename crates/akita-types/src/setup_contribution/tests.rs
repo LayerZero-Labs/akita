@@ -1,4 +1,4 @@
-use super::plan::{DirectScanWeights, SetupContributionGroupPlan};
+use super::plan::{DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan};
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
@@ -357,7 +357,7 @@ fn finalize_test_plan(
         .unwrap();
     let b_footprint = groups
         .iter()
-        .map(|group| group.n_b * group.t_cols)
+        .map(|group| group.physical_b.physical_footprint().unwrap())
         .max()
         .unwrap();
     let d_footprint = d_rows * d_physical_cols;
@@ -419,6 +419,21 @@ fn test_group_plan(
     a_row_weights: Vec<F>,
     b_weights: Vec<F>,
 ) -> SetupContributionGroupPlan<F> {
+    let physical_b = PhysicalBSetupPlan::new(
+        crate::CommitmentSliceGeometry::try_new(
+            crate::CommitmentSliceCount::ONE,
+            t_cols,
+            1,
+            1,
+            1,
+            64,
+            64,
+        )
+        .unwrap(),
+        n_b,
+        b_weights.into(),
+    )
+    .unwrap();
     SetupContributionGroupPlan {
         group_id: 0,
         role_dims: CommitmentRingDims::uniform(64),
@@ -436,14 +451,12 @@ fn test_group_plan(
         log_basis_outer: 1,
         log_basis_open: 1,
         d_col_range,
-        t_cols,
         z_cols,
         n_a,
-        n_b,
+        physical_b,
         required: 0,
         segments: Vec::new().into(),
         a_row_weights: a_row_weights.into(),
-        b_weights: b_weights.into(),
         fold_gadget: vec![F::one()].into(),
         direct_scan_weights: Some(DirectScanWeights {
             e: e_eq_slice,
@@ -453,7 +466,6 @@ fn test_group_plan(
         active_unit_ranges: Vec::new().into(),
         num_physical_units: 0,
         d_tensors: Vec::new(),
-        b_tensors: Vec::new(),
         a_tensors: Vec::new(),
     }
 }
@@ -549,13 +561,29 @@ fn structured_weight_fixture_with_outgoing(
     role_dims: CommitmentRingDims,
     outgoing_ring_dim: usize,
 ) -> StructuredWeightFixture {
+    structured_weight_fixture_with_slices(
+        num_live_blocks,
+        ownership_widths,
+        role_dims,
+        outgoing_ring_dim,
+        crate::CommitmentSliceCount::ONE,
+    )
+}
+
+fn structured_weight_fixture_with_slices(
+    num_live_blocks: usize,
+    ownership_widths: &[usize],
+    role_dims: CommitmentRingDims,
+    outgoing_ring_dim: usize,
+    outer_slice_count: crate::CommitmentSliceCount,
+) -> StructuredWeightFixture {
     let num_claims = 2;
     let depth_open = 2;
     let depth_commit = 2;
     let depth_fold = 2;
     let num_positions_per_block = 8;
     let n_a = 2;
-    let n_b = 2;
+    let n_b = if outer_slice_count.is_sliced() { 1 } else { 2 };
     let n_d = 2;
     let log_basis = 4;
     assert_eq!(ownership_widths.iter().sum::<usize>(), num_live_blocks);
@@ -611,6 +639,34 @@ fn structured_weight_fixture_with_outgoing(
         EqPolynomial::evals(&tau1).unwrap(),
     );
     retarget_test_role_dims(&mut inputs.level_params, role_dims);
+    inputs.level_params.outer_slice_count = outer_slice_count;
+    let slice_geometry = crate::CommitmentSliceGeometry::try_new(
+        outer_slice_count,
+        num_live_blocks,
+        num_claims,
+        n_a,
+        depth_commit,
+        role_dims.d_a(),
+        role_dims.d_b(),
+    )
+    .unwrap();
+    let outer = &inputs.level_params.outer_commit_matrix;
+    inputs.level_params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        slice_geometry.physical_input_width(),
+        outer.coeff_linf_bound(),
+        role_dims.d_b(),
+    );
+    let relation_rows = inputs
+        .level_params
+        .relation_matrix_row_count(inputs.opening_batch.num_groups())
+        .unwrap();
+    let mut eq_tau1 = EqPolynomial::evals(&tau1).unwrap();
+    eq_tau1.resize(relation_rows, F::zero());
+    inputs.eq_tau1 = eq_tau1.into();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let opening_source_len = layout.live_coeff_len();
     let relation_address_geometry =
