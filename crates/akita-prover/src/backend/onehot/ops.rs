@@ -12,25 +12,6 @@ use crate::compute::{
 };
 use akita_field::MulBaseUnreduced;
 
-/// Build or borrow each block once and map its entry slice through the body.
-macro_rules! for_each_block_source {
-    ($poly:expr, $num_positions_per_block:expr, |$entries:ident| $body:expr) => {
-        cfg_into_iter!(
-            0..$poly
-                .num_live_blocks_for(D, $num_positions_per_block)
-                .expect("valid one hot fold layout")
-        )
-        .map(|i| {
-            let materialized = $poly
-                .materialize_block_range(D, $num_positions_per_block, i..i + 1)
-                .expect("in-range single block build");
-            let $entries = materialized.block(0);
-            $body
-        })
-        .collect()
-    };
-}
-
 /// Inner (low) coordinate count for the factorized one-hot column-partials
 /// fast path. The high opening coordinates split into `inner_bits` low bits
 /// (a small, reusable, cache-resident `low_eq` table) and the remaining high
@@ -389,14 +370,21 @@ where
         scalars: &[F],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        // Each block is visited exactly once, so build its entries from the
-        // retained index columns on the fly instead of materializing (and
-        // caching) every block for the whole fold window.
-        for_each_block_source!(self, num_positions_per_block, |entries| fold_onehot_block(
-            entries,
-            scalars,
-            num_positions_per_block
-        ))
+        let (num_rings, num_live_blocks) = self
+            .view_layout(D, num_positions_per_block)
+            .expect("valid one hot fold layout");
+        cfg_into_iter!(0..num_live_blocks)
+            .map(|block_idx| {
+                let ring_start = block_idx * num_positions_per_block;
+                let ring_end = (ring_start + num_positions_per_block).min(num_rings);
+                fold_onehot_block::<F, I, D>(
+                    self.onehot_k,
+                    &self.indices,
+                    ring_start..ring_end,
+                    scalars,
+                )
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -405,9 +393,17 @@ where
         scalars: &[CyclotomicRing<F, D>],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        for_each_block_source!(self, num_positions_per_block, |entries| {
-            fold_onehot_block_ring(entries, scalars, num_positions_per_block)
-        })
+        let num_live_blocks = self
+            .num_live_blocks_for(D, num_positions_per_block)
+            .expect("valid one hot fold layout");
+        cfg_into_iter!(0..num_live_blocks)
+            .map(|block_idx| {
+                let materialized = self
+                    .materialize_block_range(D, num_positions_per_block, block_idx..block_idx + 1)
+                    .expect("in-range single block build");
+                fold_onehot_block_ring(materialized.block(0), scalars, num_positions_per_block)
+            })
+            .collect()
     }
 
     pub(crate) fn fold_blocks_subfield<const D: usize>(

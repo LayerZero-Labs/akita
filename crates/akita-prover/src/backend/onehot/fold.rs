@@ -1,25 +1,42 @@
 use super::*;
 use akita_types::SubfieldMultiplierOpeningPoint;
 
-pub(super) fn fold_onehot_block<F, const D: usize>(
-    entries: &[SparseRingBlockEntry],
+pub(super) fn fold_onehot_block<F, I, const D: usize>(
+    onehot_k: usize,
+    indices: &[Option<I>],
+    ring_range: std::ops::Range<usize>,
     scalars: &[F],
-    num_positions_per_block: usize,
 ) -> CyclotomicRing<F, D>
 where
     F: FieldCore,
+    I: OneHotIndex,
 {
     let mut coeffs_acc = [F::zero(); D];
-
-    for entry in entries {
-        let pos = entry.pos_in_block();
-        let coeff_idx = entry.coeff_idx();
-        if pos < scalars.len() && pos < num_positions_per_block {
-            let s = scalars[pos];
-            coeffs_acc[coeff_idx] += s;
+    let field_start = ring_range
+        .start
+        .checked_mul(D)
+        .expect("validated one hot fold range");
+    let field_end = ring_range
+        .end
+        .checked_mul(D)
+        .expect("validated one hot fold range");
+    let chunk_start = field_start / onehot_k;
+    let chunk_end = field_end.div_ceil(onehot_k).min(indices.len());
+    for (local_chunk, hot_index) in indices[chunk_start..chunk_end].iter().copied().enumerate() {
+        if let Some(hot_index) = hot_index {
+            let field_position = (chunk_start + local_chunk)
+                .checked_mul(onehot_k)
+                .and_then(|base| base.checked_add(hot_index.as_usize()))
+                .expect("validated one hot field position");
+            let ring_index = field_position / D;
+            if ring_range.contains(&ring_index) {
+                let position = ring_index - ring_range.start;
+                if let Some(&scalar) = scalars.get(position) {
+                    coeffs_acc[field_position % D] += scalar;
+                }
+            }
         }
     }
-
     CyclotomicRing::from_coefficients(coeffs_acc)
 }
 
