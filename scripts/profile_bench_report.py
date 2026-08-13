@@ -1523,6 +1523,29 @@ def write_summary_csv(path: pathlib.Path, cases: list[dict[str, object]]) -> Non
             writer.writerow(row)
 
 
+def combine_grind_retry_observations(
+    summaries: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    successful = [summary for summary in summaries if int(summary.get("exit_code", 0)) == 0]
+    if not successful:
+        return []
+    retries_by_level: dict[int, list[int]] = {}
+    for summary in successful:
+        levels = grind_retries_by_level(summary)
+        if levels is None:
+            return []
+        for level, retries in levels.items():
+            if len(retries) != 1:
+                raise ValueError("one benchmark run must emit one grinding nonce per fold")
+            retries_by_level.setdefault(level, []).append(retries[0])
+    if any(len(retries) != len(successful) for retries in retries_by_level.values()):
+        raise ValueError("successful benchmark runs emitted different grinding fold levels")
+    return [
+        {"level": level, "retries": retries_by_level[level]}
+        for level in sorted(retries_by_level)
+    ]
+
+
 def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, object]:
     combined = dict(summaries[0])
     combined["runs"] = len(summaries)
@@ -1530,6 +1553,9 @@ def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, 
     l2_grind_observations = combine_l2_grind_observations(summaries)
     if l2_grind_observations:
         combined["l2_grind_observations"] = l2_grind_observations
+    grind_retry_observations = combine_grind_retry_observations(summaries)
+    if grind_retry_observations:
+        combined["grind_retry_observations"] = grind_retry_observations
 
     for key in TIMING_SAMPLE_METRICS:
         values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
@@ -2419,6 +2445,63 @@ def terminal_response_metric_value(
     return total
 
 
+def grind_retries_by_level(summary: dict[str, object]) -> dict[int, list[int]] | None:
+    observations = summary.get("grind_retry_observations")
+    if isinstance(observations, list):
+        result: dict[int, list[int]] = {}
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            retries = observation.get("retries")
+            if not isinstance(retries, list):
+                continue
+            result[int(observation["level"])] = [int(value) for value in retries]
+        return result
+
+    proof_levels = summary.get("proof_levels")
+    if not isinstance(proof_levels, list):
+        return None
+    result = {}
+    for level in proof_levels:
+        if not isinstance(level, dict) or level.get("grind_nonce_val") is None:
+            continue
+        result[int(level["level"])] = [int(level["grind_nonce_val"])]
+    return result or None
+
+
+def grinding_retries_metric_value(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+) -> str:
+    current_levels = grind_retries_by_level(current)
+    if current_levels is None:
+        return "n/a"
+    baseline_levels = grind_retries_by_level(baseline) if baseline is not None else None
+    visible_levels = sorted(
+        level
+        for level in set(current_levels) | set(baseline_levels or {})
+        if any(current_levels.get(level, []))
+        or any((baseline_levels or {}).get(level, []))
+    )
+
+    def render(levels: dict[int, list[int]] | None) -> str:
+        if levels is None:
+            return "n/a"
+        if not visible_levels:
+            return "None"
+        rows = []
+        for level in visible_levels:
+            retries = levels.get(level, [])
+            values = " / ".join(fmt_count(float(value)) for value in retries) or "n/a"
+            rows.append(f"L{level}: {values}")
+        return "<br>".join(rows)
+
+    current_value = render(current_levels)
+    if baseline is None:
+        return f"{current_value}<br><sub>no matching merge-base case</sub>"
+    return exact_choice(current_value, render(baseline_levels))
+
+
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     main_baseline: dict[str, dict[str, object]] | None,
@@ -2446,6 +2529,16 @@ def render_matrix_summary(
             False,
         ),
         (
+            "Proof size and protocol shape",
+            [
+                Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
+                Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
+                Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
+                Metric("akita_levels", "Fold levels", "", fmt_count),
+            ],
+            True,
+        ),
+        (
             "Memory and setup size",
             [
                 Metric("setup_vector_bytes", "Setup vector", " MiB", fmt_mib_from_bytes),
@@ -2465,16 +2558,6 @@ def render_matrix_summary(
             ],
             False,
         ),
-        (
-            "Proof size and protocol shape",
-            [
-                Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
-                Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
-                Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
-                Metric("akita_levels", "Fold levels", "", fmt_count),
-            ],
-            True,
-        ),
     ]
 
     for table_index, (title, metrics, include_fold_schedule) in enumerate(tables):
@@ -2483,12 +2566,23 @@ def render_matrix_summary(
         print(f"### {title}")
         print()
         shape_headers = ["Fold A/B/D schedule"] if include_fold_schedule else []
-        headers = ["Profile", *shape_headers, *(metric.name for metric in metrics)]
+        grind_headers = ["Grinding retries"] if include_fold_schedule else []
+        headers = [
+            "Profile",
+            *shape_headers,
+            *(metric.name for metric in metrics),
+            *grind_headers,
+        ]
         print("| " + " | ".join(headers) + " |")
         print(
             "| "
             + " | ".join(
-                ["---", *("---" for _ in shape_headers), *("---:" for _ in metrics)]
+                [
+                    "---",
+                    *("---" for _ in shape_headers),
+                    *("---:" for _ in metrics),
+                    *("---" for _ in grind_headers),
+                ]
             )
             + " |"
         )
@@ -2519,7 +2613,15 @@ def render_matrix_summary(
                             "",
                         )
                     )
+            if include_fold_schedule:
+                row.append(grinding_retries_metric_value(current, baseline))
             print("| " + " | ".join(row) + " |")
+        if include_fold_schedule:
+            print()
+            print(
+                "Grinding retries are rejected attempts at each fold, listed in "
+                "measured-run order. Zero means the first sampled nonce was accepted."
+            )
 
     if main_baseline is not None:
         print()

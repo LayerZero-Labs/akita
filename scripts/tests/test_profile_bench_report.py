@@ -909,6 +909,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(observation["accepted_nonces"], [0, 2])
         self.assertEqual(observation["observed_failure_rate"], 0.5)
         self.assertEqual(
+            combined["grind_retry_observations"],
+            [{"level": 5, "retries": [0, 2]}],
+        )
+        self.assertEqual(
             combined["samples"][1]["l2_grind_observations"][0]["accepted_nonce"], 2
         )
 
@@ -974,9 +978,17 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "max_rss_kib": 2048,
                 "proof_size_bytes": 4096,
                 "planned_levels": [{"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}],
+                "grind_retry_observations": [
+                    {"level": 0, "retries": [0, 2, 1]},
+                    {"level": 2, "retries": [0, 0, 0]},
+                ],
             }
         )
         baseline = dict(current)
+        baseline["grind_retry_observations"] = [
+            {"level": 0, "retries": [0, 0, 0]},
+            {"level": 2, "retries": [1, 0, 0]},
+        ]
         for key in (
             "setup_s",
             "setup_vector_bytes",
@@ -1002,6 +1014,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("### Phase time", report)
         self.assertIn("### Memory and setup size", report)
         self.assertIn("### Proof size and protocol shape", report)
+        self.assertLess(
+            report.index("### Proof size and protocol shape"),
+            report.index("### Memory and setup size"),
+        )
         self.assertNotIn("### Protocol shape", report)
         self.assertNotIn("| Status |", report)
         self.assertIn("Setup vector", report)
@@ -1009,6 +1025,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Verify, multi-threaded", report)
         self.assertIn("Verify, single-threaded", report)
         self.assertIn("Fold A/B/D schedule", report)
+        self.assertIn("| Fold levels | Grinding retries |", report)
+        self.assertIn("L0: 0 / 2 / 1", report)
+        self.assertIn("L2: 0 / 0 / 0", report)
+        self.assertIn("<sub>Merge base</sub>", report)
+        self.assertIn("L2: 1 / 0 / 0", report)
+        self.assertIn("listed in measured-run order", report)
         self.assertIn("64/64/64", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
