@@ -299,11 +299,11 @@ Every field is already in the verifier's hands at this point, so this is a regro
 - `opening_points` / `ring_multiplier_points`: the verifier's reconstructed opening points (`RingMultiplierOpeningPoint::from_base` is already used in `proof/batch.rs`).
 - `incidence`: the `ClaimIncidenceSummary` the verifier already threads through `verify_root_level_inner` (`levels.rs:283`) and `verify_one_level_inner` (`recursive.rs:886`); this supplies `num_public_rows` and the three summary maps.
 - `commitment_routing`: built from the same per-path data the verifier already derives for `PreparedRingSwitchRowEval.claim_to_point_poly` (`ring_switch.rs:133`); root collapses to the point routing, recursive multipoint routes all claims to group 0.
-- `gamma` / `row_coefficient_rings`: derived via the same shared `derive_public_row_coefficients::<F, C, T>(layout, openings, transcript)` the prover calls. The helper absorbs the claims before it samples coefficients, so the values match by construction.
+- `gamma` / `row_coefficient_rings`: derived through the same shared phase functions the prover calls. `append_claim_values_to_transcript` binds the claims, and `sample_row_coefficients` draws the coefficients at the caller-owned protocol boundary, so the values match by construction without hiding transcript order inside one helper.
 - `y` / `v`: the proof's `y_rings` / `v`.
 
 The verifier gains a single named statement it constructs once per level and reuses, instead of re-deriving incidence and row-coefficient data inline at each evaluation site, and prover and verifier now share one definition of what the ring-relation statement is.
-This availability is verified against the current code, not assumed: the verifier already constructs `ClaimIncidenceSummary` and already samples the row coefficients from the same shared helper, so building the instance reorders no sampling and absorbs nothing new.
+This availability is verified against the current code, not assumed: the verifier already constructs `ClaimIncidenceSummary` and already uses the same shared claim-binding and row-sampling functions, so building the instance reorders no sampling and absorbs nothing new.
 
 **Concrete deduplication in scope: the witness-column segment layout.**
 The witness-column segment layout is currently duplicated: the verifier has an explicit `RingSwitchSegmentLayout` (`crates/akita-verifier/src/protocol/ring_switch.rs:140`, built by `segment_layout()` at `:605`), while the prover open-codes the same offsets inline in `compute_relation_matrix_col_evals` (`crates/akita-prover/src/protocol/ring_switch/evals.rs`).

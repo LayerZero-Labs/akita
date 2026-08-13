@@ -105,8 +105,8 @@ The refactor is implemented in the prover and verifier protocol crates:
 - `crates/akita-verifier/src/protocol/core/fold.rs` owns shared per-fold replay
   (`verify_fold_eor`, `verify_fold`, stage verifiers).
 - Root and recursive suffix EOR both bind openings and derive γ before proof
-  partials. Prover and verifier must use `derive_public_row_coefficients` for
-  this step.
+  partials. Prover and verifier must use `append_claim_values_to_transcript`
+  followed by `sample_row_coefficients` for this EOR-internal step.
 - The default validation suite passes:
   `cargo fmt -q`,
   `cargo clippy --all --message-format=short -q -- -D warnings`, and
@@ -131,8 +131,8 @@ Additional review checks:
 
 - Search for stale module references to `protocol/flow/root_extension`.
 - Search for root-only EOR materialization paths that bypass `FoldInputPoly`.
-- Confirm every opening batch uses `derive_public_row_coefficients` before EOR
-  partials.
+- Confirm every EOR opening batch binds values and calls
+  `sample_row_coefficients` before EOR partials.
 - Confirm terminal witness shape checks still use the segment-aware
   `admits_realized` relation after merging main's tail encoding work.
 
