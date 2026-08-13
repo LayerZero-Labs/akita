@@ -753,7 +753,7 @@ fn adaptive_root_domain_is_independent_of_uniform_config_dimension() {
     domain.validate_for_policy(&policy).unwrap();
 
     let selected = find_schedule(
-        PolynomialGroupLayout::singleton(36),
+        PolynomialGroupLayout::singleton(40),
         &policy,
         OneHot::root_honest_fold_policy(),
         &domain,
