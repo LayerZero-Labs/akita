@@ -9,30 +9,25 @@ use spongefish::{
 };
 use std::marker::PhantomData;
 
-#[cfg(not(any(feature = "transcript-blake2b", feature = "transcript-keccak")))]
-compile_error!("enable at least one transcript backend: transcript-blake2b or transcript-keccak");
-
 /// Sponge backend selected by the active transcript feature.
 ///
-/// Cargo feature unification means `--all-features` enables both backends. In
-/// that case Akita selects the default Blake2b backend; use
-/// `--no-default-features --features transcript-keccak` to select Keccak.
+/// Exactly one transcript backend feature must be active in the complete PCS graph.
 #[cfg(feature = "transcript-blake2b")]
 pub type TranscriptSponge = spongefish::instantiations::Blake2b512;
 
 /// Sponge backend selected by the active transcript feature.
-#[cfg(all(not(feature = "transcript-blake2b"), feature = "transcript-keccak"))]
+#[cfg(feature = "transcript-keccak")]
 pub type TranscriptSponge = spongefish::instantiations::Keccak;
 
 /// Backend-specific 64-byte protocol tag for spongefish domain separation.
 #[cfg(feature = "transcript-blake2b")]
 pub const PROTOCOL_TAG: &[u8; 64] =
-    b"akita-pcs/transcript/v1/blake2b\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    b"akita-pcs/transcript/v2/blake2b\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
 /// Backend-specific 64-byte protocol tag for spongefish domain separation.
-#[cfg(all(not(feature = "transcript-blake2b"), feature = "transcript-keccak"))]
+#[cfg(feature = "transcript-keccak")]
 pub const PROTOCOL_TAG: &[u8; 64] =
-    b"akita-pcs/transcript/v1/keccak\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    b"akita-pcs/transcript/v2/keccak\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
 const SQUEEZE_CHUNK_LEN: usize = 32;
 
@@ -55,7 +50,7 @@ pub struct AkitaTranscript<F, S = TranscriptSponge>
 where
     S: DuplexSpongeInterface<U = u8>,
 {
-    session_tag: [u8; 64],
+    session_label: Vec<u8>,
     side: TranscriptSide,
     state: Option<TranscriptState<S>>,
     _field: PhantomData<fn() -> F>,
@@ -131,7 +126,7 @@ where
 
     fn unbound(session_label: &[u8], side: TranscriptSide) -> Self {
         Self {
-            session_tag: session_tag(session_label),
+            session_label: session_label.to_vec(),
             side,
             state: None,
             _field: PhantomData,
@@ -144,7 +139,7 @@ where
     /// from `akita-types`, and this method must be called before any absorb or
     /// squeeze operation for the proof being replayed.
     pub fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
-        let domain = domain_separator_from_tag(self.session_tag, instance_bytes);
+        let domain = domain_separator_from_label(&self.session_label, instance_bytes);
         self.state = Some(match self.side {
             TranscriptSide::Prover => {
                 TranscriptState::Prover(Box::new(domain.to_prover(S::default())))
@@ -302,27 +297,53 @@ impl Encoding<[u8]> for FramedBytes<'_> {
     }
 }
 
-#[inline]
-fn domain_separator_from_tag<'a>(
-    session_tag: [u8; 64],
+struct SessionBoundInstance<'a> {
+    session_label: &'a [u8],
     instance_bytes: &'a [u8],
-) -> DomainSeparator<spongefish::WithInstance<FramedBytes<'a>>, spongefish::WithSession<[u8; 64]>> {
-    DomainSeparator::<WithoutInstance>::new(*PROTOCOL_TAG)
-        .session(session_tag)
-        .instance(FramedBytes {
-            bytes: instance_bytes,
-        })
 }
 
-#[inline]
-fn session_tag(session_label: &[u8]) -> [u8; 64] {
+impl Encoding<[u8]> for SessionBoundInstance<'_> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let label_len = u64::try_from(self.session_label.len())
+            .expect("transcript session-label length overflows u64");
+        let instance_len = u64::try_from(self.instance_bytes.len())
+            .expect("transcript instance length overflows u64");
+        let mut out = Vec::with_capacity(16 + self.session_label.len() + self.instance_bytes.len());
+        out.extend_from_slice(&label_len.to_le_bytes());
+        out.extend_from_slice(self.session_label);
+        out.extend_from_slice(&instance_len.to_le_bytes());
+        out.extend_from_slice(self.instance_bytes);
+        out
+    }
+}
+
+const fn session_domain_tag() -> [u8; 64] {
+    let source = b"akita-pcs/session-label/v1";
     let mut tag = [0u8; 64];
-    assert!(
-        session_label.len() <= tag.len(),
-        "transcript session labels must fit in 64 bytes"
-    );
-    tag[..session_label.len()].copy_from_slice(session_label);
+    let mut index = 0usize;
+    while index < source.len() {
+        tag[index] = source[index];
+        index += 1;
+    }
     tag
+}
+
+const SESSION_DOMAIN_TAG: [u8; 64] = session_domain_tag();
+
+#[inline]
+fn domain_separator_from_label<'a>(
+    session_label: &'a [u8],
+    instance_bytes: &'a [u8],
+) -> DomainSeparator<
+    spongefish::WithInstance<SessionBoundInstance<'a>>,
+    spongefish::WithSession<[u8; 64]>,
+> {
+    DomainSeparator::<WithoutInstance>::new(*PROTOCOL_TAG)
+        .session(SESSION_DOMAIN_TAG)
+        .instance(SessionBoundInstance {
+            session_label,
+            instance_bytes,
+        })
 }
 
 impl<F, S> crate::FoldChallengeSeedPreview for AkitaTranscript<F, S>
@@ -351,6 +372,28 @@ mod tests {
             left.squeeze_scalar(crate::label!("challenge")),
             right.squeeze_scalar(crate::label!("challenge"))
         );
+    }
+
+    #[test]
+    fn backend_protocol_tag_and_first_challenge_are_stable() {
+        let mut transcript = AkitaTranscript::<F>::prover(b"backend-test", b"instance");
+        let challenge = transcript.squeeze_scalar(crate::label!("challenge"));
+        #[cfg(feature = "transcript-blake2b")]
+        {
+            assert_eq!(&PROTOCOL_TAG[..31], b"akita-pcs/transcript/v2/blake2b");
+            assert_eq!(
+                challenge.to_canonical_u128(),
+                113_950_780_430_643_492_620_189_861_785_432_181_582
+            );
+        }
+        #[cfg(feature = "transcript-keccak")]
+        {
+            assert_eq!(&PROTOCOL_TAG[..30], b"akita-pcs/transcript/v2/keccak");
+            assert_eq!(
+                challenge.to_canonical_u128(),
+                303_823_475_759_686_639_708_350_814_458_946_329_972
+            );
+        }
     }
 
     #[test]
@@ -392,5 +435,40 @@ mod tests {
         assert_eq!(&short.as_ref()[..8], &3u64.to_le_bytes());
         assert_eq!(&long.as_ref()[..8], &6u64.to_le_bytes());
         assert!(!long.as_ref().starts_with(short.as_ref()));
+    }
+
+    #[test]
+    fn session_labels_are_prefix_free_and_unbounded() {
+        let labels: [&[u8]; 5] = [b"", b"\0", b"x", b"x\0", &[7u8; 65]];
+        let challenges = labels.map(|label| {
+            let mut transcript = AkitaTranscript::<F>::prover(label, b"same-instance");
+            transcript.squeeze_scalar(crate::label!("challenge"))
+        });
+
+        for (index, challenge) in challenges.iter().enumerate() {
+            assert!(
+                challenges[index + 1..]
+                    .iter()
+                    .all(|other| other != challenge),
+                "distinct session labels must derive distinct transcript states"
+            );
+        }
+    }
+
+    #[test]
+    fn session_and_instance_encoding_is_exactly_framed() {
+        let encoded = SessionBoundInstance {
+            session_label: b"x\0",
+            instance_bytes: b"instance",
+        }
+        .encode()
+        .as_ref()
+        .to_vec();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&2u64.to_le_bytes());
+        expected.extend_from_slice(b"x\0");
+        expected.extend_from_slice(&8u64.to_le_bytes());
+        expected.extend_from_slice(b"instance");
+        assert_eq!(encoded, expected);
     }
 }

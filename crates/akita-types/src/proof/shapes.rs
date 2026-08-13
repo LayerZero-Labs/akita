@@ -1,4 +1,5 @@
 use super::*;
+use crate::{CommittedGroupParams, FoldSchedule};
 
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
@@ -120,6 +121,95 @@ pub struct AkitaBatchedProofShape {
     pub recursive_folds: Vec<LevelProofShape>,
     /// Required terminal fold shape.
     pub terminal: TerminalLevelProofShape,
+}
+
+/// Derive the only accepted headerless proof shape for a base-field schedule.
+///
+/// This is the verifier-side owner for decoding proofs whose claim field is the
+/// base field. Proper extension fields add an extension-opening reduction shape
+/// and must use their configuration-specific derivation.
+pub fn canonical_base_field_proof_shape(
+    schedule: &FoldSchedule,
+) -> Result<AkitaBatchedProofShape, AkitaError> {
+    fn stage3_shape(
+        successor: Option<&CommittedGroupParams>,
+    ) -> Result<Option<SetupProductSumcheckShape>, AkitaError> {
+        let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
+            return Ok(None);
+        };
+        let n_prefix = prefix.n_prefix()?;
+        let setup_ring_len = n_prefix.checked_div(prefix.d_setup()).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup-prefix ring dimension is zero".to_string())
+        })?;
+        if setup_ring_len == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix field length does not align with its ring dimension".to_string(),
+            ));
+        }
+        let rounds = (prefix.d_setup().trailing_zeros() as usize)
+            .checked_add(setup_ring_len.next_power_of_two().trailing_zeros() as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("stage-3 round count overflow".to_string()))?;
+        Ok(Some(SetupProductSumcheckShape {
+            sumcheck: vec![SETUP_SUMCHECK_DEGREE; rounds],
+        }))
+    }
+
+    fn level_shape(
+        params: &CommittedGroupParams,
+        output_witness_len: usize,
+        successor: Option<&CommittedGroupParams>,
+    ) -> Result<LevelProofShape, AkitaError> {
+        let rounds = crate::sumcheck_rounds(params.d_a(), output_witness_len);
+        let basis = 1usize.checked_shl(params.log_basis_open).ok_or_else(|| {
+            AkitaError::InvalidSetup("digit-range basis does not fit usize".to_string())
+        })?;
+        let next_witness_binding = match successor {
+            Some(next) => NextWitnessBindingShape::OuterPayload {
+                coeffs: next.outer_payload_geometry()?.transmitted_coefficients(),
+            },
+            None => NextWitnessBindingShape::TerminalInnerState,
+        };
+        Ok(LevelProofShape {
+            extension_opening_reduction: None,
+            opening_payload_coeffs: params
+                .opening_payload_geometry()?
+                .transmitted_coefficients(),
+            stage1_stages: DigitRangePlan::new(basis)?.stage_shapes(rounds),
+            stage2_sumcheck_proof: vec![3; rounds],
+            stage3_sumcheck: stage3_shape(successor)?,
+            next_witness_binding,
+        })
+    }
+
+    let root_successor = schedule
+        .recursive_folds
+        .first()
+        .map(|step| &step.params.witness);
+    let root = level_shape(
+        &schedule.root.params.final_group.commitment,
+        schedule.root.output_witness_len,
+        root_successor,
+    )?;
+    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
+    for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        let successor = schedule
+            .recursive_folds
+            .get(index + 1)
+            .map(|next| &next.params.witness);
+        recursive_folds.push(level_shape(
+            &step.params.witness,
+            step.output_witness_len,
+            successor,
+        )?);
+    }
+    Ok(AkitaBatchedProofShape {
+        root,
+        recursive_folds,
+        terminal: TerminalLevelProofShape {
+            extension_opening_reduction: None,
+            terminal_response: schedule.terminal.params.response_shape.clone(),
+        },
+    })
 }
 
 pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
@@ -491,6 +581,102 @@ impl Valid for AkitaBatchedProofShape {
         checked_shape_sequence_len(self.recursive_folds.len())?;
         self.recursive_folds.check()?;
         self.terminal.check()?;
+        Ok(())
+    }
+}
+
+impl AkitaBatchedProofShape {
+    /// Reject a base-field proof shape whose aggregate declared payload cannot
+    /// fit in the bytes available to the proof decoder.
+    pub fn validate_base_field_decode_budget(
+        &self,
+        available_bytes: usize,
+        field_bytes: usize,
+    ) -> Result<(), SerializationError> {
+        if field_bytes == 0 {
+            return Err(SerializationError::InvalidData(
+                "base field wire size must be nonzero".to_string(),
+            ));
+        }
+        fn add(total: &mut usize, value: usize) -> Result<(), SerializationError> {
+            *total = total.checked_add(value).ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "aggregate proof shape field count overflow".to_string(),
+                )
+            })?;
+            Ok(())
+        }
+        fn add_sumcheck(total: &mut usize, shape: &[usize]) -> Result<(), SerializationError> {
+            for &stored_coefficients in shape {
+                add(total, stored_coefficients)?;
+            }
+            Ok(())
+        }
+        fn add_extension(
+            total: &mut usize,
+            shape: Option<&ExtensionOpeningReductionShape>,
+        ) -> Result<(), SerializationError> {
+            if let Some(shape) = shape {
+                add(total, shape.partials)?;
+                add_sumcheck(total, &shape.sumcheck)?;
+            }
+            Ok(())
+        }
+        fn add_level(total: &mut usize, shape: &LevelProofShape) -> Result<(), SerializationError> {
+            add_extension(total, shape.extension_opening_reduction.as_ref())?;
+            add(total, shape.opening_payload_coeffs)?;
+            for stage in &shape.stage1_stages {
+                let (rounds, stored_coefficients) = stage.sumcheck_proof;
+                add(
+                    total,
+                    rounds.checked_mul(stored_coefficients).ok_or_else(|| {
+                        SerializationError::InvalidData(
+                            "stage-1 proof shape field count overflow".to_string(),
+                        )
+                    })?,
+                )?;
+                add(total, stage.child_claims)?;
+            }
+            add(total, 1)?;
+            add_sumcheck(total, &shape.stage2_sumcheck_proof)?;
+            match shape.next_witness_binding {
+                NextWitnessBindingShape::OuterPayload { coeffs } => add(total, coeffs)?,
+                NextWitnessBindingShape::TerminalInnerState => {}
+            }
+            add(total, 1)?;
+            if let Some(stage3) = &shape.stage3_sumcheck {
+                add(total, 2)?;
+                add_sumcheck(total, &stage3.sumcheck)?;
+            }
+            Ok(())
+        }
+
+        let mut field_elements = 0usize;
+        add_level(&mut field_elements, &self.root)?;
+        for shape in &self.recursive_folds {
+            add_level(&mut field_elements, shape)?;
+        }
+        add_extension(
+            &mut field_elements,
+            self.terminal.extension_opening_reduction.as_ref(),
+        )?;
+        add(
+            &mut field_elements,
+            self.terminal.terminal_response.layout.e_field_elems(),
+        )?;
+        add(
+            &mut field_elements,
+            self.terminal.terminal_response.layout.t_field_elems(),
+        )?;
+        let required_bytes = field_elements.checked_mul(field_bytes).ok_or_else(|| {
+            SerializationError::InvalidData("aggregate proof byte budget overflow".to_string())
+        })?;
+        if required_bytes > available_bytes {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(required_bytes).unwrap_or(u64::MAX),
+                max: available_bytes,
+            });
+        }
         Ok(())
     }
 }

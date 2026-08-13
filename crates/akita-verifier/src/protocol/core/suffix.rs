@@ -435,7 +435,7 @@ where
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let claim_state = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -445,22 +445,23 @@ where
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;
         absorb_protocol_opening_points(&group_points, transcript);
-        let row_coefficients =
-            derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
-        let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
-        FoldPrefix {
+        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+        FoldClaimState::Unbatched(FoldClaimMaterial {
             prepared_points,
-            trace_eval_target,
-            trace_claim_coefficients: row_coefficients.clone(),
-            row_coefficients,
-        }
+            openings: openings.clone(),
+            reduction_factors: None,
+        })
     } else {
-        let row_coefficients =
-            derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
+        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+        let row_coefficients = sample_row_coefficients::<F, E, T>(
+            &opening_batch,
+            akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+            transcript,
+        )?;
         let group_points = (0..opening_batch.num_groups())
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;
-        verify_extension_claim_suffix_prefix::<F, E, T>(
+        FoldClaimState::Bound(verify_extension_claim_suffix_prefix::<F, E, T>(
             proof.extension_opening_reduction,
             &group_points,
             &openings,
@@ -469,7 +470,7 @@ where
             current_state.basis,
             lp,
             transcript,
-        )?
+        )?)
     };
 
     let witness_len = output_witness_len;
@@ -501,6 +502,13 @@ where
             )
         }
     };
+    let prefix = bind_opening_payload_and_finalize_claims(
+        lp,
+        &opening_batch,
+        &opening_payload,
+        claim_state,
+        transcript,
+    )?;
     let current_commitment = match &current_state.witness {
         SuffixWitnessState::Commitment(commitment) => *commitment,
         SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),

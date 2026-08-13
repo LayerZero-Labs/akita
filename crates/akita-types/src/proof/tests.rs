@@ -31,6 +31,32 @@ fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
 }
 
 #[test]
+fn ring_vec_checked_views_reject_invalid_storage() {
+    let empty = RingVec::<F>::from_coeffs(Vec::new());
+    assert!(empty.as_single_ring::<64>().is_err());
+    assert!(empty
+        .as_ring_slice::<64>()
+        .expect("empty ring slice")
+        .is_empty());
+    assert!(empty.as_single_ring::<0>().is_err());
+    assert!(empty.as_ring_slice::<0>().is_err());
+
+    let undersized = RingVec::from_coeffs(vec![F::zero(); 63]);
+    assert!(undersized.as_single_ring::<64>().is_err());
+    assert!(undersized.as_ring_slice::<64>().is_err());
+
+    let mismatched =
+        RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 32).expect("stored ring");
+    assert!(mismatched.as_single_ring::<64>().is_err());
+    assert!(mismatched.as_ring_slice::<64>().is_err());
+
+    let valid =
+        RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("valid ring storage");
+    assert!(valid.as_single_ring::<64>().is_ok());
+    assert_eq!(valid.as_ring_slice::<64>().expect("valid slice").len(), 1);
+}
+
+#[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
     let err = TerminalResponseShape {
         layout: TailSegmentLayout {
@@ -325,6 +351,42 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     let decoded = TerminalLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &proof.shape())
         .expect("deserialize direct terminal proof");
     assert_eq!(decoded, proof);
+
+    const D: usize = 8;
+    let mut root = FoldLevelProof::new::<D>(
+        vec![CyclotomicRing::<F, D>::zero()],
+        tiny_stage1(),
+        tiny_stage2::<D>(),
+    );
+    root.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
+    let batched = AkitaBatchedProof {
+        root,
+        recursive_folds: Vec::new(),
+        terminal: proof.clone(),
+    };
+    let mut batched_bytes = Vec::new();
+    batched
+        .serialize_uncompressed(&mut batched_bytes)
+        .expect("serialize batched proof");
+    let shape = batched.shape();
+    let mut oversized_shape = shape.clone();
+    oversized_shape.root.opening_payload_coeffs = DEFAULT_MAX_SEQUENCE_LEN;
+    assert!(matches!(
+        oversized_shape.validate_base_field_decode_budget(batched_bytes.len(), 16),
+        Err(SerializationError::LengthLimitExceeded { .. })
+    ));
+    assert_eq!(
+        AkitaBatchedProof::<F, F>::deserialize_uncompressed_exact(&batched_bytes, &shape)
+            .expect("exact batched proof decode"),
+        batched
+    );
+    for suffix in [0, 0xa5] {
+        let mut suffixed = batched_bytes.clone();
+        suffixed.push(suffix);
+        assert!(
+            AkitaBatchedProof::<F, F>::deserialize_uncompressed_exact(&suffixed, &shape).is_err()
+        );
+    }
 
     let mut shape_bytes = Vec::new();
     proof

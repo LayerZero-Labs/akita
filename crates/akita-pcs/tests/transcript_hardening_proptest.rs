@@ -12,21 +12,21 @@ use proptest::prelude::*;
 
 type Scheme = AkitaCommitmentScheme<DenseCfg>;
 
-fn batch_shape(index: usize) -> usize {
-    // The generated dense catalog authorizes singleton, pair, and four-claim
-    // rows. Keep fuzz inputs on those public rows so failures exercise
-    // transcript replay rather than missing-schedule rejection.
+fn batch_case(index: usize) -> (usize, usize) {
+    // Keep fuzz inputs on exact generated rows so failures exercise transcript
+    // replay rather than missing-schedule rejection.
     match index {
-        0 => 1,
-        1 => 2,
-        _ => 4,
+        0 => (14, 1),
+        1 => (15, 2),
+        2 => (17, 4),
+        _ => (24, 1),
     }
 }
 
-fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: BasisMode, seed: u64) {
+fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
 
-    let total_claims = batch_shape(shape_index);
+    let (num_vars, total_claims) = batch_case(shape_index);
     let opening_batch =
         OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
     let layout = DenseCfg::select_schedule_for_opening(&opening_batch)
@@ -92,6 +92,13 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let prover_public = public_transcript_events(prover_transcript.events());
     let verifier_public = public_transcript_events(verifier_transcript.events());
     assert_eq!(prover_public, verifier_public);
+    let batching_squeezes = assert_claim_batching_follows_opening_payload(&prover_public);
+    if total_claims > 1 {
+        assert!(
+            batching_squeezes > 0,
+            "multi-claim root must exercise public claim batching"
+        );
+    }
     let terminal_e_hat = assert_terminal_event_order_if_present(&prover_public);
     if num_vars >= 20 {
         let terminal_e_hat =
@@ -108,14 +115,14 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
 #[test]
 fn seed_corpus_covers_nv_basis_and_batch_shapes() {
     run_on_large_stack(|| {
-        for (num_vars, shape_index, basis_mode, seed) in [
-            (15, 0, BasisMode::Lagrange, 0x1001),
-            (15, 1, BasisMode::Lagrange, 0x1002),
-            (20, 0, BasisMode::Lagrange, 0x1003),
-            (15, 2, BasisMode::Lagrange, 0x1004),
-            (15, 3, BasisMode::Monomial, 0x1005),
+        for (shape_index, basis_mode, seed) in [
+            (0, BasisMode::Lagrange, 0x1001),
+            (1, BasisMode::Lagrange, 0x1002),
+            (2, BasisMode::Lagrange, 0x1004),
+            (2, BasisMode::Monomial, 0x1005),
+            (3, BasisMode::Lagrange, 0x1006),
         ] {
-            logged_dense_round_trip(num_vars, shape_index, basis_mode, seed);
+            logged_dense_round_trip(shape_index, basis_mode, seed);
         }
     });
 }
@@ -125,6 +132,6 @@ proptest! {
 
     #[test]
     fn event_stream_equality_fuzzes_batch_shapes(shape_index in 0usize..4, seed in any::<u64>()) {
-        run_on_large_stack(move || logged_dense_round_trip(15, shape_index, BasisMode::Lagrange, seed));
+        run_on_large_stack(move || logged_dense_round_trip(shape_index, BasisMode::Lagrange, seed));
     }
 }

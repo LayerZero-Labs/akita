@@ -215,7 +215,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
     /// Borrow folded `e` rows after [`Self::ensure_role_dim`].
     pub fn e_folded_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         self.ensure_role_dim::<D>(RingRole::Inner)?;
-        Ok(self.e_folded.as_ring_slice_trusted::<D>())
+        self.e_folded.as_ring_slice::<D>()
     }
 }
 

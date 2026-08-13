@@ -2,7 +2,7 @@
 
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
-use super::FoldPrefix;
+use super::FoldClaimMaterial;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
 };
@@ -10,9 +10,9 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::ABSORB_EVALUATION_CLAIMS;
 use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
-    append_claim_values_to_transcript, derive_public_row_coefficients, dispatch_for_field,
-    prepare_opening_point, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
-    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, TerminalCommittedGroupParams,
+    append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point, BasisMode,
+    Commitment, CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
+    PreparedOpeningPoint, TerminalCommittedGroupParams,
 };
 
 pub(in crate::protocol::core) fn absorb_protocol_opening_points<F, E, T>(
@@ -33,18 +33,16 @@ pub(in crate::protocol::core) fn absorb_protocol_opening_points<F, E, T>(
 /// Root single-field prefix: per-group `prepare_opening_point`, no EOR. A
 /// scalar root is the one-group case of the same layout.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_single_field_root_prefix<F, E, T>(
+pub(in crate::protocol::core) fn verify_single_field_root_prefix<F, E>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
-    transcript: &mut T,
-) -> Result<FoldPrefix<F, E>, AkitaError>
+) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
 {
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
@@ -77,14 +75,10 @@ where
         )?;
         prepared_points.push(prepared);
     }
-    let row_coefficients =
-        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
-    let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    Ok(FoldPrefix {
+    Ok(FoldClaimMaterial {
         prepared_points,
-        trace_claim_coefficients: row_coefficients.clone(),
-        row_coefficients,
-        trace_eval_target,
+        openings: openings.to_vec(),
+        reduction_factors: None,
     })
 }
 

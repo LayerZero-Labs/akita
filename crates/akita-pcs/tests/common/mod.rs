@@ -18,10 +18,10 @@ use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
-    dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
-    LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    canonical_base_field_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
+    AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
+    GroupBatchStatement, LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -652,6 +652,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         );
 
         let shape = proof.shape();
+        assert_eq!(
+            shape,
+            canonical_base_field_proof_shape(&schedule).expect("canonical schedule proof shape"),
+            "a produced proof must have the verifier's canonical schedule-derived shape"
+        );
         let mut bytes = Vec::new();
         proof
             .serialize_compressed(&mut bytes)
@@ -826,6 +831,37 @@ pub(super) fn first_label_index_after(
         .iter()
         .position(|event| event_label(event).is_some_and(|candidate| candidate == label))
         .map(|offset| start + offset)
+}
+
+/// Assert that every public claim-batching squeeze belongs to a fold whose
+/// complete opening payload was already absorbed.
+#[cfg(feature = "logging-transcript")]
+pub(super) fn assert_claim_batching_follows_opening_payload(
+    events: &[akita_transcript::TranscriptEvent],
+) -> usize {
+    let mut payload_bound = false;
+    let mut batching_squeezes = 0usize;
+    for event in events {
+        let Some(label) = event_label(event) else {
+            continue;
+        };
+        if label == akita_transcript::labels::ABSORB_OPENING_PAYLOAD {
+            payload_bound = true;
+        } else if is_label_or_extension_limb(label, akita_transcript::labels::CHALLENGE_EVAL_BATCH)
+        {
+            assert!(
+                payload_bound,
+                "public claim-batching challenge preceded its fold opening payload"
+            );
+            batching_squeezes += 1;
+        } else if is_label_or_extension_limb(
+            label,
+            akita_transcript::labels::CHALLENGE_SPARSE_CHALLENGE,
+        ) {
+            payload_bound = false;
+        }
+    }
+    batching_squeezes
 }
 
 #[cfg(feature = "logging-transcript")]

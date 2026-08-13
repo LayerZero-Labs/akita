@@ -124,9 +124,15 @@ fn setup_section_rejects_unknown_compression_policy_tag() {
 fn descriptor_roundtrip_preserves_typed_schedule_binding() {
     let descriptor = sample_descriptor();
     let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
-    let decoded = AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &())
+    let decoded = AkitaInstanceDescriptor::deserialize_uncompressed_exact(&bytes, &())
         .expect("deserialize descriptor");
     assert_eq!(decoded, descriptor);
+
+    for suffix in [0, 0xa5] {
+        let mut suffixed = bytes.clone();
+        suffixed.push(suffix);
+        assert!(AkitaInstanceDescriptor::deserialize_uncompressed_exact(&suffixed, &()).is_err());
+    }
 }
 
 #[test]

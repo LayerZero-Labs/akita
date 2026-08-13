@@ -37,7 +37,7 @@ mod wire;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    sample_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub(crate) use batch::root_tensor_projection_enabled_for_width;
@@ -96,9 +96,9 @@ pub use setup_prefix::{
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
-    AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
-    NextWitnessBindingShape, SetupProductSumcheckShape, TerminalLevelProofShape,
-    SETUP_SUMCHECK_DEGREE,
+    canonical_base_field_proof_shape, AkitaBatchedProofShape, AkitaStage1StageShape,
+    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBindingShape,
+    SetupProductSumcheckShape, TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,

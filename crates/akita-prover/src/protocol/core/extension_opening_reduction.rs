@@ -150,8 +150,12 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients =
-        derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
+    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
+        &opening_batch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        transcript,
+    )?;
     let proof_partials = prepared_groups
         .iter()
         .flat_map(|group| group.proof_partials.iter().copied())

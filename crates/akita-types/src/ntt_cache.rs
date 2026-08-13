@@ -1082,6 +1082,8 @@ where
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct VerifierNttCacheKey {
     ring_d: usize,
+    width: usize,
+    rhs_abs_bound: u64,
 }
 
 struct ErasedVerifierNttCache {
@@ -1177,7 +1179,11 @@ impl VerifierNttCache {
                 "verifier NTT matrix prefix is shorter than its row width".into(),
             ));
         }
-        let key = VerifierNttCacheKey { ring_d: D };
+        let key = VerifierNttCacheKey {
+            ring_d: D,
+            width,
+            rhs_abs_bound,
+        };
         let mut slots = self
             .slots
             .lock()

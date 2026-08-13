@@ -426,8 +426,11 @@ where
             prepared_points.push(prepared);
         }
     }
-    let row_coefficients =
-        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
+        opening_batch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        transcript,
+    )?;
     let eor_replay = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
         &group_points,
@@ -485,9 +488,10 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let row_coefficients = derive_public_row_coefficients::<F, E, T>(
+    append_claim_values_to_transcript::<F, E, T>(std::slice::from_ref(opening), transcript);
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
         opening_batch,
-        std::slice::from_ref(opening),
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
         transcript,
     )?;
     let FoldEorReplay {

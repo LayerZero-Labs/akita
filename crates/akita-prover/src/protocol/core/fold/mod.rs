@@ -186,32 +186,10 @@ where
         e_folded_by_claim.extend(prepared.folded_by_claim);
         scalar_openings.extend(prepared.scalar_openings);
     }
-    let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T>(
-        &reduction,
-        &scalar_openings,
-        trace_opening_batch,
-        row_coefficients,
-        transcript,
-    )
-    .map_err(|err| {
-        AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
-    })?;
-    let row_coefficient_rings = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        level_params.role_dims().d_a(),
-        |D| {
-            let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!("row coefficient rings failed: {err:?}"))
-                })?;
-            Ok::<_, AkitaError>(RingVec::from_ring_elems(&row_coefficient_rings))
-        }
-    )
-    .map_err(|err| {
-        AkitaError::InvalidInput(format!("root row-coefficient preparation failed: {err:?}"))
-    })?;
-    let (instance, witness) = RingRelationProver::new(
+    if reduction.is_none() {
+        append_claim_values_to_transcript::<F, E, T>(&scalar_openings, transcript);
+    }
+    let (instance, witness, (trace_claim, row_coefficients)) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
         prepared_points
@@ -222,7 +200,38 @@ where
         e_folded_by_claim,
         level_params.clone(),
         transcript,
-        row_coefficient_rings,
+        |transcript| {
+            let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T>(
+                &reduction,
+                &scalar_openings,
+                trace_opening_batch,
+                row_coefficients,
+                transcript,
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
+            })?;
+            let row_coefficient_rings = dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                level_params.role_dims().d_a(),
+                |D| {
+                    let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
+                        .map_err(|err| {
+                            AkitaError::InvalidInput(format!(
+                                "row coefficient rings failed: {err:?}"
+                            ))
+                        })?;
+                    Ok::<_, AkitaError>(RingVec::from_ring_elems(&row_coefficient_rings))
+                }
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!(
+                    "root row-coefficient preparation failed: {err:?}"
+                ))
+            })?;
+            Ok((row_coefficient_rings, (trace_claim, row_coefficients)))
+        },
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))

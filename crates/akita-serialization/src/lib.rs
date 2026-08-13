@@ -4,7 +4,7 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 
 /// Default maximum number of elements accepted by self-described validated
 /// vector decoding.
@@ -137,6 +137,14 @@ pub trait AkitaDeserialize: Sized {
         Self::deserialize_with_mode(reader, Compress::Yes, Validate::Yes, ctx)
     }
 
+    /// Deserialize one complete compressed artifact and reject trailing bytes.
+    fn deserialize_compressed_exact(
+        bytes: &[u8],
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_exact_with_mode(bytes, Compress::Yes, Validate::Yes, ctx)
+    }
+
     /// Deserialize from compressed form without validation.
     ///
     /// This is for trusted internal buffers whose producer and shape have
@@ -157,6 +165,14 @@ pub trait AkitaDeserialize: Sized {
         Self::deserialize_with_mode(reader, Compress::No, Validate::Yes, ctx)
     }
 
+    /// Deserialize one complete uncompressed artifact and reject trailing bytes.
+    fn deserialize_uncompressed_exact(
+        bytes: &[u8],
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        Self::deserialize_exact_with_mode(bytes, Compress::No, Validate::Yes, ctx)
+    }
+
     /// Deserialize from uncompressed form without validation.
     ///
     /// This is for trusted internal buffers whose producer and shape have
@@ -167,6 +183,21 @@ pub trait AkitaDeserialize: Sized {
         ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         Self::deserialize_with_mode(reader, Compress::No, Validate::No, ctx)
+    }
+
+    /// Deserialize one complete artifact with explicit encoding and validation modes.
+    fn deserialize_exact_with_mode(
+        bytes: &[u8],
+        compress: Compress,
+        validate: Validate,
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        let mut cursor = Cursor::new(bytes);
+        let value = Self::deserialize_with_mode(&mut cursor, compress, validate, ctx)?;
+        if cursor.position() != bytes.len() as u64 {
+            return Err(SerializationError::UnexpectedData);
+        }
+        Ok(value)
     }
 }
 
