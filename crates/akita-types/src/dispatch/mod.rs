@@ -1,7 +1,7 @@
 //! Runtime-to-const-generic dispatch shared by prover and verifier.
 //!
 //! Fold / ring-switch paths use **role × PCS field tier** tables (see
-//! `specs/ring-dim-challenge-cutover.md`). NTT cache build uses field tier only.
+//! `book/src/foundations/ntt-crt.md`). NTT cache build uses field tier only.
 //!
 //! Arm lists come from the policy block in `dispatch/policy.rs`; validators and
 //! [`crate::dispatch_for_field!`] expand from that single declaration.

@@ -504,7 +504,7 @@ cycles saved by offloading vs the extra chunked-witness bytes.
 - `specs/setup-offloading-planner.md`
 - `specs/distributed-planner.md`
 - `specs/multi-group-batching.md`
-- `specs/batched-stage3-setup-opening.md`
+- `specs/archive/2026-Q3/group-local-opening-points.md`
 - `crates/akita-planner/src/planner.rs`
 - `crates/akita-planner/src/schedule_params/candidate.rs`
 - `crates/akita-prover/src/protocol/fold_grind.rs`
