@@ -37,8 +37,6 @@ impl_ext_serde!(FpExt8; 8; |coeffs| Self::new(coeffs));
 
 #[cfg(test)]
 mod tests {
-    use bincode::config::standard;
-    use bincode::error::DecodeError;
     use serde::de::DeserializeOwned;
 
     use super::*;
@@ -46,7 +44,6 @@ mod tests {
     use crate::prime::Fp128;
     use crate::CanonicalField;
 
-    /// `2^128 − 275`, so each base coefficient occupies sixteen bytes.
     type F = Fp128<0xffff_ffff_ffff_ffff_ffff_ffff_ffff_feed>;
     type E2 = Ext2<F>;
     type E4 = FpExt4<F>;
@@ -55,11 +52,11 @@ mod tests {
     const BASE_WIDTH: usize = 16;
 
     fn encode<T: Serialize>(value: T) -> Vec<u8> {
-        bincode::serde::encode_to_vec(value, standard()).expect("encoding cannot fail")
+        postcard::to_stdvec(&value).expect("encoding cannot fail")
     }
 
-    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
-        bincode::serde::decode_from_slice(bytes, standard()).map(|(value, _)| value)
+    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, postcard::Error> {
+        postcard::from_bytes(bytes)
     }
 
     fn base(value: u128) -> F {

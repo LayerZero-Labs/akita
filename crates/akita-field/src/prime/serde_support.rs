@@ -4,7 +4,7 @@
 //! (`Fp32` → `[u8; 4]`, `Fp64` → `[u8; 8]`, `Fp128` → `[u8; 16]`); decode rejects
 //! non-canonical values (`val >= P`) rather than reducing. Encoding the byte
 //! array rather than the storage integer keeps the length value-independent
-//! under Bincode (which varint-encodes integers), matches Jolt's `JoltProof`
+//! under formats that varint-encode integers, matches Jolt's `JoltProof`
 //! convention, and agrees with
 //! [`AkitaSerialize`](akita_serialization::AkitaSerialize) for these types.
 //!
@@ -50,25 +50,20 @@ impl_prime_serde!(Fp128<P: u128>);
 #[cfg(test)]
 mod tests {
     use akita_serialization::AkitaSerialize;
-    use bincode::config::standard;
-    use bincode::error::DecodeError;
     use serde::de::DeserializeOwned;
 
     use super::*;
 
-    /// `2^32 − 5`, the largest prime below `2^32`.
     type F32 = Fp32<4_294_967_291>;
-    /// `2^64 − 59`.
     type F64 = Fp64<18_446_744_073_709_551_557>;
-    /// `2^128 − 275`.
     type F128 = Fp128<0xffff_ffff_ffff_ffff_ffff_ffff_ffff_feed>;
 
     fn encode<T: Serialize>(value: T) -> Vec<u8> {
-        bincode::serde::encode_to_vec(value, standard()).expect("encoding cannot fail")
+        postcard::to_stdvec(&value).expect("encoding cannot fail")
     }
 
-    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
-        bincode::serde::decode_from_slice(bytes, standard()).map(|(value, _)| value)
+    fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, postcard::Error> {
+        postcard::from_bytes(bytes)
     }
 
     fn fp32(value: u128) -> F32 {
