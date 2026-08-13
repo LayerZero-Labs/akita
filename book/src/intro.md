@@ -76,7 +76,7 @@ Reading orders by audience:
 - **Application developer (integrating Jolt or another host):** start with
   [Usage](./usage/usage.md). While chapters are stubs, use
   [`profile/akita-recursion/README.md`](../../profile/akita-recursion/README.md),
-  [`specs/single-point-opening-batch.md`](../../specs/single-point-opening-batch.md),
+  [`usage/commitment-api.md`](./usage/commitment-api.md),
   and [`AGENTS.md`](../../AGENTS.md) for the current API contracts.
 - **Contributor:** [How it works](./how/how-it-works.md), lead with the lifecycle.
 - **Reviewer:** [Foundations](./foundations/foundations.md) + [Security model](./how/security.md).

@@ -6,7 +6,7 @@
 | Created       | 2026-07-23 |
 | Status        | partially implemented |
 | PR            | #327; remaining runtime policy split deferred to a stacked PR after #343 |
-| Supersedes    | Runtime-fallback portions of [`archive/2026-Q2/planner-refactor.md`](archive/2026-Q2/planner-refactor.md) and [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md) |
+| Supersedes    | Runtime-fallback portions of [`archive/2026-Q2/planner-refactor.md`](archive/2026-Q2/planner-refactor.md) and the deleted `schedule-catalog-ownership.md` |
 | Superseded-by | |
 | Book-chapter  | book/src/how/configuration.md |
 
@@ -494,7 +494,7 @@ specified, a catalog miss rejects.
 ## References
 
 - [`modular-planner-and-precommit-roles.md`](modular-planner-and-precommit-roles.md)
-- [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md)
+- [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md)
 - [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
 - [`digit-innermost-layout.md`](digit-innermost-layout.md)
 - [`../docs/verifier-contract.md`](../docs/verifier-contract.md)

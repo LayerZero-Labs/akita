@@ -36,4 +36,4 @@ cargo test -p akita-pcs --features logging-transcript --test transcript_hardenin
 cargo test -p akita-pcs --features logging-transcript --test transcript_hardening_proptest
 ```
 
-For the full design and deferred follow-ups, see `specs/transcript-hardening.md`.
+For the full design, see [`book/src/how/transcript.md`](../../book/src/how/transcript.md).

@@ -830,7 +830,7 @@ turn it into a new detailed current spec. The rest stays coarse.
 ## References
 
 - `specs/akita-pcs-crate-decomposition.md`
-- `specs/akita-crate-followup-jolt-integration.md`
+- `book/src/usage/jolt-recursion.md`
 - `/Users/quang.dao/Documents/Notes/jolt-prover-model-crate.md`
 - `/Users/quang.dao/Documents/Notes/jolt-prover-cpu-backend-port.md`
 - `/Users/quang.dao/Documents/Notes/jolt-core-prover-optimization-inventory.md`

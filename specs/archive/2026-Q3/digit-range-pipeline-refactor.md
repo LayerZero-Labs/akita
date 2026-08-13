@@ -11,7 +11,7 @@
 | Book-chapter     | book/src/how/proving/sumcheck-stages.md |
 | Base             | PR #311, `quang/terminal-direct-ring-relations` at `fad006e2280e880fa16f1cd13b5ea2df599364d0`                                                                          |
 | Implemented head | `11163598a6a66b5376306fa9b97d64c29515446a`                                                                                                                             |
-| Related          | `[digit-innermost-layout.md](../../digit-innermost-layout.md)`, `[packed-sumcheck.md](../../packed-sumcheck.md)`, `[akita-sumcheck-unification.md](../../akita-sumcheck-unification.md)` |
+| Related          | `[digit-innermost-layout.md](../../digit-innermost-layout.md)`, `[packed-sumcheck.md](../../packed-sumcheck.md)`, `akita-sumcheck-unification.md` (deleted) |
 
 
 
