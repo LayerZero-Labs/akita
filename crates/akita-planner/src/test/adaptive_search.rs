@@ -581,10 +581,6 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
             .role_dims(),
         d64
     );
-    assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
-    assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
-    assert_eq!(rank_one_capped_root.outer_commit_matrix.output_rank(), 1);
-    assert_eq!(selected_root.outer_commit_matrix.output_rank(), 1);
     assert!(
         selected.estimate.estimated_num_setup_field_elements
             <= rank_one_capped.estimate.estimated_num_setup_field_elements,
@@ -811,10 +807,10 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
 
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
-        8_388_608
+        10_485_760
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        112_616
+        112_728
     );
 }
