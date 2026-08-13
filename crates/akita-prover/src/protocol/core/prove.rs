@@ -7,12 +7,12 @@ use crate::compute::{
     SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
+use crate::SelectedProverOpeningData;
 use akita_config::{
     effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
-use akita_types::OpeningScheduleSelection;
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
@@ -36,8 +36,7 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
         Tensor = TS,
         RingSwitch = R,
     >,
-    selection: OpeningScheduleSelection,
-    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     transcript: &mut T,
     basis: BasisMode,
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
@@ -85,6 +84,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
+    let (selection, claims) = opening.into_low_level_parts();
     let opening_claims = claims.opening_claims();
     let opening_batch = opening_claims.layout()?;
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;

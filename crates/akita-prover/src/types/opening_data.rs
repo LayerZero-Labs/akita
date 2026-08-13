@@ -3,19 +3,37 @@ use crate::backend::RecursiveFoldSource;
 use crate::compute::RootPolyMeta;
 use crate::protocol::core::RootProverGroupMeta;
 use crate::PreparedProverGroup;
+use akita_config::CommitmentConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupParams, OpeningClaims,
-    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    SetupPrefixSlot,
+    AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,
+    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout, SetupPrefixSlot,
 };
 
 /// Exact top-level row selection paired with its prover opening material.
-pub type SelectedProverOpeningData<'a, PointF, G, CommitF> = (
-    OpeningScheduleSelection,
-    ProverOpeningData<'a, PointF, G, CommitF>,
-);
+#[derive(Debug, Clone)]
+pub struct SelectedProverOpeningData<'a, PointF: Clone, G, CommitF: FieldCore> {
+    selection: OpeningScheduleSelection,
+    opening_data: ProverOpeningData<'a, PointF, G, CommitF>,
+}
+
+impl<'a, PointF: Clone, G, CommitF: FieldCore> SelectedProverOpeningData<'a, PointF, G, CommitF> {
+    /// Exact catalog row identity selected for this complete opening batch.
+    pub const fn selection(&self) -> OpeningScheduleSelection {
+        self.selection
+    }
+
+    pub(crate) fn into_low_level_parts(
+        self,
+    ) -> (
+        OpeningScheduleSelection,
+        ProverOpeningData<'a, PointF, G, CommitF>,
+    ) {
+        (self.selection, self.opening_data)
+    }
+}
 
 #[derive(Debug, Clone)]
 struct ProverGroupInput<G, CommitF: FieldCore> {
@@ -111,6 +129,37 @@ where
         };
         data.check_alignment()?;
         Ok(data)
+    }
+}
+
+impl<'a, PointF, P, CommitF>
+    SelectedProverOpeningData<'a, PointF, PreparedProverGroup<'a, P>, CommitF>
+where
+    PointF: Clone,
+    CommitF: FieldCore,
+    P: RootPolyMeta<CommitF>,
+{
+    /// Atomically select the exact batch row before stripping commitment profiles.
+    pub fn from_committed_claims<Cfg>(
+        opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
+        hints: Vec<AkitaCommitmentHint<CommitF>>,
+        polynomial_groups: Vec<&'a [&'a P]>,
+    ) -> Result<Self, AkitaError>
+    where
+        Cfg: CommitmentConfig<Field = CommitF, ExtField = PointF>,
+    {
+        let batch_profile = CommittedGroupBatchProfile::from_ordered_groups(
+            opening_claims
+                .groups()
+                .iter()
+                .map(PolynomialGroupClaims::commitment),
+        )?;
+        let selection = Cfg::select_schedule_for_profiles(&batch_profile)?.selection();
+        let opening_data = ProverOpeningData::new(opening_claims, hints, polynomial_groups)?;
+        Ok(Self {
+            selection,
+            opening_data,
+        })
     }
 }
 

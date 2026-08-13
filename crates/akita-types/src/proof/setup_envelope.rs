@@ -4,8 +4,9 @@ use akita_field::AkitaError;
 
 use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
 use crate::{
-    CommittedGroupParams, CompressionChainPlan, FoldSchedule, OpeningClaimsLayout,
-    SetupMatrixCapacity, SetupPrefixSlotId, SisModulusProfileId, TerminalCommittedGroupParams,
+    CommittedGroupParams, CompressionChainPlan, FoldSchedule, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity, SetupPrefixSlotId,
+    SisModulusProfileId, TerminalCommittedGroupParams,
 };
 
 /// Compute the exact maximum reusable setup-matrix field prefix required by
@@ -145,6 +146,48 @@ pub fn accumulate_matrix_field_elements_for_level(
         *max_field_elements = (*max_field_elements).max(setup_prefix_slot_field_elements(slot)?);
     }
     Ok(())
+}
+
+/// Physical setup footprint of materializing one committed group's commitment.
+///
+/// Commitment arithmetic touches only the A matrix, the B matrix, and the
+/// compression chain that reduces B's output. It never touches D, because a
+/// group's opening happens under whichever row later consumes it.
+///
+/// Setup sizing and commit-time admission both price an independent
+/// commitment from this one definition, so provisioning can never fall short
+/// of what admission demands.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when any footprint product overflows.
+pub fn commit_only_setup_field_elements(
+    inner_commit_matrix: &InnerCommitMatrixParams,
+    outer_commit_matrix: &OuterCommitMatrixParams,
+) -> Result<usize, AkitaError> {
+    let mut max_field_elements = 0;
+    include_matrix_field_elements(
+        &mut max_field_elements,
+        inner_commit_matrix.output_rank(),
+        inner_commit_matrix.input_width(),
+        inner_commit_matrix.ring_dimension(),
+        "commit inner setup",
+    )?;
+    include_matrix_field_elements(
+        &mut max_field_elements,
+        outer_commit_matrix.output_rank(),
+        outer_commit_matrix.input_width(),
+        outer_commit_matrix.ring_dimension(),
+        "commit outer setup",
+    )?;
+    include_compression_setup(
+        &mut max_field_elements,
+        outer_commit_matrix.sis_modulus_profile(),
+        outer_commit_matrix.output_rank(),
+        outer_commit_matrix.ring_dimension(),
+        "commit outer compression setup",
+    )?;
+    Ok(max_field_elements)
 }
 
 /// Extend a physical setup footprint with every compression map used by one

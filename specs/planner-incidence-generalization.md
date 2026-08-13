@@ -1,4 +1,4 @@
-# Spec: Planner Incidence Generalization
+# Historical spec: Planner Incidence Generalization
 
 > **Superseded (schedule keys):** portions of this spec that describe schedule lookup
 > keys, shipped-table selection, or preset↔table binding are superseded by

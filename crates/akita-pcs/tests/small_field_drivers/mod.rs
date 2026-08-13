@@ -16,8 +16,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, MultilinearPolynomial, Unifo
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims,
+    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 
 use akita_field::unreduced::{
@@ -27,7 +26,7 @@ use akita_field::{
     CanonicalBytes, CanonicalField, ExtField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling, TranscriptChallenge, Zero,
 };
-use akita_prover::ProverOpeningData;
+use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
 use akita_types::FpExtEncoding;
 
@@ -72,18 +71,17 @@ pub(super) fn single_group_roundtrip<Cfg>(
     let verifier_setup =
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(poly), &stack)
-            .expect("commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("commit");
     let poly_refs = [poly];
-
-    let selection =
-        <Cfg as CommitmentConfig>::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitment.profile(),
-            precommitteds: Vec::new(),
-        })
-        .expect("schedule")
-        .selection();
 
     let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.clone(),
@@ -92,11 +90,13 @@ pub(super) fn single_group_roundtrip<Cfg>(
     )
     .expect("prover group")])
     .expect("prover claims");
-    let prover_data = (
-        selection,
-        ProverOpeningData::new(prover_claims, vec![hint], vec![&poly_refs[..]])
-            .expect("prover data"),
-    );
+    let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
+        prover_claims,
+        vec![hint],
+        vec![&poly_refs[..]],
+    )
+    .expect("prover data");
+    let selection = prover_data.selection();
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(

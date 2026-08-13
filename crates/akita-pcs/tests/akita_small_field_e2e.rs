@@ -108,10 +108,15 @@ macro_rules! small_field_test {
                     let n = 1usize << nv;
                     let opening_batch =
                         OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-                    let layout = <$cfg as CommitmentConfig>::get_params_for_batched_commitment(
+                    let layout = <$cfg as CommitmentConfig>::select_schedule_for_opening(
                         &opening_batch,
                     )
-                    .expect("layout");
+                    .expect("layout")
+                    .into_schedule()
+                    .root
+                    .params
+                    .final_group
+                    .commitment;
                     let d = layout.d_a();
 
                     let evals: Vec<$sf> = (0..n)
@@ -155,13 +160,12 @@ macro_rules! small_field_test {
                 let label = concat!("completeness/", stringify!($name)).as_bytes();
                 const PRE_NV: usize = $pnv;
 
-                // The pre-group ring dimension comes from the standalone
-                // precommit catalog: a config may ship a precommit descriptor
-                // at PRE_NV without a standalone root row at that size.
-                let pre_d = akita_config::committed_group_profile::<$cfg>(
-                    &PolynomialGroupLayout::new(PRE_NV, 1),
+                // An independent precommit commits with its own row without
+                // precommitted groups, so take the ring dimension from that row.
+                let pre_d = <$cfg as CommitmentConfig>::profile_without_precommitted_groups(
+                    PolynomialGroupLayout::new(PRE_NV, 1),
                 )
-                .expect("pre precommit profile")
+                .expect("pre profile without precommitted groups")
                 .inner_commit_matrix
                 .ring_dimension();
                 let pre_n = 1usize << PRE_NV;
@@ -193,21 +197,25 @@ macro_rules! small_field_test {
                         &pre_evals,
                     )
                     .expect("pre dense poly");
-                    let (pre_commitment, pre_hint) =
-                        AkitaCommitmentScheme::<$cfg>::commit_group(
-                            &setup,
-                            std::slice::from_ref(&pre_poly),
-                            &stack,
-                        )
-                        .expect("precommit");
+                    let akita_prover::CommitOutput {
+                        committed_group: pre_commitment,
+                        hint: pre_hint,
+                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                        &setup,
+                        std::slice::from_ref(&pre_poly),
+                        &stack,
+                        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                    )
+                    .expect("precommit");
 
-                    let multi_schedule = <$cfg as CommitmentConfig>::runtime_schedule(
-                        AkitaScheduleLookupKey {
+                    let multi_schedule = <$cfg as CommitmentConfig>::select_schedule_for_key(
+                        &AkitaScheduleLookupKey {
                             final_group: PolynomialGroupLayout::new(final_nv, 1),
                             precommitteds: vec![pre_commitment.profile],
                         },
                     )
-                    .expect("multi-group schedule");
+                    .expect("multi-group schedule")
+                    .into_schedule();
                     let final_d = multi_schedule.root.params.final_group.commitment.d_a();
                     let final_n = 1usize << final_nv;
                     let final_evals: Vec<$sf> = (0..final_n)
@@ -219,14 +227,20 @@ macro_rules! small_field_test {
                         &final_evals,
                     )
                     .expect("final dense poly");
-                    let (final_commitment, final_hint, _sel) =
-                        AkitaCommitmentScheme::<$cfg>::commit_final_group(
-                            &setup,
-                            std::slice::from_ref(&final_poly),
-                            &stack,
-                            vec![pre_commitment.profile],
-                        )
-                        .expect("final commit");
+                    let precommitteds =
+                        PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty precommitted groups");
+                    let akita_prover::CommitOutput {
+                        committed_group: final_commitment,
+                        hint: final_hint,
+                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                        &setup,
+                        std::slice::from_ref(&final_poly),
+                        &stack,
+                        akita_prover::GroupContext::scheduler_with_precommitted_groups(
+                            &precommitteds,
+                        ),
+                    )
+                    .expect("final commit");
 
                     let point: Vec<$se> = (0..final_nv.max(PRE_NV))
                         .map(|i| <$se>::from_u64((i as u64).wrapping_mul(3).wrapping_add(1)))
@@ -263,7 +277,7 @@ macro_rules! small_field_test {
                         vec![pre_hint, final_hint],
                         vec![&pre_refs[..], &final_refs[..]],
                     );
-                    let selection = prover_data.0;
+                    let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
                     let proof = AkitaCommitmentScheme::<$cfg>::batched_prove::<_, _, _>(
@@ -306,10 +320,15 @@ macro_rules! small_field_test {
                 for &nv in &[$($nv),+] {
                     let opening_batch =
                         OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-                    let layout = <$cfg as CommitmentConfig>::get_params_for_batched_commitment(
+                    let layout = <$cfg as CommitmentConfig>::select_schedule_for_opening(
                         &opening_batch,
                     )
-                    .expect("layout");
+                    .expect("layout")
+                    .into_schedule()
+                    .root
+                    .params
+                    .final_group
+                    .commitment;
                     let d = layout.d_a();
                     let num_chunks = (1usize << nv) / onehot_k;
                     let indices: Vec<Option<u8>> = (0..num_chunks)
@@ -353,13 +372,12 @@ macro_rules! small_field_test {
                 const PRE_NV: usize = $pnv;
                 let onehot_k: usize = $k;
 
-                // The pre-group ring dimension comes from the standalone
-                // precommit catalog: a config may ship a precommit descriptor
-                // at PRE_NV without a standalone root row at that size.
-                let pre_d = akita_config::committed_group_profile::<$cfg>(
-                    &PolynomialGroupLayout::new(PRE_NV, 1),
+                // An independent precommit commits with its own row without
+                // precommitted groups, so take the ring dimension from that row.
+                let pre_d = <$cfg as CommitmentConfig>::profile_without_precommitted_groups(
+                    PolynomialGroupLayout::new(PRE_NV, 1),
                 )
-                .expect("pre precommit profile")
+                .expect("pre profile without precommitted groups")
                 .inner_commit_matrix
                 .ring_dimension();
                 let pre_chunks = (1usize << PRE_NV) / onehot_k;
@@ -391,21 +409,25 @@ macro_rules! small_field_test {
                         pre_indices.clone(),
                     )
                     .expect("pre onehot poly");
-                    let (pre_commitment, pre_hint) =
-                        AkitaCommitmentScheme::<$cfg>::commit_group(
-                            &setup,
-                            std::slice::from_ref(&pre_poly),
-                            &stack,
-                        )
-                        .expect("precommit");
+                    let akita_prover::CommitOutput {
+                        committed_group: pre_commitment,
+                        hint: pre_hint,
+                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                        &setup,
+                        std::slice::from_ref(&pre_poly),
+                        &stack,
+                        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                    )
+                    .expect("precommit");
 
-                    let multi_schedule = <$cfg as CommitmentConfig>::runtime_schedule(
-                        AkitaScheduleLookupKey {
+                    let multi_schedule = <$cfg as CommitmentConfig>::select_schedule_for_key(
+                        &AkitaScheduleLookupKey {
                             final_group: PolynomialGroupLayout::new(final_nv, 1),
                             precommitteds: vec![pre_commitment.profile],
                         },
                     )
-                    .expect("multi-group schedule");
+                    .expect("multi-group schedule")
+                    .into_schedule();
                     let final_d = multi_schedule.root.params.final_group.commitment.d_a();
                     let final_chunks = (1usize << final_nv) / onehot_k;
                     let final_indices: Vec<Option<u8>> = (0..final_chunks)
@@ -417,14 +439,20 @@ macro_rules! small_field_test {
                         final_indices,
                     )
                     .expect("final onehot poly");
-                    let (final_commitment, final_hint, _sel) =
-                        AkitaCommitmentScheme::<$cfg>::commit_final_group(
-                            &setup,
-                            std::slice::from_ref(&final_poly),
-                            &stack,
-                            vec![pre_commitment.profile],
-                        )
-                        .expect("final commit");
+                    let precommitteds =
+                        PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile]).expect("nonempty precommitted groups");
+                    let akita_prover::CommitOutput {
+                        committed_group: final_commitment,
+                        hint: final_hint,
+                    } = AkitaCommitmentScheme::<$cfg>::commit(
+                        &setup,
+                        std::slice::from_ref(&final_poly),
+                        &stack,
+                        akita_prover::GroupContext::scheduler_with_precommitted_groups(
+                            &precommitteds,
+                        ),
+                    )
+                    .expect("final commit");
 
                     let point: Vec<$se> = (0..final_nv.max(PRE_NV))
                         .map(|i| <$se>::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
@@ -471,7 +499,7 @@ macro_rules! small_field_test {
                         vec![pre_hint, final_hint],
                         vec![&pre_refs[..], &final_refs[..]],
                     );
-                    let selection = prover_data.0;
+                    let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
                     let proof = AkitaCommitmentScheme::<$cfg>::batched_prove::<_, _, _>(
@@ -514,8 +542,12 @@ macro_rules! small_field_test {
 
 // fp32 × Dense × direct              catalog: single(20,1)
 small_field_test!(dense;     fp32_dense;     fp32::Dense;  fp32::Field; fp32::ExtensionField; nvs=[20]);
-// fp32 × Dense × precommitted        catalog: final=(20,1) <- pre=[(14,1)]
-small_field_test!(dense_pre; fp32_dense_pre; fp32::Dense; fp32::Field; fp32::ExtensionField; pre_nv=14; final_nvs=[20]);
+// fp32 × Dense × precommitted        catalog: final=(20,1) <- pre=[(20,1)]
+//
+// pre_nv=20 rather than 14: an independent precommit commits with its own row
+// without precommitted groups, and `fp32::Dense` has no schedule with at least two
+// folds below 20, so no such row exists at 14.
+small_field_test!(dense_pre; fp32_dense_pre; fp32::Dense; fp32::Field; fp32::ExtensionField; pre_nv=20; final_nvs=[20]);
 // fp32 × OneHot × direct             catalog: single(14,1), single(16,1)
 small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]; k=256);
 // fp32 × OneHot × precommitted       catalog: final=(20,1) <- pre=[(14,1)]
@@ -577,10 +609,11 @@ fn fp32_onehot_multi_group() {
                 .expect("grouped fp32 poly")
         };
 
-        let pre_group_schedule = SmallCfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::new(PRE_NV, 1),
-        ))
-        .expect("pre schedule");
+        let pre_group_schedule = SmallCfg::select_schedule_for_key(
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(PRE_NV, 1)),
+        )
+        .expect("pre schedule")
+        .into_schedule();
         let pre_params = &pre_group_schedule.root.params.final_group.commitment;
         let pre_poly = grouped_poly(pre_params, 1);
 
@@ -594,15 +627,23 @@ fn fp32_onehot_multi_group() {
             pre_setup.expanded.as_ref(),
         )
         .expect("pre stack");
-        let (pre_commitment, pre_hint) =
-            SmallScheme::commit_group(&pre_setup, std::slice::from_ref(&pre_poly), &pre_stack)
-                .expect("precommit");
+        let akita_prover::CommitOutput {
+            committed_group: pre_commitment,
+            hint: pre_hint,
+        } = SmallScheme::commit(
+            &pre_setup,
+            std::slice::from_ref(&pre_poly),
+            &pre_stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("precommit");
 
-        let multi_schedule = SmallCfg::runtime_schedule(AkitaScheduleLookupKey {
+        let multi_schedule = SmallCfg::select_schedule_for_key(&AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
             precommitteds: vec![pre_commitment.profile],
         })
-        .expect("multi-group schedule");
+        .expect("multi-group schedule")
+        .into_schedule();
         let final_params = &multi_schedule.root.params.final_group.commitment;
         let final_poly = grouped_poly(final_params, 2);
 
@@ -613,11 +654,16 @@ fn fp32_onehot_multi_group() {
                 .expect("stack");
         let verifier_setup = SmallScheme::setup_verifier(&setup).expect("verifier setup");
 
-        let (final_commitment, final_hint, _sel) = SmallScheme::commit_final_group(
+        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty precommitted groups");
+        let akita_prover::CommitOutput {
+            committed_group: final_commitment,
+            hint: final_hint,
+        } = SmallScheme::commit(
             &setup,
             std::slice::from_ref(&final_poly),
             &stack,
-            vec![pre_commitment.profile],
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final commit");
 
@@ -652,7 +698,7 @@ fn fp32_onehot_multi_group() {
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],
         );
-        let selection = prover_data.0;
+        let selection = prover_data.selection();
 
         let mut prover_transcript =
             AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");

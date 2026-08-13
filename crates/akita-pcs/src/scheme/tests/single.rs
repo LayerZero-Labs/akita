@@ -18,8 +18,16 @@ fn verify_rejects_wrong_opening() {
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();

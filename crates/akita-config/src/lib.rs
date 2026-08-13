@@ -1,8 +1,8 @@
 //! [`CommitmentConfig`] — the single `<Cfg>` parameter used by
 //! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
-//! Production `get_params_for_prove` implementations resolve a schedule for
-//! cataloged lookup key via [`CommitmentConfig::runtime_schedule`]. Runtime
+//! Production selectors resolve a schedule row for a cataloged lookup key via
+//! [`CommitmentConfig::select_schedule_for_key`]. Runtime
 //! resolution is strict: missing generated catalog rows reject instead of
 //! invoking planner search.
 
@@ -16,8 +16,8 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity, SisModulusProfileId,
+    AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, OpeningClaimsLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -86,19 +86,10 @@ macro_rules! impl_multi_chunk_companion {
                     None
                 }
             }
-
-            fn get_params_for_prove(
-                layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
-                    layout,
-                )?)
-            }
         }
     };
 }
 
-pub mod precommitted_commitment;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -107,7 +98,6 @@ pub mod setup_prefix_slots;
 pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
-pub use precommitted_commitment::committed_group_profile;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
@@ -335,13 +325,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         None
     }
 
-    /// Build the runtime [`FoldSchedule`] for `key`.
+    /// Select the exact generated row for `key`.
     ///
     /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
     /// empty `precommitteds` vector. Grouped roots supply frozen precommit
     /// layouts in `precommitteds`.
     ///
-    /// Delegates to [`akita_schedules::resolve_group_batch_schedule`] with this
+    /// Delegates to [`akita_schedules::select_generated_schedule_row`] with this
     /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
     /// and expands the compact entry. A missing catalog row is unsupported.
     ///
@@ -349,14 +339,52 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Propagates expansion / SIS-bucket failures or unsupported catalog
     /// requests. Never panics — this is verifier-reachable.
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
+    fn select_schedule_for_key(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
         Self::validate_sis_modulus_profile()?;
-        akita_schedules::resolve_group_batch_schedule(
-            &key,
+        akita_schedules::select_generated_schedule_row(
+            key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::schedule_catalog(),
         )
+    }
+
+    /// Select the exact row without precommitted groups for an opening layout.
+    ///
+    /// A layout carrying precommitted groups has no single row: grouped selection
+    /// needs the exact committed descriptors, so it goes through
+    /// [`Self::select_schedule_for_key`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed or grouped layout, and propagates
+    /// unsupported catalog requests.
+    fn select_schedule_for_opening(
+        layout: &OpeningClaimsLayout,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        Self::select_schedule_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
+    }
+
+    /// Frozen profile this config commits a group with when it has no precommitted groups.
+    ///
+    /// This is the one runtime definition of an independent commitment's
+    /// parameters. A grouped row's frozen precommitted descriptor is the value this
+    /// returns for the same group, which
+    /// `every_grouped_precommitted_descriptor_has_a_generated_producer` enforces.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no generated row without precommitted groups covers
+    /// `group`.
+    fn profile_without_precommitted_groups(
+        group: akita_types::PolynomialGroupLayout,
+    ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
+        let layout = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+        Ok(Self::select_schedule_for_opening(&layout)?
+            .profiles()
+            .final_group)
     }
 
     /// Select the generated row accepted for exact committed profiles.
@@ -394,33 +422,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             Self::ring_challenge_config,
             Self::schedule_catalog(),
         )
-    }
-
-    /// FoldSchedule consumed by the prove/verify root path.
-    ///
-    /// # Errors
-    ///
-    /// Propagates schedule-key construction, catalog expansion, or DP-search
-    /// failures for `layout`.
-    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError>;
-
-    /// Root commit layout the `batched_prove` flow uses for `layout`,
-    /// read off the runtime schedule's root fold. Same layout per-point commits use,
-    /// so they stay compatible with the batched prove root.
-    ///
-    /// Reading the schedule's first step (rather than re-resolving the compact
-    /// entry directly) keeps this coupled to whatever
-    /// [`Self::get_params_for_prove`] / [`Self::runtime_schedule`] produce,
-    /// so config overrides and synthetic fixtures stay honored.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Self::get_params_for_prove`] and rejects malformed schedules.
-    fn get_params_for_batched_commitment(
-        layout: &OpeningClaimsLayout,
-    ) -> Result<CommittedGroupParams, AkitaError> {
-        let schedule = Self::get_params_for_prove(layout)?;
-        Ok(schedule.root.params.final_group.commitment.clone())
     }
 }
 
@@ -485,12 +486,6 @@ mod tests {
                 ),
             )
         }
-
-        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
-            layout.check()?;
-            let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout()?);
-            Self::runtime_schedule(key)
-        }
     }
 
     #[test]
@@ -540,11 +535,10 @@ mod tests {
 
 #[cfg(test)]
 mod sis_schedule_width_audit {
-    use super::*;
     use akita_types::sis::min_secure_rank;
 
     pub(super) fn assert_schedule_stays_within_audited_sis_widths(
-        schedule: &FoldSchedule,
+        schedule: &akita_types::FoldSchedule,
         num_vars: usize,
     ) {
         for (level_idx, lp) in std::iter::once(&schedule.root.params.final_group.commitment)
@@ -628,10 +622,11 @@ mod fp128_policy_tests {
         num_vars_values: &[usize],
     ) {
         for &num_vars in num_vars_values {
-            let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+            let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
                 PolynomialGroupLayout::singleton(num_vars),
             ))
-            .unwrap();
+            .unwrap()
+            .into_schedule();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }
@@ -697,8 +692,9 @@ mod fp128_policy_tests {
         );
 
         let opening_batch = OpeningClaimsLayout::new(28, 1).expect("singleton opening batch");
-        let schedule =
-            SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
+        let schedule = SmallCfg::select_schedule_for_opening(&opening_batch)
+            .expect("small-field schedule")
+            .into_schedule();
         let root_params = &schedule.root.params.final_group.commitment;
         assert!(
             root_params.inner_commit_matrix.coeff_linf_bound()
@@ -711,10 +707,12 @@ mod fp128_policy_tests {
     fn fp128_generated_singleton_plans_resolve() {
         let key = PolynomialGroupLayout::singleton(32);
 
-        let dense = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(key))
-            .expect("adaptive dense schedule");
-        let onehot = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
-            .expect("adaptive onehot schedule");
+        let dense = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
+            .expect("adaptive dense schedule")
+            .into_schedule();
+        let onehot = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
+            .expect("adaptive onehot schedule")
+            .into_schedule();
 
         assert_eq!(dense.initial_witness_len(), 1usize << 32);
         assert_eq!(onehot.initial_witness_len(), 1usize << 32);
@@ -724,38 +722,39 @@ mod fp128_policy_tests {
     fn fp128_adaptive_onehot_supports_batched_keys() {
         let key = PolynomialGroupLayout::new(30, 4);
 
-        let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
-            .expect("adaptive batched onehot schedule");
+        let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
+            .expect("adaptive batched onehot schedule")
+            .into_schedule();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }
 }
 
 #[cfg(test)]
-mod precommit_tests {
+mod independent_commitment_tests {
     use super::proof_optimized::fp128;
     use super::*;
 
     #[test]
-    fn exact_precommit_params_freeze_standalone_metadata() {
+    fn independent_profile_comes_from_the_scalar_row() {
         let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
-        let precommitted =
-            committed_group_profile::<fp128::OneHot>(&group).expect("precommitted group profile");
+        let profile =
+            fp128::OneHot::profile_without_precommitted_groups(group).expect("independent profile");
         assert_eq!(
-            precommitted.inner_commit_matrix.ring_dimension(),
-            64,
-            "adaptive precommits use the uniform suffix dimension for A"
+            profile.inner_commit_matrix.ring_dimension(),
+            256,
+            "the independent commitment uses the scalar row's A dimension"
         );
         assert_eq!(
-            precommitted.outer_commit_matrix.ring_dimension(),
+            profile.outer_commit_matrix.ring_dimension(),
             64,
-            "adaptive precommits use the uniform suffix dimension for B"
+            "the independent commitment uses the scalar row's B dimension"
         );
         let root_basis = fp128::OneHot::opening_basis_range().0;
-        assert_eq!(precommitted.log_basis_inner, root_basis);
-        assert_eq!(precommitted.log_basis_outer, root_basis);
-        assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
-        assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
+        assert_eq!(profile.log_basis_inner, root_basis);
+        assert_eq!(profile.log_basis_outer, root_basis);
+        assert_ne!(profile.inner_commit_matrix.output_rank(), 0);
+        assert_ne!(profile.outer_commit_matrix.output_rank(), 0);
     }
 }

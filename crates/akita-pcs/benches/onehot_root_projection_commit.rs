@@ -10,7 +10,7 @@ use akita_field::{
     PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
-use akita_prover::{commit_with_params, AkitaProverSetup, OneHotPoly, RootTensorProjectionPoly};
+use akita_prover::{AkitaProverSetup, GroupContext, OneHotPoly, RootTensorProjectionPoly};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     accumulate_matrix_field_elements_for_level, AkitaScheduleLookupKey, FpExtEncoding,
@@ -113,19 +113,6 @@ where
     let num_vars = env_usize("AKITA_ROOT_COMMIT_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_ROOT_COMMIT_NUM_POLYS", DEFAULT_NUM_POLYS);
     let indices = make_onehot_indices(num_vars, num_polys);
-    let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
-    let transformed_polys: Vec<RootTensorProjectionPoly<F>> = onehot_polys
-        .iter()
-        .map(|poly| {
-            let view = poly.tensor_view()?;
-            TensorProjectionKernel::<_, F, Cfg::ExtField, D>::root_projection(
-                &CpuBackend::DEFAULT,
-                None,
-                view,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .expect("benchmark root projection");
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polys));
     let params = akita_planner::find_schedule(
         &key,
@@ -189,25 +176,6 @@ where
         })
     });
 
-    group.bench_function("commit_transformed_roots", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let start = Instant::now();
-                let committed = commit_with_params::<F, RootTensorProjectionPoly<F>, CpuBackend>(
-                    &transformed_polys,
-                    setup.expanded.as_ref(),
-                    stack.commit(),
-                    &params,
-                )
-                .expect("benchmark transformed commitment");
-                total += start.elapsed();
-                black_box(committed);
-            }
-            total
-        })
-    });
-
     group.bench_function("commit_onehot_with_planned_params", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
@@ -218,11 +186,11 @@ where
                 // benchmark. Runtime PCS entrypoints reject its missing
                 // generated proof schedule, so pass the offline planned root
                 // parameters directly to the canonical commitment operation.
-                let committed = commit_with_params::<F, OneHotPoly<F, u8>, CpuBackend>(
+                let committed = akita_prover::commit::<Cfg, OneHotPoly<F, u8>, CpuBackend>(
                     &polys,
                     setup.expanded.as_ref(),
-                    stack.commit(),
-                    &params,
+                    &stack,
+                    GroupContext::explicit_without_precommitted_groups(&params),
                 )
                 .expect("benchmark one hot commitment");
                 total += start.elapsed();

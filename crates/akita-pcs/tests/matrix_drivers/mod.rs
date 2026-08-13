@@ -43,8 +43,9 @@ where
         let schedule_key =
             AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule = RecursiveCommitmentConfig::<BaseCfg>::runtime_schedule(schedule_key)
-            .expect("recursive direct schedule");
+        let schedule = RecursiveCommitmentConfig::<BaseCfg>::select_schedule_for_key(&schedule_key)
+            .expect("recursive direct schedule")
+            .into_schedule();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive schedule must carry setup-prefix metadata"
@@ -67,8 +68,16 @@ where
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|i| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
             .collect();
-        let (commitment, hint) = Recursive::<BaseCfg>::commit::<_, _>(&setup, &final_polys, &stack)
-            .expect("recursive direct commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = Recursive::<BaseCfg>::commit::<_, _>(
+            &setup,
+            &final_polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("recursive direct commit");
 
         let point = random_point(FINAL_NV, 0xcafe_2027_0001);
         // Independent oracle: sums of Lagrange weights at the hot indices.
@@ -89,7 +98,7 @@ where
             vec![hint],
             vec![&poly_refs[..]],
         );
-        let selection = prover_data.0;
+        let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = Recursive::<BaseCfg>::batched_prove(
@@ -159,10 +168,14 @@ where
         let verifier_setup =
             AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         let poly_refs = [&poly];
@@ -204,7 +217,13 @@ where
 {
     for &nv in nv_values {
         let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-        let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+        let layout = Cfg::select_schedule_for_opening(&opening_batch)
+            .expect("layout")
+            .into_schedule()
+            .root
+            .params
+            .final_group
+            .commitment;
         let d = layout.d_a();
         let seed = 0x0bee_0000_u64 ^ nv as u64;
         let poly = make_onehot_poly_with_d_and_k(nv, d, k, seed);
@@ -223,10 +242,14 @@ where
         let verifier_setup =
             AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
             &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         let poly_refs = [&poly];
@@ -285,10 +308,14 @@ where
         let pre_evals = dense_field_evals(PRE_NV, pre_seed);
         let pre_poly =
             DensePoly::<F>::from_field_evals(PRE_NV, DENSE_D, &pre_evals).expect("pre dense poly");
-        let (pre_commitment, pre_hint) = AkitaCommitmentScheme::<Cfg>::commit_group(
+        let akita_prover::CommitOutput {
+            committed_group: pre_commitment,
+            hint: pre_hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit(
             &setup,
             std::slice::from_ref(&pre_poly),
             &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
 
@@ -296,14 +323,18 @@ where
         let final_evals = dense_field_evals(final_nv, final_seed);
         let final_poly = DensePoly::<F>::from_field_evals(final_nv, DENSE_D, &final_evals)
             .expect("final dense poly");
-        let (final_commitment, final_hint, _sel) =
-            AkitaCommitmentScheme::<Cfg>::commit_final_group(
-                &setup,
-                std::slice::from_ref(&final_poly),
-                &stack,
-                vec![pre_commitment.profile],
-            )
-            .expect("final commit");
+        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty precommitted groups");
+        let akita_prover::CommitOutput {
+            committed_group: final_commitment,
+            hint: final_hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit(
+            &setup,
+            std::slice::from_ref(&final_poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .expect("final commit");
 
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, 1),
@@ -312,7 +343,9 @@ where
         // The openings come from independent oracles, so the schedule is not
         // needed to project them. Keep the lookup as a structural check that
         // the combined key resolves to a real catalog row.
-        let schedule = Cfg::runtime_schedule(schedule_key).expect("schedule");
+        let schedule = Cfg::select_schedule_for_key(&schedule_key)
+            .expect("schedule")
+            .into_schedule();
         assert_eq!(
             schedule.root.params.precommitted_groups.len(),
             1,
@@ -345,7 +378,7 @@ where
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],
         );
-        let selection = prover_data.0;
+        let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
@@ -403,15 +436,13 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     for &final_nv in final_nvs {
-        // Take the pre-group ring dimension from the standalone precommit
-        // catalog, not from a single-group root schedule: a config can ship a
-        // precommit descriptor at PRE_NV without shipping a standalone root
-        // row at that size (fp32::Dense and fp64::OneHot both do).
-        let pre_d =
-            akita_config::committed_group_profile::<Cfg>(&PolynomialGroupLayout::new(PRE_NV, 1))
-                .expect("pre precommit profile")
-                .inner_commit_matrix
-                .ring_dimension();
+        // An independent precommit commits with its own row without prior
+        // groups, so take the pre-group ring dimension from exactly the row
+        // `commit` will select below.
+        let pre_d = Cfg::profile_without_precommitted_groups(PolynomialGroupLayout::new(PRE_NV, 1))
+            .expect("pre profile without precommitted groups")
+            .inner_commit_matrix
+            .ring_dimension();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -426,10 +457,14 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
 
         let pre_poly =
             make_onehot_poly_with_d_and_k(PRE_NV, pre_d, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
-        let (pre_commitment, pre_hint) = AkitaCommitmentScheme::<Cfg>::commit_group(
+        let akita_prover::CommitOutput {
+            committed_group: pre_commitment,
+            hint: pre_hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit(
             &setup,
             std::slice::from_ref(&pre_poly),
             &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("precommit");
 
@@ -437,20 +472,26 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             final_group: PolynomialGroupLayout::new(final_nv, 1),
             precommitteds: vec![pre_commitment.profile],
         };
-        let schedule = Cfg::runtime_schedule(schedule_key).expect("schedule");
+        let schedule = Cfg::select_schedule_for_key(&schedule_key)
+            .expect("schedule")
+            .into_schedule();
         let final_group_params = multi_group_root_params(&schedule);
         let final_d = final_group_params.d_a();
 
         let final_poly =
             make_onehot_poly_with_d_and_k(final_nv, final_d, k, 0x0bee_f001_u64 ^ final_nv as u64);
-        let (final_commitment, final_hint, _sel) =
-            AkitaCommitmentScheme::<Cfg>::commit_final_group(
-                &setup,
-                std::slice::from_ref(&final_poly),
-                &stack,
-                vec![pre_commitment.profile],
-            )
-            .expect("final commit");
+        let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
+            .expect("nonempty precommitted groups");
+        let akita_prover::CommitOutput {
+            committed_group: final_commitment,
+            hint: final_hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit(
+            &setup,
+            std::slice::from_ref(&final_poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .expect("final commit");
 
         let point = random_point(final_nv.max(PRE_NV), 0xcafe_babe_u64 ^ final_nv as u64);
         // Independent oracles: sums of Lagrange weights at the hot indices.
@@ -478,7 +519,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],
         );
-        let selection = prover_data.0;
+        let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
