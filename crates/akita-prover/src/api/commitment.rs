@@ -16,9 +16,9 @@ use akita_field::{
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommitmentRingDims, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
-    CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
+    Commitment, CommitmentRingDims, CommitmentSliceCount, CommittedGroup, CommittedGroupParams,
+    CommittedGroupProfile, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
 
 mod inner;
@@ -132,6 +132,7 @@ struct CommitmentGeometry<'a> {
     log_basis_outer: u32,
     num_digits_outer: usize,
     outer_matrix: &'a OuterCommitMatrixParams,
+    outer_slice_count: CommitmentSliceCount,
 }
 
 impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
@@ -146,6 +147,7 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
             log_basis_outer: params.log_basis_outer,
             num_digits_outer: params.num_digits_outer,
             outer_matrix: &params.outer_commit_matrix,
+            outer_slice_count: params.outer_slice_count,
         }
     }
 }
@@ -199,6 +201,7 @@ where
     let required = akita_types::commit_only_setup_field_elements(
         geometry.inner_matrix,
         geometry.outer_matrix,
+        geometry.outer_slice_count,
     )?;
     let available = setup.shared_matrix.num_field_elements();
     if required > available {

@@ -202,6 +202,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
                     scan.observe(akita_types::commit_only_setup_field_elements(
                         &profile.inner_commit_matrix,
                         &profile.outer_commit_matrix,
+                        profile.outer_slice_count,
                     )?);
                 }
             }

@@ -96,6 +96,7 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
     let commit_only_fields = akita_types::commit_only_setup_field_elements(
         &params.inner_commit_matrix,
         &params.outer_commit_matrix,
+        params.outer_slice_count,
     )
     .unwrap();
     let expanded = AkitaProverSetup::<F>::generate_with_capacity(
