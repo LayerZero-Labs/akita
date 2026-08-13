@@ -377,12 +377,7 @@ where
             .map(|block_idx| {
                 let ring_start = block_idx * num_positions_per_block;
                 let ring_end = (ring_start + num_positions_per_block).min(num_rings);
-                fold_onehot_block::<F, I, D>(
-                    self.onehot_k,
-                    &self.indices,
-                    ring_start..ring_end,
-                    scalars,
-                )
+                fold_onehot_block::<F, I, D>(self, ring_start..ring_end, scalars)
             })
             .collect()
     }
@@ -416,12 +411,7 @@ where
             .map(|block_idx| {
                 let ring_start = block_idx * num_positions_per_block;
                 let ring_end = (ring_start + num_positions_per_block).min(num_rings);
-                fold_onehot_block_subfield(
-                    self.onehot_k,
-                    &self.indices,
-                    ring_start..ring_end,
-                    multipliers,
-                )
+                fold_onehot_block_subfield(self, ring_start..ring_end, multipliers)
             })
             .collect()
     }

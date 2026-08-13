@@ -2,8 +2,7 @@ use super::*;
 use akita_types::SubfieldMultiplierOpeningPoint;
 
 pub(super) fn fold_onehot_block<F, I, const D: usize>(
-    onehot_k: usize,
-    indices: &[Option<I>],
+    poly: &OneHotPoly<F, I>,
     ring_range: std::ops::Range<usize>,
     scalars: &[F],
 ) -> CyclotomicRing<F, D>
@@ -12,13 +11,14 @@ where
     I: OneHotIndex,
 {
     let mut coeffs_acc = [F::zero(); D];
-    let entries = OneHotRingRange::new(onehot_k, indices, D, ring_range.clone())
+    let (_, coefficients) = poly
+        .ring_range_coefficients(D, ring_range.clone())
         .expect("validated one hot fold range");
-    for entry in entries {
-        let entry = entry.expect("validated one hot field position");
-        let position = entry.ring_index - ring_range.start;
+    for coefficient in coefficients {
+        let coefficient = coefficient.expect("validated one hot field position");
+        let position = coefficient.ring_idx(D) - ring_range.start;
         if let Some(&scalar) = scalars.get(position) {
-            coeffs_acc[entry.coefficient_index] += scalar;
+            coeffs_acc[coefficient.coeff_idx(D)] += scalar;
         }
     }
     CyclotomicRing::from_coefficients(coeffs_acc)
@@ -47,8 +47,7 @@ where
 }
 
 pub(super) fn fold_onehot_block_subfield<F, I, const D: usize>(
-    onehot_k: usize,
-    indices: &[Option<I>],
+    poly: &OneHotPoly<F, I>,
     ring_range: std::ops::Range<usize>,
     multipliers: &SubfieldMultiplierOpeningPoint<F>,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
@@ -57,12 +56,12 @@ where
     I: OneHotIndex,
 {
     let mut acc = CyclotomicRing::<F, D>::zero();
-    let entries = OneHotRingRange::new(onehot_k, indices, D, ring_range.clone())?;
-    for entry in entries {
-        let entry = entry?;
+    let (_, coefficients) = poly.ring_range_coefficients(D, ring_range.clone())?;
+    for coefficient in coefficients {
+        let coefficient = coefficient?;
         multipliers.accumulate_position_monomial(
-            entry.ring_index - ring_range.start,
-            entry.coefficient_index,
+            coefficient.ring_idx(D) - ring_range.start,
+            coefficient.coeff_idx(D),
             F::one(),
             &mut acc,
         )?;

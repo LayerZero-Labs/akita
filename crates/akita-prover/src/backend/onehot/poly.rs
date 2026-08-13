@@ -144,6 +144,67 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         Ok(evals)
     }
 
+    /// Traverse the one hot coefficients in a requested ring range without
+    /// materializing another owner.
+    ///
+    /// The source chunk range lets block materialization retain its exact
+    /// capacity calculation without repeating coordinate mapping. Fold paths
+    /// ignore it and consume only the coefficient iterator.
+    pub(super) fn ring_range_coefficients(
+        &self,
+        ring_d: usize,
+        ring_range: std::ops::Range<usize>,
+    ) -> Result<
+        (
+            std::ops::Range<usize>,
+            impl Iterator<Item = Result<SparseRingCoeff, AkitaError>> + '_,
+        ),
+        AkitaError,
+    > {
+        if ring_range.start > ring_range.end {
+            return Err(AkitaError::InvalidInput(
+                "one hot ring range must be ordered".into(),
+            ));
+        }
+        let num_rings = self.validate_ring_dimension(ring_d)?;
+        let ring_start = ring_range.start.min(num_rings);
+        let ring_end = ring_range.end.min(num_rings);
+        let field_start = ring_start
+            .checked_mul(ring_d)
+            .ok_or_else(|| AkitaError::InvalidInput("one hot range start overflow".into()))?;
+        let field_end = ring_end
+            .checked_mul(ring_d)
+            .ok_or_else(|| AkitaError::InvalidInput("one hot range end overflow".into()))?;
+        let chunk_start = field_start / self.onehot_k;
+        let chunk_end = field_end.div_ceil(self.onehot_k).min(self.indices.len());
+        let source_chunks = chunk_start..chunk_end;
+        let ring_range = ring_start..ring_end;
+
+        let coefficients = self.indices[source_chunks.clone()]
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(move |(local_chunk, hot_index)| {
+                let hot_index = hot_index?;
+                let chunk_index = chunk_start + local_chunk;
+                let coefficient = self
+                    .hot_field_position(chunk_index, hot_index, "ring range")
+                    .and_then(|field_position| {
+                        if ring_range.contains(&(field_position / ring_d)) {
+                            SparseRingCoeff::new(field_position, 1).map(Some)
+                        } else {
+                            Ok(None)
+                        }
+                    });
+                match coefficient {
+                    Ok(Some(coefficient)) => Some(Ok(coefficient)),
+                    Ok(None) => None,
+                    Err(err) => Some(Err(err)),
+                }
+            });
+        Ok((source_chunks, coefficients))
+    }
+
     pub(super) fn materialize_block_range(
         &self,
         ring_d: usize,
@@ -168,14 +229,35 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             .checked_mul(num_positions_per_block)
             .ok_or_else(|| AkitaError::InvalidInput("one hot block range overflow".into()))?
             .min(ring_elems_at_d);
-        FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
-            self.onehot_k,
-            &self.indices,
-            num_positions_per_block,
-            ring_d,
-            ring_start..ring_end,
-            block_range.start,
-        )
+        let num_range_blocks = ring_end
+            .div_ceil(num_positions_per_block)
+            .saturating_sub(block_range.start);
+        let (source_chunks, coefficients) =
+            self.ring_range_coefficients(ring_d, ring_start..ring_end)?;
+        let entry_capacity = self.indices[source_chunks]
+            .iter()
+            .filter(|entry| entry.is_some())
+            .count();
+        let mut blocks = FlatBlocks::with_capacity(num_range_blocks, entry_capacity);
+        let mut current_block = 0usize;
+        for coefficient in coefficients {
+            let coefficient = coefficient?;
+            let ring_index = coefficient.ring_idx(ring_d);
+            let block_index = ring_index / num_positions_per_block - block_range.start;
+            let position = u32::try_from(ring_index % num_positions_per_block).map_err(|_| {
+                AkitaError::InvalidInput("one hot block position exceeds u32".into())
+            })?;
+            let coefficient_index = u16::try_from(coefficient.coeff_idx(ring_d)).map_err(|_| {
+                AkitaError::InvalidInput("one hot coefficient index exceeds u16".into())
+            })?;
+            blocks.push_entry(
+                &mut current_block,
+                block_index,
+                num_range_blocks,
+                SparseRingBlockEntry::new(position, coefficient_index, 1),
+            )?;
+        }
+        blocks.finish_build(current_block, num_range_blocks)
     }
 
     /// Validate one runtime ring view and return its ring-element count.

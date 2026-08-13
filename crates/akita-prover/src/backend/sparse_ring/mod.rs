@@ -68,12 +68,12 @@ impl SparseRingCoeff {
     }
 
     #[inline]
-    fn ring_idx(self, ring_d: usize) -> usize {
+    pub(in crate::backend) fn ring_idx(self, ring_d: usize) -> usize {
         (self.flat_idx as usize) / ring_d
     }
 
     #[inline]
-    fn coeff_idx(self, ring_d: usize) -> usize {
+    pub(in crate::backend) fn coeff_idx(self, ring_d: usize) -> usize {
         (self.flat_idx as usize) % ring_d
     }
 

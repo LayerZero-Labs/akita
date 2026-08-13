@@ -4,21 +4,17 @@ use super::*;
 
 #[test]
 fn map_onehot_k_gt_d() {
+    type F = Prime24Offset3;
     // K=16, D=4, T=2 chunks => 32 field elements => 8 ring elements
     // num_positions_per_block=4 => 2 blocks of 4 ring elements each.
     let k = 16;
     let d = 4;
     let indices: Vec<Option<usize>> = vec![Some(3), Some(10)];
     let num_live_blocks = 2;
-    let blocks = FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
-        k,
-        &indices,
-        4,
-        d,
-        0..num_live_blocks * 4,
-        0,
-    )
-    .unwrap();
+    let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+    let blocks = poly
+        .materialize_block_range(d, 4, 0..num_live_blocks)
+        .unwrap();
 
     assert_eq!(blocks.num_live_blocks(), 2);
     let total_entries: usize = (0..blocks.num_live_blocks())
@@ -39,21 +35,17 @@ fn map_onehot_k_gt_d() {
 
 #[test]
 fn map_onehot_k_eq_d() {
+    type F = Prime24Offset3;
     // K=4, D=4, T=4 chunks => 16 field elements => 4 ring elements
     // num_positions_per_block=2 => 2 blocks of 2 ring elements each.
     let k = 4;
     let d = 4;
     let indices: Vec<Option<usize>> = vec![Some(0), Some(2), Some(3), Some(1)];
     let num_live_blocks = 2;
-    let blocks = FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
-        k,
-        &indices,
-        2,
-        d,
-        0..num_live_blocks * 2,
-        0,
-    )
-    .unwrap();
+    let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+    let blocks = poly
+        .materialize_block_range(d, 2, 0..num_live_blocks)
+        .unwrap();
 
     assert_eq!(blocks.num_live_blocks(), 2);
     let total_entries: usize = (0..blocks.num_live_blocks())
@@ -78,6 +70,7 @@ fn map_onehot_k_eq_d() {
 
 #[test]
 fn map_onehot_k_lt_d() {
+    type F = Prime24Offset3;
     // K=4, D=8, T=8 chunks => 32 field elements => 4 ring elements
     // num_positions_per_block=2 => 2 blocks of 2 ring elements each.
     let k = 4;
@@ -93,15 +86,10 @@ fn map_onehot_k_lt_d() {
         Some(3),
     ];
     let num_live_blocks = 2;
-    let blocks = FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
-        k,
-        &indices,
-        2,
-        d,
-        0..num_live_blocks * 2,
-        0,
-    )
-    .unwrap();
+    let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+    let blocks = poly
+        .materialize_block_range(d, 2, 0..num_live_blocks)
+        .unwrap();
 
     assert_eq!(blocks.num_live_blocks(), 2);
     let total_entries: usize = (0..blocks.num_live_blocks())
@@ -135,31 +123,19 @@ fn map_onehot_k_lt_d() {
 #[test]
 fn ranged_mapping_matches_full_mapping_for_both_dimension_orders() {
     fn check(k: usize, d: usize, indices: Vec<Option<usize>>) {
+        type F = Prime24Offset3;
         let num_positions_per_block = 2;
         let num_rings = indices.len() * k / d;
         let num_blocks = num_rings.div_ceil(num_positions_per_block);
-        let full = FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
-            k,
-            &indices,
-            num_positions_per_block,
-            d,
-            0..num_rings,
-            0,
-        )
-        .unwrap();
+        let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+        let full = poly
+            .materialize_block_range(d, num_positions_per_block, 0..num_blocks)
+            .unwrap();
 
         for block_idx in 0..num_blocks {
-            let ring_start = block_idx * num_positions_per_block;
-            let ring_end = (ring_start + num_positions_per_block).min(num_rings);
-            let ranged = FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(
-                k,
-                &indices,
-                num_positions_per_block,
-                d,
-                ring_start..ring_end,
-                block_idx,
-            )
-            .unwrap();
+            let ranged = poly
+                .materialize_block_range(d, num_positions_per_block, block_idx..block_idx + 1)
+                .unwrap();
             assert_eq!(ranged.num_live_blocks(), 1);
             assert_eq!(ranged.block(0), full.block(block_idx));
             assert!(ranged.block(0).iter().all(|entry| entry.value() == 1));
@@ -198,13 +174,12 @@ fn empty_final_block_range_is_accepted() {
 
 #[test]
 fn ordered_ring_range_beyond_storage_is_empty() {
-    let indices = vec![Some(0usize), Some(1)];
+    type F = Prime24Offset3;
+    let poly = OneHotPoly::<F>::new(4, 4, vec![Some(0usize), Some(1), None, None]).unwrap();
 
-    let blocks =
-        FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(4, &indices, 2, 4, 10..10, 5)
-            .unwrap();
+    let (_, coefficients) = poly.ring_range_coefficients(4, 10..10).unwrap();
 
-    assert_eq!(blocks.num_live_blocks(), 0);
+    assert_eq!(coefficients.count(), 0);
 }
 
 #[test]
@@ -218,9 +193,7 @@ fn flat_blocks_block_panics_on_out_of_range_index() {
 fn onehot_poly_rejects_non_divisible_k_d() {
     // K=3 and D=4: neither divides the other. `OneHotPoly::new` must
     // refuse to construct. The nicely-matched K/D invariant is what
-    // lets `FlatBlocks::from_{single,multi}_chunk_onehot` skip their
-    // own K/D check; this test pins the upstream guard that enforces
-    // it.
+    // lets all operation-local views reuse the upstream invariant.
     type F = Prime24Offset3;
     const D: usize = 4;
     let result = OneHotPoly::<F>::new(3, D, vec![Some(0usize), Some(1)]);

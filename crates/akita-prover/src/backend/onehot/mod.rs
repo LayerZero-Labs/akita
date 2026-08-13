@@ -36,7 +36,6 @@ use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
-mod blocks;
 mod column_sweep;
 mod decompose_fold;
 mod entries;
@@ -54,7 +53,6 @@ mod tests;
 pub(crate) use column_sweep::column_sweep_ajtai_onehot;
 pub(crate) use column_sweep::column_sweep_ajtai_onehot_multi;
 pub use entries::OneHotIndex;
-use entries::OneHotRingRange;
 #[cfg(test)]
 use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
 pub use ops::{OneHotBatchView, OneHotView};
