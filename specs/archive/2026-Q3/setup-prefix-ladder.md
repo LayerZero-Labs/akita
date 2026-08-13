@@ -5,25 +5,24 @@
 | --------- | ------------------- |
 | Author(s) |                     |
 | Created   | 2026-06-08          |
-| Status    | draft               |
+| Status    | superseded          |
 | PR        | setup-prefix-ladder |
+| Superseded-by | full-setup-prefix-compact-tail-weights.md; book/src/how/verifying/setup_contribution.md |
 
 
 ## Summary
 
-This PR adds setup-prefix commitment artifacts for recursive setup-contribution
+This historical PR added setup-prefix commitment artifacts for recursive setup-contribution
 proofs. A setup prefix is a power-of-two flat coefficient prefix of the shared
 setup vector `S`, committed as an ordinary Akita witness using a selected fold's
 commitment parameters. The resulting slot stores verifier-visible commitment
 metadata and prover-only hint material so later setup-offloading work can carry
 an opening claim for `S_{<=N}` instead of rescanning the full setup matrix.
 
-This is a partial implementation of the `SelectedSlots` mode described in
-`STACK.md` slice 02B. The current branch materializes the active slots implied by
-one runtime schedule and stores them in setup metadata. It does not implement
-the full policy surface from the stack plan (`FullLadder`, explicit arbitrary
-slot lists, strict missing-slot policy, generate-and-persist policy, or setup
-artifact reuse across many workload shapes).
+The missing-slot and planner-status statements in the original draft are
+superseded. Current recursive Stage 3 requires a selected setup-prefix slot and
+carried full-prefix opening claim; direct setup contribution does not execute
+Stage 3.
 
 ## Intent
 
@@ -36,27 +35,28 @@ Key surfaces:
 
 - `akita-types::proof::setup_prefix` defines `SetupPrefixSlotId`,
 `SetupPrefixSlot`, `SetupPrefixVerifierSlot`, and prover/verifier registries.
-- `akita-prover::api::setup_prefix::commit_setup_prefix` commits one padded
-setup prefix and records the commitment hint material.
+- `akita-prover::api::setup_prefix::commit_setup_prefix` commits one actual
+full setup prefix and records the commitment hint material.
 - `akita-setup::new_prover_setup_recursion` constructs ordinary setup, then
 populates recursive setup-prefix slots.
-- Stage-3 prover/verifier setup-product paths use a committed prefix when the
-matching slot exists, and otherwise fall back to the direct setup scan.
+- Stage-3 prover/verifier setup-product paths require the matching committed
+prefix slot selected by the schedule.
 
 ### Invariants
 
-- **Slot identity is deterministic.** A slot id binds the setup seed digest,
-`D_setup`, `N_prefix`, and the digest of the commitment parameters used to
-commit that prefix. Prover and verifier must derive the same id for a fold.
-- **Prefix length is power-of-two padded.** A fold's natural setup footprint is
-padded with `padded_setup_prefix_len`; the committed prefix covers the padded
-field length while retaining the natural length in metadata.
+- **Slot identity is deterministic.** A slot id binds the natural active setup
+length and the commitment parameters used to commit that prefix. Prover and
+verifier must derive the same id for a fold; the registry binds slots to the
+public setup seed.
+- **Prefix length is power-of-two.** A fold's natural setup footprint determines
+`padded_setup_prefix_len`; the committed prefix covers that full actual setup
+field length while retaining the natural length in the slot identity.
 - **Commitment params must carry the prefix shape.** `setup_prefix_level_params`
 returns `Some(LevelParams)` only when a valid block split exists for
 `N_prefix / D_setup` ring elements under the candidate fold's A/B key widths.
 If no such split exists, it returns `None`.
-- **Missing or unsupported slots are non-fatal in this PR.** Prover and verifier
-fall back to the direct setup scan for that fold instead of failing the proof.
+- **Missing or unsupported selected slots are fatal.** Prover and verifier reject
+recursive Stage 3 when the selected slot is absent or mismatched.
 - **Verifier-visible metadata excludes prover hints.** `SetupPrefixSlot` stores
 `AkitaCommitmentHint`; `SetupPrefixVerifierSlot` stores only the public slot
 metadata and commitment.
@@ -65,30 +65,27 @@ must return `AkitaError` / serialization errors.
 
 ### Non-Goals
 
-- **Planner awareness.** The planner is not setup-prefix aware in this PR. It
-does not score schedules by whether the next fold can commit the current
-fold's setup prefix, and it does not synthesize next-fold parameters to make
-prefix slots fit. Fixing the planner is deferred to a later PR.
+- **Planner awareness.** Superseded. The recursive planner now selects and
+validates carried setup-prefix slots as part of schedule construction.
 - **Full `SelectedSlots` from `STACK.md`.** This PR only implements the active
 selected slots for one concrete setup schedule. It does not expose a durable
 user-facing selected-slot list or the complete missing-slot policy matrix.
 - `**FullLadder`.** Generating every power-of-two prefix in a range is out of
 scope.
-- **Carried setup openings.** This PR does not yet carry setup-prefix openings
-into the next recursive fold or batch them with folded-witness openings.
-- **Making recursive setup offloading universal.** Unsupported folds use direct
-fallback.
+- **Carried setup openings.** Superseded. Recursive suffix openings now carry
+setup-prefix opening claims.
+- **Making recursive setup offloading universal.** Unsupported selected slots
+reject instead of falling back inside Stage 3.
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- Recursive setup construction populates every setup-prefix slot that fits
-the active schedule and skips unsupported shapes.
+- Recursive setup construction populates every selected setup-prefix slot
+required by the active schedule.
 - Prover and verifier select the same committed slot id for folds whose
 slots were populated.
-- Folds with no populated compatible slot continue to prove and verify via
-direct setup scan fallback.
+- Superseded: folds with no populated compatible selected slot reject.
 - The setup-prefix slot metadata serializes, validates, and round-trips.
 - `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`, and `cargo test` pass.
 
@@ -99,8 +96,8 @@ registry duplicate rejection, verifier metadata projection, active setup
 footprint calculation, and prefix length selection.
 - Unit tests in `akita-prover::api::setup_prefix` cover committing one prefix
 slot and selecting the populated slot from the registry.
-- End-to-end recursive setup tests exercise the setup-product path and direct
-fallback behavior.
+- End-to-end recursive setup tests exercise the setup-product path with selected
+setup-prefix slots.
 - For local manual verification, run the recursive setup profile:
 
 ```bash
@@ -119,10 +116,7 @@ AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 AKITA_SETUP_MODE=recursive \
 ### Performance
 
 This PR adds setup preprocessing work and stores extra setup metadata for
-populated prefixes. It does not yet remove the setup matrix scan from every
-fold: unsupported or missing slots use direct fallback. Proof-size and verifier
-performance wins are expected only after the later planner-aware and carried
-opening integration PRs.
+populated prefixes.
 
 ### Design Note: Prefix Contents and Cache Reuse
 
@@ -162,40 +156,19 @@ num_live_blocks * a_key.row_len() * num_digits_open <= b_key.col_len()
 ```
 
 If a split fits, the function returns repacked `LevelParams` for the prefix
-commitment. If not, it returns `None` and the fold uses direct setup scan.
+commitment. If not, recursive setup planning rejects the unsupported selected
+slot.
 
 ### Current Scheduling Rule
 
-The planner is not consulted for setup-prefix compatibility. The current
-implementation blindly tries the **next fold's existing `LevelParams`** as the
-commitment parameters for the current fold's setup prefix:
+Superseded. Current recursive planning selects and validates setup-prefix
+commitment parameters as part of schedule construction:
 
 ```text
-prefix commitment params for fold i = schedule.fold[i + 1].params
+prefix commitment params for fold i = schedule.fold[i + 1].setup_prefix
 ```
 
-This matches the intended direction that a setup-prefix commitment should use
-the same kind of parameters as the next recursive witness commitment, but it is
-not globally optimized. Some folds will fail the prefix-shape check because the
-next fold's A/B key widths were chosen without considering setup-prefix
-commitment needs.
-
-Planner-aware setup-prefix scheduling is future work. That later PR should make
-the planner price and constrain candidate next-fold params against the current
-fold's setup-prefix footprint. The proposed per-fold mode, eligibility gates,
-and two-group suffix transition are specified in
-[`setup-offloading-planner.md`](setup-offloading-planner.md).
-
-### Runtime Fallback
-
-Setup construction only materializes slots for compatible folds. Stage-3 prover
-and verifier both recompute the same candidate id from the same setup seed,
-`D_setup`, full-prefix length, and prefix commitment params digest. If the
-slot exists and covers the active support, they use the full-prefix evaluation
-length. Otherwise they use the full setup matrix length.
-
-This fallback is intentionally permissive for this PR because the planner does
-not yet guarantee prefix-compatible next-fold params.
+Missing or incompatible selected slots are invalid for recursive Stage 3.
 
 ## Documentation
 

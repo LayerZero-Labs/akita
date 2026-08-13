@@ -14,10 +14,11 @@ use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, Polynomia
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_levels_are_exactly_root_and_recursive_folds() {
-    let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(30),
     ))
-    .expect("generated fp128 schedule");
+    .expect("generated fp128 schedule")
+    .into_schedule();
     let setup_levels = setup_level_params_from_schedule(&schedule);
     assert_eq!(setup_levels.len(), 1 + schedule.recursive_folds.len());
     assert_eq!(
@@ -29,10 +30,11 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn generated_schedule_has_explicit_terminal_inner_only_topology() {
-    let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(32),
     ))
-    .expect("generated one-hot schedule");
+    .expect("generated one-hot schedule")
+    .into_schedule();
     schedule.validate_structure().expect("typed topology");
     assert!(schedule.terminal.params.witness.inner_width() > 0);
     assert_eq!(
@@ -49,8 +51,9 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 #[test]
 fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(40));
-    let schedule =
-        fp128::OneHot::runtime_schedule(key.clone()).expect("generated one-hot schedule");
+    let schedule = fp128::OneHot::select_schedule_for_key(&key)
+        .expect("generated one-hot schedule")
+        .into_schedule();
     let (step, table_key, response_cap) = schedule
         .recursive_folds
         .iter()
@@ -118,7 +121,9 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
 #[test]
 fn fp64_response_model_selects_globally_winning_l2_suffix() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(28));
-    let schedule = fp64::OneHot::runtime_schedule(key.clone()).expect("generated fp64 schedule");
+    let schedule = fp64::OneHot::select_schedule_for_key(&key)
+        .expect("generated fp64 schedule")
+        .into_schedule();
     assert!(schedule.recursive_folds.iter().any(|step| matches!(
         step.params.witness.inner_commit_matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
@@ -171,7 +176,9 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
         (6, 2)
     );
 
-    let schedule = fp64::OneHot::runtime_schedule(key).expect("generated one-hot schedule");
+    let schedule = fp64::OneHot::select_schedule_for_key(&key)
+        .expect("generated one-hot schedule")
+        .into_schedule();
     assert_eq!(
         (
             schedule.terminal.params.witness.fold_log_basis,
@@ -209,8 +216,10 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
         assert_typed_model::<Cfg>();
         let catalog = Cfg::schedule_catalog().expect("generated catalog");
         let has_l2 = catalog.entries.iter().any(|entry| {
-            let schedule = Cfg::runtime_schedule(entry.to_runtime_lookup_key())
-                .expect("generated schedule must expand");
+            let key = entry.to_runtime_lookup_key();
+            let schedule = Cfg::select_schedule_for_key(&key)
+                .expect("generated schedule must expand")
+                .into_schedule();
             schedule.recursive_folds.iter().any(|step| {
                 matches!(
                     step.params.witness.inner_commit_matrix.security_route(),
@@ -253,10 +262,11 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_capacity_includes_terminal_inner_matrix() {
-    let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
-    .expect("generated fp128 schedule");
+    .expect("generated fp128 schedule")
+    .into_schedule();
     let envelope = setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
     let terminal = &schedule.terminal.params.witness;
     let terminal_a = terminal
@@ -324,8 +334,9 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
         .entries
         .first()
         .expect("nonempty adaptive one-hot catalog");
-    let schedule = fp128::OneHot::runtime_schedule(first.to_runtime_lookup_key())
-        .expect("resolve adaptive one-hot row");
+    let schedule = fp128::OneHot::select_schedule_for_key(&first.to_runtime_lookup_key())
+        .expect("resolve adaptive one-hot row")
+        .into_schedule();
     let root = &schedule.root.params.final_group.commitment;
     assert_eq!(
         root.num_digits_fold,
@@ -351,8 +362,8 @@ fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
 #[test]
 fn setup_capacity_includes_standalone_precommit_recipes() {
     let profile =
-        crate::committed_group_profile::<fp128::Dense>(&PolynomialGroupLayout::new(16, 1))
-            .expect("dense precommit profile");
+        fp128::Dense::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
+            .expect("independent profile");
     let capacity = fp128::Dense::setup_matrix_capacity(16, 1).expect("dense setup capacity");
     let a_fields = profile.inner_commit_matrix.output_rank()
         * profile.inner_commit_matrix.input_width()

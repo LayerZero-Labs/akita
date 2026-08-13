@@ -20,6 +20,6 @@ the per-level interactive protocol is large. Subpages:
 
 ## Sources to fold in
 
-- `crates/akita-prover/src/protocol/flow/root_fold.rs`, `ring_relation.rs`, `ring_switch.rs`.
+- `crates/akita-verifier/src/protocol/core/root_fold.rs`, `ring_relation.rs`, `ring_switch.rs`.
 - Paper §3.5 `sec:akita-one-step` (one folding step; `fig:akita-fold`, `fig:akita-sumcheck`).
 - Council architecture report (per-level sub-pipeline).

@@ -135,57 +135,75 @@ pub(crate) fn proof_optimized_setup_matrix_capacity<Cfg: CommitmentConfig>(
     Ok(envelope)
 }
 
+/// Running maximum over every setup matrix a sizing request can reach.
+///
+/// Observing a shape is the only way to raise the envelope, so a reachable
+/// shape can never be priced without also marking the request supported.
+struct SetupCapacityScan {
+    supported: bool,
+    capacity: SetupMatrixCapacity,
+}
+
+impl SetupCapacityScan {
+    fn new() -> Self {
+        Self {
+            supported: false,
+            capacity: SetupMatrixCapacity::minimum(),
+        }
+    }
+
+    fn observe(&mut self, field_elements: usize) {
+        self.supported = true;
+        self.capacity.num_field_elements = self.capacity.num_field_elements.max(field_elements);
+    }
+
+    fn observe_schedule(&mut self, schedule: &FoldSchedule) -> Result<(), AkitaError> {
+        self.observe(setup_matrix_capacity_for_schedule(schedule)?.num_field_elements);
+        Ok(())
+    }
+
+    fn finish(self, max_num_vars: usize) -> Result<SetupMatrixCapacity, AkitaError> {
+        if !self.supported {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup matrix sizing found no generated schedules for max_num_vars={max_num_vars}"
+            )));
+        }
+        Ok(self.capacity)
+    }
+}
+
 fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<SetupMatrixCapacity, AkitaError> {
     let layouts = setup_capacity_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
-    let mut saw_supported_shape = false;
-    let mut envelope = SetupMatrixCapacity::minimum();
+    let mut scan = SetupCapacityScan::new();
     for layout in &layouts {
-        let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
+        let Ok(schedule) = Cfg::select_schedule_for_opening(layout) else {
             continue;
         };
-        let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
-        saw_supported_shape = true;
-        envelope.num_field_elements = envelope
-            .num_field_elements
-            .max(entry_envelope.num_field_elements);
+        scan.observe_schedule(schedule.schedule())?;
     }
 
-    // Generated multi-group rows carry exact frozen precommit descriptors.
-    // Size those schedules from their canonical keys: synthesizing an opening
-    // layout at `max_num_vars` can miss a finite-catalog precommit arity.
+    // Generated multi-group rows can exceed every scalar row's matrix envelope.
     if let Some(catalog) = Cfg::schedule_catalog() {
-        let policy = crate::policy_of::<Cfg>();
-        for &row in catalog.precommitted_profiles {
-            let profile = row.expand_to_committed_profile(&policy)?;
-            if profile.group.num_vars() > max_num_vars
-                || profile.group.num_polynomials() > max_num_batched_polys
-            {
-                continue;
-            }
-            let a_coeff_len = matrix_coefficient_len(
-                profile.inner_commit_matrix.output_rank(),
-                profile.inner_commit_matrix.input_width(),
-                profile.inner_commit_matrix.ring_dimension(),
-                "precommit A",
-            )?;
-            let b_coeff_len = matrix_coefficient_len(
-                profile.outer_commit_matrix.output_rank(),
-                profile.outer_commit_matrix.input_width(),
-                profile.outer_commit_matrix.ring_dimension(),
-                "precommit B",
-            )?;
-            saw_supported_shape = true;
-            envelope.num_field_elements = envelope
-                .num_field_elements
-                .max(a_coeff_len)
-                .max(b_coeff_len);
-        }
         for entry in catalog.entries {
             if entry.root.precommitted_groups.is_empty() {
                 continue;
+            }
+            // An independent precommit only needs its own frozen A/B matrices
+            // resident, so it is provisionable at its own polynomial count even
+            // when the grouped root it later feeds is not.
+            for group in entry.root.precommitted_groups {
+                let profile = group.descriptor;
+                if profile.group.num_vars() <= max_num_vars
+                    && profile.group.num_polynomials() <= max_num_batched_polys
+                {
+                    scan.observe(akita_types::commit_only_setup_field_elements(
+                        &profile.inner_commit_matrix,
+                        &profile.outer_commit_matrix,
+                    )?);
+                }
             }
             let key = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
@@ -199,12 +217,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 continue;
             }
-            let schedule = Cfg::runtime_schedule(key)?;
-            let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
-            saw_supported_shape = true;
-            envelope.num_field_elements = envelope
-                .num_field_elements
-                .max(entry_envelope.num_field_elements);
+            scan.observe_schedule(Cfg::select_schedule_for_key(&key)?.schedule())?;
         }
     }
 
@@ -216,21 +229,10 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
         max_num_vars,
         max_num_batched_polys,
     )? {
-        let schedule = Cfg::runtime_schedule(key)?;
-        let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
-        saw_supported_shape = true;
-        envelope.num_field_elements = envelope
-            .num_field_elements
-            .max(entry_envelope.num_field_elements);
+        scan.observe_schedule(Cfg::select_schedule_for_key(&key)?.schedule())?;
     }
 
-    if !saw_supported_shape {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup matrix sizing found no generated schedules for max_num_vars={max_num_vars}"
-        )));
-    }
-
-    Ok(envelope)
+    scan.finish(max_num_vars)
 }
 
 fn validate_setup_capacity_metadata(
@@ -332,21 +334,19 @@ pub fn ensure_prover_schedule_fits_setup<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let available_setup_field_elements = setup.shared_matrix.as_field_slice().len();
-    let required_setup_field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
+    // `setup_matrix_field_elements_for_schedule` already maxes over the root
+    // level's A/B/D matrices, every frozen precommitted group, the compression maps,
+    // and the fold tail, so it dominates any per-level recomputation here.
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .validate_opening_batch(layout)?;
     ensure_required_setup_field_elements(
-        required_setup_field_elements,
-        available_setup_field_elements,
-    )?;
-
-    let root_params = &schedule.root.params.final_group.commitment;
-    let required_root_field_elements =
-        root_runtime_matrix_field_elements_for_opening_batch(root_params, layout)?;
-    ensure_required_setup_field_elements(
-        required_root_field_elements,
-        available_setup_field_elements,
-    )?;
-    Ok(())
+        setup_matrix_field_elements_for_schedule(schedule)?,
+        setup.shared_matrix.as_field_slice().len(),
+    )
 }
 
 /// Reject a concrete schedule whose direct verifier matrix uses exceed setup.
@@ -376,61 +376,6 @@ fn ensure_required_setup_field_elements(
         "schedule requires {required_field_elements} physical setup field elements, but setup \
          provides {available_field_elements}"
     )))
-}
-
-fn root_runtime_matrix_field_elements_for_opening_batch(
-    lp: &CommittedGroupParams,
-    layout: &OpeningClaimsLayout,
-) -> Result<usize, AkitaError> {
-    lp.validate_opening_batch(layout)?;
-    let mut max_a_coeff_len = matrix_coefficient_len(
-        lp.inner_commit_matrix.output_rank(),
-        lp.inner_commit_matrix.input_width(),
-        lp.inner_commit_matrix.ring_dimension(),
-        "root A",
-    )?;
-    let mut max_b_coeff_len = matrix_coefficient_len(
-        lp.outer_commit_matrix.output_rank(),
-        lp.outer_commit_matrix.input_width(),
-        lp.outer_commit_matrix.ring_dimension(),
-        "root B",
-    )?;
-
-    for group in &lp.precommitted_groups {
-        let a_coeff_len = matrix_coefficient_len(
-            group.layout.inner_commit_matrix.output_rank(),
-            group.layout.inner_commit_matrix.input_width(),
-            group.layout.inner_commit_matrix.ring_dimension(),
-            "multi-group A",
-        )?;
-        let b_coeff_len = matrix_coefficient_len(
-            group.layout.outer_commit_matrix.output_rank(),
-            group.layout.outer_commit_matrix.input_width(),
-            group.layout.outer_commit_matrix.ring_dimension(),
-            "multi-group B",
-        )?;
-        max_a_coeff_len = max_a_coeff_len.max(a_coeff_len);
-        max_b_coeff_len = max_b_coeff_len.max(b_coeff_len);
-    }
-
-    let d_coeff_len = matrix_coefficient_len(
-        lp.open_commit_matrix.output_rank(),
-        lp.open_commit_matrix.input_width(),
-        lp.open_commit_matrix.ring_dimension(),
-        "root D",
-    )?;
-    Ok(d_coeff_len.max(max_a_coeff_len).max(max_b_coeff_len))
-}
-
-fn matrix_coefficient_len(
-    rows: usize,
-    columns: usize,
-    ring_dimension: usize,
-    label: &str,
-) -> Result<usize, AkitaError> {
-    rows.checked_mul(columns)
-        .and_then(|len| len.checked_mul(ring_dimension))
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} setup capacity overflow")))
 }
 
 // ---------------------------------------------------------------------------
@@ -577,14 +522,6 @@ macro_rules! impl_proof_optimized_preset {
                 }
             }
 
-            fn get_params_for_prove(
-                layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
-                    layout,
-                )?)
-            }
-
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
@@ -657,14 +594,6 @@ macro_rules! impl_proof_optimized_preset {
                         ),
                     )
                 }
-            }
-
-            fn get_params_for_prove(
-                layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
-                    layout,
-                )?)
             }
 
             impl_proof_optimized_preset!(@schedule_catalog ($feat, $family_name, $table));

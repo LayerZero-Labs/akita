@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | Status | active |
-| Updated | 2026-08-09 |
-| PR | #355 |
+| Updated | 2026-08-12 |
+| PR | #355, #385 |
 | Historical record | `archive/2026-Q3/multi-group-batching-legacy.md` |
 
 ## Summary
@@ -15,8 +15,8 @@ that was used to commit it. The final root schedule is selected from the final
 group layout and the ordered list of those exact profiles.
 
 This file is the current contract. The archived record preserves earlier
-designs based on `ConservativeCommitmentConfig`, reconstructed layouts, and
-ordinary `batched_commit`. Those APIs have been removed.
+designs based on `ConservativeCommitmentConfig`, reconstructed layouts, and a
+separate scalar batch-commit entry point. Those APIs have been removed.
 
 ## Canonical types
 
@@ -29,11 +29,11 @@ It freezes:
 - the exact inner and outer SIS matrices, including ranks and bounds.
 
 `AkitaScheduleLookupKey` contains one final group layout and an ordered list of
-exact precommitted profiles. Profile order is part of the schedule and
+exact `precommitteds`. Profile order is part of the schedule and
 transcript identity.
 
 The final root must use every frozen profile exactly. It may choose fresh root
-opening and D geometry, but it must not reconstruct or change a precommitted A
+opening and D geometry, but it must not reconstruct or change a precommitted group's A
 or B relation.
 
 ## Standalone profile selection
@@ -58,25 +58,34 @@ Generated profile lookup is strict. An unlisted layout returns
 
 The current staggered flow is:
 
-1. Resolve a generated `CommittedGroupProfile` for each early group.
-2. Commit each early group with `commit_group` and that exact profile.
-3. Pass the ordered profiles into `commit_final_group` with the final group.
-4. Build the exact `AkitaScheduleLookupKey` and resolve the generated root row.
-5. Commit and prove with the resolved root parameters.
+1. Commit each early group with the unified `commit` method and
+   `GroupContext::scheduler_without_precommitted_groups()`; this resolves its exact
+   scalar row. Retain the resulting committed group/profile for use as a
+   precommitted group.
+2. Build one ordered `PrecommittedGroupProfiles` owner from those committed groups for
+   the final commitment.
+3. Commit the last group with
+   `GroupContext::scheduler_with_precommitted_groups(&prior)?`, borrowing that owner.
+4. Build the self-describing `OpeningClaims`, then pass them to
+   `SelectedProverOpeningData::from_committed_claims`. Batch assembly derives
+   the ordered profiles from the committed groups and selects the exact
+   generated grouped row before it strips those profiles from prover data.
+5. Prove with that selected row and verify against its explicit row identity.
 
-`batched_commit` retains its scalar meaning. It commits one bundle under one
-scalar schedule. It is not the precommit API for this flow.
+The scheduler-without-priors context commits a group under its scalar row.
+The same commitment may be opened alone or used before a later final group.
+Multiple homogeneous polynomials may still belong to one group.
 
 The commitment and opening claims must use the same ordered group profiles.
 Malformed, missing, reordered, or altered profiles return `AkitaError`.
 
 ## Planning and runtime ownership
 
-`akita-planner` owns standalone profile search and grouped root search.
+`akita-planner` owns scalar-row search and grouped root search.
 `akita-schedules` owns generated catalogs, catalog identity checks, expansion,
 and strict runtime resolution. Verifier crates do not depend on the planner.
 
-Generated families carry both standalone profiles and selected grouped rows.
+Generated families carry scalar rows and selected grouped rows.
 Generation holds a typed planning request with its key and honest fold policies
 through one materialization pass. Unsupported requests are omitted. Runtime
 table misses remain unsupported.
@@ -94,10 +103,15 @@ from unchecked lengths, or invoke the planner.
 
 ## Acceptance criteria
 
-- Standalone generation emits exact profiles for every supported layout.
+- Scalar generation emits exact S profiles for every supported layout.
 - Profile descriptor changes alter lookup and effective schedule identity.
-- `commit_group` uses the supplied profile without reconstructing it.
-- `commit_final_group` uses the exact ordered profiles supplied by the caller.
+- `GroupContext::scheduler_without_precommitted_groups()` always uses the exact
+  generated scalar-row profile, including when that commitment later becomes a
+  precommitted group.
+- `GroupContext::scheduler_with_precommitted_groups` selects from the exact ordered
+  profiles supplied by the caller and rejects an empty prefix.
+- Batch assembly derives the exact ordered profiles from the committed claims
+  and selects the grouped row before it strips the profiles from prover data.
 - Reordered, altered, unknown, or undersized profiles reject.
 - Scalar keys normalize through `AkitaScheduleLookupKey::single`.
 - Grouped roots hand one compact witness to the recursive suffix.

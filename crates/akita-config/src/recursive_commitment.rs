@@ -4,8 +4,7 @@ use crate::CommitmentConfig;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
-    SisModulusProfileId,
+    ChunkedWitnessCfg, DecompositionParams, SetupMatrixCapacity, SisModulusProfileId,
 };
 #[cfg(any(
     feature = "schedules-fp128-onehot-recursive",
@@ -84,23 +83,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         }
         None
     }
-
-    fn runtime_schedule(
-        key: akita_types::AkitaScheduleLookupKey,
-    ) -> Result<akita_types::FoldSchedule, AkitaError> {
-        akita_schedules::resolve_group_batch_schedule(
-            &key,
-            &crate::policy_of::<Self>(),
-            Self::ring_challenge_config,
-            Self::schedule_catalog(),
-        )
-    }
-
-    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
-        Self::runtime_schedule(crate::proof_optimized::proof_optimized_schedule_key(
-            layout,
-        )?)
-    }
 }
 
 #[cfg(all(
@@ -110,28 +92,34 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2"
     )
 ))]
-mod adaptive_precommit_tests {
+mod base_precommit_tests {
     use super::*;
     use crate::proof_optimized::fp128;
     use akita_types::PolynomialGroupLayout;
 
-    fn assert_nv16_precommit<Cfg: CommitmentConfig>() {
-        crate::committed_group_profile::<RecursiveCommitmentConfig<Cfg>>(
-            &PolynomialGroupLayout::new(16, 1),
-        )
-        .expect("adaptive recursive catalog must expose its base precommit profile");
+    /// A recursive companion ships no row without precommitted groups at a precommit
+    /// layout, so the caller precommits under `Cfg` and proves the grouped
+    /// root under `RecursiveCommitmentConfig<Cfg>`. Assert both halves of that
+    /// split: the base config produces the profile, and the recursive one
+    /// rejects the same request.
+    fn assert_nv16_precommit_needs_the_base_config<Cfg: CommitmentConfig>() {
+        let group = PolynomialGroupLayout::new(16, 1);
+        Cfg::profile_without_precommitted_groups(group)
+            .expect("base catalog must expose its independent profile");
+        RecursiveCommitmentConfig::<Cfg>::profile_without_precommitted_groups(group)
+            .expect_err("a recursive companion must not self-derive a precommit profile");
     }
 
     #[cfg(feature = "schedules-fp128-onehot-recursive")]
     #[test]
-    fn onehot_recursive_catalog_exposes_base_precommit_profiles() {
-        assert_nv16_precommit::<fp128::OneHot>();
+    fn onehot_recursive_precommit_comes_from_the_base_catalog() {
+        assert_nv16_precommit_needs_the_base_config::<fp128::OneHot>();
     }
 
     #[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2")]
     #[test]
-    fn onehot_recursive_w8r2_catalog_exposes_base_precommit_profiles() {
-        assert_nv16_precommit::<fp128::OneHotMultiChunk>();
+    fn onehot_recursive_w8r2_precommit_comes_from_the_base_catalog() {
+        assert_nv16_precommit_needs_the_base_config::<fp128::OneHotMultiChunk>();
     }
 }
 
@@ -142,21 +130,22 @@ mod tests {
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
     #[test]
-    fn prove_layout_uses_the_recursive_catalogs_frozen_precommit_params() {
+    fn recursive_grouped_row_freezes_the_base_configs_precommit_profile() {
         type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
         let final_group = PolynomialGroupLayout::new(32, 2);
-        let expected = crate::committed_group_profile::<Cfg>(&precommitted)
-            .expect("recursive-catalog precommit profile");
-        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey {
+        let expected = fp128::OneHot::profile_without_precommitted_groups(precommitted)
+            .expect("independent profile");
+        let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey {
             final_group,
             precommitteds: vec![expected, expected],
         })
         .expect("recursive schedule");
 
-        assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
+        assert_eq!(schedule.schedule().root.params.precommitted_groups.len(), 2);
         assert!(schedule
+            .schedule()
             .root
             .params
             .precommitted_groups
@@ -167,13 +156,19 @@ mod tests {
     #[test]
     fn scalar_recursive_profile_uses_offloaded_catalog_row() {
         type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
-        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(36),
         ))
         .expect("scalar recursive schedule");
 
-        assert!(schedule.root.params.precommitted_groups.is_empty());
         assert!(schedule
+            .schedule()
+            .root
+            .params
+            .precommitted_groups
+            .is_empty());
+        assert!(schedule
+            .schedule()
             .recursive_folds
             .iter()
             .any(|fold| fold.params.incoming_setup_prefix.is_some()));

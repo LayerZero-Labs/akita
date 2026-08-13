@@ -79,7 +79,14 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
-    let level_params = Cfg::get_params_for_batched_commitment(&opening_batch).unwrap();
+    let level_params = Cfg::select_schedule_for_opening(&opening_batch)
+        .unwrap()
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
     let witness_layout = WitnessLayout::new(
         &level_params,
         &opening_batch,

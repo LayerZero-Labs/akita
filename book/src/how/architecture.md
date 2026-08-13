@@ -38,9 +38,9 @@ Key structural facts:
 
 ## End-to-end lifecycle
 
-1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`). The preset also fixes the protocol geometry: when the claim field coincides with the coefficient field (`EXT_DEGREE == 1`, today's `fp128` families) the fold path never runs extension-opening reduction; when claims live in a proper extension (`fp32` / `fp64`), root EOR follows `akita_types::root_tensor_projection_enabled` and suffix EOR follows `EXT_DEGREE > 1`. See [Fold path and field geometry](./proving/fold-path.md).
+1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::select_schedule_for_key` resolves one complete row from the shipped catalog; planner search remains offline. The preset also fixes the protocol geometry: when the claim field coincides with the coefficient field (`EXT_DEGREE == 1`, today's `fp128` families) the fold path never runs extension-opening reduction; when claims live in a proper extension (`fp32` / `fp64`), root EOR follows `akita_types::root_tensor_projection_enabled` and suffix EOR follows `EXT_DEGREE > 1`. See [Fold path and field geometry](./proving/fold-path.md).
 2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `num_vars`.
-3. **Commit.** `commit` / `batched_commit` (in `akita-prover`, orchestrated by `akita-pcs`) produce commitments over root polynomials at the opening layout implied by the schedule.
+3. **Commit.** The context-aware `commit` entry point (in `akita-prover`, orchestrated by `akita-pcs`) produces one committed polynomial group using `GroupContext`. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does; explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
 5. **Prove.** `batched_prove` walks the folded-only schedule level by level: per-group opening preparation, sumcheck stages, extension-opening reduction, recursive suffix work, and the final direct terminal handoff.
 6. **Verify.** `batched_verify` re-derives the schedule, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
@@ -91,7 +91,7 @@ ring dimension of the specific data one operation touches and enters the
 kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
 proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
-see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
+see `specs/mixed-ring-dimension-per-level.md`) reduce to feeding different
 dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
 names the per-matrix ring dimensions; prove/verify hot paths dispatch on
 `d_a()`, `d_b()`, or `d_d()` per operation, not on a single fused dimension.

@@ -1,9 +1,8 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow,
-    degree_one_claim_point_to_base, dense_lagrange_opening_from_evals, make_profile_onehot_poly,
-    onehot_lagrange_opening, opening_from_poly, planned_payload_bytes,
-    profile_setup_contribution_mode, prover_claims, random_claim_point,
-    report_proof_size_against_planner, run_verifier_timings, verifier_claims,
+    degree_one_claim_point_to_base, make_profile_onehot_poly, onehot_lagrange_opening,
+    opening_from_poly, planned_payload_bytes, profile_setup_contribution_mode, prover_claims,
+    random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
@@ -18,7 +17,8 @@ use akita_field::unreduced::{
 };
 use akita_field::{
     AdditiveGroup, CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
+    HalvingField, LiftBase, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
+    TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
@@ -94,8 +94,16 @@ fn run_prove<
 
     let (commitments, proof) = {
         let t0 = Instant::now();
-        let (commitment, hint) =
-            AkitaCommitmentScheme::<Cfg>::commit(setup, std::slice::from_ref(poly), stack).unwrap();
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<Cfg>::commit(
+            setup,
+            std::slice::from_ref(poly),
+            stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let commitments = [commitment];
@@ -109,7 +117,7 @@ fn run_prove<
         let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
             setup,
-            prover_claims(selection, pt, &poly_refs[..], &commitments[0], hint),
+            prover_claims::<Cfg, _>(selection, pt, &poly_refs[..], &commitments[0], hint),
             stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -153,7 +161,9 @@ fn run_prove<
     } else {
         let opening_batch =
             OpeningClaimsLayout::new(pt.len(), 1).expect("same-point opening batch");
-        let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
+        let schedule = Cfg::select_schedule_for_opening(&opening_batch)
+            .expect("runtime schedule")
+            .into_schedule();
         if validate_against_planner {
             report_proof_size_against_planner(
                 label,
@@ -252,10 +262,14 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     Cfg::ExtField: FrobeniusExtField<FF>
         + FpExtEncoding<FF>
         + HasUnreducedOps
+        + MulBaseUnreduced<FF>
         + HasOptimizedFold
         + AkitaSerialize
         + Valid,
 {
+    let statement_prepare_start = Instant::now();
+    let statement_prepare_span =
+        tracing::info_span!("profile_dense_prepare_statement", num_vars = nv).entered();
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let original_pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let len = 1usize << nv;
@@ -288,7 +302,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         DensePoly::<FF>::from_field_evals(nv, D, evals).unwrap()
     };
     let opening = {
-        let _span = tracing::info_span!("profile_dense_compute_opening").entered();
+        let _span = tracing::info_span!("profile_dense_compute_expected_opening").entered();
         if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&original_pt) {
             Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
                 &poly,
@@ -297,12 +311,21 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
                 BasisMode::Lagrange,
             ))
         } else {
-            dense_lagrange_opening_from_evals::<FF, Cfg::ExtField>(
+            akita_types::derive_tensor_extension_opening_claim::<FF, Cfg::ExtField>(
+                nv,
                 &poly.field_coeffs()[..len],
                 &original_pt,
             )
+            .expect("valid dense extension opening")
+            .0
         }
     };
+    drop(statement_prepare_span);
+    report_timing(
+        label,
+        "statement_prepare",
+        statement_prepare_start.elapsed().as_secs_f64(),
+    );
     let t0 = Instant::now();
     let setup =
         AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)

@@ -591,10 +591,11 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn generated_schedule_excludes_prior_root_commitment() {
-        let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+        let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(32),
         ))
-        .expect("generated schedule");
+        .expect("generated schedule")
+        .into_schedule();
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
         let mut expected_root_level_commits = NttExecutionRequirements::default();
@@ -640,10 +641,11 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn complete_execution_includes_the_root_commitment() {
-        let schedule = fp128::OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+        let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(32),
         ))
-        .expect("generated schedule");
+        .expect("generated schedule")
+        .into_schedule();
         let prove = NttExecutionRequirements::from_prove_schedule(&schedule).unwrap();
         let complete = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule).unwrap();
         let root = &schedule.root.params.final_group.commitment;
@@ -658,10 +660,11 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn fp128_dense_prewarms_centered_quotient_tail() {
-        let schedule = fp128::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+        let schedule = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(26),
         ))
-        .expect("generated dense schedule");
+        .expect("generated dense schedule")
+        .into_schedule();
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
         assert!(requirements.entries().iter().any(|entry| {
@@ -690,20 +693,22 @@ mod tests {
             expects_i16_tail,
         ) in [
             (
-                fp32::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                fp32::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
                 ))
-                .expect("generated fp32 dense schedule"),
+                .expect("generated fp32 dense schedule")
+                .into_schedule(),
                 1024,
                 8,
                 4096,
                 false,
             ),
             (
-                fp64::Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+                fp64::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
                 ))
-                .expect("generated fp64 dense schedule"),
+                .expect("generated fp64 dense schedule")
+                .into_schedule(),
                 512,
                 6,
                 11_264,
