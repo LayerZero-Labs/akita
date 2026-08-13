@@ -51,7 +51,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     .expect("schedule plan")
     .into_schedule();
     tracing::info!("{}", title);
-    print_layout(&layout, 1, Cfg::decomposition().field_bits());
+    print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan), true);
 }
 
@@ -89,7 +89,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     .expect("schedule plan")
     .into_schedule();
     tracing::info!("{}", title);
-    print_layout(&layout, 1, Cfg::decomposition().field_bits());
+    print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     run_dense_for::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
 }
 
@@ -121,8 +121,9 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     tracing::info!("{}", title);
     if num_polys == 1 {
         let layout = resolve_layout::<FF, Cfg>(nv);
-        let required_vars =
-            layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
+        let required_vars = layout.position_index_bits()
+            + layout.block_index_bits()
+            + layout.d_a().trailing_zeros() as usize;
         if required_vars > nv {
             tracing::error!(
                 label,
@@ -139,7 +140,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         ))
         .expect("schedule plan")
         .into_schedule();
-        print_layout(&layout, 1, Cfg::decomposition().field_bits());
+        print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
     } else {
         let lookup_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, num_polys));
@@ -150,8 +151,9 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Cfg::select_schedule_for_opening(&lookup_key.opening_layout().expect("opening layout"))
                 .map(|row| row.schedule().root.params.final_group.commitment.clone())
                 .expect("layout");
-        let required_vars =
-            layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
+        let required_vars = layout.position_index_bits()
+            + layout.block_index_bits()
+            + layout.d_a().trailing_zeros() as usize;
         if required_vars > nv {
             tracing::error!(
                 label,
@@ -164,7 +166,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 "[{label}] fixed batched onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
             );
         }
-        print_layout(&layout, num_polys, Cfg::decomposition().field_bits());
+        print_layout(&layout, num_polys, Cfg::decomposition().field_bits())
+            .expect("profile B geometry");
         run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout, Some(&plan));
     }
 }
@@ -447,7 +450,7 @@ fn run_profile_onehot_fp128_with_cfg<
     tracing::info!(
         "=== {label} (fp128, flat public setup, generated per-level dimensions, 1-of-256) ==="
     );
-    print_layout(&layout, 1, Cfg::decomposition().field_bits());
+    print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     // The catalog row selected here is the same exact row used by the PCS
     // prover and verifier. The benchmark intentionally does not compare it
     // against a different uniform-D family.

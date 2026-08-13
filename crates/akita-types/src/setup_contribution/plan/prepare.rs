@@ -105,14 +105,28 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let log_basis_inner = group_params.log_basis_inner();
                 let log_basis_outer = group_params.log_basis_outer();
                 let n_a = group.n_a(level_params, opening_batch)?;
-                let n_b = group.n_b(level_params, opening_batch)?;
+                let physical_n_b = group_params.b_rows_len();
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
                 let d_col_range = d_col_range.clone();
-                let t_cols = group
+                let expected_logical_t_cols = group
                     .num_claims
                     .checked_mul(t_vector_width)
                     .and_then(|cols| cols.checked_mul(*b_subcolumns))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
+                let slice_geometry = crate::CommitmentSliceGeometry::try_new(
+                    group_params.outer_slice_count(),
+                    num_live_blocks,
+                    group.num_claims,
+                    n_a,
+                    depth_commit,
+                    role_dims.d_a(),
+                    role_dims.d_b(),
+                )?;
+                if slice_geometry.logical_input_width() != expected_logical_t_cols {
+                    return Err(AkitaError::InvalidSetup(
+                        "logical B columns disagree with slice geometry".into(),
+                    ));
+                }
                 let z_cols = num_positions_per_block
                     .checked_mul(depth_witness)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
@@ -120,10 +134,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?
                         .to_vec()
                         .into();
+                let logical_n_b = slice_geometry.logical_output_rows(physical_n_b)?;
                 let b_weights: std::sync::Arc<[E]> =
-                    checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?
+                    checked_slice(&eq_tau1, group.b_row_start, logical_n_b, "setup B rows")?
                         .to_vec()
                         .into();
+                let physical_b = PhysicalBSetupPlan::new(slice_geometry, physical_n_b, b_weights)?;
                 let consistency_weight = *eq_tau1
                     .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
                     .ok_or(AkitaError::InvalidProof)?;
@@ -178,20 +194,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     log_basis_outer,
                     log_basis_open,
                     d_col_range,
-                    t_cols,
                     z_cols,
                     n_a,
-                    n_b,
+                    physical_b,
                     required: 0,
                     segments: Vec::new().into(),
                     a_row_weights,
-                    b_weights,
                     fold_gadget,
                     direct_scan_weights: None,
                     active_unit_ranges,
                     num_physical_units,
                     d_tensors: Vec::new(),
-                    b_tensors: Vec::new(),
                     a_tensors: Vec::new(),
                 })
             })
@@ -203,8 +216,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     role_dims: planned.role_dims,
                     a_rows: planned.n_a,
                     a_cols: planned.z_cols,
-                    b_rows: planned.n_b,
-                    b_cols: planned.t_cols,
+                    b_rows: planned.physical_b.physical_rows(),
+                    b_cols: planned.physical_b.physical_input_width(),
                     d_active_cols: planned.d_col_range.len(),
                 })
             })
@@ -273,7 +286,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 // same policy: below it every job stays sequential and
                 // `rayon::join` would only add scheduling cost.
                 const PARALLEL_THRESHOLD: usize = 1 << 14;
-                let largest_output = group.d_col_range.len().max(group.t_cols).max(group.z_cols);
+                let largest_output = group
+                    .d_col_range
+                    .len()
+                    .max(group.physical_b.logical_input_width())
+                    .max(group.z_cols);
                 if largest_output >= PARALLEL_THRESHOLD {
                     // Shared reborrow alongside group's sub-borrow; both are &T so
                     // NLL allows them to coexist for parallel closure capture.
@@ -295,8 +312,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                     tracing::info_span!("setup_materialize_t_weights").entered();
                                 plan.materialize_role_tensor_weights(
                                     group.b_ratio,
-                                    &group.b_tensors,
-                                    group.t_cols,
+                                    &group.physical_b.relation_tensors,
+                                    group.physical_b.logical_input_width(),
                                     alpha,
                                 )
                             },
@@ -327,8 +344,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         let _span = tracing::info_span!("setup_materialize_t_weights").entered();
                         self.materialize_role_tensor_weights(
                             group.b_ratio,
-                            &group.b_tensors,
-                            group.t_cols,
+                            &group.physical_b.relation_tensors,
+                            group.physical_b.logical_input_width(),
                             alpha,
                         )?
                     };
@@ -427,12 +444,17 @@ fn validate_static_inputs<E: FieldCore>(
                 "A-key column width is too small for setup contribution layout".into(),
             ));
         }
-        let expected_b_width = group_layout
-            .num_polynomials()
-            .checked_mul(group_params.a_rows_len())
-            .and_then(|width| width.checked_mul(depth_commit))
-            .and_then(|width| width.checked_mul(num_live_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
+        let role_dims = level_params.group_role_dims(opening_batch, group_index)?;
+        let expected_b_width = crate::CommitmentSliceGeometry::try_new(
+            group_params.outer_slice_count(),
+            num_live_blocks,
+            group_layout.num_polynomials(),
+            group_params.a_rows_len(),
+            depth_commit,
+            role_dims.d_a(),
+            role_dims.d_b(),
+        )?
+        .physical_input_width();
         if group_params.b_col_len() < expected_b_width {
             return Err(AkitaError::InvalidSetup(
                 "B-key column width is too small for setup contribution layout".into(),

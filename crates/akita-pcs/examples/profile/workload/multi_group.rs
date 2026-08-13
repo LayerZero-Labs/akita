@@ -401,7 +401,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         &schedule,
         final_group,
         Cfg::decomposition().field_bits(),
-    );
+    )
+    .expect("runtime schedule report geometry");
     emit_proof_tail_report::<FF, Cfg::ExtField>(
         label,
         &proof,

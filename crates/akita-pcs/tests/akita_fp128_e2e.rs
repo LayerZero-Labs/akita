@@ -72,7 +72,7 @@ mod common;
 mod heterogeneous;
 mod matrix_drivers;
 
-use akita_config::proof_optimized::fp128;
+use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, MultilinearPolynomial,
@@ -193,7 +193,44 @@ matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 // Dense × multi-chunk × direct × non-recursive    [16]  (feature-gated)
 // ----------------------------------------------------------------------------
 #[cfg(feature = "schedules-fp128-dense-multi-chunk")]
-matrix_test!(dense; fp128_dense_mc; fp128::DenseMultiChunk; nvs=[16]);
+#[test]
+fn fp128_dense_mc() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let schedule = fp128::DenseMultiChunk::select_schedule_for_key(
+            &akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::singleton(16),
+            ),
+        )
+        .expect("dense multi-chunk schedule")
+        .into_schedule();
+        assert_eq!(
+            schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .outer_slice_count,
+            akita_types::CommitmentSliceCount::EIGHT,
+            "multi-chunk regression profile must pin the exact S=8 root geometry"
+        );
+        assert_eq!(
+            schedule
+                .recursive_folds
+                .first()
+                .expect("dense multi-chunk schedule must have a recursive fold")
+                .params
+                .witness
+                .outer_slice_count,
+            akita_types::CommitmentSliceCount::EIGHT,
+            "multi-chunk regression profile must pin the exact S=8 level-one geometry"
+        );
+        prove_verify_dense_roundtrip::<fp128::DenseMultiChunk>(
+            &[16],
+            b"completeness/fp128_dense_mc",
+        );
+    });
+}
 
 // ----------------------------------------------------------------------------
 // Dense × multi-chunk × precommitted × non-recursive — NA

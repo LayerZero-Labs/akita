@@ -100,7 +100,7 @@ impl WitnessLayout {
         }
 
         let b_source_coefficients = params
-            .b_rows_len()
+            .logical_b_rows_len()?
             .checked_mul(role_dims.d_b())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("relation B compression shape overflow".into())

@@ -71,10 +71,13 @@ pub struct GeneratedOutput {
     pub(super) body: String,
 }
 
-fn render_family_outputs(spec: &EmitSpec) -> Result<GeneratedOutput, String> {
+fn render_family_output(
+    spec: &EmitSpec,
+    materialized: Vec<MaterializedEntry>,
+) -> Result<GeneratedOutput, String> {
     Ok(GeneratedOutput {
         destination: spec.output_dir.join(format!("{}.rs", spec.module_name)),
-        body: emit_family_module(spec)?,
+        body: emit_family_module_from_entries(spec, materialized)?,
     })
 }
 
@@ -87,10 +90,12 @@ pub fn render_generated_outputs(
     wiring_specs: &[EmitSpec],
     mod_path: Option<&Path>,
 ) -> Result<Vec<GeneratedOutput>, String> {
-    let workers = schedule_generation_worker_count(specs.len());
-    let rendered =
-        bounded_parallel_filter_map(specs, workers, |spec| render_family_outputs(spec).map(Some))?;
-    let mut outputs = rendered;
+    let materialized = materialized_entries_for_specs(specs)?;
+    let mut outputs = specs
+        .iter()
+        .zip(materialized)
+        .map(|(spec, entries)| render_family_output(spec, entries))
+        .collect::<Result<Vec<_>, _>>()?;
     if let Some(mod_path) = mod_path {
         let mod_src = fs::read_to_string(mod_path)
             .map_err(|error| format!("read {}: {error}", mod_path.display()))?;

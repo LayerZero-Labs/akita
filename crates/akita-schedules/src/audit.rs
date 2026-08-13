@@ -2,15 +2,14 @@
 
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_t_ring_count, decomposed_w_ring_count, num_digits_inner, num_digits_open,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, InnerCommitMatrixParams,
-    InnerCommitSecurityRoute, OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
-    SisTableKey,
+    decomposed_w_ring_count, num_digits_inner, num_digits_open, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, InnerCommitMatrixParams, InnerCommitSecurityRoute,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, validate_role_dims, CommittedGroupBatchProfile, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, PrecommittedLevelParams, TerminalCommittedGroupParams,
-    TerminalResponseShape,
+    shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
+    CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
+    PrecommittedLevelParams, TerminalCommittedGroupParams, TerminalResponseShape,
 };
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
@@ -230,14 +229,16 @@ fn audit_committed_params(
         .num_positions_per_block
         .checked_mul(params.num_digits_inner)
         .ok_or_else(|| invalid(label, "A width overflow"))?;
-    let native_b_width = decomposed_t_ring_count(
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_outer,
+    let expected_b_width = CommitmentSliceGeometry::try_new(
+        params.outer_slice_count,
         params.num_live_blocks,
         num_claims,
-    )
-    .ok_or_else(|| invalid(label, "B width overflow"))?;
-    let expected_b_width = checked_projected_width(label, native_b_width, dims.d_a(), dims.d_b())?;
+        params.inner_commit_matrix.output_rank(),
+        params.num_digits_outer,
+        dims.d_a(),
+        dims.d_b(),
+    )?
+    .physical_input_width();
     let expected_d_width = expected_d_width(label, params, num_claims)?;
     if params.inner_commit_matrix.input_width() != expected_a_width
         || params.outer_commit_matrix.input_width() != expected_b_width

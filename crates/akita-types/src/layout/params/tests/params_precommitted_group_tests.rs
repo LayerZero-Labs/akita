@@ -186,6 +186,7 @@ fn precommit_admission_fixture() -> (
         num_live_ring_elements_per_claim: 256,
         num_positions_per_block: 32,
         num_live_blocks: 8,
+        outer_slice_count: crate::CommitmentSliceCount::ONE,
         log_basis_inner: 8,
         num_digits_inner: 16,
         inner_commit_matrix,

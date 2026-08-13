@@ -676,6 +676,9 @@ pub fn planned_next_witness_len(
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
     let quotient_depth =
         akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open);
+    if !params.compression_sources_supported()? {
+        return Ok(None);
+    }
     if params.setup_prefix.is_none() {
         return WitnessLayout::try_scalar_live_coeff_len(
             params,
@@ -683,9 +686,6 @@ pub fn planned_next_witness_len(
             num_chunks,
             quotient_depth,
         );
-    }
-    if !params.compression_sources_supported()? {
-        return Ok(None);
     }
     Ok(Some(
         WitnessLayout::new(params, &opening_batch, num_chunks, quotient_depth)?.live_coeff_len(),

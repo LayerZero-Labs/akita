@@ -905,6 +905,18 @@ def extract_summary(
                     "response_l2_sq_cap": parse_tracing_optional_int(
                         kvs.get("response_l2_sq_cap")
                     ),
+                    "b_slice_count": int(kvs.get("b_slice_count", "1")),
+                    "physical_b_input_width": (
+                        int(kvs["physical_b_input_width"])
+                        if "physical_b_input_width" in kvs
+                        else None
+                    ),
+                    "logical_b_rows": (
+                        int(kvs["logical_b_rows"]) if "logical_b_rows" in kvs else None
+                    ),
+                    "complete_b_compression_bytes": parse_tracing_optional_int(
+                        kvs.get("complete_b_compression_bytes")
+                    ),
                     "log_basis_inner": int(kvs["log_basis_inner"]),
                     "log_basis_outer": int(kvs["log_basis_outer"]),
                     "log_basis_open": int(kvs["log_basis_open"]),
@@ -1021,6 +1033,18 @@ def extract_summary(
                 ),
                 "response_l2_sq_cap": parse_tracing_optional_int(
                     kvs.get("response_l2_sq_cap")
+                ),
+                "b_slice_count": int(kvs.get("b_slice_count", "1")),
+                "physical_b_input_width": (
+                    int(kvs["physical_b_input_width"])
+                    if "physical_b_input_width" in kvs
+                    else None
+                ),
+                "logical_b_rows": (
+                    int(kvs["logical_b_rows"]) if "logical_b_rows" in kvs else None
+                ),
+                "complete_b_compression_bytes": parse_tracing_optional_int(
+                    kvs.get("complete_b_compression_bytes")
                 ),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                 **{
@@ -2700,6 +2724,22 @@ def planned_group_planner_value(group: dict[str, object]) -> str:
         matrix_line("B commitment", group["d_b"], group.get("b_width", 0), group["n_b"]),
         matrix_line("D opening", group["d_d"], group.get("d_width", 0), group["n_d"]),
     ]
+    slice_count = int(group.get("b_slice_count", 1))
+    b_geometry = [f"Slices: {fmt_count(float(slice_count))}"]
+    if group.get("physical_b_input_width") is not None:
+        b_geometry.append(
+            "Physical B input ring elements: "
+            f"{fmt_count(float(group['physical_b_input_width']))}"
+        )
+    if group.get("logical_b_rows") is not None:
+        b_geometry.append(
+            f"Logical B rows: {fmt_count(float(group['logical_b_rows']))}"
+        )
+    if group.get("complete_b_compression_bytes") is not None:
+        b_geometry.append(
+            "Complete B compression input: "
+            f"{fmt_count(float(group['complete_b_compression_bytes']))} bytes"
+        )
     segments = [
         "z response: "
         f"{digit_count_phrase(group['num_digits_inner'], 'input')} "
@@ -2725,6 +2765,7 @@ def planned_group_planner_value(group: dict[str, object]) -> str:
         planned_group_label(group),
         [
             f"<em>Commitment matrices used at this fold</em><br>{'<br>'.join(matrices)}",
+            f"<br><em>B commitment slicing</em><br>{'<br>'.join(b_geometry)}",
             f"<br><em>Folded response check</em><br>{'<br>'.join(response_bound_lines(group))}",
             f"<br><em>Outgoing witness segments</em><br>{'<br>'.join(segments)}",
             f"<br><em>Challenge used at this fold</em><br>{challenge_line(group)}",

@@ -48,7 +48,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     .clone();
     let poly = make_onehot_poly(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
-    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+    let opening = opening_from_poly_for_layout(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
     let prepared = CpuBackend::DEFAULT
@@ -213,7 +213,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         .clone();
         let poly = make_onehot_poly(num_vars, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
-        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_for_layout(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
         let prepared = CpuBackend::DEFAULT

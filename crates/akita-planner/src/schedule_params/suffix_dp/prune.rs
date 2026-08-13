@@ -64,6 +64,13 @@ pub(super) fn level_candidates(
             )| {
                 best_params.payload_mode == candidate_params.payload_mode
                     && best_params.role_dims() == candidate_params.role_dims()
+                    // This PR emits one L2 split and norm-proof shape per DP
+                    // state. Keep Linf and L2 frontiers separate because these
+                    // coordinates do not price the L2 norm payload.
+                    && std::mem::discriminant(&best_params.inner_commit_matrix.security_route())
+                        == std::mem::discriminant(
+                            &candidate_params.inner_commit_matrix.security_route(),
+                        )
                     && best_next_witness_len == candidate_next_witness_len
                     && best_source_moment == candidate_source_moment
                     && pareto::canonical_dominates(

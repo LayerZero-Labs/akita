@@ -151,7 +151,8 @@ fn run_prove<
             plan,
             PolynomialGroupLayout::singleton(pt.len()),
             Cfg::decomposition().field_bits(),
-        );
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -179,7 +180,8 @@ fn run_prove<
             &schedule,
             PolynomialGroupLayout::singleton(pt.len()),
             Cfg::decomposition().field_bits(),
-        );
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,

@@ -20,16 +20,15 @@ use crate::generated::{
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    projected_role_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    SisTableKey,
+    decomposed_s_block_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_inner,
+    num_digits_open, num_digits_setup_prefix_commit, projected_role_ring_count,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
-    TerminalCommittedGroupParams,
+    shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommitmentSliceCount,
+    CommitmentSliceGeometry, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedLevelParams, TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -102,6 +101,13 @@ impl GeneratedSetupPrefixInput {
         let num_positions_per_block =
             generated_count(geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
+        let outer_slice_count =
+            CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
+        outer_slice_count.validate_for_commitment(
+            0,
+            akita_types::CommitmentPayloadMode::Compressed,
+            num_live_blocks,
+        )?;
         let n_prefix = num_live_ring_elements_per_claim
             .checked_mul(d_a)
             .ok_or_else(|| {
@@ -177,10 +183,16 @@ impl GeneratedSetupPrefixInput {
             log_basis_open,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let native_outer_width = decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, 1)
-            .ok_or_else(|| no_layout("B"))?;
-        let outer_width = projected_role_ring_count(d_a, d_b, native_outer_width)
-            .ok_or_else(|| no_layout("B"))?;
+        let outer_width = CommitmentSliceGeometry::try_new(
+            outer_slice_count,
+            num_live_blocks,
+            1,
+            n_a,
+            num_digits_outer,
+            d_a,
+            d_b,
+        )?
+        .physical_input_width();
         let n_b = secure_rank(
             "setup-prefix b",
             sis_key(
@@ -215,6 +227,7 @@ impl GeneratedSetupPrefixInput {
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
+            outer_slice_count,
             log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
             num_digits_inner,
             inner_commit_matrix,
@@ -299,6 +312,8 @@ impl GeneratedCommittedGroup {
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
+        let outer_slice_count = CommitmentSliceCount::try_new(self.outer_slice_count as usize)?;
+        outer_slice_count.validate_for_commitment(fold_level, payload_mode, num_live_blocks)?;
         let block_index_bits = num_live_blocks
             .checked_next_power_of_two()
             .map_or(0, |domain| domain.trailing_zeros() as usize);
@@ -461,12 +476,16 @@ impl GeneratedCommittedGroup {
             log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let native_outer_width =
-            decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, num_claims)
-                .ok_or_else(|| no_layout("B"))?;
-        let outer_width =
-            projected_role_ring_count(dimensions.d_a(), dimensions.d_b(), native_outer_width)
-                .ok_or_else(|| no_layout("B"))?;
+        let outer_width = CommitmentSliceGeometry::try_new(
+            outer_slice_count,
+            num_live_blocks,
+            num_claims,
+            n_a,
+            num_digits_outer,
+            dimensions.d_a(),
+            dimensions.d_b(),
+        )?
+        .physical_input_width();
 
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
@@ -569,6 +588,7 @@ impl GeneratedCommittedGroup {
             num_live_ring_elements_per_claim,
             num_live_blocks,
             num_positions_per_block,
+            outer_slice_count,
             fold_challenge_config: ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
@@ -620,6 +640,12 @@ impl GeneratedCommittedGroup {
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
+        let outer_slice_count = CommitmentSliceCount::try_new(self.outer_slice_count as usize)?;
+        outer_slice_count.validate_for_commitment(
+            0,
+            akita_types::CommitmentPayloadMode::Compressed,
+            num_live_blocks,
+        )?;
         let block_index_bits = num_live_blocks
             .checked_next_power_of_two()
             .map_or(0, |domain| domain.trailing_zeros() as usize);
@@ -696,12 +722,16 @@ impl GeneratedCommittedGroup {
             log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let native_outer_width =
-            decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, main_num_polys)
-                .ok_or_else(|| no_layout("B"))?;
-        let outer_width =
-            projected_role_ring_count(dimensions.d_a(), dimensions.d_b(), native_outer_width)
-                .ok_or_else(|| no_layout("B"))?;
+        let outer_width = CommitmentSliceGeometry::try_new(
+            outer_slice_count,
+            num_live_blocks,
+            main_num_polys,
+            n_a,
+            num_digits_outer,
+            dimensions.d_a(),
+            dimensions.d_b(),
+        )?
+        .physical_input_width();
 
         let native_main_d_width =
             decomposed_w_ring_count(num_digits_open_val, num_live_blocks, main_num_polys)
@@ -783,6 +813,7 @@ impl GeneratedCommittedGroup {
                 })?,
             num_live_blocks,
             num_positions_per_block,
+            outer_slice_count,
             fold_challenge_config: ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
@@ -1035,8 +1066,8 @@ mod tests {
                 outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
                     ring_dimension: 64,
                     log_basis: 3,
-                    slice_count: 1,
                 },
+                outer_slice_count: 1,
             },
         };
         let requested_dimensions = RefCell::new(Vec::new());
@@ -1061,5 +1092,39 @@ mod tests {
             SparseChallengeConfig::production_for_ring_dim(128)
                 .expect("production D128 challenge config")
         );
+    }
+
+    #[test]
+    fn setup_prefix_expansion_accepts_slicing_independent_of_fold_level() {
+        let input = GeneratedSetupPrefixInput {
+            natural_len: 1 << 16,
+            num_digits_fold: 4,
+            commitment: GeneratedCommittedGroup {
+                geometry: crate::generated::GeneratedBlockGeometry {
+                    live_ring_elements_per_claim: 512,
+                    positions_per_block: 32,
+                    live_blocks: 16,
+                },
+                inner_commit_matrix: crate::generated::GeneratedInnerCommitMatrix {
+                    ring_dimension: 128,
+                    log_basis: 3,
+                },
+                outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
+                    ring_dimension: 64,
+                    log_basis: 3,
+                },
+                outer_slice_count: 2,
+            },
+        };
+        let ring_challenge_config = |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        };
+
+        let expanded = input
+            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
+            .expect("setup-prefix precommitment may use slicing at any consumer level");
+        assert_eq!(expanded.layout.outer_slice_count, CommitmentSliceCount::TWO);
     }
 }

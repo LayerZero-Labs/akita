@@ -1,3 +1,4 @@
+use super::PhysicalBWeightTerm;
 #[cfg(test)]
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::ring::eval_ring_at_pows_fast;
@@ -13,7 +14,7 @@ pub(crate) struct GroupSetupSegment<E> {
     pub(super) d_weight: E,
     pub(super) has_b: bool,
     pub(super) b_start_abs: usize,
-    pub(super) b_weight: E,
+    pub(super) b_terms: std::sync::Arc<[PhysicalBWeightTerm<E>]>,
     pub(super) has_a: bool,
     pub(super) a_start_abs: usize,
     pub(super) a_row_weight: E,
@@ -198,10 +199,8 @@ where
         d_projection.is_identity() && b_projection.is_identity() && a_projection.is_identity();
     if identity {
         let d_eq = checked_role_eq_slice::<E, HAS_D>(e_eq, range.start, len, segment.d_start_abs)?;
-        let b_eq = checked_role_eq_slice::<E, HAS_B>(t_eq, range.start, len, segment.b_start_abs)?;
         let a_eq = checked_role_eq_slice::<E, HAS_A>(z_eq, range.start, len, segment.a_start_abs)?;
         let mut d_eq = d_eq.iter();
-        let mut b_eq = b_eq.iter();
         let mut a_eq = a_eq.iter();
         for offset in 0..len {
             let mut weight = E::zero();
@@ -209,7 +208,8 @@ where
                 weight += segment.d_weight * *d_eq.next().ok_or(AkitaError::InvalidProof)?;
             }
             if HAS_B {
-                weight += segment.b_weight * *b_eq.next().ok_or(AkitaError::InvalidProof)?;
+                weight +=
+                    projected_b_role_weight_at(range.start + offset, segment, t_eq, b_projection)?;
             }
             if HAS_A {
                 weight += segment.a_row_weight * *a_eq.next().ok_or(AkitaError::InvalidProof)?;
@@ -281,13 +281,7 @@ where
         )?;
     }
     if HAS_B {
-        weight += projected_role_weight_at(
-            base_idx,
-            segment.b_start_abs,
-            segment.b_weight,
-            t_eq,
-            b_projection,
-        )?;
+        weight += projected_b_role_weight_at(base_idx, segment, t_eq, b_projection)?;
     }
     if HAS_A {
         weight += projected_role_weight_at(
@@ -302,6 +296,30 @@ where
 }
 
 #[inline(always)]
+fn projected_b_role_weight_at<E: FieldCore>(
+    base_idx: usize,
+    segment: &GroupSetupSegment<E>,
+    weights: &[E],
+    projection: &RoleProjection<E>,
+) -> Result<E, AkitaError> {
+    let (role_idx, scale) = projected_role_index_and_scale(base_idx, projection)?;
+    let local = role_idx
+        .checked_sub(segment.b_start_abs)
+        .ok_or(AkitaError::InvalidProof)?;
+    let mut weight = E::zero();
+    for term in segment.b_terms.iter() {
+        let logical = term
+            .logical_start
+            .checked_add(local)
+            .and_then(|index| weights.get(index))
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?;
+        weight += term.row_weight * logical;
+    }
+    Ok(scale.map_or(weight, |scale| weight * scale))
+}
+
+#[inline(always)]
 fn projected_role_weight_at<E: FieldCore>(
     base_idx: usize,
     start_abs: usize,
@@ -309,7 +327,20 @@ fn projected_role_weight_at<E: FieldCore>(
     eq_slice: &[E],
     projection: &RoleProjection<E>,
 ) -> Result<E, AkitaError> {
-    let (role_idx, scale) = match projection {
+    let (role_idx, scale) = projected_role_index_and_scale(base_idx, projection)?;
+    let eq_idx = role_idx
+        .checked_sub(start_abs)
+        .ok_or(AkitaError::InvalidProof)?;
+    let weight = row_weight * *eq_slice.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
+    Ok(scale.map_or(weight, |scale| weight * scale))
+}
+
+#[inline(always)]
+fn projected_role_index_and_scale<E: FieldCore>(
+    base_idx: usize,
+    projection: &RoleProjection<E>,
+) -> Result<(usize, Option<E>), AkitaError> {
+    Ok(match projection {
         RoleProjection::Identity => (base_idx, None),
         RoleProjection::Projected {
             scales,
@@ -323,12 +354,7 @@ fn projected_role_weight_at<E: FieldCore>(
                     .ok_or(AkitaError::InvalidProof)?,
             ),
         ),
-    };
-    let eq_idx = role_idx
-        .checked_sub(start_abs)
-        .ok_or(AkitaError::InvalidProof)?;
-    let weight = row_weight * *eq_slice.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
-    Ok(scale.map_or(weight, |scale| weight * scale))
+    })
 }
 
 #[cfg(test)]

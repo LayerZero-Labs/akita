@@ -1,14 +1,15 @@
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
     golomb_rice::{analyze_z_fold_golomb_encoding, golomb_rice_zigzag_width},
     layout::proof_size::field_bytes,
     sis::{compute_num_digits_field_width, num_digits_for_bound},
-    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule,
-    InnerCommitSecurityRoute, NttTransformDomain, OpenCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
+    AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
+    FoldLevelProof, FoldSchedule, InnerCommitSecurityRoute, NttTransformDomain,
+    OpenCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, SetupSumcheckProof,
+    SisModulusProfileId, TerminalLevelProof, ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -284,6 +285,10 @@ struct PlannedGroupReport {
     n_a: usize,
     n_b: usize,
     n_d: usize,
+    b_slice_count: usize,
+    physical_b_input_width: usize,
+    logical_b_rows: usize,
+    complete_b_compression_bytes: Option<usize>,
     log_basis_inner: u32,
     log_basis_outer: u32,
     log_basis_open: u32,
@@ -304,6 +309,44 @@ struct PlannedGroupReport {
     norm_proof_shape: Option<akita_types::PhysicalL2NormProofShape>,
     setup_prefix_natural_field_elements: usize,
     setup_prefix_padded_field_elements: usize,
+}
+
+#[derive(Clone, Copy)]
+struct BSliceReportGeometry {
+    slice_count: usize,
+    physical_input_width: usize,
+    logical_rows: usize,
+    complete_compression_bytes: Option<usize>,
+}
+
+fn b_slice_report_geometry(
+    payload_mode: CommitmentPayloadMode,
+    slice_count: CommitmentSliceCount,
+    physical_output_rank: usize,
+    physical_input_width: usize,
+    outer_ring_dimension: usize,
+    modulus_profile: SisModulusProfileId,
+) -> Result<BSliceReportGeometry, AkitaError> {
+    let logical_rows = slice_count.logical_output_rows(physical_output_rank)?;
+    let complete_compression_bytes = if payload_mode.is_compressed() {
+        let complete_source_coefficients =
+            slice_count.complete_source_coefficients(physical_output_rank, outer_ring_dimension)?;
+        Some(
+            akita_types::CompressionChainPlan::for_complete_source(
+                modulus_profile,
+                complete_source_coefficients,
+            )?
+            .source_bytes(),
+        )
+    } else {
+        None
+    };
+    Ok(BSliceReportGeometry {
+        slice_count: slice_count.get(),
+        physical_input_width,
+        logical_rows,
+        complete_compression_bytes,
+    })
 }
 
 fn reported_operator_norm_threshold(
@@ -328,7 +371,7 @@ impl PlannedGroupReport {
         witness_field_elements: usize,
         public_group: Option<PolynomialGroupLayout>,
         params: &CommittedGroupParams,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         let role_dims = params.role_dims();
         let security_route = params.inner_commit_matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
@@ -347,7 +390,16 @@ impl PlannedGroupReport {
         let (public_num_vars, public_num_polynomials) = public_group
             .map(|layout| (layout.num_vars(), layout.num_polynomials()))
             .unwrap_or((0, 0));
-        Self {
+        let n_b = params.outer_commit_matrix.output_rank();
+        let b_geometry = b_slice_report_geometry(
+            params.payload_mode,
+            params.outer_slice_count,
+            n_b,
+            params.outer_commit_matrix.input_width(),
+            role_dims.d_b(),
+            params.outer_commit_matrix.sis_modulus_profile(),
+        )?;
+        Ok(Self {
             group,
             group_role,
             consumer_level: level,
@@ -361,8 +413,12 @@ impl PlannedGroupReport {
             b_width: params.outer_commit_matrix.input_width(),
             d_width: params.open_commit_matrix.input_width(),
             n_a: params.inner_commit_matrix.output_rank(),
-            n_b: params.outer_commit_matrix.output_rank(),
+            n_b,
             n_d: params.open_commit_matrix.output_rank(),
+            b_slice_count: b_geometry.slice_count,
+            physical_b_input_width: b_geometry.physical_input_width,
+            logical_b_rows: b_geometry.logical_rows,
+            complete_b_compression_bytes: b_geometry.complete_compression_bytes,
             log_basis_inner: params.log_basis_inner,
             log_basis_outer: params.log_basis_outer,
             log_basis_open: params.log_basis_open,
@@ -383,7 +439,7 @@ impl PlannedGroupReport {
             norm_proof_shape,
             setup_prefix_natural_field_elements: 0,
             setup_prefix_padded_field_elements: 0,
-        }
+        })
     }
 
     fn precommitted(
@@ -394,7 +450,7 @@ impl PlannedGroupReport {
         params: &PrecommittedLevelParams,
         shared_open: &OpenCommitMatrixParams,
         setup_prefix_lengths: Option<(usize, usize)>,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         let layout = params.layout;
         let role_dims = params.role_dims(shared_open.ring_dimension());
         let (setup_prefix_natural_field_elements, setup_prefix_padded_field_elements) =
@@ -416,7 +472,16 @@ impl PlannedGroupReport {
             role_dims.d_a(),
             &params.fold_challenge_config,
         );
-        Self {
+        let n_b = layout.outer_commit_matrix.output_rank();
+        let b_geometry = b_slice_report_geometry(
+            CommitmentPayloadMode::Compressed,
+            layout.outer_slice_count,
+            n_b,
+            layout.outer_commit_matrix.input_width(),
+            role_dims.d_b(),
+            layout.outer_commit_matrix.sis_modulus_profile(),
+        )?;
+        Ok(Self {
             group,
             group_role: if setup_prefix_lengths.is_some() {
                 "setup_offload"
@@ -434,8 +499,12 @@ impl PlannedGroupReport {
             b_width: layout.outer_commit_matrix.input_width(),
             d_width: shared_open.input_width(),
             n_a: layout.inner_commit_matrix.output_rank(),
-            n_b: layout.outer_commit_matrix.output_rank(),
+            n_b,
             n_d: shared_open.output_rank(),
+            b_slice_count: b_geometry.slice_count,
+            physical_b_input_width: b_geometry.physical_input_width,
+            logical_b_rows: b_geometry.logical_rows,
+            complete_b_compression_bytes: b_geometry.complete_compression_bytes,
             log_basis_inner: layout.log_basis_inner,
             log_basis_outer: layout.log_basis_outer,
             log_basis_open: params.log_basis_open,
@@ -459,7 +528,7 @@ impl PlannedGroupReport {
             norm_proof_shape,
             setup_prefix_natural_field_elements,
             setup_prefix_padded_field_elements,
-        }
+        })
     }
 
     fn emit(&self, label: &str, level: usize, field_bits: u32) {
@@ -482,6 +551,10 @@ impl PlannedGroupReport {
             n_a = self.n_a,
             n_b = self.n_b,
             n_d = self.n_d,
+            b_slice_count = self.b_slice_count,
+            physical_b_input_width = self.physical_b_input_width,
+            logical_b_rows = self.logical_b_rows,
+            complete_b_compression_bytes = ?self.complete_b_compression_bytes,
             log_basis_inner = self.log_basis_inner,
             log_basis_outer = self.log_basis_outer,
             log_basis_open = self.log_basis_open,
@@ -513,7 +586,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     schedule: &FoldSchedule,
     final_group: PolynomialGroupLayout,
     field_bits: u32,
-) {
+) -> Result<(), AkitaError> {
     let levels = schedule.num_fold_levels();
     let num_setup_field_elements =
         akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
@@ -546,7 +619,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             &group.commitment,
             root_open,
             None,
-        )
+        )?
         .emit(label, 0, field_bits);
     }
     PlannedGroupReport::committed(
@@ -556,7 +629,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         group_field_elements(final_group.num_vars(), final_group.num_polynomials()),
         Some(final_group),
         &schedule.root.params.final_group.commitment,
-    )
+    )?
     .emit(label, 0, field_bits);
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         PlannedGroupReport::committed(
@@ -566,7 +639,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             fold.input_witness_len,
             None,
             &fold.params.witness,
-        )
+        )?
         .emit(label, index + 1, field_bits);
         if let Some(prefix) = &fold.params.incoming_setup_prefix {
             PlannedGroupReport::precommitted(
@@ -577,7 +650,7 @@ pub(crate) fn emit_runtime_schedule_summary(
                 &prefix.commitment_params,
                 &fold.params.open_commit_matrix,
                 Some((prefix.natural_len, prefix.n_prefix().unwrap_or(0))),
-            )
+            )?
             .emit(label, index, field_bits);
         }
     }
@@ -635,6 +708,14 @@ pub(crate) fn emit_runtime_schedule_summary(
             role_dims.d_a(),
             &lp.fold_challenge_config,
         );
+        let b_geometry = b_slice_report_geometry(
+            lp.payload_mode,
+            lp.outer_slice_count,
+            lp.outer_commit_matrix.output_rank(),
+            lp.outer_commit_matrix.input_width(),
+            role_dims.d_b(),
+            lp.outer_commit_matrix.sis_modulus_profile(),
+        )?;
         tracing::info!(
             label,
             level = level_idx,
@@ -648,6 +729,10 @@ pub(crate) fn emit_runtime_schedule_summary(
             n_a = lp.inner_commit_matrix.output_rank(),
             n_b = lp.outer_commit_matrix.output_rank(),
             n_d = lp.open_commit_matrix.output_rank(),
+            b_slice_count = b_geometry.slice_count,
+            physical_b_input_width = b_geometry.physical_input_width,
+            logical_b_rows = b_geometry.logical_rows,
+            complete_b_compression_bytes = ?b_geometry.complete_compression_bytes,
             security_route = ?security_route,
             response_l2_sq_cap = ?response_l2_sq_cap,
             norm_proof_shape = ?norm_proof_shape,
@@ -729,6 +814,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             .unwrap_or(0),
         "planned terminal state"
     );
+    Ok(())
 }
 
 fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
@@ -1069,7 +1155,19 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     );
 }
 
-pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _field_bits: u32) {
+pub(crate) fn print_layout(
+    layout: &CommittedGroupParams,
+    _num_claims: usize,
+    _field_bits: u32,
+) -> Result<(), AkitaError> {
+    let b_geometry = b_slice_report_geometry(
+        layout.payload_mode,
+        layout.outer_slice_count,
+        layout.outer_commit_matrix.output_rank(),
+        layout.outer_commit_matrix.input_width(),
+        layout.outer_commit_matrix.ring_dimension(),
+        layout.outer_commit_matrix.sis_modulus_profile(),
+    )?;
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),
@@ -1087,6 +1185,11 @@ pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _f
         n_a = layout.inner_commit_matrix.output_rank(),
         n_b = layout.outer_commit_matrix.output_rank(),
         n_d = layout.open_commit_matrix.output_rank(),
+        b_slice_count = b_geometry.slice_count,
+        physical_b_input_width = b_geometry.physical_input_width,
+        logical_b_rows = b_geometry.logical_rows,
+        complete_b_compression_bytes = b_geometry.complete_compression_bytes,
         "layout"
     );
+    Ok(())
 }

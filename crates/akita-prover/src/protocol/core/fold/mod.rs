@@ -389,7 +389,15 @@ where
                     "recursive successor requires outer-payload binding".into(),
                 ));
             }
-            crate::commit_w::<Cfg, C>(&params.witness, expanded, stack.commit(), &logical_w)?
+            crate::commit_w::<Cfg, C>(
+                &params.witness,
+                level
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?,
+                expanded,
+                stack.commit(),
+                &logical_w,
+            )?
         }
         FoldSuccessorParams::Terminal(params) => {
             if next_witness_binding

@@ -40,6 +40,8 @@ pub struct EmitSpec {
     pub policy: PlannerPolicy,
     pub keys: Vec<PolynomialGroupLayout>,
     pub group_batch_keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
+    /// Exact successful scalar results already needed to construct grouped keys.
+    pub preplanned_scalar: Vec<(PolynomialGroupLayout, FoldSchedule)>,
     pub output_dir: PathBuf,
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     pub regen_group_batch:
@@ -52,14 +54,15 @@ const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 // Schedule search is memory bound. Keep the default below host-wide
 // parallelism while allowing explicit tuning for large generation machines.
-const DEFAULT_SCHEDULE_GENERATION_WORKERS: usize = 2;
+const DEFAULT_OFFLINE_PLANNING_WORKERS: usize = 3;
 
-pub(crate) fn schedule_generation_worker_count(work_items: usize) -> usize {
+/// Bound memory-heavy offline planner searches for generation and drift checks.
+pub fn offline_planning_worker_count(work_items: usize) -> usize {
     let configured = std::env::var("AKITA_SCHEDULE_GEN_JOBS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&value| value > 0)
-        .unwrap_or(DEFAULT_SCHEDULE_GENERATION_WORKERS);
+        .unwrap_or(DEFAULT_OFFLINE_PLANNING_WORKERS);
     std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1)
@@ -67,7 +70,8 @@ pub(crate) fn schedule_generation_worker_count(work_items: usize) -> usize {
         .min(work_items.max(1))
 }
 
-pub(crate) fn bounded_parallel_filter_map<T, R>(
+/// Map independent offline requests with a fixed worker count and input order.
+pub fn bounded_parallel_filter_map<T, R>(
     items: &[T],
     workers: usize,
     map: impl Fn(&T) -> Result<Option<R>, String> + Sync,
@@ -137,8 +141,8 @@ fn committed_group(p: &CommittedGroupParams) -> GeneratedCommittedGroup {
         outer_commit_matrix: GeneratedOuterCommitMatrix {
             ring_dimension: p.outer_commit_matrix.ring_dimension() as u32,
             log_basis: p.log_basis_outer,
-            slice_count: 1,
         },
+        outer_slice_count: p.outer_slice_count.get() as u32,
     }
 }
 
@@ -146,7 +150,6 @@ fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedOp
     GeneratedOpenCommitMatrix {
         ring_dimension: p.ring_dimension() as u32,
         log_basis,
-        slice_count: 1,
     }
 }
 
@@ -177,8 +180,8 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
             outer_commit_matrix: GeneratedOuterCommitMatrix {
                 ring_dimension: group.layout.outer_commit_matrix.ring_dimension() as u32,
                 log_basis: group.layout.log_basis_outer,
-                slice_count: 1,
             },
+            outer_slice_count: group.layout.outer_slice_count.get() as u32,
         },
     }
 }
@@ -216,8 +219,8 @@ fn generated_entry(
                     ring_dimension: group.commitment.layout.outer_commit_matrix.ring_dimension()
                         as u32,
                     log_basis: group.commitment.layout.log_basis_outer,
-                    slice_count: 1,
                 },
+                outer_slice_count: group.commitment.layout.outer_slice_count.get() as u32,
             },
         })
         .collect::<Vec<_>>();
@@ -328,11 +331,18 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 
 fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
     format!(
-        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
+        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
         emit_key(layout.group),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
+        match layout.outer_slice_count {
+            akita_types::CommitmentSliceCount::ONE => "ONE",
+            akita_types::CommitmentSliceCount::TWO => "TWO",
+            akita_types::CommitmentSliceCount::FOUR => "FOUR",
+            akita_types::CommitmentSliceCount::EIGHT => "EIGHT",
+            _ => unreachable!("checked commitment slice count"),
+        },
         layout.log_basis_inner,
         layout.num_digits_inner,
         emit_profile_matrix(
@@ -382,20 +392,20 @@ fn emit_geometry(value: GeneratedBlockGeometry) -> String {
 
 fn emit_committed_group(value: GeneratedCommittedGroup) -> String {
     format!(
-        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: {} }} }}",
+        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_slice_count: {} }}",
         emit_geometry(value.geometry),
         value.inner_commit_matrix.ring_dimension,
         value.inner_commit_matrix.log_basis,
         value.outer_commit_matrix.ring_dimension,
         value.outer_commit_matrix.log_basis,
-        value.outer_commit_matrix.slice_count,
+        value.outer_slice_count,
     )
 }
 
 fn emit_open_matrix(value: GeneratedOpenCommitMatrix) -> String {
     format!(
-        "GeneratedOpenCommitMatrix {{ ring_dimension: {}, log_basis: {}, slice_count: {} }}",
-        value.ring_dimension, value.log_basis, value.slice_count
+        "GeneratedOpenCommitMatrix {{ ring_dimension: {}, log_basis: {} }}",
+        value.ring_dimension, value.log_basis
     )
 }
 
@@ -680,27 +690,54 @@ enum PlanningRequest {
     },
 }
 
-fn materialized_entries(
-    spec: &EmitSpec,
-) -> Result<Vec<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
-    let mut requests = Vec::with_capacity(spec.keys.len() + spec.group_batch_keys.len());
-    requests.extend(spec.keys.iter().copied().map(PlanningRequest::Scalar));
-    requests.extend(
-        spec.group_batch_keys
-            .iter()
-            .cloned()
-            .map(|(key, honest_fold_policies)| PlanningRequest::Grouped {
-                key,
-                honest_fold_policies,
-            }),
-    );
-    let workers = schedule_generation_worker_count(requests.len());
-    let mut regenerated_entries = bounded_parallel_filter_map(&requests, workers, |request| {
-        materialized_entry(spec, request)
+struct IndexedPlanningRequest {
+    spec_index: usize,
+    request: PlanningRequest,
+}
+
+pub(super) type MaterializedEntry = (AkitaScheduleLookupKey, FoldSchedule);
+
+pub(super) fn materialized_entries_for_specs(
+    specs: &[EmitSpec],
+) -> Result<Vec<Vec<MaterializedEntry>>, String> {
+    let request_count = specs
+        .iter()
+        .map(|spec| spec.keys.len() + spec.group_batch_keys.len())
+        .sum();
+    let mut requests = Vec::with_capacity(request_count);
+    for (spec_index, spec) in specs.iter().enumerate() {
+        requests.extend(spec.keys.iter().copied().map(|key| IndexedPlanningRequest {
+            spec_index,
+            request: PlanningRequest::Scalar(key),
+        }));
+        requests.extend(spec.group_batch_keys.iter().cloned().map(
+            |(key, honest_fold_policies)| IndexedPlanningRequest {
+                spec_index,
+                request: PlanningRequest::Grouped {
+                    key,
+                    honest_fold_policies,
+                },
+            },
+        ));
+    }
+
+    let workers = offline_planning_worker_count(requests.len());
+    let materialized = bounded_parallel_filter_map(&requests, workers, |indexed| {
+        materialized_entry(&specs[indexed.spec_index], &indexed.request)
+            .map(|entry| entry.map(|entry| (indexed.spec_index, entry)))
     })?;
-    regenerated_entries
-        .sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
-    Ok(regenerated_entries)
+    let mut entries_by_spec = std::iter::repeat_with(Vec::new)
+        .take(specs.len())
+        .collect::<Vec<_>>();
+    for (spec_index, entry) in materialized {
+        entries_by_spec[spec_index].push(entry);
+    }
+    for entries in &mut entries_by_spec {
+        entries.sort_by(|(left, _), (right, _)| {
+            akita_schedules::runtime_schedule_key_cmp(left, right)
+        });
+    }
+    Ok(entries_by_spec)
 }
 
 fn materialized_entry(
@@ -710,7 +747,12 @@ fn materialized_entry(
     let (key, result) = match request {
         PlanningRequest::Scalar(key) => {
             let lookup = AkitaScheduleLookupKey::single(*key);
-            (lookup, (spec.regen)(*key))
+            let result = spec
+                .preplanned_scalar
+                .iter()
+                .find(|(preplanned_key, _)| preplanned_key == key)
+                .map_or_else(|| (spec.regen)(*key), |(_, schedule)| Ok(schedule.clone()));
+            (lookup, result)
         }
         PlanningRequest::Grouped {
             key,
@@ -736,8 +778,17 @@ fn materialized_entry(
 
 /// Emit one family module (entries + embedded catalog identity).
 pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
-    let materialized = materialized_entries(spec)?;
+    let mut materialized = materialized_entries_for_specs(std::slice::from_ref(spec))?;
+    let materialized = materialized
+        .pop()
+        .ok_or_else(|| "missing materialized schedule family".to_string())?;
+    emit_family_module_from_entries(spec, materialized)
+}
 
+pub(super) fn emit_family_module_from_entries(
+    spec: &EmitSpec,
+    materialized: Vec<MaterializedEntry>,
+) -> Result<String, String> {
     let mut out = String::new();
     let const_name = spec.const_name;
     writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
@@ -787,4 +838,71 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     out.push_str(&emit_identity_const(&identity));
 
     Ok(out)
+}
+
+#[cfg(all(test, feature = "catalog-gen"))]
+mod preplanned_scalar_tests {
+    use super::*;
+    use crate::generated_families::{wiring_emit_spec, ALL_GENERATED_FAMILIES};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::OnceLock;
+    use std::time::Duration;
+
+    static REGEN_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static ACTIVE_REGEN: AtomicUsize = AtomicUsize::new(0);
+    static MAX_ACTIVE_REGEN: AtomicUsize = AtomicUsize::new(0);
+    static REGEN_SCHEDULE: OnceLock<FoldSchedule> = OnceLock::new();
+
+    fn counted_regen(_key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+        REGEN_CALLS.fetch_add(1, Ordering::Relaxed);
+        let active = ACTIVE_REGEN.fetch_add(1, Ordering::Relaxed) + 1;
+        MAX_ACTIVE_REGEN.fetch_max(active, Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(20));
+        ACTIVE_REGEN.fetch_sub(1, Ordering::Relaxed);
+        Ok(REGEN_SCHEDULE.get().expect("test schedule").clone())
+    }
+
+    #[test]
+    fn preplanned_scalar_skips_regen_and_preserves_emitted_bytes() {
+        let family = ALL_GENERATED_FAMILIES
+            .iter()
+            .find(|family| family.module_name == "fp128_onehot_multi_chunk_w2r2")
+            .expect("known family");
+        let key = PolynomialGroupLayout::new(14, 1);
+        let schedule = (family.regen)(key).expect("scalar schedule");
+        REGEN_SCHEDULE.get_or_init(|| schedule.clone());
+        let mut cached = wiring_emit_spec(family, PathBuf::from("generated"));
+        cached.keys = vec![key];
+        cached.preplanned_scalar = vec![(key, schedule)];
+        cached.regen = counted_regen;
+        cached.generator_command = "generator command";
+
+        REGEN_CALLS.store(0, Ordering::Relaxed);
+        let cached_bytes = emit_family_module(&cached).expect("cached family module");
+        assert_eq!(REGEN_CALLS.load(Ordering::Relaxed), 0);
+
+        let mut uncached = cached.clone();
+        uncached.preplanned_scalar.clear();
+        let uncached_bytes = emit_family_module(&uncached).expect("uncached family module");
+        assert_eq!(REGEN_CALLS.load(Ordering::Relaxed), 1);
+        assert_eq!(cached_bytes, uncached_bytes);
+
+        let specs = [cached.clone(), cached];
+        let rendered = render_generated_outputs(&specs, &[], None).expect("flattened render");
+        assert_eq!(rendered.len(), specs.len());
+        assert!(rendered.iter().all(|output| output.body == cached_bytes));
+
+        let mut queued = uncached;
+        queued.keys = vec![key; 3];
+        let specs = [queued.clone(), queued];
+        REGEN_CALLS.store(0, Ordering::Relaxed);
+        ACTIVE_REGEN.store(0, Ordering::Relaxed);
+        MAX_ACTIVE_REGEN.store(0, Ordering::Relaxed);
+        materialized_entries_for_specs(&specs).expect("flattened planning queue");
+        assert_eq!(REGEN_CALLS.load(Ordering::Relaxed), 6);
+        assert!(
+            MAX_ACTIVE_REGEN.load(Ordering::Relaxed) <= offline_planning_worker_count(6),
+            "flattened planning exceeded the process worker bound"
+        );
+    }
 }

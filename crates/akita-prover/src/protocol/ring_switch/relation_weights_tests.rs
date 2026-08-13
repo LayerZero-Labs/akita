@@ -119,3 +119,43 @@ fn factorization_rejects_an_unaligned_alpha_reset() {
         Err(AkitaError::InvalidSetup(_))
     ));
 }
+
+#[test]
+fn setup_columns_batch_logical_weights_over_one_physical_family() {
+    let row_0 = [
+        TestField::from_u64(1),
+        TestField::from_u64(2),
+        TestField::from_u64(3),
+        TestField::from_u64(4),
+    ];
+    let row_1 = [
+        TestField::from_u64(5),
+        TestField::from_u64(6),
+        TestField::from_u64(7),
+        TestField::from_u64(8),
+    ];
+    let family = SetupRows {
+        rows: vec![&row_0, &row_1],
+        ring_d: 2,
+    };
+    let alpha = TestField::from_u64(11);
+    let alpha_powers = [TestField::one(), alpha];
+    let row_weights = vec![
+        (0, vec![TestField::from_u64(2), TestField::from_u64(3)]),
+        (1, vec![TestField::from_u64(5), TestField::zero()]),
+    ];
+
+    let evaluated = evaluate_setup_columns(&family, 0..2, &row_weights, 2, &alpha_powers).unwrap();
+    for column in 0..2 {
+        let row_0_eval = row_0[2 * column] + alpha * row_0[2 * column + 1];
+        let row_1_eval = row_1[2 * column] + alpha * row_1[2 * column + 1];
+        assert_eq!(
+            evaluated.get(0, column).unwrap(),
+            TestField::from_u64(2) * row_0_eval + TestField::from_u64(5) * row_1_eval,
+        );
+        assert_eq!(
+            evaluated.get(1, column).unwrap(),
+            TestField::from_u64(3) * row_0_eval,
+        );
+    }
+}

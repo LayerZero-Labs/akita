@@ -1,7 +1,5 @@
 #![allow(missing_docs)]
 
-pub const MAX_COMMIT_MATRIX_SLICES: u32 = 16;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedBlockGeometry {
     pub live_ring_elements_per_claim: u64,
@@ -19,14 +17,12 @@ pub struct GeneratedInnerCommitMatrix {
 pub struct GeneratedOuterCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    pub slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedOpenCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    pub slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +30,7 @@ pub struct GeneratedCommittedGroup {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
     pub outer_commit_matrix: GeneratedOuterCommitMatrix,
+    pub outer_slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -510,6 +507,7 @@ mod mixed_dimension_key_tests {
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 8,
             num_live_blocks: 4,
+            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             log_basis_inner: 4,
             num_digits_inner: 2,
             inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
