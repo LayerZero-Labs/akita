@@ -1260,7 +1260,7 @@ Update the statuses of related specs when their deferred work is completed.
 - `STACK.md`
 - `specs/setup-layout-repack.md`
 - `specs/archive/2026-Q3/setup-prefix-ladder.md`
-- `specs/batched-stage3-setup-opening.md`
+- `specs/archive/2026-Q3/group-local-opening-points.md`
 - `specs/setup-product-sumcheck.md`
 - `specs/multi-group-batching.md`
 - `specs/planner-incidence-generalization.md`

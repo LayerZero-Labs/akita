@@ -76,7 +76,6 @@ These remain **live design** but still mention removed names; scrub before addin
 back to the CI live list in `check-spec-references.sh`:
 
 - `specs/akita-compute-backend-metal.md` (`akita-scheme`, `_with_policy`)
-- `specs/transcript-immediate-fixes.md` (`akita-scheme`)
 
 ## Cadence
 
@@ -92,7 +91,7 @@ back to the CI live list in `check-spec-references.sh`:
 specs/archive/
   README.md          # index: filename | final status | book chapter | date
   2026-Q2/
-    fp16-small-field-support.md
+    planner-refactor.md
     ...
 ```
 
@@ -130,13 +129,55 @@ Use these targets (not the pre-consolidation folder paths):
 | w-to-e notation | `book/src/foundations/glossary.md` |
 | Setup product sumcheck | `book/src/how/proving/sumcheck-stages.md` |
 
-## 2026-Q2 audit (archive pass — partial)
+## 2026-Q3 stale-spec removal (deleted, not archived)
 
-Classification from the initial book scaffold. Five specs moved to
-`specs/archive/2026-Q2/` on the book scaffold PR; the remaining rows below are
-for a stacked follow-up.
+The Q2 audit classified a large backlog for a stacked follow-up that never
+landed, so the specs kept accumulating dead references. This pass **deleted**
+21 specs outright rather than archiving them: each was either superseded by a
+spec that already owns the content, a retrospective of shipped work, or a
+shipped change whose header still read `proposed` / `draft` / `in review`. None
+carried durable content that the book or a surviving spec did not already own.
 
-### Fold into book, then archive
+Recovery is via git history (`git log --diff-filter=D -- specs/`), not the
+archive.
+
+### Superseded or abandoned (successor owns the content)
+
+| Deleted spec | Content now owned by |
+|--------------|----------------------|
+| `distributed-verifier-row-eval.md` | `digit-innermost-layout.md` (PR #296 closed unlanded) |
+| `akita-sumcheck-unification.md` | `archive/2026-Q3/digit-range-pipeline-refactor.md` |
+| `schedule-catalog-ownership.md` | `heterogeneous-group-source-contracts.md` |
+| `transcript-immediate-fixes.md` | `book/src/how/transcript.md` |
+| `batched-stage3-setup-opening.md` | `archive/2026-Q3/group-local-opening-points.md` |
+| `extension-field-trace-cutover.md` | `extension-field-opening-batching.md` |
+| `fp16-small-field-support.md` | `remove-fp16.md` |
+| `crt-ntt-prime-profiles.md` | `book/src/foundations/ntt-crt.md` |
+
+### Retrospectives of shipped work (no forward value)
+
+`fp31-field-optimization-retrospective.md`,
+`small-field-prover-opening-optimization.md`,
+`akita-crate-followup-jolt-integration.md`,
+`core-protocol-naming-cleanup.md` (superseded by archived `w-to-e-notation.md`),
+`general-field-support.md`, `extension-claim-incidence-cutover.md`,
+`simd-ring-subfield-fp8.md`.
+
+### Status drift (PR merged; header still open)
+
+| Deleted spec | Header said | Shipped in |
+|--------------|-------------|------------|
+| `shared-opening-claims-api.md` | `proposed` | landed; `OpeningClaimsLayout` / `PolynomialGroupLayout` are the live types |
+| `transcript-hardening.md` | `DRAFT` | PR #90 |
+| `y-ring-trace-internalization.md` | `in review` | PR #154 |
+| `ring-dim-challenge-cutover.md` | `draft` | PR #268 |
+| `sis-infinity-estimator-crate.md` | `proposed` | `crates/akita-sis-estimator/` |
+| `single-point-opening-batch.md` | landed PR #186 | superseded by archived `group-local-opening-points.md` |
+
+### Still owed: fold into book, then archive
+
+Shipped records kept only because their book chapters are still thin stubs.
+Fold each, then `git mv` to `specs/archive/`:
 
 | Spec | Book chapter |
 |------|--------------|
@@ -144,32 +185,11 @@ for a stacked follow-up.
 | `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
 | `terminal-fold-cutover.md` | `how/recursion.md` |
 | `weak-binding-norm-fix.md` (committed-fold section) | `how/security.md` |
-| `akita-sis-consolidation.md` | `how/security.md` |
-| `planner-refactor.md`, `planner-owns-schedule-expansion.md` | `how/configuration.md` |
-| `transcript-hardening.md` | `how/transcript.md` |
 | `security-hardening.md` | `how/verification.md` |
 | `remove-fp16.md` | `foundations/rings-and-fields.md` |
-| `crt-ntt-accumulation-safety.md` | `how/optimizations.md` |
-| `avx-simd-port.md`, `fp31-field-optimization-retrospective.md` | `how/optimizations.md` |
-| `akita-zk-commitment-hiding.md`, `akita-zk-v-hiding.md`, `akita-zk-sumcheck-hiding-plain.md` | `foundations/zero-knowledge.md` |
+| `crt-ntt-accumulation-safety.md`, `avx-simd-port.md` | `how/optimizations.md` |
 | `ci-test-timing.md` | `usage/profiling.md` |
-| `w-to-e-notation.md` | `foundations/glossary.md` |
 | `setup-product-sumcheck.md` | `how/proving/sumcheck-stages.md` |
-
-### Archive directly (little or no fold)
-
-| Spec | Reason |
-|------|--------|
-| `fp16-small-field-support.md` | superseded by `remove-fp16.md` |
-| `simd-ring-subfield-fp8.md` | consumer removed |
-| `planner-config-consolidation.md` | superseded; proposes non-existent crates |
-| `extension-field-trace-cutover.md` | superseded by opening batching spec |
-| `general-field-support.md` | historical |
-| `extension-claim-incidence-cutover.md` | landed (PR #69) |
-| `small-field-prover-opening-optimization.md` | retrospective |
-| `akita-crate-followup-jolt-integration.md` | retrospective |
-| `core-protocol-naming-cleanup.md` | superseded by `w-to-e-notation.md` |
-| `rust-file-line-cap.md` | policy in CI + CONTRIBUTING |
 
 ### Keep as live specs
 
@@ -178,9 +198,9 @@ for a stacked follow-up.
 `setup-offloading-planner.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
-`akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
+`akita-compute-backend-metal.md`,
 `large-digit-ntt-infrastructure.md`,
-`transcript-immediate-fixes.md`, `eor-sumcheck-prover-acceleration.md`,
+`eor-sumcheck-prover-acceleration.md`,
 `cross-repo-field-microbench.md`,
 `sis-quantum128-scalar-n-table.md`, plus `TEMPLATE.md`,
 `SPEC_REVIEW.md`, and this file.
