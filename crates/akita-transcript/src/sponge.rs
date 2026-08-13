@@ -22,12 +22,12 @@ pub type TranscriptSponge = spongefish::instantiations::Keccak;
 /// Backend-specific 64-byte protocol tag for spongefish domain separation.
 #[cfg(feature = "transcript-blake2b")]
 pub const PROTOCOL_TAG: &[u8; 64] =
-    b"akita-pcs/transcript/v2/blake2b\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    b"akita-pcs/transcript/v1/blake2b\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
 /// Backend-specific 64-byte protocol tag for spongefish domain separation.
 #[cfg(feature = "transcript-keccak")]
 pub const PROTOCOL_TAG: &[u8; 64] =
-    b"akita-pcs/transcript/v2/keccak\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    b"akita-pcs/transcript/v1/keccak\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
 const SQUEEZE_CHUNK_LEN: usize = 32;
 
@@ -380,18 +380,18 @@ mod tests {
         let challenge = transcript.squeeze_scalar(crate::label!("challenge"));
         #[cfg(feature = "transcript-blake2b")]
         {
-            assert_eq!(&PROTOCOL_TAG[..31], b"akita-pcs/transcript/v2/blake2b");
+            assert_eq!(&PROTOCOL_TAG[..31], b"akita-pcs/transcript/v1/blake2b");
             assert_eq!(
                 challenge.to_canonical_u128(),
-                113_950_780_430_643_492_620_189_861_785_432_181_582
+                313_598_626_200_370_843_239_849_985_198_023_824_966
             );
         }
         #[cfg(feature = "transcript-keccak")]
         {
-            assert_eq!(&PROTOCOL_TAG[..30], b"akita-pcs/transcript/v2/keccak");
+            assert_eq!(&PROTOCOL_TAG[..30], b"akita-pcs/transcript/v1/keccak");
             assert_eq!(
                 challenge.to_canonical_u128(),
-                303_823_475_759_686_639_708_350_814_458_946_329_972
+                23_462_597_902_952_977_795_780_514_374_913_799_469
             );
         }
     }
