@@ -96,6 +96,7 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
     let commit_only_fields = akita_types::commit_only_setup_field_elements(
         &params.inner_commit_matrix,
         &params.outer_commit_matrix,
+        params.outer_slice_count,
     )
     .unwrap();
     let expanded = AkitaProverSetup::<F>::generate_with_capacity(
@@ -124,6 +125,50 @@ fn sliced_commit_params() -> CommittedGroupParams {
     );
     params.outer_slice_count = akita_types::CommitmentSliceCount::FOUR;
     params.with_decomp(2, 16, 1, 1, 1).unwrap()
+}
+
+#[test]
+fn sliced_commit_admission_prices_complete_b_stack() {
+    let params = sliced_commit_params();
+    let unsliced_fields = akita_types::commit_only_setup_field_elements(
+        &params.inner_commit_matrix,
+        &params.outer_commit_matrix,
+        akita_types::CommitmentSliceCount::ONE,
+    )
+    .expect("unsliced commit envelope");
+    let sliced_fields = akita_types::commit_only_setup_field_elements(
+        &params.inner_commit_matrix,
+        &params.outer_commit_matrix,
+        params.outer_slice_count,
+    )
+    .expect("sliced commit envelope");
+    assert!(sliced_fields > unsliced_fields);
+
+    let undersized = AkitaProverSetup::<F>::generate_with_capacity(
+        5,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: unsliced_fields,
+        },
+    )
+    .expect("undersized setup")
+    .expanded;
+    assert!(matches!(
+        validate_commit_level_params::<F>(&params, &undersized, 0, 1),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+
+    let exact = AkitaProverSetup::<F>::generate_with_capacity(
+        5,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: sliced_fields,
+        },
+    )
+    .expect("exact setup")
+    .expanded;
+    validate_commit_level_params::<F>(&params, &exact, 0, 1)
+        .expect("sliced commitment fits its exact setup envelope");
 }
 
 fn set_outer_width(params: &mut CommittedGroupParams, input_width: usize) {
