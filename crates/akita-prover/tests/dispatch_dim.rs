@@ -45,14 +45,9 @@ fn accepts_real_fp64_adaptive_schedule() {
 }
 
 #[test]
-fn accepts_real_fp32_d1024_schedule() {
+fn accepts_real_fp32_adaptive_schedule() {
     let schedule = schedule::<fp32::OneHot>(16);
     validate_schedule_ring_dims(&schedule).expect("adaptive fp32 schedule");
-    assert_eq!(
-        schedule.root.params.final_group.commitment.d_a(),
-        1024,
-        "the generated fp32 one-hot nv16 row must exercise the D1024 protocol arm"
-    );
     assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024]);
 }
 

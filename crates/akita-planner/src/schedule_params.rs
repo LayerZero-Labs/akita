@@ -24,8 +24,7 @@ use akita_types::{
 };
 #[cfg(test)]
 use akita_types::{
-    level_proof_bytes, try_extension_opening_reduction_level_bytes,
-    PlannedFoldSchedule,
+    level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
 };
 
 use crate::{InnerBasisSource, PlannerPolicy};
