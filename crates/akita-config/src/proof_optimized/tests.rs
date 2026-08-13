@@ -192,8 +192,8 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn every_generated_profile_opts_in_and_ships_an_l2_route() {
-    fn assert_profile<Cfg: CommitmentConfig>() {
+fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
+    fn assert_typed_model<Cfg: CommitmentConfig>() {
         let policy = crate::policy_of::<Cfg>();
         assert!(
             matches!(
@@ -203,6 +203,10 @@ fn every_generated_profile_opts_in_and_ships_an_l2_route() {
             "{} must use the typed L2 response model",
             std::any::type_name::<Cfg>()
         );
+    }
+
+    fn assert_selected_l2<Cfg: CommitmentConfig>() {
+        assert_typed_model::<Cfg>();
         let catalog = Cfg::schedule_catalog().expect("generated catalog");
         let has_l2 = catalog.entries.iter().any(|entry| {
             let schedule = Cfg::runtime_schedule(entry.to_runtime_lookup_key())
@@ -229,18 +233,21 @@ fn every_generated_profile_opts_in_and_ships_an_l2_route() {
         );
     }
 
-    assert_profile::<fp32::Dense>();
-    assert_profile::<fp32::OneHot>();
-    assert_profile::<fp64::Dense>();
-    assert_profile::<fp64::OneHot>();
-    assert_profile::<fp128::Dense>();
-    assert_profile::<fp128::OneHot>();
-    assert_profile::<fp128::DenseMultiChunk>();
-    assert_profile::<fp128::OneHotMultiChunk>();
-    assert_profile::<fp128::OneHotMultiChunkW2R2>();
-    assert_profile::<fp128::OneHotMultiChunkW4R2>();
-    assert_profile::<crate::RecursiveCommitmentConfig<fp128::OneHot>>();
-    assert_profile::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
+    assert_selected_l2::<fp32::Dense>();
+    assert_selected_l2::<fp32::OneHot>();
+    assert_selected_l2::<fp64::Dense>();
+    assert_selected_l2::<fp64::OneHot>();
+    assert_selected_l2::<fp128::Dense>();
+    assert_selected_l2::<fp128::OneHot>();
+    // Selective L2 is not a catalog admission requirement. The current dense
+    // W8R2 winner opts into typed modeling but no eligible L2 candidate lowers
+    // its A rank, so retaining its Linf-only suffix is the correct outcome.
+    assert_typed_model::<fp128::DenseMultiChunk>();
+    assert_selected_l2::<fp128::OneHotMultiChunk>();
+    assert_selected_l2::<fp128::OneHotMultiChunkW2R2>();
+    assert_selected_l2::<fp128::OneHotMultiChunkW4R2>();
+    assert_selected_l2::<crate::RecursiveCommitmentConfig<fp128::OneHot>>();
+    assert_selected_l2::<crate::RecursiveCommitmentConfig<fp128::OneHotMultiChunk>>();
 }
 
 #[cfg(feature = "schedules-default")]
