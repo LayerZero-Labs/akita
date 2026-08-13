@@ -1,7 +1,8 @@
 //! Generate schedule tables using the offline DP planner.
 
 use akita_planner::generated_families::{
-    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, ALL_GENERATED_FAMILIES,
+    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
+    ALL_GENERATED_FAMILIES,
 };
 use akita_planner::{publish_generated_outputs, render_generated_outputs, EmitSpec};
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
@@ -334,6 +335,7 @@ fn push_unique_group_batch_key(
 }
 
 fn expand_precommitted_choices(
+    preplans: &mut GenerationPreplans,
     groups: &[ExplicitGroup],
 ) -> Result<
     Vec<
@@ -353,7 +355,7 @@ fn expand_precommitted_choices(
                 .layouts()
                 .into_iter()
                 .map(|layout| {
-                    (precommitted_family.explicit_precommitted_group)(layout)
+                    (precommitted_family.explicit_precommitted_group)(preplans, layout)
                         .map_err(|e| format!("{}: explicit precommitted group: {e}", group.family))
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -389,12 +391,13 @@ fn push_precommitted_combinations(
 
 fn emit_spec_with_overrides(
     family: &GeneratedFamily,
+    preplans: &mut GenerationPreplans,
     base_dir: PathBuf,
     explicit_rows: &ExplicitRows,
     generator_command: &'static str,
 ) -> Result<EmitSpec, String> {
     if !explicit_rows.has_family(family) {
-        return emit_spec_for_family(family, base_dir, generator_command)
+        return emit_spec_for_family(family, preplans, base_dir, generator_command)
             .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
     }
 
@@ -421,7 +424,8 @@ fn emit_spec_with_overrides(
         return Ok(spec);
     }
 
-    let precommitted_choices = expand_precommitted_choices(&explicit_rows.precommitted_groups)?;
+    let precommitted_choices =
+        expand_precommitted_choices(preplans, &explicit_rows.precommitted_groups)?;
     let mut precommitted_combinations = Vec::new();
     push_precommitted_combinations(
         &precommitted_choices,
@@ -466,6 +470,7 @@ fn main() -> Result<(), String> {
         Vec::new()
     } else {
         let generator_command = generator_command();
+        let mut preplans = GenerationPreplans::default();
         let mut specs = Vec::with_capacity(families_to_write.len());
         for (index, family) in families_to_write.iter().enumerate() {
             eprintln!(
@@ -476,11 +481,16 @@ fn main() -> Result<(), String> {
             );
             specs.push(emit_spec_with_overrides(
                 family,
+                &mut preplans,
                 args.base_dir.clone(),
                 &args.explicit_rows,
                 generator_command,
             )?);
         }
+        for (family, spec) in families_to_write.iter().zip(&mut specs) {
+            preplans.attach_to_spec(family, spec);
+        }
+        drop(preplans);
         specs
     };
 
@@ -522,6 +532,7 @@ mod tests {
 
         let spec = emit_spec_with_overrides(
             family,
+            &mut GenerationPreplans::default(),
             PathBuf::from("generated"),
             &explicit_rows,
             "generator command",

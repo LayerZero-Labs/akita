@@ -39,7 +39,7 @@ use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_planner::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
+    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
     sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule,
@@ -59,8 +59,10 @@ use akita_schedules::{
 
 #[test]
 fn group_batch_requests_are_canonically_ordered() {
+    let mut preplans = GenerationPreplans::default();
     for family in ALL_GENERATED_FAMILIES {
-        let requests = (family.group_batch_keys)().expect("grouped request enumeration");
+        let requests =
+            (family.group_batch_keys)(&mut preplans).expect("grouped request enumeration");
         assert!(requests.windows(2).all(|pair| {
             akita_planner::runtime_schedule_key_cmp(&pair[0].0, &pair[1].0)
                 == std::cmp::Ordering::Less
@@ -743,7 +745,11 @@ fn check_group_batch_keys(
     }
 }
 
-fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
+fn check_family(
+    family: &GeneratedFamily,
+    preplans: &mut GenerationPreplans,
+    into: &mut Vec<Mismatch>,
+) {
     if (family.schedule_catalog)().is_none() {
         return;
     }
@@ -754,7 +760,7 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     #[cfg(feature = "all-schedules")]
     {
         let catalog = prepare_family_catalog(family, &keys);
-        let group_batch_keys = (family.group_batch_keys)().unwrap_or_else(|e| {
+        let group_batch_keys = (family.group_batch_keys)(preplans).unwrap_or_else(|e| {
             panic!(
                 "family {} multi-group key enumeration failed: {e}",
                 family.module_name
@@ -766,7 +772,7 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
     }
     #[cfg(not(feature = "all-schedules"))]
     {
-        let group_batch_keys = (family.group_batch_keys)().unwrap_or_else(|e| {
+        let group_batch_keys = (family.group_batch_keys)(preplans).unwrap_or_else(|e| {
             panic!(
                 "family {} multi-group key enumeration failed: {e}",
                 family.module_name
@@ -788,8 +794,9 @@ fn regen_hint() -> &'static str {
 #[test]
 fn generated_schedule_tables_match_key_planner() {
     let mut mismatches = Vec::new();
+    let mut preplans = GenerationPreplans::default();
     for family in ALL_GENERATED_FAMILIES {
-        check_family(family, &mut mismatches);
+        check_family(family, &mut preplans, &mut mismatches);
     }
 
     if mismatches.is_empty() {

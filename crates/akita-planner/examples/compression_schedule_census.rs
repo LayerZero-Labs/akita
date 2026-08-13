@@ -2,7 +2,7 @@
 
 use akita_field::AkitaError;
 use akita_planner::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
+    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
     CompressionChainPlan, FoldSchedule, OpenCommitMatrixParams, OuterCommitMatrixParams,
@@ -232,6 +232,7 @@ fn main() -> Result<(), String> {
     let mut max_chains_per_proof = 0usize;
     let mut max_maps_per_proof = 0usize;
     let mut max_instances_key = String::new();
+    let mut preplans = GenerationPreplans::default();
     for family in ALL_GENERATED_FAMILIES {
         for key in emitted_scalar_keys(family)
             .map_err(|error| format!("{} scalar keys: {error}", family.module_name))?
@@ -264,7 +265,7 @@ fn main() -> Result<(), String> {
             }
             schedules += 1;
         }
-        for (key, honest_fold_policies) in (family.group_batch_keys)()
+        for (key, honest_fold_policies) in (family.group_batch_keys)(&mut preplans)
             .map_err(|error| format!("{} group keys: {error}", family.module_name))?
         {
             let label = format!("{}:group:{key:?}", family.module_name);

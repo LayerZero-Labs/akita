@@ -40,6 +40,8 @@ pub struct EmitSpec {
     pub policy: PlannerPolicy,
     pub keys: Vec<PolynomialGroupLayout>,
     pub group_batch_keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
+    /// Exact successful scalar results already needed to construct grouped keys.
+    pub preplanned_scalar: Vec<(PolynomialGroupLayout, FoldSchedule)>,
     pub output_dir: PathBuf,
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     pub regen_group_batch:
@@ -691,7 +693,12 @@ fn materialized_entry(
     let (key, result) = match request {
         PlanningRequest::Scalar(key) => {
             let lookup = AkitaScheduleLookupKey::single(*key);
-            (lookup, (spec.regen)(*key))
+            let result = spec
+                .preplanned_scalar
+                .iter()
+                .find(|(preplanned_key, _)| preplanned_key == key)
+                .map_or_else(|| (spec.regen)(*key), |(_, schedule)| Ok(schedule.clone()));
+            (lookup, result)
         }
         PlanningRequest::Grouped {
             key,
@@ -768,4 +775,47 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     out.push_str(&emit_identity_const(&identity));
 
     Ok(out)
+}
+
+#[cfg(all(test, feature = "catalog-gen"))]
+mod preplanned_scalar_tests {
+    use super::*;
+    use crate::generated_families::{wiring_emit_spec, ALL_GENERATED_FAMILIES};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static REGEN_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn counted_regen(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+        REGEN_CALLS.fetch_add(1, Ordering::Relaxed);
+        let family = ALL_GENERATED_FAMILIES
+            .iter()
+            .find(|family| family.module_name == "fp128_onehot_multi_chunk_w2r2")
+            .expect("known family");
+        (family.regen)(key)
+    }
+
+    #[test]
+    fn preplanned_scalar_skips_regen_and_preserves_emitted_bytes() {
+        let family = ALL_GENERATED_FAMILIES
+            .iter()
+            .find(|family| family.module_name == "fp128_onehot_multi_chunk_w2r2")
+            .expect("known family");
+        let key = PolynomialGroupLayout::new(14, 1);
+        let schedule = (family.regen)(key).expect("scalar schedule");
+        let mut cached = wiring_emit_spec(family, PathBuf::from("generated"));
+        cached.keys = vec![key];
+        cached.preplanned_scalar = vec![(key, schedule)];
+        cached.regen = counted_regen;
+        cached.generator_command = "generator command";
+
+        REGEN_CALLS.store(0, Ordering::Relaxed);
+        let cached_bytes = emit_family_module(&cached).expect("cached family module");
+        assert_eq!(REGEN_CALLS.load(Ordering::Relaxed), 0);
+
+        let mut uncached = cached.clone();
+        uncached.preplanned_scalar.clear();
+        let uncached_bytes = emit_family_module(&uncached).expect("uncached family module");
+        assert_eq!(REGEN_CALLS.load(Ordering::Relaxed), 1);
+        assert_eq!(cached_bytes, uncached_bytes);
+    }
 }
