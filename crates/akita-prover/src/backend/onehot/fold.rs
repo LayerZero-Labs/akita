@@ -12,29 +12,13 @@ where
     I: OneHotIndex,
 {
     let mut coeffs_acc = [F::zero(); D];
-    let field_start = ring_range
-        .start
-        .checked_mul(D)
+    let entries = OneHotRingRange::new(onehot_k, indices, D, ring_range.clone())
         .expect("validated one hot fold range");
-    let field_end = ring_range
-        .end
-        .checked_mul(D)
-        .expect("validated one hot fold range");
-    let chunk_start = field_start / onehot_k;
-    let chunk_end = field_end.div_ceil(onehot_k).min(indices.len());
-    for (local_chunk, hot_index) in indices[chunk_start..chunk_end].iter().copied().enumerate() {
-        if let Some(hot_index) = hot_index {
-            let field_position = (chunk_start + local_chunk)
-                .checked_mul(onehot_k)
-                .and_then(|base| base.checked_add(hot_index.as_usize()))
-                .expect("validated one hot field position");
-            let ring_index = field_position / D;
-            if ring_range.contains(&ring_index) {
-                let position = ring_index - ring_range.start;
-                if let Some(&scalar) = scalars.get(position) {
-                    coeffs_acc[field_position % D] += scalar;
-                }
-            }
+    for entry in entries {
+        let entry = entry.expect("validated one hot field position");
+        let position = entry.ring_index - ring_range.start;
+        if let Some(&scalar) = scalars.get(position) {
+            coeffs_acc[entry.coefficient_index] += scalar;
         }
     }
     CyclotomicRing::from_coefficients(coeffs_acc)
@@ -72,32 +56,13 @@ where
     F: FieldCore,
     I: OneHotIndex,
 {
-    let field_start = ring_range
-        .start
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidInput("one-hot fold range overflow".into()))?;
-    let field_end = ring_range
-        .end
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidInput("one-hot fold range overflow".into()))?;
-    let chunk_start = field_start / onehot_k;
-    let chunk_end = field_end.div_ceil(onehot_k).min(indices.len());
     let mut acc = CyclotomicRing::<F, D>::zero();
-    for (local_chunk, hot_index) in indices[chunk_start..chunk_end].iter().copied().enumerate() {
-        let Some(hot_index) = hot_index else {
-            continue;
-        };
-        let field_position = (chunk_start + local_chunk)
-            .checked_mul(onehot_k)
-            .and_then(|base| base.checked_add(hot_index.as_usize()))
-            .ok_or_else(|| AkitaError::InvalidInput("one-hot field position overflow".into()))?;
-        let ring_index = field_position / D;
-        if !ring_range.contains(&ring_index) {
-            continue;
-        }
+    let entries = OneHotRingRange::new(onehot_k, indices, D, ring_range.clone())?;
+    for entry in entries {
+        let entry = entry?;
         multipliers.accumulate_position_monomial(
-            ring_index - ring_range.start,
-            field_position % D,
+            entry.ring_index - ring_range.start,
+            entry.coefficient_index,
             F::one(),
             &mut acc,
         )?;

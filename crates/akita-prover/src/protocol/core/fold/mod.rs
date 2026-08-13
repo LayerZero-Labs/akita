@@ -350,21 +350,30 @@ where
         AkitaError::InvalidSetup("non-terminal fold is missing successor params".into())
     })?;
     let next_opening_ring_dim = next_params.inner_ring_dimension();
-    let mut logical_w = ring_switch_build_w::<F, R>(
+    let logical_w = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,
         prepared_fold.witness,
         stack.ring_switch(),
         lp,
     )
-    .map_err(|err| AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}")))?
-    .align_for_commitment_ring_dim(next_opening_ring_dim)?;
-    let committed_witness_len = logical_w.committed_coeff_len()?;
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
+    })?;
+    let committed_witness_len = akita_types::witness_commitment_domain_len(
+        logical_w.live_coeff_len(),
+        next_opening_ring_dim,
+    )?;
     if Some(logical_w.live_coeff_len()) != expected_output_witness_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled fold level {level} produced unexpected next-w length: expected={expected_output_witness_len:?}, actual={}",
             logical_w.live_coeff_len()
         )));
     }
+    let logical_w = if E::EXT_DEGREE == 1 {
+        logical_w.align_for_commitment_ring_dim(next_opening_ring_dim)?
+    } else {
+        logical_w
+    };
     let _span = tracing::info_span!("commit_w_level", level).entered();
     let next_commitment = match next_params {
         FoldSuccessorParams::Recursive(params) => {
@@ -386,9 +395,6 @@ where
             crate::commit_terminal_w::<Cfg, C>(params, expanded, stack.commit(), &logical_w)?
         }
     };
-    if next_commitment.witness.is_some() {
-        logical_w.release_commitment_alignment();
-    }
     drop(_span);
     match &next_commitment.binding {
         NextWitnessState::OuterPayload(commitment) => {

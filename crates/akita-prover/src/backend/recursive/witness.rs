@@ -106,11 +106,6 @@ impl RecursiveWitnessFlat {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    pub(crate) fn release_commitment_alignment(&mut self) {
-        self.commitment_digits = None;
-        self.commitment_ring_dim = None;
-    }
-
     pub fn is_empty(&self) -> bool {
         self.digits.is_empty()
     }
@@ -835,22 +830,6 @@ mod tests {
         assert_eq!(view.live_ring_elems, 70);
         assert!(view.coeffs.len() >= view.live_ring_elems);
         assert_eq!(view.num_live_blocks(10).expect("live blocks"), 7);
-    }
-
-    #[test]
-    fn releasing_commitment_alignment_keeps_logical_digits() {
-        const LOGICAL_D: usize = 64;
-        let digits = vec![1; 70 * LOGICAL_D];
-        let mut witness = RecursiveWitnessFlat::from_i8_digits(digits.clone())
-            .align_for_commitment_ring_dim(256)
-            .expect("commitment alignment");
-        assert!(witness.committed_coeff_len().unwrap() > witness.live_coeff_len());
-
-        witness.release_commitment_alignment();
-
-        assert_eq!(witness.as_i8_digits(), digits);
-        assert!(witness.committed_coeff_len().is_err());
-        assert!(witness.view::<F, LOGICAL_D>().is_ok());
     }
 
     #[test]
