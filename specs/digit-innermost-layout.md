@@ -7,7 +7,7 @@
 | Revised | 2026-07-31 |
 | Status | active |
 | PR | #294 |
-| Supersedes | Root and recursive layout decisions in `setup-layout-repack.md`, `protocol-core-eor-consolidation.md`, and `distributed-verifier-row-eval.md` |
+| Supersedes | Root and recursive layout decisions in `setup-layout-repack.md` and `protocol-core-eor-consolidation.md`, plus the deleted `distributed-verifier-row-eval.md` (PR #296, closed unlanded) |
 | Superseded by | |
 | Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
 
@@ -864,7 +864,6 @@ book/src/how/recursion.md
 book/src/how/proving/opening-points-layout.md
 book/src/how/verifying/matrix_evaluation.md
 specs/multi-group-batching.md
-specs/distributed-verifier-row-eval.md
 ```
 
 Steps:
@@ -883,7 +882,6 @@ Steps:
 * [`specs/SPEC_REVIEW.md`](SPEC_REVIEW.md)
 * [`specs/PRUNING.md`](PRUNING.md)
 * [`specs/multi-group-batching.md`](multi-group-batching.md)
-* [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
 * [`book/src/how/recursion.md`](../book/src/how/recursion.md)
 * `crates/akita-types/src/layout/params.rs`
 * `crates/akita-types/src/layout/params/precommitted.rs`

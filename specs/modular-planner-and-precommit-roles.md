@@ -688,5 +688,5 @@ The following choices remain open and must not be encoded accidentally:
 - [`distributed-planner.md`](distributed-planner.md)
 - [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
 - [`digit-innermost-layout.md`](digit-innermost-layout.md)
-- [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md)
+- [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md)
 - [`../docs/verifier-contract.md`](../docs/verifier-contract.md)

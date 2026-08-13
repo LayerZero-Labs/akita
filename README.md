@@ -31,7 +31,7 @@ documentation (how the scheme works, how to use it, and the foundations). Most
 chapters are still stubs that cite source paths and specs to fold; until prose
 lands, integrators should read the [Akita Book](book/README.md) (start with
 [`book/src/how/architecture.md`](book/src/how/architecture.md)),
-[`specs/single-point-opening-batch.md`](specs/single-point-opening-batch.md),
+[`book/src/usage/commitment-api.md`](book/src/usage/commitment-api.md),
 and [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md).
 Build the book locally with `./scripts/serve-book.sh` (see
 [`book/README.md`](book/README.md) for the toolchain). `AGENTS.md` is the
