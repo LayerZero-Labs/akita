@@ -161,10 +161,8 @@ where
         .last()
         .ok_or(AkitaError::InvalidProof)?
         .ring_dimension();
-    let commitment_payload = RingVec::from_coeffs_with_ring_dim(
-        output.terminal.coefficients().to_vec(),
-        terminal_ring_dim,
-    )?;
+    let commitment_payload =
+        RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
     let hint = AkitaCommitmentHint::singleton_with_outer_compression(
         RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
         &output.witness,

@@ -612,6 +612,12 @@ impl<F: FieldCore + CanonicalField> CompressionTerminalPayload<F> {
     pub fn coefficients(&self) -> &[F] {
         &self.coefficients
     }
+
+    /// Consume the terminal payload and return its coefficient storage.
+    #[must_use]
+    pub fn into_coefficients(self) -> Vec<F> {
+        self.coefficients
+    }
 }
 
 #[cfg(test)]

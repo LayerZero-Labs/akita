@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::backend::flat_blocks::FlatBlocks;
-use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+use crate::backend::poly_helpers::build_decompose_fold_witness;
 use crate::DecomposeFoldWitness;
 
 mod ops;
@@ -68,12 +68,12 @@ impl SparseRingCoeff {
     }
 
     #[inline]
-    fn ring_idx(self, ring_d: usize) -> usize {
+    pub(in crate::backend) fn ring_idx(self, ring_d: usize) -> usize {
         (self.flat_idx as usize) / ring_d
     }
 
     #[inline]
-    fn coeff_idx(self, ring_d: usize) -> usize {
+    pub(in crate::backend) fn coeff_idx(self, ring_d: usize) -> usize {
         (self.flat_idx as usize) % ring_d
     }
 
@@ -660,45 +660,45 @@ fn sparse_accumulate<const D: usize>(
     inner_width: usize,
     num_digits: usize,
 ) -> Vec<[i32; D]> {
+    if inner_width == 0 {
+        return Vec::new();
+    }
+
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(inner_width.max(1));
-    let pos_chunk = inner_width.div_ceil(actual_threads);
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
-        .map(|tid| {
-            let pos_start = tid * pos_chunk;
-            if pos_start >= inner_width {
-                return Vec::new();
-            }
-            let pos_end = (pos_start + pos_chunk).min(inner_width);
-            let mut acc = vec![[0i32; D]; pos_end - pos_start];
-            let mut rotated = vec![[0i16; D]; D];
-
+    let row_chunk = inner_width.div_ceil(num_threads.min(inner_width.max(1)));
+    let mut centered = vec![[0i32; D]; inner_width];
+    cfg_chunks_mut!(&mut centered, row_chunk)
+        .enumerate()
+        .for_each(|(chunk_idx, rows)| {
+            let row_start = chunk_idx * row_chunk;
+            let row_end = row_start + rows.len();
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_live_blocks) {
                 let entries = blocks.block(block_idx);
-                let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);
-                let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_end);
-                if lo >= hi {
-                    continue;
-                }
-                fill_rotated_challenge::<D>(&mut rotated, challenge);
+                let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < row_start);
+                let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < row_end);
                 for entry in &entries[lo..hi] {
-                    let local_pos = entry.pos_in_block() * num_digits - pos_start;
-                    let rot = &rotated[entry.coeff_idx()];
-                    let dst = &mut acc[local_pos];
-                    let weight = entry.value as i32;
-                    for k in 0..D {
-                        dst[k] += weight * i32::from(rot[k]);
+                    let local_row = entry.pos_in_block() * num_digits - row_start;
+                    let dst = &mut rows[local_row];
+                    let source_coeff = i32::from(entry.value);
+                    for (&challenge_pos, &challenge_coeff) in
+                        challenge.positions.iter().zip(&challenge.coeffs)
+                    {
+                        let target = entry.coeff_idx() + challenge_pos as usize;
+                        let value = source_coeff * i32::from(challenge_coeff);
+                        if target < D {
+                            dst[target] += value;
+                        } else {
+                            dst[target - D] -= value;
+                        }
                     }
                 }
             }
-            acc
-        })
-        .collect();
-    chunks.into_iter().flatten().collect()
+        });
+    centered
 }
 
 type WeightedColEntry = (usize, u32, u16, i8);
