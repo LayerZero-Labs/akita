@@ -564,8 +564,6 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
     )
     .expect("rank-one-capped nv36 planner");
     let selected_root = &selected.schedule.root.params.final_group.commitment;
-    let rank_one_capped_root = &rank_one_capped.schedule.root.params.final_group.commitment;
-
     assert_eq!(
         selected_root.role_dims(),
         CommitmentRingDims {
