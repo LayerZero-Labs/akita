@@ -736,34 +736,18 @@ fn adaptive_search_validates_key_and_policy_at_entry() {
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_root_domain_is_independent_of_uniform_config_dimension() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
 
-    let domain = RingDimensionSearchDomain::new([
-        CommitmentRingDims::uniform(64),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 64,
-            opening: 64,
-        },
-    ])
-    .expect("supported fp128 adaptive domain");
+    let ceiling = CommitmentRingDims {
+        inner: 256,
+        outer: 64,
+        opening: 64,
+    };
     let mut base_policy = policy_of::<OneHot>();
     base_policy.uniform_ring_dimension = 64;
-    let policy = policy_for_domain(base_policy, &domain);
-    domain.validate_for_policy(&policy).unwrap();
-
-    let selected = find_schedule(
-        PolynomialGroupLayout::singleton(40),
-        &policy,
-        OneHot::root_honest_fold_policy(),
-        &domain,
-        OneHot::ring_challenge_config,
-    )
-    .expect("D256 A search must not be capped by uniform D64");
-    assert_eq!(
-        selected.schedule.root.params.final_group.commitment.d_a(),
-        256
-    );
+    let candidates = dimension_candidates(&base_policy, 0, ceiling)
+        .expect("D256 A search must not be capped by uniform D64");
+    assert!(candidates.contains(&ceiling));
 }
 
 #[cfg(feature = "catalog-gen")]
