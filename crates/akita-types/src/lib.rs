@@ -4,6 +4,7 @@
 //! point reductions, per-level parameter shapes, commitment API contracts, and
 //! generated schedule/SIS data shared by prover, verifier, and planner code.
 
+pub mod coefficient_carrier;
 pub mod commitment_slicing;
 pub mod compression;
 pub mod config;
@@ -36,6 +37,7 @@ pub mod trace_weight;
 pub mod transcript;
 pub mod witness;
 
+pub use coefficient_carrier::CarrierGeometry;
 pub use commitment_slicing::{
     CommitmentSliceCount, CommitmentSliceGeometry, MAX_COMMITMENT_SLICES,
 };
