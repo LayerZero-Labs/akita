@@ -184,6 +184,30 @@ fn ranged_mapping_matches_full_mapping_for_both_dimension_orders() {
 }
 
 #[test]
+fn empty_final_block_range_is_accepted() {
+    type F = Prime24Offset3;
+    let poly = OneHotPoly::<F>::new(4, 8, vec![Some(0usize); 8]).unwrap();
+    let num_live_blocks = poly.num_live_blocks_for(8, 8).unwrap();
+
+    let blocks = poly
+        .materialize_block_range(8, 8, num_live_blocks..num_live_blocks)
+        .unwrap();
+
+    assert_eq!(blocks.num_live_blocks(), 0);
+}
+
+#[test]
+fn ordered_ring_range_beyond_storage_is_empty() {
+    let indices = vec![Some(0usize), Some(1)];
+
+    let blocks =
+        FlatBlocks::<SparseRingBlockEntry>::from_onehot_ring_range(4, &indices, 2, 4, 10..10, 5)
+            .unwrap();
+
+    assert_eq!(blocks.num_live_blocks(), 0);
+}
+
+#[test]
 #[should_panic(expected = "FlatBlocks::block: block index 1 out of range for 1 blocks")]
 fn flat_blocks_block_panics_on_out_of_range_index() {
     let blocks = super::test_helpers::from_buckets(vec![vec![1u16]]);

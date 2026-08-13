@@ -74,7 +74,7 @@ impl<'a, I: OneHotIndex> OneHotRingRange<'a, I> {
             .end
             .checked_mul(ring_d)
             .ok_or_else(|| AkitaError::InvalidInput("one hot range end overflow".into()))?;
-        let next_chunk = field_start / onehot_k;
+        let next_chunk = (field_start / onehot_k).min(indices.len());
         let chunk_end = field_end.div_ceil(onehot_k).min(indices.len());
         Ok(Self {
             onehot_k,

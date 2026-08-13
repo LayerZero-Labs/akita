@@ -161,7 +161,8 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         let ring_start = block_range
             .start
             .checked_mul(num_positions_per_block)
-            .ok_or_else(|| AkitaError::InvalidInput("one hot block range overflow".into()))?;
+            .ok_or_else(|| AkitaError::InvalidInput("one hot block range overflow".into()))?
+            .min(ring_elems_at_d);
         let ring_end = block_range
             .end
             .checked_mul(num_positions_per_block)
