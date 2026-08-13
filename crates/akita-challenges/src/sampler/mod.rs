@@ -38,9 +38,11 @@ static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'stati
             u64::from(policy.threshold),
         )
         .map_err(|_| "failed to initialize the D64 selective-L2 operator-norm table")?;
-        if !table.strict_threshold_contains_true_subset(
-            u64::from(policy.certified_subset_threshold),
+        if !table.strict_threshold_contains_shrunken_subset(
+            policy.fractional_bits,
+            policy.root_coordinate_error_units,
             u64::from(policy.threshold),
+            policy.rounding_margin_units,
         ) {
             return Err("the D64 operator-norm table does not contain its certified subset");
         }
@@ -57,9 +59,11 @@ static D128_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'stat
             u64::from(policy.threshold),
         )
         .map_err(|_| "failed to initialize the D128 selective-L2 operator-norm table")?;
-        if !table.strict_threshold_contains_true_subset(
-            u64::from(policy.certified_subset_threshold),
+        if !table.strict_threshold_contains_shrunken_subset(
+            policy.fractional_bits,
+            policy.root_coordinate_error_units,
             u64::from(policy.threshold),
+            policy.rounding_margin_units,
         ) {
             return Err("the D128 operator-norm table does not contain its certified subset");
         }

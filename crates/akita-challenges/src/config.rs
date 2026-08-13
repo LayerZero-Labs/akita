@@ -20,9 +20,8 @@ pub const D64_PRODUCTION_PM2_COUNT: usize = 10;
 /// D=64 exact shell used by the selective-L2 operator-norm route.
 ///
 /// The raw family has about 130.15 bits of support. The independently checked
-/// `Gamma <= 18` certificate retains about 128.06 bits; the runtime predicate
-/// uses threshold 19 so its strict fixed-point enclosure provably contains
-/// that certified subset.
+/// fixed-point certificate retains 128.062439 bits inside the strict runtime
+/// threshold 18 predicate.
 pub const D64_L2_OP_NORM_PM1_COUNT: usize = 31;
 pub const D64_L2_OP_NORM_PM2_COUNT: usize = 11;
 
@@ -35,23 +34,31 @@ pub const D128_L2_OP_NORM_PM2_COUNT: usize = 0;
 pub struct OperatorNormRejection {
     /// Strict certified predicate threshold used by prover and verifier.
     pub threshold: u32,
-    /// Mathematical threshold whose accepted-support floor was certified.
-    pub certified_subset_threshold: u32,
+    /// Fractional bits used by the certified fixed-point predicate.
+    pub fractional_bits: u32,
+    /// Certified upper bound on each fixed-point root-coordinate error.
+    pub root_coordinate_error_units: u32,
+    /// Fixed-point distance below `threshold` of the certified true-norm subset.
+    pub rounding_margin_units: u32,
 }
 
 impl OperatorNormRejection {
     /// D=64 selective-L2 policy. Its support certificate is
     /// `cert_d64_a31_b11_gamma18.json` from the Akita paper artifacts.
     pub const D64_SELECTIVE_L2: Self = Self {
-        threshold: 19,
-        certified_subset_threshold: 18,
+        threshold: 18,
+        fractional_bits: 48,
+        root_coordinate_error_units: 4,
+        rounding_margin_units: 600,
     };
 
     /// D=128 selective-L2 policy. Its support certificate is
     /// `scripts/operator_norm/d128/cert_d128_w31_gamma13.json`.
     pub const D128_SELECTIVE_L2: Self = Self {
-        threshold: 14,
-        certified_subset_threshold: 13,
+        threshold: 13,
+        fractional_bits: 48,
+        root_coordinate_error_units: 4,
+        rounding_margin_units: 351,
     };
 
     /// Validate the exact challenge family covered by the support certificate.
@@ -80,11 +87,13 @@ impl OperatorNormRejection {
     }
 
     /// Canonical transcript-domain bytes for this rejection policy.
-    pub fn domain_separator_bytes(self) -> [u8; 9] {
-        let mut out = [0u8; 9];
-        out[0] = 1;
+    pub fn domain_separator_bytes(self) -> [u8; 17] {
+        let mut out = [0u8; 17];
+        out[0] = 2;
         out[1..5].copy_from_slice(&self.threshold.to_le_bytes());
-        out[5..9].copy_from_slice(&self.certified_subset_threshold.to_le_bytes());
+        out[5..9].copy_from_slice(&self.fractional_bits.to_le_bytes());
+        out[9..13].copy_from_slice(&self.root_coordinate_error_units.to_le_bytes());
+        out[13..17].copy_from_slice(&self.rounding_margin_units.to_le_bytes());
         out
     }
 }

@@ -1,5 +1,5 @@
 {
- "description": "Certified lower bound on Pr[Gamma(c) <= Gamma] for the d=64 exact-shell challenge family, via exact spectral moments, a dual-polynomial marginal tail bound, and a union bound over the d/2 distinct frequencies. See appendix C (sec:opnorm-moment-method, sec:opnorm-worked) of the Akita paper.",
+ "description": "Certified lower bound for a true-operator-norm subset of the d=64 exact-shell challenge family that is contained in the strict q=48 fixed-point predicate at runtime threshold 18. The support bound uses exact spectral moments, a dual-polynomial marginal tail bound, and a union bound over the d/2 distinct frequencies.",
  "method": "moment-LP union; Lemma (dual moment bound) + Lemma (Bernstein certificate) + Theorem (certified acceptance floor)",
  "params": {
   "d": 64,
@@ -9,10 +9,17 @@
   "l1_norm": 53,
   "l2_sq": 75,
   "support_cap_B": 2809,
-  "Gamma": 18,
-  "threshold_Gamma_sq": 324,
+  "nominal_Gamma": 18,
   "lambda_bits": 128,
   "num_distinct_freqs": 32
+ },
+ "fixed_point_containment": {
+  "fractional_bits": 48,
+  "root_coordinate_error_units": 4,
+  "runtime_strict_threshold": 18,
+  "rounding_margin_units": 600,
+  "certified_true_norm_upper_bound": "633318697598901/35184372088832",
+  "certified_tail_start_sq": "401092572728368211262676407801/1237940039285380274899124224"
  },
  "N_raw": "1512629743948280609404551579217617223680",
  "moments_M0_to_M30": {
@@ -93,7 +100,7 @@
    2809
   ],
   "ge1_interval_for_Q_minus_1": [
-   324,
+   "401092572728368211262676407801/1237940039285380274899124224",
    2809
   ],
   "note": "subdivide each interval into 80 equal rational pieces; all degree-30 Bernstein coeffs are >= 0"

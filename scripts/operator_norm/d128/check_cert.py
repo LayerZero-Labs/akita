@@ -136,7 +136,7 @@ def main():
     w = params["w_nonzero"]
     b = params["b_mag2"]
     B = params["support_cap_B"]
-    gamma = params["Gamma"]
+    nominal_gamma = params["nominal_Gamma"]
     nfreq = params["num_distinct_freqs"]
     security_bits = params["lambda_bits"]
     nraw = comb(d, w) * comb(w, b) * 2**w
@@ -152,10 +152,38 @@ def main():
 
     check("production dimensions", d == 128 and w == 31 and b == 0)
     check("B=l1^2", B == params["l1_norm"] ** 2 == 961)
-    check("Gamma^2=169", params["threshold_Gamma_sq"] == gamma * gamma == 169)
+    check("nominal dual threshold is 13", nominal_gamma == 13)
     check("64 conjugacy-distinct odd frequencies", nfreq == d // 2 == 64)
     check("raw support", str(nraw) == cert["N_raw"])
     check("M0=1 and M1=31", moments[0] == 1 and moments[1] == 31)
+
+    containment = cert["fixed_point_containment"]
+    fixed_point_q = containment["fractional_bits"]
+    eps = containment["root_coordinate_error_units"]
+    runtime_threshold = containment["runtime_strict_threshold"]
+    r_error = params["l1_norm"] * eps
+    squared_error = 8 * r_error * r_error
+    margin = math.isqrt(squared_error)
+    if margin * margin <= squared_error:
+        margin += 1
+    scale = 1 << fixed_point_q
+    true_norm_upper = F(runtime_threshold * scale - margin, scale)
+    tail_start_sq = true_norm_upper * true_norm_upper
+    check("runtime table contract uses q=48 and root error at most 4",
+          fixed_point_q == 48 and eps == 4)
+    check("runtime threshold matches the nominal dual threshold",
+          runtime_threshold == nominal_gamma)
+    check("fixed-point margin is the least strict integer upper bound",
+          containment["rounding_margin_units"] == margin
+          and margin * margin > squared_error
+          and (margin - 1) * (margin - 1) <= squared_error,
+          f"h={margin}, 8r^2={squared_error}")
+    check("certified true-norm upper bound matches fixed-point containment",
+          F(containment["certified_true_norm_upper_bound"]) == true_norm_upper,
+          str(true_norm_upper))
+    check("certified spectral tail start is the square of that bound",
+          F(containment["certified_tail_start_sq"]) == tail_start_sq,
+          str(tail_start_sq))
 
     support_count = comb(d, w)
     residue_checks = True
@@ -204,7 +232,7 @@ def main():
     check("Q>0 exact Sturm certificate on [-1,1]", positive, f"roots={root_count}")
     z_minus_one = z_coefficients[:]
     z_minus_one[0] -= 1
-    threshold_z = F(2 * gamma * gamma, B) - 1
+    threshold_z = F(2, B) * tail_start_sq - 1
     positive, root_count = strictly_positive_on_interval(z_minus_one, threshold_z, F(1))
     check("Q-1>0 exact Sturm certificate on the tail", positive, f"roots={root_count}")
 
@@ -220,17 +248,18 @@ def main():
         gap0 = interval_certificate_min(x_coefficients, F(0), F(B), subdivisions, degree)
         minus_one = x_coefficients[:]
         minus_one[0] -= 1
-        gap1 = interval_certificate_min(minus_one, F(gamma * gamma), F(B), subdivisions, degree)
+        gap1 = interval_certificate_min(minus_one, tail_start_sq, F(B), subdivisions, degree)
         check("Q>=0 exact Bernstein certificate", gap0 >= 0, f"minimum={float(gap0):.3e}")
         check("Q-1>=0 exact Bernstein certificate", gap1 >= 0, f"minimum={float(gap1):.3e}")
-        check("claimed Bernstein minima", gap0 == F(cert["claimed"]["minimum_bernstein_Q"]) and gap1 == F(cert["claimed"]["minimum_bernstein_Q_minus_1"]))
+        check("claimed Bernstein minimum for Q",
+              gap0 == F(cert["claimed"]["minimum_bernstein_Q"]))
 
     cutoff = F(1, nfreq) * (1 - F(2**security_bits, nraw))
     check("q below exact support-floor cutoff", q < cutoff, f"{float(q):.9f} < {float(cutoff):.9f}")
     check("accepted support is at least 2^128", F(nraw) * p0 >= 2**security_bits)
     accepted_bits = math.log2(nraw) + math.log2(p0.numerator) - math.log2(p0.denominator)
     print(f"RESULT: {'ALL CHECKS PASS' if ok else 'FAILURE'}")
-    print(f"Pr[Gamma(c)<=13] >= {float(p0):.12f}")
+    print(f"Pr[Gamma(c)<{true_norm_upper}] >= {float(p0):.12f}")
     print(f"log2(N_raw*p0) = {accepted_bits:.12f}")
     raise SystemExit(0 if ok else 1)
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 from fractions import Fraction as F
 from math import comb
 from pathlib import Path
@@ -10,6 +11,19 @@ GAMMA = 13
 LAMBDA = 128
 NFREQ = D // 2
 B = W * W
+FIXED_POINT_Q = 48
+ROOT_COORDINATE_ERROR_UNITS = 4
+
+
+def fixed_point_containment():
+    scale = 1 << FIXED_POINT_Q
+    r_error = W * ROOT_COORDINATE_ERROR_UNITS
+    squared_error = 8 * r_error * r_error
+    margin = math.isqrt(squared_error)
+    if margin * margin <= squared_error:
+        margin += 1
+    true_norm_upper = F(GAMMA * scale - margin, scale)
+    return margin, true_norm_upper, true_norm_upper * true_norm_upper
 
 
 def main():
@@ -17,10 +31,12 @@ def main():
     coefficients = json.loads(Path("dual_coefficients.json").read_text())
     summary = json.loads(Path("dual_summary.json").read_text())
     nraw = comb(D, W) * 2**W
+    margin, true_norm_upper, tail_start_sq = fixed_point_containment()
     cert = {
         "description": (
-            "Exact accepted-support certificate for the production d=128, weight-31, "
-            "signed unit sparse challenge family and true operator-norm subset Gamma<=13."
+            "Exact accepted-support certificate for a true-operator-norm subset of the "
+            "production d=128, weight-31 signed-unit challenge family that is contained "
+            "in the strict q=48 fixed-point predicate at runtime threshold 13."
         ),
         "method": "degree-30 exact moment dual, exact Bernstein positivity, union bound",
         "params": {
@@ -31,10 +47,17 @@ def main():
             "l1_norm": W,
             "l2_sq": W,
             "support_cap_B": B,
-            "Gamma": GAMMA,
-            "threshold_Gamma_sq": GAMMA * GAMMA,
+            "nominal_Gamma": GAMMA,
             "lambda_bits": LAMBDA,
             "num_distinct_freqs": NFREQ,
+        },
+        "fixed_point_containment": {
+            "fractional_bits": FIXED_POINT_Q,
+            "root_coordinate_error_units": ROOT_COORDINATE_ERROR_UNITS,
+            "runtime_strict_threshold": GAMMA,
+            "rounding_margin_units": margin,
+            "certified_true_norm_upper_bound": str(true_norm_upper),
+            "certified_tail_start_sq": str(tail_start_sq),
         },
         "N_raw": str(nraw),
         "moments_M0_to_M30": moments,
@@ -47,14 +70,14 @@ def main():
         "bernstein_certificate": {
             "num_subintervals": summary["subdivisions"],
             "nonneg_interval_for_Q": [0, B],
-            "ge1_interval_for_Q_minus_1": [GAMMA * GAMMA, B],
+            "ge1_interval_for_Q_minus_1": [str(tail_start_sq), B],
         },
         "claimed": {
             "q1_star": summary["q"],
             "p0": summary["p0"],
             "cutoff_q1_for_floor": summary["cutoff"],
             "minimum_bernstein_Q": summary["gap0"],
-            "minimum_bernstein_Q_minus_1": summary["gap1"],
+            "minimum_bernstein_Q_minus_1_at_nominal_threshold": summary["gap1"],
         },
         "moment_generation": {
             "algorithm": "exact truncated bivariate EGF over finite-field primitive 256th roots, seven-prime CRT plus independent eighth-prime check",

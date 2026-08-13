@@ -2,8 +2,9 @@
 """Exact, floating-point-free checker for an operator-norm acceptance certificate.
 
 Validates a certificate of the form produced for Appendix C of the Akita paper
-(sec:opnorm-moment-method / sec:opnorm-worked): a lower bound on
-    p = Pr[ Gamma(c) <= Gamma ]
+(sec:opnorm-moment-method / sec:opnorm-worked): a lower bound on an exact
+true-operator-norm subset that is contained in the runtime fixed-point
+predicate.
 for a d=64 exact-shell challenge family, via exact spectral moments, a
 dual-polynomial marginal tail bound, and a union bound over the d/2 distinct
 frequencies.
@@ -102,8 +103,7 @@ def main():
     b = P["b_mag2"]
     w = P["w_nonzero"]
     B = P["support_cap_B"]
-    Gamma = P["Gamma"]
-    g2 = P["threshold_Gamma_sq"]
+    nominal_gamma = P["nominal_Gamma"]
     lam = P["lambda_bits"]
     nfreq = P["num_distinct_freqs"]
 
@@ -115,14 +115,53 @@ def main():
         print(f"  [{'PASS' if cond else 'FAIL'}] {name}{(' -- ' + detail) if detail else ''}")
 
     print(f"Checking {path}")
-    print(f"family d={d}, (a,b)=({a},{b}), B={B}, Gamma={Gamma}, lambda={lam}, freqs={nfreq}")
+    print(
+        f"family d={d}, (a,b)=({a},{b}), B={B}, "
+        f"runtime threshold={nominal_gamma}, lambda={lam}, freqs={nfreq}"
+    )
 
     # ---- structural params ----
+    check("production dimensions",
+          d == 64 and a == 31 and b == 11 and w == 42)
     check("l1_norm = a + 2b", P["l1_norm"] == a + 2 * b, f"{P['l1_norm']}")
     check("support cap B = l1^2", B == P["l1_norm"] ** 2)
-    check("threshold = Gamma^2", g2 == Gamma * Gamma)
     Nraw = comb(d, w) * comb(w, b) * (2 ** w)
     check("N_raw = C(d,w) C(w,b) 2^w", str(Nraw) == cert["N_raw"], cert["N_raw"])
+
+    # ---- fixed-point containment ----
+    # If each tabulated real/imaginary root coordinate has error at most eps,
+    # every frequency accumulator has coordinate error at most r=l1*eps. The
+    # squared upper enclosure adds at most 2*sqrt(2)*r before squaring. Choose
+    # the least integer h strictly above that irrational quantity. Then every
+    # true norm <= runtime_threshold-h/2^q is accepted by the strict runtime
+    # predicate at runtime_threshold.
+    containment = cert["fixed_point_containment"]
+    q = containment["fractional_bits"]
+    eps = containment["root_coordinate_error_units"]
+    runtime_threshold = containment["runtime_strict_threshold"]
+    r_error = P["l1_norm"] * eps
+    squared_error = 8 * r_error * r_error
+    margin = math.isqrt(squared_error)
+    if margin * margin <= squared_error:
+        margin += 1
+    scale = 1 << q
+    true_norm_upper = F(runtime_threshold * scale - margin, scale)
+    tail_start_sq = true_norm_upper * true_norm_upper
+    check("runtime table contract uses q=48 and root error at most 4",
+          q == 48 and eps == 4)
+    check("runtime threshold matches the nominal dual threshold",
+          runtime_threshold == nominal_gamma)
+    check("fixed-point margin is the least strict integer upper bound",
+          containment["rounding_margin_units"] == margin
+          and margin * margin > squared_error
+          and (margin - 1) * (margin - 1) <= squared_error,
+          f"h={margin}, 8r^2={squared_error}")
+    check("certified true-norm upper bound matches fixed-point containment",
+          frac(containment["certified_true_norm_upper_bound"]) == true_norm_upper,
+          str(true_norm_upper))
+    check("certified spectral tail start is the square of that bound",
+          frac(containment["certified_tail_start_sq"]) == tail_start_sq,
+          str(tail_start_sq))
 
     # ---- moments ----
     Mr = cert["moments_M0_to_M30"]
@@ -209,23 +248,25 @@ def main():
     bc = cert["bernstein_certificate"]
     nsub = bc["num_subintervals"]
 
-    lo0, hi0 = bc["nonneg_interval_for_Q"]
+    lo0, hi0 = map(frac, bc["nonneg_interval_for_Q"])
     g0 = None
     for i in range(nsub):
-        lo = F(hi0 - lo0) * F(i, nsub) + lo0
-        hi = F(hi0 - lo0) * F(i + 1, nsub) + lo0
+        lo = (hi0 - lo0) * F(i, nsub) + lo0
+        hi = (hi0 - lo0) * F(i + 1, nsub) + lo0
         mn = bernstein_min_on(xc, lo, hi, N)
         g0 = mn if g0 is None or mn < g0 else g0
     check(f"Q >= 0 on {bc['nonneg_interval_for_Q']} ({nsub} subintervals)",
           g0 >= 0, f"min Bernstein coeff = {float(g0):.6e}")
 
-    lo1, hi1 = bc["ge1_interval_for_Q_minus_1"]
+    lo1, hi1 = map(frac, bc["ge1_interval_for_Q_minus_1"])
+    check("Q-1 tail interval starts at the certified fixed-point subset",
+          lo1 == tail_start_sq)
     xc1 = xc[:]
     xc1[0] -= 1
     g1 = None
     for i in range(nsub):
-        lo = F(hi1 - lo1) * F(i, nsub) + lo1
-        hi = F(hi1 - lo1) * F(i + 1, nsub) + lo1
+        lo = (hi1 - lo1) * F(i, nsub) + lo1
+        hi = (hi1 - lo1) * F(i + 1, nsub) + lo1
         mn = bernstein_min_on(xc1, lo, hi, N)
         g1 = mn if g1 is None or mn < g1 else g1
     check(f"Q-1 >= 0 on {bc['ge1_interval_for_Q_minus_1']} ({nsub} subintervals)",
@@ -237,7 +278,7 @@ def main():
 
     print()
     print(f"RESULT: {'ALL CHECKS PASS' if ok else 'FAILURE'}")
-    print(f"  Pr[Gamma(c) <= {Gamma}] >= p0 = {float(p0):.10f}")
+    print(f"  Pr[Gamma(c) < {true_norm_upper}] >= p0 = {float(p0):.10f}")
     print(f"  log2(N_raw * p0) = {bits:.6f}  (>= {lam} ? {'yes' if bits >= lam else 'no'})")
     sys.exit(0 if ok else 1)
 

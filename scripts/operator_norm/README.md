@@ -4,13 +4,15 @@ This directory contains exact offline certificates for the sparse challenge
 families used by operator-norm rejection sampling.
 
 - `d64/` certifies the selective-L2 shell with 31 magnitude-one and 11
-  magnitude-two coefficients at true operator norm `Gamma <= 18`.
-- `d128/` certifies the production signed weight-31 shell at true operator norm
-  `Gamma <= 13`.
+  magnitude-two coefficients for the strict runtime threshold 18.
+- `d128/` certifies the production signed weight-31 shell for the strict runtime
+  threshold 13.
 
-The runtime fixed-point predicates use strict thresholds one unit above these
-true-subset thresholds. The exact certificates prove that each true subset has
-at least 128 bits of accepted support. They do not rely on Monte Carlo data.
+The runtime predicates use 48-bit fixed-point roots. Each certificate accounts
+for the root-table error and proves that a true-norm subset just below the
+integer threshold is contained in the strict runtime predicate. The exact
+certificates prove that these contained subsets have at least 128 bits of
+support. They do not rely on Monte Carlo data.
 
 Run both exact checkers through repository test discovery:
 

@@ -493,7 +493,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=4 n_b=6 n_d=8 response_l2_sq_cap=Some(100) challenge_l1_mass=53 '
             'challenge_count_pm1=31 challenge_count_pm2=11 '
-            'challenge_operator_norm_threshold=Some(19) log_basis=6 position_index_bits=7 '
+            'challenge_operator_norm_threshold=Some(18) log_basis=6 position_index_bits=7 '
             'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
@@ -522,7 +522,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Sum of squared coefficients (L2)", report)
         self.assertIn("Sum of squared coefficients (L2): ≤ 100", report)
         self.assertIn(
-            "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 19",
+            "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 18",
             report,
         )
         self.assertIn("<em>Commitment matrices used at this fold</em>", report)
@@ -600,7 +600,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "log_basis_inner=5 num_digits_inner=1 fold_log_basis=6 "
                 "fold_digit_count=2 challenge_l1_mass=53 "
                 "challenge_count_pm1=31 challenge_count_pm2=11 "
-                "challenge_operator_norm_threshold=Some(19) "
+                "challenge_operator_norm_threshold=Some(18) "
                 "response_l2_sq_cap=Some(633237013) "
                 "z_admission_linf_cap=Some(2570) "
                 "num_live_ring_elements_per_claim=1908 "
@@ -645,7 +645,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             report,
         )
         self.assertIn(
-            "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 19",
+            "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 18",
             report,
         )
         self.assertIn("Maximum coefficient magnitude (Linf): ≤ 2,570", report)
@@ -815,7 +815,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=4 n_b=6 n_d=8 response_l2_sq_cap=Some(100) challenge_l1_mass=53 '
             'challenge_count_pm1=31 challenge_count_pm2=11 '
-            'challenge_operator_norm_threshold=Some(19) log_basis=6 position_index_bits=7 '
+            'challenge_operator_norm_threshold=Some(18) log_basis=6 position_index_bits=7 '
             'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048\n'

@@ -77,10 +77,10 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     assert_eq!(
         step.params.witness.inner_commit_matrix.input_width()
             * step.params.witness.inner_commit_matrix.ring_dimension(),
-        131_072,
+        65_536,
     );
-    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 4);
-    assert_eq!(response_cap, 783_496_643);
+    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 3);
+    assert_eq!(response_cap, 697_251_053);
     let expected_collision = akita_types::sis::role_a_collision_l2_sq_for_response_bound(
         u128::from(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2.threshold),
         response_cap,
@@ -133,7 +133,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         terminal.sparse_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(2_618_810_696));
+    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(2_544_309_170));
     assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 7);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");

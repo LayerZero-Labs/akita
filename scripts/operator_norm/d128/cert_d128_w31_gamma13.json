@@ -1,5 +1,5 @@
 {
- "description": "Exact accepted-support certificate for the production d=128, weight-31, signed unit sparse challenge family and true operator-norm subset Gamma<=13.",
+ "description": "Exact accepted-support certificate for a true-operator-norm subset of the production d=128, weight-31 signed-unit challenge family that is contained in the strict q=48 fixed-point predicate at runtime threshold 13.",
  "method": "degree-30 exact moment dual, exact Bernstein positivity, union bound",
  "params": {
   "d": 128,
@@ -9,10 +9,17 @@
   "l1_norm": 31,
   "l2_sq": 31,
   "support_cap_B": 961,
-  "Gamma": 13,
-  "threshold_Gamma_sq": 169,
+  "nominal_Gamma": 13,
   "lambda_bits": 128,
   "num_distinct_freqs": 64
+ },
+ "fixed_point_containment": {
+  "fractional_bits": 48,
+  "root_coordinate_error_units": 4,
+  "runtime_strict_threshold": 13,
+  "rounding_margin_units": 351,
+  "certified_true_norm_upper_bound": "3659174697238177/281474976710656",
+  "certified_tail_start_sq": "13389559464908104312671466283329/79228162514264337593543950336"
  },
  "N_raw": "1046949673839956231392050469602223718400",
  "moments_M0_to_M30": {
@@ -93,7 +100,7 @@
    961
   ],
   "ge1_interval_for_Q_minus_1": [
-   169,
+   "13389559464908104312671466283329/79228162514264337593543950336",
    961
   ]
  },
@@ -102,7 +109,7 @@
   "p0": "486519574071612178439762976887788593708925299394325740459288285620993783398013295420649774133741215628957339648946512014661626625513207688175270149377116416998325073961060611659330297/1013004384930130687694091318709836561398952953290363230698629587308068629995313714207568682736852011836542686972059396012386050206992870987463622987078066966989874839179755520000000000",
   "cutoff_q1_for_floor": "2570840686235961649540243751/243761966433365883164119550400",
   "minimum_bernstein_Q": "807190246033626602164707755031841778553786348863771622382937057473183331225339845390493996604678739229370549085687512610391725236981532621693509809496508746437230470758006397303233894495196180217/2632150451086514534240669548701949095354995280178182631208823018402775742360198473221325111522241246463202104176607093589933840979071358559237525147039776425049183699946212828176587864145920000000000",
-  "minimum_bernstein_Q_minus_1": "1/10000000000"
+  "minimum_bernstein_Q_minus_1_at_nominal_threshold": "1/10000000000"
  },
  "moment_generation": {
   "algorithm": "exact truncated bivariate EGF over finite-field primitive 256th roots, seven-prime CRT plus independent eighth-prime check",

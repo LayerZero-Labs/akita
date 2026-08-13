@@ -233,33 +233,44 @@ impl OpNormTable {
         Ok(self.decide_parts(positions, coeffs, t)? == Decision::Accept)
     }
 
-    /// Prove that every challenge with true operator norm at most
-    /// `subset_t` is accepted by the strict fixed-point predicate at
-    /// `strict_t`.
+    /// Prove that every challenge in the certificate's shrunken true-norm
+    /// subset is accepted by the strict fixed-point predicate.
     ///
     /// Each real/imaginary accumulator has error at most `r`. The predicate's
-    /// upper enclosure is therefore at most `(subset_t * 2^q + 2 sqrt(2) r)^2`.
-    /// The integer inequality below proves that this fits below
-    /// `(strict_t * 2^q)^2` without using floating point.
-    pub(crate) fn strict_threshold_contains_true_subset(
+    /// upper enclosure for true norm at most `strict_t - h / 2^q` is below
+    /// `(strict_t * 2^q)^2` when `h > 2 sqrt(2) r`. The integer inequality
+    /// `h^2 > 8 r^2` proves that strict containment without floating point.
+    pub(crate) fn strict_threshold_contains_shrunken_subset(
         &self,
-        subset_t: u64,
+        fractional_bits: u32,
+        root_coordinate_error_units: u32,
         strict_t: u64,
+        rounding_margin_units: u32,
     ) -> bool {
-        let Some(gap) = strict_t.checked_sub(subset_t).map(i128::from) else {
+        if self.q != fractional_bits
+            || self.eps_root > i128::from(root_coordinate_error_units)
+            || i128::from(strict_t) > self.max_t
+        {
+            return false;
+        }
+        let Some(r) = self
+            .max_l1
+            .checked_mul(i128::from(root_coordinate_error_units))
+        else {
             return false;
         };
-        let r = self.max_l1 * self.eps_root;
-        let scale = 1i128 << self.q;
+        let margin = i128::from(rounding_margin_units);
+        let Some(strict_fixed) = i128::from(strict_t).checked_shl(self.q) else {
+            return false;
+        };
+        if margin == 0 || margin >= strict_fixed {
+            return false;
+        }
         8i128
             .checked_mul(r)
             .and_then(|value| value.checked_mul(r))
-            .zip(
-                gap.checked_mul(gap)
-                    .and_then(|value| value.checked_mul(scale))
-                    .and_then(|value| value.checked_mul(scale)),
-            )
-            .is_some_and(|(lhs, rhs)| lhs <= rhs)
+            .zip(margin.checked_mul(margin))
+            .is_some_and(|(lhs, rhs)| lhs < rhs)
     }
 }
 
@@ -865,12 +876,14 @@ mod tests {
 
     #[test]
     fn production_strict_threshold_contains_the_certified_subset() {
-        for &(d, mag1, mag2, subset, strict, min_numerator, denominator) in
-            &[(64, 31, 11, 18, 19, 1, 4), (128, 31, 0, 13, 14, 1, 2)]
+        for &(d, mag1, mag2, strict, margin, min_numerator, denominator) in
+            &[(64, 31, 11, 18, 600, 1, 4), (128, 31, 0, 13, 351, 1, 2)]
         {
-            let t = table(d);
-            assert!(t.strict_threshold_contains_true_subset(subset, strict));
-            assert!(!t.strict_threshold_contains_true_subset(subset, subset));
+            let t = OpNormTable::new(d, Q, (mag1 + 2 * mag2) as u64, strict).unwrap();
+            assert!(t.strict_threshold_contains_shrunken_subset(48, 4, strict, margin));
+            assert!(!t.strict_threshold_contains_shrunken_subset(47, 4, strict, margin));
+            assert!(!t.strict_threshold_contains_shrunken_subset(48, 0, strict, margin));
+            assert!(!t.strict_threshold_contains_shrunken_subset(48, 4, strict, 1));
 
             let mut state = 0xface_cafe_beef_0001u64 ^ d as u64;
             let samples = 10_000u64;
@@ -897,18 +910,18 @@ mod tests {
         let mut state = 0xd128_cafe_beef_0001u64;
         for _ in 0..1000 {
             let ch = random_shell(&mut state, d, 31, 0);
-            let production = decide_ch(&t, &ch, 14).unwrap();
-            let reduced = decide_reference_nested(&t, &ch, 14, d / 2);
-            let full = decide_reference_nested(&t, &ch, 14, d);
+            let production = decide_ch(&t, &ch, 13).unwrap();
+            let reduced = decide_reference_nested(&t, &ch, 13, d / 2);
+            let full = decide_reference_nested(&t, &ch, 13, d);
             assert_eq!(production, reduced, "challenge {ch:?}");
             assert_eq!(reduced, full, "challenge {ch:?}");
 
             let gamma_sq = gamma_sq_f64(d, &ch);
             if production == Decision::Accept {
-                assert!(gamma_sq <= 14.0f64.powi(2) + 1e-3);
+                assert!(gamma_sq <= 13.0f64.powi(2) + 1e-3);
             }
             if production == Decision::Reject {
-                assert!(gamma_sq >= 14.0f64.powi(2) - 1e-3);
+                assert!(gamma_sq >= 13.0f64.powi(2) - 1e-3);
             }
         }
     }

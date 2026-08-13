@@ -751,6 +751,7 @@ mod tests {
         };
         let policy = PlannerPolicy {
             cost_model: stale.identity.cost_model,
+            selective_l2_response_model: stale.identity.selective_l2_response_model,
             selection_policy: stale.identity.selection_policy,
             recursive_split_search_policy: stale.identity.recursive_split_search_policy,
             setup_field_budget: stale.identity.setup_field_budget,
@@ -758,10 +759,10 @@ mod tests {
             sis_modulus_profile: stale.identity.sis_modulus_profile,
             sis_security_policy: stale.identity.sis_security_policy,
             sis_table_digest: stale.identity.sis_table_digest,
+            sis_l2_table_digest: stale.identity.sis_l2_table_digest,
             uniform_ring_dimension: stale.identity.uniform_ring_dimension,
             setup_prefix_inner_ring_dimension: stale.identity.setup_prefix_inner_ring_dimension,
             decomposition: stale.identity.decomposition,
-            ring_subfield_norm_bound: stale.identity.ring_subfield_norm_bound,
             claim_ext_degree: stale.identity.claim_ext_degree,
             chal_ext_degree: stale.identity.chal_ext_degree,
             inner_basis_range: stale.identity.inner_basis_range,
