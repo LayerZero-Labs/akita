@@ -12,6 +12,7 @@
 //! runtime callers consume the generated tables from `akita-schedules`.
 
 use std::any::TypeId;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
@@ -28,7 +29,7 @@ use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, Recursive
 struct ScalarPreplan {
     source: TypeId,
     key: PolynomialGroupLayout,
-    schedule: FoldSchedule,
+    result: OnceLock<Result<FoldSchedule, AkitaError>>,
 }
 
 /// Exact scalar schedules already needed while preparing one generator run.
@@ -39,52 +40,71 @@ struct ScalarPreplan {
 /// before parallel rendering and is never persisted or iterated for output.
 #[derive(Default)]
 pub struct GenerationPreplans {
-    scalar: Vec<ScalarPreplan>,
+    scalar: Mutex<Vec<Arc<ScalarPreplan>>>,
 }
 
 impl GenerationPreplans {
     fn scalar<Cfg: CommitmentConfig + 'static>(
-        &mut self,
+        &self,
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
         let source = TypeId::of::<Cfg>();
-        if let Some(preplanned) = self
+        let mut scalar = self
             .scalar
+            .lock()
+            .map_err(|_| AkitaError::InvalidInput("scalar preplan cache poisoned".into()))?;
+        let preplanned = scalar
             .iter()
             .find(|preplanned| preplanned.source == source && preplanned.key == key)
-        {
-            return Ok(preplanned.schedule.clone());
-        }
-        let schedule = regen::<Cfg>(key)?;
-        self.scalar.push(ScalarPreplan {
-            source,
-            key,
-            schedule: schedule.clone(),
-        });
-        Ok(schedule)
+            .cloned()
+            .unwrap_or_else(|| {
+                let preplanned = Arc::new(ScalarPreplan {
+                    source,
+                    key,
+                    result: OnceLock::new(),
+                });
+                scalar.push(Arc::clone(&preplanned));
+                preplanned
+            });
+        drop(scalar);
+        preplanned.result.get_or_init(|| regen::<Cfg>(key)).clone()
+    }
+
+    /// Return an exact scalar result previously planned for `family`.
+    pub fn scalar_for_family(
+        &self,
+        family: &GeneratedFamily,
+        key: PolynomialGroupLayout,
+    ) -> Option<FoldSchedule> {
+        let source = (family.scalar_plan_source)();
+        self.scalar
+            .lock()
+            .ok()?
+            .iter()
+            .find(|preplanned| preplanned.source == source && preplanned.key == key)
+            .and_then(|preplanned| preplanned.result.get())
+            .and_then(|result| result.as_ref().ok())
+            .cloned()
     }
 
     /// Copy exact producer results into a completed spec before rendering.
     pub fn attach_to_spec(&self, family: &GeneratedFamily, spec: &mut EmitSpec) {
-        let source = (family.scalar_plan_source)();
         spec.preplanned_scalar = spec
             .keys
             .iter()
             .filter_map(|key| {
-                self.scalar
-                    .iter()
-                    .find(|preplanned| preplanned.source == source && preplanned.key == *key)
-                    .map(|preplanned| (*key, preplanned.schedule.clone()))
+                self.scalar_for_family(family, *key)
+                    .map(|schedule| (*key, schedule))
             })
             .collect();
     }
 }
 
 type GroupBatchKeys = Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>;
-type GroupBatchKeyGenerator = fn(&mut GenerationPreplans) -> Result<GroupBatchKeys, AkitaError>;
+type GroupBatchKeyGenerator = fn(&GenerationPreplans) -> Result<GroupBatchKeys, AkitaError>;
 type ExplicitPrecommittedGroupGenerator =
     fn(
-        &mut GenerationPreplans,
+        &GenerationPreplans,
         PolynomialGroupLayout,
     ) -> Result<(CommittedGroupProfile, HonestFoldPolicySpec), AkitaError>;
 
@@ -265,7 +285,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 /// `every_grouped_precommitted_descriptor_has_a_generated_producer` asserts the two
 /// agree on every shipped descriptor.
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
     let schedule = preplans.scalar::<Cfg>(group)?;
@@ -305,13 +325,13 @@ fn sorted_group_batch_keys(
 }
 
 fn no_group_batch_keys(
-    _preplans: &mut GenerationPreplans,
+    _preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     Ok(Vec::new())
 }
 
 fn fp128_onehot_group_batch_keys(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>(preplans)?;
     keys.push(heterogeneous_onehot_catalog_key(preplans)?);
@@ -332,7 +352,7 @@ fn fp128_onehot_group_batch_keys(
 }
 
 fn fp128_onehot_multichunk_group_batch_keys(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     Ok(sorted_group_batch_keys(recursive_onehot_profile_keys::<
         fp128::OneHotMultiChunk,
@@ -340,7 +360,7 @@ fn fp128_onehot_multichunk_group_batch_keys(
 }
 
 fn fp128_onehot_multichunk_w2r2_group_batch_keys(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     type Cfg = fp128::OneHotMultiChunkW2R2;
     let group = PolynomialGroupLayout::new(14, 1);
@@ -363,7 +383,7 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
 /// fills that gap. Both sizes are existing production sizes for the family —
 /// no key here introduces a new polynomial size or ring dimension.
 fn single_pre_group_batch_keys<Cfg: CommitmentConfig + 'static>(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
     pre_group: PolynomialGroupLayout,
     final_group: PolynomialGroupLayout,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
@@ -380,7 +400,7 @@ fn single_pre_group_batch_keys<Cfg: CommitmentConfig + 'static>(
 /// Shipped fp32 precommit-plus-final workload exercised by the extension-field
 /// multi-group PCS end-to-end test.
 fn fp32_onehot_group_batch_keys(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     single_pre_group_batch_keys::<fp32::OneHot>(
         preplans,
@@ -391,7 +411,7 @@ fn fp32_onehot_group_batch_keys(
 
 /// Precommit-plus-final row backing the `fp32 × Dense × pre` matrix cell.
 fn fp32_dense_group_batch_keys(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     // The precommit half is 20 rather than 14: `fp32::Dense` has no schedule
     // with at least two folds below 20, so 14 cannot produce the row this
@@ -410,7 +430,7 @@ fn fp32_dense_group_batch_keys(
 /// fold-level-1 witness length, so only the 16-variable pre-group yields a
 /// schedule the prover can actually execute.
 fn fp64_dense_group_batch_keys(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     single_pre_group_batch_keys::<fp64::Dense>(
         preplans,
@@ -421,7 +441,7 @@ fn fp64_dense_group_batch_keys(
 
 /// Precommit-plus-final row backing the `fp128 × Dense × sc × pre` matrix cell.
 fn fp128_dense_group_batch_keys(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     single_pre_group_batch_keys::<fp128::Dense>(
         preplans,
@@ -431,7 +451,7 @@ fn fp128_dense_group_batch_keys(
 }
 
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
@@ -449,7 +469,7 @@ fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 }
 
 fn heterogeneous_onehot_catalog_key(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), AkitaError> {
     let onehot_group = PolynomialGroupLayout::new(14, 1);
     let dense_group = PolynomialGroupLayout::new(15, 2);
@@ -468,7 +488,7 @@ fn heterogeneous_onehot_catalog_key(
 }
 
 fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let singleton_pre = planned_profile_without_precommitted_groups::<BaseCfg>(
         preplans,
@@ -572,7 +592,7 @@ pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf
 /// Adapt one [`GeneratedFamily`] into an [`EmitSpec`] for the planner emitter.
 pub fn emit_spec_for_family(
     family: &GeneratedFamily,
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
     output_dir: std::path::PathBuf,
     generator_command: &'static str,
 ) -> Result<EmitSpec, AkitaError> {
@@ -596,7 +616,7 @@ pub fn emit_spec_for_family(
 }
 
 fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
 ) -> Result<(CommittedGroupProfile, HonestFoldPolicySpec), AkitaError> {
     Ok((
@@ -720,21 +740,27 @@ mod tests {
     #[test]
     fn scalar_preplans_deduplicate_by_exact_producer_and_layout() {
         let key = PolynomialGroupLayout::new(14, 1);
-        let mut preplans = GenerationPreplans::default();
+        let preplans = GenerationPreplans::default();
 
-        let first = preplans
-            .scalar::<fp128::OneHot>(key)
-            .expect("first one-hot plan");
-        let repeated = preplans
-            .scalar::<fp128::OneHot>(key)
-            .expect("repeated one-hot plan");
-        assert_eq!(first, repeated);
-        assert_eq!(preplans.scalar.len(), 1);
+        let schedules = std::thread::scope(|scope| {
+            let handles = (0..3)
+                .map(|_| {
+                    scope.spawn(|| preplans.scalar::<fp128::OneHot>(key).expect("one-hot plan"))
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("preplan worker"))
+                .collect::<Vec<_>>()
+        });
+        let first = schedules[0].clone();
+        assert!(schedules.iter().all(|schedule| schedule == &first));
+        assert_eq!(preplans.scalar.lock().expect("preplan cache").len(), 1);
 
         preplans
             .scalar::<fp128::Dense>(key)
             .expect("same layout under a distinct producer");
-        assert_eq!(preplans.scalar.len(), 2);
+        assert_eq!(preplans.scalar.lock().expect("preplan cache").len(), 2);
 
         let family = ALL_GENERATED_FAMILIES
             .iter()

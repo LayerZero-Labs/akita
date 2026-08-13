@@ -1,5 +1,6 @@
 //! Generate schedule tables using the offline DP planner.
 
+use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
     emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
     ALL_GENERATED_FAMILIES,
@@ -335,7 +336,7 @@ fn push_unique_group_batch_key(
 }
 
 fn expand_precommitted_choices(
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
     groups: &[ExplicitGroup],
 ) -> Result<
     Vec<
@@ -391,7 +392,7 @@ fn push_precommitted_combinations(
 
 fn emit_spec_with_overrides(
     family: &GeneratedFamily,
-    preplans: &mut GenerationPreplans,
+    preplans: &GenerationPreplans,
     base_dir: PathBuf,
     explicit_rows: &ExplicitRows,
     generator_command: &'static str,
@@ -470,23 +471,31 @@ fn main() -> Result<(), String> {
         Vec::new()
     } else {
         let generator_command = generator_command();
-        let mut preplans = GenerationPreplans::default();
-        let mut specs = Vec::with_capacity(families_to_write.len());
-        for (index, family) in families_to_write.iter().enumerate() {
+        let preplans = GenerationPreplans::default();
+        let indexed_families = families_to_write
+            .iter()
+            .enumerate()
+            .map(|(index, family)| (index, *family))
+            .collect::<Vec<_>>();
+        let family_count = indexed_families.len();
+        let workers = offline_planning_worker_count(family_count);
+        let mut specs = bounded_parallel_filter_map(&indexed_families, workers, |item| {
+            let (index, family) = *item;
             eprintln!(
                 "planning schedule family {}/{}: {}",
                 index + 1,
-                families_to_write.len(),
+                family_count,
                 family.module_name
             );
-            specs.push(emit_spec_with_overrides(
+            emit_spec_with_overrides(
                 family,
-                &mut preplans,
+                &preplans,
                 args.base_dir.clone(),
                 &args.explicit_rows,
                 generator_command,
-            )?);
-        }
+            )
+            .map(Some)
+        })?;
         for (family, spec) in families_to_write.iter().zip(&mut specs) {
             preplans.attach_to_spec(family, spec);
         }
@@ -532,7 +541,7 @@ mod tests {
 
         let spec = emit_spec_with_overrides(
             family,
-            &mut GenerationPreplans::default(),
+            &GenerationPreplans::default(),
             PathBuf::from("generated"),
             &explicit_rows,
             "generator command",

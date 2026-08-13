@@ -121,9 +121,9 @@ graph TD
   the schedule-search DP. It sits **below** `akita-config` and names no
   `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
   and `akita-field`.
-- `akita-schedules` owns feature-gated generated schedule table wiring. The
-  large family modules are deterministic output produced during local/CI
-  bootstrap. It depends only on `akita-types`, `akita-challenges`, and
+- `akita-schedules` stores the tracked generated tables and their Cargo feature
+  wiring. The family modules are deterministic planner output. The crate
+  depends only on `akita-types`, `akita-challenges`, and
   `akita-field`.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
   policy trait. It depends on `akita-schedules`: `CommitmentConfig::select_schedule_for_key`

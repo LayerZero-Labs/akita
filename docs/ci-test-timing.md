@@ -7,7 +7,8 @@ Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`
 ## How CI runs tests
 
 - **`test`** runs the workspace nextest merge gate (`--profile ci --cargo-profile ci-test`, features `parallel,disk-persistence`), sharded across matrix jobs (`slice:index/total`).
-- **`test-all-schedules-drift`** regenerates schedule tables, rejects any difference from the committed generated files, then runs planner parity and schedule wiring tests outside the timing artifact.
+- **Generic CI and Jolt smoke jobs** consume the tracked schedule tables without regenerating them.
+- **`test-all-schedules-drift`** is the only CI job that regenerates schedules. It checks the tracked catalogs against fresh planner results, regenerates every table, rejects any byte difference, and runs schedule wiring tests outside the timing artifact.
 - **`test-timing`** merges shard JUnit into `summary.json` (schema v2, single pass `ci`) and uploads artifact `ci-test-timing-data`.
 
 ## Local repro
