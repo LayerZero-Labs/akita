@@ -35,8 +35,8 @@ the chunked witness model, and ship **new generated schedule tables for
 `D = 64` only**, with a `_multi_chunk` filename suffix.
 
 `ChunkedWitnessCfg` and the per-level `LevelParams.witness_chunk` field are
-**owned by** [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
-(it explicitly *replaced* an earlier `WitnessType`/`witness_shape` enum with this
+**owned by** [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)
+(it replaced an earlier `WitnessType`/`witness_shape` enum with this
 struct). This spec consumes that type rather than introducing a parallel one, and
 only adds planner-facing helpers/validation on it. Prover execution, verifier
 row-MLE evaluation, and witness production are **out of scope here**; they depend
@@ -98,7 +98,7 @@ fields on `AkitaScheduleLookupKey`.
   than live blocks, repeated boundaries preserve empty chunk slots.
 - **Power-of-two `num_chunks`.** Initial scope: `num_chunks` is a power of two
   (matching the book's $2^N$ nodes and the verifier chunked fast path in
-  [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)).
+  [`dyadic-chunk-partition.md`](dyadic-chunk-partition.md)).
   Non-power-of-two chunk counts return `InvalidSetup` at plan time.
 - **Single source of truth for witness width.** Chunked ring counts live in
   one new helper in `akita-types`; the planner DP, `schedule_from_entry`, and
@@ -124,9 +124,8 @@ fields on `AkitaScheduleLookupKey`.
 
 - **Prover implementation** (partial commits, local $\mathbf M_j$, node
   orchestration). The planner only emits parameters the prover will later consume.
-- **Verifier row-MLE refactor.** Assumed landed or in flight per
-  `distributed-verifier-row-eval.md`; this spec only requires
-  `LevelParams::witness_chunk` to be set consistently.
+- **Verifier row-MLE refactor.** Owned by `digit-innermost-layout.md`; this spec
+  only requires `LevelParams::witness_chunk` to be set consistently.
 - **Multi-chunk with precommitted commitment groups.** Chunked witness layout
   (`witness_chunk.uses_multi_chunk()`) and multi-group precommitted roots are
   separate axes; mixed-D multi-chunk is rejected at the verifier boundary.
@@ -166,7 +165,7 @@ At the root, `num_polynomials` comes from the lookup key; recursive levels use
 
 ### Chunked (multi-chunk witness)
 
-Per [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md) and
+Per [`digit-innermost-layout.md`](digit-innermost-layout.md) and
 [the distributed prover book chapter](book/src/how/proving/distributed-prover.md),
 a level with `witness_chunk.num_chunks = num_chunks > 1` concatenates
 `num_chunks` chunks followed by a single shared tail
@@ -278,7 +277,7 @@ not `num_nodes`. A level is "chunked" when `lp.witness_chunk.num_chunks > 1`.
 #### 1. `ChunkedWitnessCfg` (`akita-types`)
 
 `ChunkedWitnessCfg` is **defined by**
-[`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md) and lives in
+[`digit-innermost-layout.md`](digit-innermost-layout.md) and lives in
 `crates/akita-types/src/witness/`, so both `akita-config` and `akita-planner` can
 name it without a circular dependency and the verifier consumes the same type.
 That spec defines:
@@ -439,8 +438,8 @@ chunked vs single-chunk format. Convenience: import `ChunkedWitnessCfg` from
 
 #### 5. `LevelParams.witness_chunk` (`akita-types`)
 
-This spec does **not** add a new layout type to `LevelParams`. The verifier spec
-[`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md) already adds
+This spec does **not** add a new layout type to `LevelParams`. The layout spec
+[`digit-innermost-layout.md`](digit-innermost-layout.md) already adds
 the field
 
 ```rust
@@ -497,7 +496,7 @@ mirror every segment of the delegate ($\widehat e$, $\widehat t$, $\widehat z$,
 $r$). ZK blinding columns are out of scope for the initial non-zk tables.
 
 Unit tests in `akita-types` compare against the chunk offset arithmetic from
-`distributed-verifier-row-eval.md` Stage 1 (`chunk_stride`, `offset_r`).
+`digit-innermost-layout.md` Stage 1 (`chunk_stride`, `offset_r`).
 
 #### 7. Schedule lookup key — no multi-chunk fields
 
@@ -899,8 +898,8 @@ planner/config/`akita-types`-only otherwise and can land before the prover/verif
 ## References
 
 - Book: [The distributed prover](../book/src/how/proving/distributed-prover.md)
-- Verifier layout spec: [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
+- Verifier layout spec: [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)
 - Planner crate map: [`crates/akita-planner/README.md`](../crates/akita-planner/README.md)
 - Terminal tail sizing: [`crates/akita-types/src/proof/tail_segments.rs`](../crates/akita-types/src/proof/tail_segments.rs)
-- Generated table pipeline: [`specs/schedule-catalog-ownership.md`](schedule-catalog-ownership.md)
+- Generated table pipeline: [`specs/heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md)
 - Prior art (terminal layout split): [`specs/terminal-fold-cutover.md`](terminal-fold-cutover.md)

@@ -87,5 +87,4 @@ pass.
 
 - `profile/akita-recursion/README.md` (canonical runbook)
 - `profile/akita-recursion/glue/src/lib.rs`
-- `specs/akita-crate-followup-jolt-integration.md`
 - `specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`

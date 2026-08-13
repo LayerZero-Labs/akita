@@ -54,7 +54,7 @@ pub const I16_TAIL_PRIME: NttPrime<i16> = NttPrime {
 /// Raw 30-bit primes for Q128 (`logq = 128`, K=5).
 ///
 /// Chosen v₂-descending under prefix min-v₂ floors for future ring-dim headroom
-/// (see `specs/ring-dim-challenge-cutover.md`). Q32/Q64 use separate const tables
+/// (see `book/src/foundations/ntt-crt.md`). Q32/Q64 use separate const tables
 /// below with the matching prefix primes.
 pub const I32_RAW_PRIMES: [i32; Q128_NUM_PRIMES] =
     [1073692673, 1073668097, 1073707009, 1073738753, 1073732609];
