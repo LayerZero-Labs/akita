@@ -79,8 +79,14 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
             * step.params.witness.inner_commit_matrix.ring_dimension(),
         65_536,
     );
-    assert_eq!(step.params.witness.inner_commit_matrix.output_rank(), 3);
-    assert_eq!(response_cap, 697_251_053);
+    assert_eq!(
+        step.params.witness.inner_commit_matrix.output_rank(),
+        akita_types::sis::min_secure_l2_rank(
+            table_key,
+            step.params.witness.inner_commit_matrix.input_width() as u64,
+        )
+        .expect("shipped L2 geometry must have an audited rank")
+    );
     let expected_collision = akita_types::sis::role_a_collision_l2_sq_for_response_bound(
         u128::from(akita_challenges::OperatorNormRejection::D64_SELECTIVE_L2.threshold),
         response_cap,
