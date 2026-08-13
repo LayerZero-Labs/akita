@@ -369,11 +369,7 @@ where
             logical_w.live_coeff_len()
         )));
     }
-    let logical_w = if E::EXT_DEGREE == 1 {
-        logical_w.align_for_commitment_ring_dim(next_opening_ring_dim)?
-    } else {
-        logical_w
-    };
+    let logical_w = logical_w.align_for_commitment_ring_dim(next_opening_ring_dim)?;
     let _span = tracing::info_span!("commit_w_level", level).entered();
     let next_commitment = match next_params {
         FoldSuccessorParams::Recursive(params) => {

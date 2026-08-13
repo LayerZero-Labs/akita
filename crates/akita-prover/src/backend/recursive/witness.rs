@@ -856,6 +856,21 @@ mod tests {
     }
 
     #[test]
+    fn tensor_view_uses_commitment_domain_after_commitment_padding() {
+        const D: usize = 64;
+        let witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 70 * D])
+            .align_for_commitment_ring_dim(D)
+            .expect("commitment alignment");
+
+        let committed: SuffixWitnessView<'_, F, D> = witness.commit_view().expect("commit view");
+        let tensor: SuffixWitnessView<'_, F, D> = witness.tensor_view().expect("tensor view");
+
+        assert_eq!(committed.coeffs.len(), tensor.coeffs.len());
+        assert_eq!(tensor.live_ring_elems, 70);
+        assert_eq!(tensor.num_vars(), 13);
+    }
+
+    #[test]
     fn suffix_root_projection_is_rejected() {
         const D: usize = 16;
         type E = akita_field::FpExt4<F>;
