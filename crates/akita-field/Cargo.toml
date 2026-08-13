@@ -26,6 +26,11 @@ serde = "1"
 thiserror = "2.0"
 
 [dev-dependencies]
+# Pins the serde encoding against the exact config Jolt uses for `JoltProof`.
+bincode = { version = "2", default-features = false, features = [
+  "std",
+  "serde",
+] }
 jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
 rand = "0.8"
 
