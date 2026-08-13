@@ -66,15 +66,16 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Ok(universal_digits) = fold_policy.num_digits_fold(sizing_query) else {
         return Ok(None);
     };
-    let num_digits_fold = source_moment
-        .and_then(|moment| {
-            moment.response_linf_cap(
-                ring_challenge_cfg.challenge_l2_sq_max(),
-                num_live_blocks,
-                num_chunks,
-                num_fold_coeffs,
-            )
-        })
+    let modeled_linf_cap = source_moment.and_then(|moment| {
+        moment.response_linf_cap(
+            ring_challenge_cfg.challenge_l2_sq_max(),
+            num_live_blocks,
+            num_chunks,
+            num_fold_coeffs,
+            d_a,
+        )
+    });
+    let num_digits_fold = modeled_linf_cap
         .map(|cap| {
             num_digits_for_linf_cap(cap, policy.decomposition.field_bits(), log_basis_open)
                 .min(universal_digits)

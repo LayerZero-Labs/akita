@@ -118,6 +118,7 @@ pub(crate) fn terminal_direct_suffix_cost(
             terminal_params.num_live_blocks,
             1,
             num_fold_coeffs,
+            terminal_params.d_a(),
         )
     });
     let admission_cap = modeled_admission_cap

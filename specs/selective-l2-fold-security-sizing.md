@@ -77,31 +77,36 @@ Hachi logical-to-physical embedding factor at this boundary. The Euclidean
 estimator also receives the complete collision length once. It does not
 multiply that length by the A matrix width a second time.
 
-The planner carries two source statistics through recursive folds:
+The planner carries total and typed source statistics through recursive folds:
 
 ```text
-M = estimated total source squared L2 norm
-P = estimated largest coordinate second moment
+M             = estimated total source squared L2 norm
+M_i           = estimated squared L2 norm of component i
+P_i,ring      = estimated coordinate second moment across a complete packed ring
+P_i,local     = estimated coordinate second moment for a strict packed subring
+D_pack        = ring dimension used to pack the source
 ```
 
-It uses `M` for L2 response caps. It uses both `M` and `P` for a tighter Linf
-digit depth. The model follows the actual Z, E, T, R, compression, tensor, and
-setup-prefix components of `WitnessLayout`.
+The component index `i` ranges over Z, E, T, R, and compression. The planner
+uses `M` for L2 response caps. It uses the typed values for Linf digit depth.
+The model follows the component counts in `WitnessLayout`.
 
 The current calibration uses
 
 ```text
-L2 cap = ceil(M * q_c * 1.03 * 1.06),
+L2 cap = ceil(M * q_c * 1.03 * 40 / 39),
 ```
 
 where `q_c` is the challenge squared L2 norm. The `1.03` factor covers measured
-source-model error. The `1.06` factor gives a distribution-free Markov lower
-bound on per-nonce acceptance, conditional on the source envelope being valid.
+source-model error. The `40/39` factor gives a distribution-free Markov lower
+bound of `1/40` on per-nonce acceptance, conditional on the source envelope
+being valid. With 4096 fresh nonce attempts, the resulting exhaustion bound is
+below `2^-149` for one response.
 
-Fresh end-to-end validation covers 14 production profiles and 52 selected L2
+Fresh end-to-end validation covers 13 production profiles and 51 selected L2
 responses. It includes dense and one-hot witnesses over fp32, fp64, and fp128,
 plus direct, recursive-setup, multi-group, and W2, W4, and W8 multi-chunk
-adapters. Observed L2 cap slack was 6.8998 to 18.1761 percent. Every proof
+adapters. Observed L2 cap slack was 0.0847 to 10.4720 percent. Every proof
 passed both verifier modes.
 
 ## Scope
@@ -154,7 +159,6 @@ This change does not do the following.
 * It does not force a particular rank or number of folds.
 * It does not add four-square slack, carry witnesses, or a field inequality
   proof.
-* It does not symmetrize accepted challenges with an extra transcript draw.
 * It does not reject and resample setup seeds from a planner envelope.
 
 The last item remains a possible future completeness improvement. A verifier
@@ -223,7 +227,7 @@ The design uses several kinds of reasoning. They should not be conflated.
 | Universal balanced-source Linf cap | Tail bound from public source bounds and random challenge signs | Honest rejection rate may increase if incorrect |
 | Typed source moments | Component model plus empirical error envelope | Honest L2 or Linf grinding may take longer or exhaust |
 | Rounded-normal Z digit moments | Conditional approximation | Honest grinding or later schedule choices may be worse |
-| Typed Linf sub-Gaussian proxy | Planner heuristic, capped by the universal digit depth | Honest Linf grinding may take longer or exhaust |
+| Typed Linf Gaussian slab model | Gaussian correlation bound applied to modeled coordinate variances, capped by the universal digit depth | Honest Linf grinding may take longer or exhaust if the Gaussian approximation is inaccurate |
 | Measured challenge covariance | Empirical validation, not a proof of exact symmetry | Source model may have more error than measured |
 
 Only the first five rows are part of the verifier security contract. The
@@ -419,24 +423,20 @@ separate certificate checkers under `scripts/operator_norm/`.
 Other ring dimensions use their production sparse shell without operator norm
 rejection. For those dimensions, L2 security sets `gamma` to the shell L1 norm.
 
-### Why this PR does not add orbit symmetrization
+### Measured challenge covariance
 
-Negacyclic shifts and odd ring automorphisms preserve the mathematical
-operator norm. Sampling a random element of that orbit after acceptance would
-make the covariance exactly scalar if the added orbit draw were uniform.
+The fixed-point predicate could have broken the ring symmetries that preserve
+the mathematical operator norm. Measurements found no such effect. Five
+million random orbit pairs at each of D64 and D128 produced no acceptance
+mismatch. Thirty-two complete orbits at each dimension produced no mixed
+accepted and rejected orbit. The measured covariance defect was about 0.07
+percent before and after explicit orbit randomization.
 
-The fixed-point predicate might, in principle, break orbit invariance. This PR
-measured that risk before changing the transcript. Five million random orbit
-pairs at each of D64 and D128 produced no acceptance mismatch. Thirty-two
-complete orbits at each dimension produced no mixed accepted and rejected
-orbit. The measured covariance defect was about 0.07 percent before and after
-explicit orbit randomization.
-
-The result does not prove exact covariance. It shows that transcript
-symmetrization would add protocol machinery without a measurable improvement
-at the tested precision. The planner's 3 percent source envelope covers the
-measured defect. Soundness does not depend on covariance because the verifier
-enforces `gamma` for every accepted challenge.
+The data does not prove exact scalar covariance, so the planner still treats
+the small measured defect as part of its 3 percent source envelope. There is no
+observed asymmetry to correct and no deferred symmetrization work. Soundness
+does not depend on covariance because the verifier enforces `gamma` for every
+accepted challenge.
 
 ## Physical L2 proof
 
@@ -657,7 +657,7 @@ the final witness length.
 | T | Exact live E count times the A output row count. Uses the same field digit moments. | Same as E |
 | R | Exact row ranges from `WitnessLayout`. Uses full-width field digit moments. | Same as E |
 | Compression | Exact coefficient count. Negative-binary digits contribute expected energy `1/2` per coefficient. | Exact under a balanced bit model |
-| Tensor packing | Applies the multiplicity `(2K - 1) / K` for extension degree `K`. | Exact under exchangeable extension coordinates |
+| Tensor packing | Applies the multiplicity `(2K - 1) / K` to total energy and to the average coordinate moment across a complete packed ring. It also retains the local bound `P` for `K = 1` and `2P` for `K > 1`. A later fold uses the complete-ring value only when its ring dimension matches `D_pack`. | Exact under exchangeable extension coordinates; the local value is a deterministic coefficient bound |
 | Padding | Contributes zero. | Exact |
 
 For a power-of-two digit basis `b`, a centered uniform digit in
@@ -707,11 +707,12 @@ source energy in proportion to its public share of live blocks, then adds the
 typed component energies. The block counts are exact. The assumption that
 energy follows those counts is part of the completeness model.
 
-For chunks, the model uses the exact chunk layout. The Linf peak proxy scales by
-the ceiling of live blocks per chunk. L2 candidate construction still requires
-one chunk because the current physical norm proof and candidate audit are
-defined for that boundary. A multi-chunk profile can select L2 at a later
-single-chunk state.
+For chunks, the model uses the exact chunk layout. The Linf peak calculation
+uses the ceiling of live blocks per chunk. All component classes share that
+one column capacity. L2 candidate construction still requires one chunk
+because the current physical norm proof and candidate audit are defined for
+that boundary. A multi-chunk profile can select L2 at a later single-chunk
+state.
 
 ## L2 response cap
 
@@ -719,7 +720,7 @@ Let `M` be the upward-bucketed source energy and `q_c` the exact challenge
 squared L2 mass. The planner freezes
 
 ```text
-S_max = ceil(M * q_c * 1.03 * 1.06).
+S_max = ceil(M * q_c * 1.03 * 40 / 39).
 ```
 
 The factors have different meanings.
@@ -727,7 +728,7 @@ The factors have different meanings.
 * `1.03` is the source-model envelope. It covers observed unfavorable error
   from typed components, pseudo-Mersenne field moments, approximate challenge
   covariance, finite mixing, and rounded-normal Z digits.
-* `1.06` is the response allowance for one nonce attempt.
+* `40/39` is the response allowance for one nonce attempt.
 
 Assume the first factor bounds the true conditional mean:
 
@@ -738,12 +739,16 @@ E[S | source] <= 1.03 * M * q_c.
 Since `S` is nonnegative, Markov's inequality gives
 
 ```text
-Pr[S <= 1.06 * E[S | source]] >= 1 - 1 / 1.06 = 3 / 53.
+Pr[S <= (40/39) * E[S | source]] >= 1 - 39 / 40 = 1 / 40.
 ```
 
 The fold protocol permits 4096 nonce attempts. Under the random-oracle model,
-fresh nonces give fresh challenge draws, so even this loose per-attempt lower
-bound makes exhaustion negligible.
+fresh nonces give fresh challenge draws. Even this loose per-attempt lower
+bound gives
+
+```text
+Pr[all 4096 attempts fail] <= (39/40)^4096 < 2^-149.
+```
 
 This argument does not assume a Gaussian response tail. It is rigorous only
 conditional on the 3 percent source envelope. The empirical section tests that
@@ -794,34 +799,67 @@ remain the soundness boundary.
 
 ### Typed Linf candidate
 
-The typed model uses both source statistics. Let
+The typed model uses the component statistics. Let
 
 ```text
 N = physical response coefficient count
 L = number of live blocks
 C = number of chunks
+D = source ring dimension
+B = ceil(L / C)
 ```
 
-and interpret `P` as the largest source-coordinate second moment. It computes
+One source column contains at most `B * D` coefficients. For component `i`, let
+`P_i(D)` be `P_i,ring` when `D = D_pack`. Otherwise it is `P_i,local`.
+
+For each component, write
+
+```text
+M_i = k_i * P_i(D) + r_i,
+0 <= r_i < P_i(D).
+```
+
+This gives `k_i` full slots with value `P_i(D)` and at most one partial slot
+with value `r_i`. The planner sorts these ten slot classes by value and takes
+the largest `B * D` slots. Their sum is `Q_peak`. This is the largest column
+moment allowed by the component totals and coordinate peaks.
+
+The response calculation is
 
 ```text
 v_avg  = M * q_c / N
-v_peak = P * q_c * ceil(L / C)
+v_peak = Q_peak * q_c / D
 v       = 1.03 * max(v_avg, v_peak)
-t       = ceil(sqrt(2 * v * ln(16N / 7))).
+p_N     = (1/40)^(1/N)
+t       = ceil(sqrt(v) * Phi^-1((1 + p_N) / 2)).
 ```
 
-If every response coordinate were sub-Gaussian with variance proxy at most
-`v`, a union bound would give
+Here `Phi` is the standard normal cumulative distribution function. If the
+centered response were multivariate Gaussian and every coordinate variance
+were at most `v`, then each symmetric coordinate slab `[-t,t]` would have
+probability at least `p_N`. The Gaussian correlation inequality applies to
+centered Gaussian measures and symmetric convex sets. Applying it to the `N`
+coordinate slabs gives
 
 ```text
-Pr[||z||_inf <= t] >= 1 / 8.
+Pr[||z||_inf <= t] >= p_N^N = 1 / 40.
 ```
 
-The model tracks `P` so a small high-energy component cannot disappear inside
-the whole-witness average. The formula is theoretically motivated, but the
-implementation does not prove the required sub-Gaussian proxy from second
-moments alone. It is therefore a planner heuristic.
+This does not assume independent response coordinates. It removes the loss
+from the previous coordinatewise union bound while retaining the full modeled
+covariance freedom.
+
+The shared capacity is important. Z, E, T, R, and compression occupy disjoint
+witness coordinates. Giving every class all `B * D` slots can overcount the
+same fp64 column by about four times. The capacity calculation prevents that
+error while retaining every component total and peak bound.
+
+The component capacity calculation is a valid upper bound for the supplied
+moments. The Gaussian correlation step is rigorous for the modeled Gaussian
+law, but the reduction from the actual sparse signed convolution to that law
+is heuristic. The component moments are also distribution estimates rather
+than bounds on each realized witness. The universal Linf candidate remains
+available.
 
 The selected typed digit depth is capped by the universal depth. The suffix
 search also retains the relevant universal Linf alternative. No historical
@@ -962,9 +1000,9 @@ A total proof size alone cannot answer these questions. The validation records
 source energy, modeled response mean, observed response norm, cap, nonce, route,
 and exact serialized bytes at each fold.
 
-### Current sample
+### Broad calibration sample
 
-The current run contains 14 fresh production profiles. It covers:
+The final calibration run contains 13 production profiles. It covers:
 
 * Dense and one-hot fp32.
 * Dense and one-hot fp64.
@@ -972,24 +1010,28 @@ The current run contains 14 fresh production profiles. It covers:
 * One-hot fp128 direct and recursive setup.
 * Direct and recursive multi-group.
 * W2, W4, and W8 multi-chunk variants.
-* Recursive W8 and dense W8 adapters.
+* Recursive W8 adapters.
 
 Every proof passed multi-threaded and single-threaded verification.
 
-Across 52 selected L2 responses:
+This run measures the total-energy formula. The later component-capacity
+experiment measures the Linf column formula. A Linf model change can select a
+different suffix, so the two data sets answer different questions.
+
+Across 51 selected L2 responses:
 
 | Measurement | Observed range |
 |---|---:|
-| Frozen cap above observed response | 6.8998% to 18.1761% |
-| Modeled source energy relative to exact source energy | -0.2029% to +8.9523% |
-| Observed response relative to `exact source energy * q_c` | -2.1843% to +2.4899% |
-| Nonce use | 51 used nonce 0; 1 used nonce 1 |
+| Frozen cap above observed response | 0.0847% to 10.4720%; mean 6.80% |
+| Modeled source energy relative to exact source energy | -0.1750% to +2.0689% |
+| Observed response relative to `exact source energy * q_c` | -3.8491% to +6.3244% |
+| Attempts | 1 to 6; mean 1.57 |
 
 For the second and third rows, a positive value means the model or observation
 is larger than the reference. The third row uses the conditional mean implied
 by scalar challenge covariance. The separate orbit measurement tests the small
 covariance approximation in that reference. The worst aggregate source
-underestimate was 0.2029 percent, below the 3 percent envelope.
+underestimate was 0.1750 percent, below the 3 percent envelope.
 
 Component-level checks covered 88 recursive witnesses. Model error relative to
 the measured component was:
@@ -1008,11 +1050,58 @@ W8 setup values that retained correlation instead of behaving as fully mixed
 uniform values. Those overestimates cost planner efficiency but do not threaten
 honest acceptance.
 
-The 52-response sample is strong evidence for the current generated profiles.
-It is not a proof that all future witness distributions fit the model. New
-field profiles, setup distributions, ring dimensions, challenge families, or
-layout components require new component and end-to-end measurements before
-they inherit the 3 percent envelope.
+### Final schedule remeasurement
+
+The component-capacity correction was measured on every recursive and terminal
+state of fp32 and fp64 dense and one-hot profiles. The diagnostic computed the
+exact largest cyclic source-column energy before each response. A second final
+run then exercised every supported adapter family with the corrected Linf
+quantile and L2 grinding allowance.
+
+| Profile | Actual proof bytes | Terminal cap | Observed terminal maximum | Cap above maximum |
+|---|---:|---:|---:|---:|
+| fp32 dense `nv=26` | 69,416 | 1,146 | 1,137 | 0.8% |
+| fp32 one-hot `nv=30` | 69,350 | 1,146 | 1,027 | 11.6% |
+| fp64 dense `nv=26` | 72,789 | 1,647 | 1,512 | 8.9% |
+| fp64 one-hot `nv=30` | 71,511 | 1,647 | 1,613 | 2.1% |
+| fp128 dense `nv=28` | 73,247 | 851 | 812 | 4.8% |
+| fp128 one-hot direct `nv=36` | 73,938 | 851 | 840 | 1.3% |
+| fp128 one-hot recursive `nv=36` | 78,835 | 851 | 791 | 7.6% |
+| fp128 multi-group direct `nv=32`, 4 groups | 72,898 | 851 | 799 | 6.5% |
+| fp128 multi-group recursive `nv=32`, 4 groups | 76,199 | 851 | 823 | 3.4% |
+| fp128 multi-group recursive W8R2 | 79,259 | 851 | 841 | 1.2% |
+| fp128 multi-chunk W2R2 | 73,729 | 851 | 841 | 1.2% |
+| fp128 multi-chunk W4R2 | 73,993 | 851 | 836 | 1.8% |
+| fp128 multi-chunk W8R2 | 75,583 | 851 | 835 | 1.9% |
+
+Every proof passed multi-threaded and single-threaded verification. The profile
+harness uses fixed seeds. These four maxima are samples, not estimates of an
+acceptance quantile.
+
+The old scalar calculation gave every typed component the complete block
+column. In the eight-block fp64 terminal experiment, that counted four
+disjoint component classes as four separate eight-block columns. The source
+proxy was 66,572, while the exact source-column energy was 16,061. The shared
+capacity model removes this structural overcount.
+
+The previous coordinatewise union bound made the fp64 maximum too large. It
+forced one late response from two digits to three and made the selective L2 A
+matrix rank eight instead of seven. The Gaussian correlation inequality gives
+a joint slab lower bound without assuming independent coordinates. Combined
+with the `40/39` L2 allowance, it restores the compact two-digit and rank-seven
+fp64 suffix.
+
+Twenty independent seeds for each fp64 profile produced 160 accepted L2
+responses. Dense proofs averaged 1.525 attempts per L2 response and one-hot
+proofs averaged 1.775. The largest single attempt count was 12. The inferred
+source estimate was 0.03 to 2.49 percent above exact source energy across this
+sample. This supports the 3 percent source envelope and is far better than the
+theoretical `1/40` per-attempt floor.
+
+These measurements do not prove that all future witness distributions fit the
+model. A new field profile, setup distribution, ring dimension, challenge
+family, or layout component requires new measurements before it can use the 3
+percent envelope.
 
 ### Current model limits
 
@@ -1024,8 +1113,9 @@ places.
 * Z digit moments assume an approximately normal folded coefficient before
   balanced reduction.
 * E, T, and R use uniform field moments even when protocol correlations remain.
-* The typed Linf formula treats a second moment as a sub-Gaussian variance
-  proxy without proving that tail class.
+* The typed Linf formula approximates the sparse signed response by a centered
+  Gaussian with the modeled coordinate variances. The Gaussian correlation
+  step is exact for that model, but the approximation itself is not proved.
 * The setup prefix is modeled as pseudorandom rather than checked against a
   deterministic seed-admission envelope.
 
@@ -1165,13 +1255,6 @@ for every accepted response, regardless of its distribution.
 The verifier needs an exact integer norm followed by a public integer
 comparison. Direct no-wrap sums and LimbGram reconstruction provide that
 statement without slack variables or carry witnesses.
-
-### Explicit challenge symmetrization
-
-Uniform negacyclic shifts and odd automorphisms would force scalar covariance.
-Measurements found no orbit mismatch and no useful covariance improvement, so
-this PR leaves the transcript unchanged. A future challenge family should
-repeat the orbit experiment or add explicit symmetrization.
 
 ### Deterministic setup-seed admission
 

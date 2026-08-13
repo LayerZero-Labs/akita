@@ -82,8 +82,7 @@ pub(super) struct ScheduleMemoKey {
     pub(super) level: usize,
     pub(super) current_witness_len: usize,
     pub(super) current_lb: u32,
-    pub(super) source_mean_l2_sq: Option<u128>,
-    pub(super) source_peak_second_moment_ppm: Option<u128>,
+    pub(super) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(super) incoming_setup_prefix: Option<usize>,
     pub(super) d_a: usize,
     pub(super) d_b: usize,
@@ -250,10 +249,7 @@ impl SuffixState {
             level: self.level,
             current_witness_len: self.current_witness_len,
             current_lb: self.current_lb,
-            source_mean_l2_sq: self.source_moment.map(|moment| moment.mean_l2_sq()),
-            source_peak_second_moment_ppm: self
-                .source_moment
-                .map(|moment| moment.peak_second_moment_ppm()),
+            source_moment: self.source_moment,
             incoming_setup_prefix: self.incoming_setup_prefix,
             d_a: memo_dimensions.d_a(),
             d_b: memo_dimensions.d_b(),

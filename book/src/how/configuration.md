@@ -88,18 +88,19 @@ applies the following rules.
 The planner rounds each source estimate upward while retaining seven leading
 bits. This adds less than `1/64` relative error and keeps the suffix search
 small. It then multiplies the source estimate by the challenge squared energy,
-a 1.03 model envelope, and a 1.06 response allowance. The combined factor is
-1.0918. If the model envelope bounds the conditional mean, Markov's inequality
-gives at least `3/53` acceptance probability on each independent attempt. The
-protocol permits 4096 attempts.
+a 1.03 model envelope, and a `40/39` response allowance. If the model envelope
+bounds the conditional mean, Markov's inequality gives at least `1/40`
+acceptance probability on each independent attempt. The protocol permits 4096
+attempts, so the resulting exhaustion bound for one response is below
+`2^-149`.
 
 The 1.03 factor covers approximations in the normal, field digit, challenge
 covariance, and finite mixing models. It is an empirical completeness margin,
 not a soundness claim. In fresh cross-profile validation proofs, aggregate
-source estimates were 0.09 to 1.93 percent above measured source energy. Across
-44 selected L2 responses in 13 profile cases, every proof passed both verifier
-modes. Frozen cap slack ranged from 1.85 to 13.26 percent, and every response
-used nonce zero.
+source estimates were 0.18 percent below to 2.07 percent above measured source
+energy. Across 51 selected L2 responses in 13 profile cases, every proof passed
+both verifier modes. Frozen cap slack ranged from 0.08 to 10.47 percent, and
+responses took one to six attempts.
 
 The field digit model is exact for uniform power of two residues, apart from
 the negligible pseudo-Mersenne boundary. Recursive setup values can retain

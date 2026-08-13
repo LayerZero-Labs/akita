@@ -152,6 +152,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                     num_live_blocks,
                     num_chunks,
                     num_fold_coeffs,
+                    d,
                 )
                 .map(|cap| {
                     num_digits_for_linf_cap(cap, policy.decomposition.field_bits(), log_basis_open)
