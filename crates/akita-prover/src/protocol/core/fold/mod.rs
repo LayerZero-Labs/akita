@@ -350,7 +350,7 @@ where
         AkitaError::InvalidSetup("non-terminal fold is missing successor params".into())
     })?;
     let next_opening_ring_dim = next_params.inner_ring_dimension();
-    let logical_w = ring_switch_build_w::<F, R>(
+    let mut logical_w = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,
         prepared_fold.witness,
         stack.ring_switch(),
@@ -386,6 +386,9 @@ where
             crate::commit_terminal_w::<Cfg, C>(params, expanded, stack.commit(), &logical_w)?
         }
     };
+    if next_commitment.witness.is_some() {
+        logical_w.release_commitment_alignment();
+    }
     drop(_span);
     match &next_commitment.binding {
         NextWitnessState::OuterPayload(commitment) => {
