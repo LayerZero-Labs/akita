@@ -31,6 +31,14 @@ For extension fields, EOR is not available at those levels. For degree one
 fields, the same mode may reduce the partial opening and D or H source even
 though there is no EOR payload to remove.
 
+Carrier folds at levels 0 and 1 MUST use the Linf A security route. This keeps
+PR 369's rule that physical L2 admission starts at fold level 3. The planner
+MUST derive the Linf response bound through the same policy as PR 369. At the
+root, this includes the unconditional adversarial bound for caller controlled
+dense inputs. At level 1, it uses the propagated typed response model when the
+selected profile provides one. This feature does not add another response
+model.
+
 Later recursive folds and the terminal keep the current opening protocol. The
 feature does not add a carrier terminal and does not extend carrier search past
 the existing two level adaptive prefix. A short schedule uses carrier mode at
@@ -45,7 +53,7 @@ payload second, followed by its current canonical deterministic ordering.
 
 This specification is stacked on the selective L2 fold sizing work in
 [PR #369](https://github.com/LayerZero-Labs/akita/pull/369), at commit
-`8637b85472349c5cd8d2178221399b5dea3773ef`. It also assumes the dyadic B
+`6b0050b76a10e9dd11835d96e167a53bcab21b8b`. It also assumes the dyadic B
 slicing merged in [PR #388](https://github.com/LayerZero-Labs/akita/pull/388).
 
 ## Why this change
@@ -509,6 +517,25 @@ partial is `selected_partial_width / d_D`. D ranks, compression source widths,
 and H compression geometry MUST be recomputed from that exact width. They MUST
 NOT be obtained by scaling an old `d_A` price after rank selection.
 
+### Relation and setup factorizations
+
+The Stage 2 relation address and the Stage 3 setup projection use different
+coefficient factorizations. They MUST have distinct checked geometry types.
+
+The Stage 2 relation coefficient block must factor every row modulus used in
+the combined relation, including the carrier modulus `s`. It may therefore be
+smaller than each A, B, and D role dimension. This remains valid when `d_D`
+divides `k s` but does not divide `s`. The `k` carrier coordinate planes remain
+separate semantic planes even when the flat address calculation groups their
+coefficients into smaller common blocks.
+
+The Stage 3 setup projection keeps its existing base derived from the A, B, and
+D role dimensions. It does not shrink merely because Stage 2 includes a
+carrier row. The implementation MUST prove that both checked factorizations
+produce the same flat coefficient weights for every shared A, B, and D scan.
+It MUST NOT strengthen the carrier admission rule from `d_D | k s` to
+`d_D | s` to make the two factorizations equal.
+
 ## Ring switching
 
 ### Two evaluations of each challenge
@@ -611,16 +638,48 @@ REQUIRED.
 
 ### Challenge entropy and unit differences
 
-Every admitted carrier challenge configuration MUST satisfy both conditions:
+Every admitted carrier challenge configuration MUST meet the configured
+per-draw Fiat-Shamir min-entropy target. The complete proof MUST use Akita's
+existing schedule error accounting, including the number of challenge
+coordinates and the public random oracle query bound. A raw 128-bit family is
+not by itself a 128-bit schedule.
 
-1. one draw has at least the configured 128-bit Fiat-Shamir min-entropy target;
-2. the difference of any two distinct challenges in the family is a unit in
-   `S` under Akita's audited short-invertibility bound.
+Pairwise difference invertibility follows from the fixed prime profiles, not
+from a separate challenge certificate. Let `ell` denote the cyclotomic split
+count in LS18. This is distinct from Akita's extension degree `k`. LS18
+Corollary 1.2 states that, for powers of two `s >= ell > 1`, if
 
-The second condition MUST be checked for the **difference** family, including
-its doubled coefficient and norm bounds, not merely for one sampled challenge.
-The proof and parameter checker MUST use the factorization/invertibility bound
-for `Y^s+1`. Entropy validation alone is insufficient.
+```text
+q = 2 ell + 1 mod 4 ell,
+```
+
+then every nonzero `delta` in `K[Y]/(Y^s+1)` with
+
+```text
+||delta||_inf < q^(1/ell) / sqrt(ell)
+```
+
+is a unit. Akita fixes these production field invariants:
+
+| Modulus profile | Prime `q` | LS18 split count `ell` | Congruence |
+|---|---:|---:|---|
+| `Q32Offset99` | `2^32 - 99` | 2 | `q = 5 mod 8` |
+| `Q64Offset59` | `2^64 - 59` | 2 | `q = 5 mod 8` |
+| `Q128OffsetA7F7` | `2^128 - 2^32 + 22537` | 4 | `q = 9 mod 16` |
+
+Every production sparse challenge family has `c_max <= 2`. Therefore every
+coefficient of a challenge difference has magnitude at most
+`2 c_max <= 4`. For each fixed profile above,
+
+```text
+2 c_max < q^(1/ell) / sqrt(ell),
+```
+
+so every nonzero difference of two production challenges is a unit in `S`.
+This is a build time production field invariant. It is not schedule metadata or
+candidate admission. The implementation MUST NOT add a per-candidate unit
+certificate, registry, or planner gate. A future production field profile or
+challenge family must establish the same LS18 condition during review.
 
 If `delta(Y)` is a unit in `S`, then `delta(X^(k h))` is a unit in `R`: the
 carrier embedding maps the inverse of `delta` to an ambient inverse. The same
@@ -640,10 +699,10 @@ It follows that
 ||M_(c(X^(k h)))||_2 = ||M_(c(Y))||_2.
 ```
 
-The selective L2 response route may use the operator norm certificate at
-dimension `s` after checking this embedding. It may not select a certificate by
-ambient dimension `d_A`. Tests MUST compare the block reduction with direct
-ambient multiplication and MUST cover the sign on negacyclic wraparound.
+Tests MUST compare this block reduction with direct ambient multiplication and
+MUST cover the sign on negacyclic wraparound. The operator norm equality is
+retained as an algebraic fact for later work. It does not admit an L2 carrier
+candidate at levels 0 or 1 in this feature.
 
 ### Forking extraction
 
@@ -695,7 +754,8 @@ the verifier tests the resulting single `E` polynomial.
 The final theorem statement for direct mode MUST include:
 
 - binding of the original and partial commitments;
-- the carrier challenge entropy and unit-difference assumptions;
+- the carrier challenge entropy condition and the fixed LS18 prime and
+  shortness conditions;
 - the carrier polynomial root bound;
 - the existing A/B/D/F/H MSIS assumptions;
 - the existing range and sum-check soundness errors; and
@@ -803,8 +863,8 @@ it MUST NOT report `h` as an automatic proof-size factor.
 ### Concrete fp32, `d_A = 1024`, `k = 4`
 
 The candidates induced by the current production challenge ladder expose the
-main tradeoff. Direct-mode admission still requires the new unit-difference
-certificate specified above.
+main tradeoff. The fixed fp32 prime and every family in this table satisfy the
+LS18 condition above.
 
 | `s` | `h` | `k h` ambient stride | coordinates per partial | production sparse family at `s` | challenge `l1` mass |
 |---:|---:|---:|---:|---|---:|
@@ -912,9 +972,9 @@ conversion is needed. The level 2 schedule binds EOR, and it checks the frozen
 commitment geometry against the level 2 challenge family.
 
 The selective L2 branch currently rejects setup prefix derivation from an A
-commitment that has no SIS table key. Carrier search does not weaken this rule.
-If an L2 candidate cannot create the required prefix, the planner must use an
-admissible Linf candidate, use direct setup, or reject that schedule edge.
+commitment that has no SIS table key. Carrier folds use Linf, so they do not
+enter that L2 path. The existing restriction remains unchanged for later
+current-protocol folds that consider L2.
 
 ### Candidate admission
 
@@ -924,7 +984,8 @@ A carrier candidate is admitted only when all of the following conditions hold.
 2. `k s` divides `d_A`.
 3. `h = d_A/(k s)` is positive.
 4. An audited sparse challenge configuration exists at dimension `s`.
-5. That configuration meets the entropy and unit difference requirements.
+5. That configuration meets the existing challenge entropy and total schedule
+   error requirements.
 6. The field and ring dispatcher supports the ambient A dimension and carrier
    kernels.
 7. `d_D` divides `k s` in the first implementation.
@@ -944,25 +1005,26 @@ carrier mode at levels 0 and 1. It may choose `s < d_A` to reduce partial and
 quotient coordinates. The full ring candidate is `s = d_A` and `h = 1` when
 that `s` exists in the audited registry.
 
-### L2 and Linf security routes
+### Linf security route and the preserved L2 identity
 
-The L2 response calculation is keyed by `s`, not by `d_A`. Multiplication by
-the embedded challenge `c(X^(k h))` preserves each residue class modulo `k h`.
-After a coefficient permutation, the ambient multiplication map is a direct
-sum of `k h` copies of multiplication by `c(Y)` in the carrier ring. Its L2
-operator norm is therefore exactly the carrier operator norm.
+Every carrier candidate at levels 0 and 1 uses the Linf A security route. The
+planner applies PR 369's current Linf derivation to the exact carrier geometry.
+The root uses the current root policy. A recursive carrier fold uses the typed
+response model when its profile provides one. Otherwise it uses the current
+universal Linf bound. The resulting bound determines the secure A rank at the
+ambient dimension `d_A`.
+
+Multiplication by the embedded challenge `c(X^(k h))` preserves each residue
+class modulo `k h`. After a coefficient permutation, the ambient
+multiplication map is a direct sum of `k h` copies of multiplication by
+`c(Y)` in the carrier ring. Its L2 operator norm is therefore exactly the
+carrier operator norm at dimension `s`. Physical response length, SIS rank,
+and A geometry still depend on ambient `d_A` and the complete response shape.
 
 The implementation MUST encode this reduction and compare it with a direct
-ambient multiplication reference for every admitted geometry. An L2 candidate
-also needs an operator norm certificate for its exact carrier challenge
-family. The selective L2 branch currently has such certificates at dimensions
-64 and 128. A carrier dimension without that certificate may still use the
-audited Linf security route. It MUST NOT reuse an L2 certificate from another
-dimension.
-
-The unit difference certificate is separate from the Linf or L2 response
-certificate. The former admits the carrier challenge family. The latter prices
-the A response and rank.
+ambient multiplication reference for every admitted geometry. The identity is
+useful for later work, but this feature MUST NOT use it to select an L2 route
+at level 0 or 1.
 
 ### Level policy
 
@@ -1018,7 +1080,8 @@ values.
 3. D input width, secure D rank, H source, and compression geometry.
 4. Carrier quotient coordinates and quotient digit count.
 5. Sparse challenge `l1`, `l2`, and `linf` bounds at `s`.
-6. Folded `z` bounds and the secure A rank under every available route.
+6. The Linf folded `z` bound and secure A rank under PR 369's applicable root
+   or recursive response model.
 7. `t_hat`, B input width, B slicing candidates, and F compression geometry.
 8. Logical row count, physical row dimensions, relation address length, and
    sum check rounds.
@@ -1042,7 +1105,8 @@ challenge norm, the selected A dimension, and secure A rank. Candidate
 construction MUST use this order.
 
 1. Choose `d_A`, `s`, and the carrier challenge family.
-2. Evaluate the available Linf and L2 routes, then derive A rank and `t_hat`.
+2. Derive the Linf response bound, A rank, and `t_hat` through PR 369's current
+   root or recursive response model.
 3. Enumerate and prune the bounded B slice counts from PR 388.
 4. Derive D or H and B or F compression plans.
 5. Construct the next witness and score the complete suffix.
@@ -1058,7 +1122,8 @@ The planner MUST keep the search bounded in the following ways.
 1. Derive `h` from `(k, d_A, s)`.
 2. Use one canonical coefficient layout and embedding.
 3. Use the fixed audited list of `s` values.
-4. Apply security and divisibility admission before rank lookup.
+4. Apply geometry, challenge entropy, dispatcher support, and divisibility
+   admission before rank lookup.
 5. Search carrier candidates only at levels 0 and 1.
 6. Apply B slicing only after A and `t_hat` geometry is known.
 7. Keep the existing deterministic frontier and memo state objective.
@@ -1074,6 +1139,8 @@ The planner MUST keep the search bounded in the following ways.
 - Represent the carrier consistency row as one logical row with carrier
   dimension `s` and extension coordinate width `k`.
 - Extend witness and address layouts for `k s` partial and quotient coordinates.
+- Give the Stage 2 relation address and Stage 3 setup projection distinct
+  checked factorization types. Prove their flat A, B, and D weight equivalence.
 - Separate precommitted commitment identity from the opening plan selected by
   the consuming fold. Apply the same split to setup prefix slot identity.
 - Generalize proof size and successor witness sizing at levels 0 and 1.
@@ -1083,10 +1150,10 @@ The planner MUST keep the search bounded in the following ways.
 ### `akita-challenges`
 
 - Reuse the signed-sparse sampler at dimension `s`.
-- Add or expose a parameter certificate that covers entropy and the complete
-  pairwise-difference invertibility bound.
-- Expose L2 operator norm certificates by carrier dimension and exact challenge
-  family. Keep the Linf route for other certified carrier dimensions.
+- Reuse the existing challenge entropy audit. Do not add a separate unit
+  difference certificate or carrier L2 admission path.
+- Keep the LS18 prime congruence and shortness condition with the fixed
+  production field profiles rather than making it planner state.
 - Bind carrier dimension and mode in the draw domain.
 - Do not create a second ambient challenge draw.
 
@@ -1152,15 +1219,17 @@ The planner MUST keep the search bounded in the following ways.
       tier.
 - [ ] A level 2 fold opens the flat output of a carrier level 1 fold with the
       current protocol without conversion or carrier metadata reuse.
+- [ ] Stage 2 accepts `d_D | k s` when `d_D` does not divide `s`, and its flat
+      A, B, and D weights match the separate Stage 3 setup projection.
 
 ### Soundness and transcript
 
-- [ ] Every admitted challenge family has a reviewable 128-bit entropy and
-      pairwise-difference unit certificate for `S`.
-- [ ] The certificate checks the difference family's exact coefficient/norm
-      envelope.
-- [ ] Each selective L2 carrier candidate has an operator norm certificate for
-      its exact `s` and challenge family. Other carrier candidates use Linf.
+- [ ] Every admitted challenge family meets Akita's per-draw entropy condition,
+      and the complete proof meets the existing total schedule error budget.
+- [ ] The fixed production field table above remains part of security review,
+      not schedule metadata or candidate admission.
+- [ ] Generated and supplied carrier schedules at levels 0 and 1 use the Linf A
+      security route and cannot select physical L2.
 - [ ] Nonterminal partial D or H payloads are transcript bound before their
       carrier challenge draws.
 - [ ] Carrier quotient and next-witness data are bound before `alpha`.
@@ -1201,8 +1270,8 @@ The planner MUST keep the search bounded in the following ways.
       L0/L1 EOR removal in actual serialized proof breakdowns.
 - [ ] No generated catalog silently drops a previously supported row. Every
       regression is listed, but minor per row regressions are allowed.
-- [ ] The schedule report identifies each setup prefix edge that cannot use an
-      L2 A route and records the selected Linf, direct setup, or rejected path.
+- [ ] Carrier setup prefix edges use Linf. Reports for later current-protocol
+      edges preserve PR 369's existing L2 admission result.
 
 ### Precommitment and setup prefixes
 
@@ -1210,7 +1279,8 @@ The planner MUST keep the search bounded in the following ways.
       challenge draw.
 - [ ] Schedule and transcript identity include the consuming opening plan.
 - [ ] The same frozen precommitted commitment can be admitted under carrier or
-      current opening mode when its matrices meet both security checks.
+      current opening mode when its matrices meet the selected mode's security
+      checks.
 - [ ] A setup prefix consumed at level 1 uses carrier mode. A setup prefix
       consumed at level 2 uses the current protocol.
 - [ ] A two level recursive offloading test verifies the transition from a
@@ -1285,6 +1355,8 @@ this spec moves through `implemented` to the normal archive workflow in
 
 ## References
 
+- [Lyubashevsky and Seiler, EUROCRYPT 2018](https://doi.org/10.1007/978-3-319-78381-9_8),
+  Corollary 1.2 for partial splitting and short invertibility.
 - [B commitment slicing](commitment-slicing.md), PR 388 baseline and B planner
   interaction.
 - [Selective L2 fold sizing](https://github.com/LayerZero-Labs/akita/pull/369),
