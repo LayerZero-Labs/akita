@@ -71,7 +71,7 @@ where
     // validated against its (final vs frozen-precommit) params before the
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
-    let relation_layout = relation_rhs_layout_for(root_lp, &opening_batch)?;
+    let relation_layout = relation_rhs_layout_for(root_lp, opening_batch)?;
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
         let plan = relation_layout.compression_plan_for_group(group_index)?;
@@ -101,7 +101,7 @@ where
         transcript,
         claims,
         &openings,
-        &opening_batch,
+        opening_batch,
         extension_opening_reduction,
         stage3_sumcheck_proof,
         next_fold_level_params,
