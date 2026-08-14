@@ -10,5 +10,13 @@ fi
 
 cd "$repo_root"
 
-cargo run --release -p akita-planner --features catalog-gen --bin gen_schedule_tables -- \
+planner_features="catalog-gen"
+for arg in "$@"; do
+    if [ "$arg" = "--check-catalog" ]; then
+        planner_features="catalog-gen,catalog-check"
+        break
+    fi
+done
+
+cargo run --release -p akita-planner --features "$planner_features" --bin gen_schedule_tables -- \
     crates/akita-schedules/src/generated "$@"

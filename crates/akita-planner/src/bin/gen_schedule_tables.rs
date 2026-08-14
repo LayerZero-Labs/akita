@@ -209,6 +209,9 @@ fn parse_args() -> Result<ParsedArgs, String> {
     if check_catalog && (wiring_only || explicit_rows.final_group.is_some()) {
         return Err("--check-catalog requires ordinary generated rows".to_string());
     }
+    if check_catalog && !cfg!(feature = "catalog-check") {
+        return Err("--check-catalog requires the `catalog-check` feature".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
