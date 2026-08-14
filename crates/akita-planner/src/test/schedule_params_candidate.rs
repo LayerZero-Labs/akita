@@ -62,7 +62,7 @@ fn grouped_level_params() -> CommittedGroupParams {
 #[test]
 fn scalar_next_witness_len_rejects_multi_group_root_level_params() {
     let grouped = grouped_level_params();
-    let err = planned_next_witness_len(128, &grouped, 1, 1)
+    let err = planned_next_witness_len(128, 1, &grouped, 1, 1)
         .expect_err("multi-group root suffix sizing must use output_witness_len");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

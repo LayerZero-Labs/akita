@@ -250,6 +250,10 @@ impl PrecommittedLevelParams {
                 "subring coefficient packing is not implemented yet".to_string(),
             ));
         }
+        self.validate_geometry()
+    }
+
+    pub(crate) fn validate_geometry(&self) -> Result<(), AkitaError> {
         let field_bits = self
             .layout
             .inner_commit_matrix
@@ -363,6 +367,7 @@ impl PrecommittedLevelParams {
 /// Use this trait when code only needs the shared commitment geometry carried
 /// by both [`CommittedGroupParams`] and [`PrecommittedLevelParams`].
 pub trait LevelParamsLike {
+    fn opening_method(&self) -> OpeningMethod;
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams;
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
@@ -389,6 +394,10 @@ pub trait LevelParamsLike {
 }
 
 impl LevelParamsLike for CommittedGroupParams {
+    fn opening_method(&self) -> OpeningMethod {
+        self.opening_method
+    }
+
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
         &self.inner_commit_matrix
     }
@@ -467,6 +476,10 @@ impl LevelParamsLike for CommittedGroupParams {
 }
 
 impl LevelParamsLike for PrecommittedLevelParams {
+    fn opening_method(&self) -> OpeningMethod {
+        self.opening.opening_method
+    }
+
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
         &self.layout.inner_commit_matrix
     }

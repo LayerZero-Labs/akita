@@ -458,6 +458,7 @@ fn finalize_recursive_level_candidate(
 ) -> Result<Option<(LayoutCandidateScore, CommittedGroupParams, usize)>, AkitaError> {
     let Some(next_witness_len) = planned_next_witness_len(
         policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
         &candidate_params,
         1,
         search.num_chunks,

@@ -312,10 +312,12 @@ where
     let commitment_payloads = &prepared.commitment_payloads;
     let prefix = &prepared.prefix;
     let role_dims = prepared.lp.role_dims();
-    let relation_rhs_layout =
-        relation_rhs_layout_for(prepared.lp, &opening_shape).map_err(|error| {
-            AkitaError::InvalidInput(format!("compressed relation layout failed: {error:?}"))
-        })?;
+    let relation_geometry =
+        RelationWitnessGeometry::for_evaluation_trace_execution(prepared.lp, &opening_shape)
+            .map_err(|error| {
+                AkitaError::InvalidInput(format!("compressed relation layout failed: {error:?}"))
+            })?;
+    let relation_rhs_layout = relation_geometry.rhs_layout();
     if commitment_payloads.len() != num_groups {
         return Err(AkitaError::InvalidInput(
             "commitment payload group count mismatch".into(),
@@ -493,6 +495,7 @@ where
     // `eq(tau1, EvaluationTrace_row_index)`.
     let opening_batch = relation_instance.opening_batch();
     let relation_range_image_plan = RelationRangeImagePlan::new(
+        relation_geometry,
         rs.relation_address_geometry,
         DigitRangePlan::new(rs.b)?,
         rs.relation_matrix_evaluator.witness_layout()?.clone(),

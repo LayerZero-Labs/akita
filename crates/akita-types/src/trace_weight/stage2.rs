@@ -693,7 +693,6 @@ where
                             for role_subcolumn in 0..role_subcolumns {
                                 for role_coefficient in 0..group_dims.d_d() {
                                     let destination = unit.e_coefficient_index(
-                                        group_dims.d_a(),
                                         group_dims.d_d(),
                                         group_layout.num_polynomials(),
                                         group_lp.num_digits_open(),

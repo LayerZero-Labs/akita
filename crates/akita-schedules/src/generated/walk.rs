@@ -97,10 +97,15 @@ pub(crate) fn walk_generated_schedule_entry(
     root_params.witness_chunk =
         partition_to_chunk(entry.root.witness_partition, distributed_levels)?;
     let root_output_len = if is_multi_group {
-        root_params.output_witness_len_for_field_bits(field_bits, &key.opening_layout()?)?
+        root_params.output_witness_len_for_field_bits(
+            field_bits,
+            policy.claim_ext_degree,
+            &key.opening_layout()?,
+        )?
     } else {
         planned_next_witness_len(
             field_bits,
+            policy.claim_ext_degree,
             &root_params,
             key.final_group.num_polynomials(),
             root_params.witness_chunk.num_chunks,
@@ -130,13 +135,18 @@ pub(crate) fn walk_generated_schedule_entry(
         )?;
         params.opening_method = fold.opening_method;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
-        let output_witness_len =
-            planned_next_witness_len(field_bits, &params, 1, params.witness_chunk.num_chunks)?
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(format!(
+        let output_witness_len = planned_next_witness_len(
+            field_bits,
+            policy.claim_ext_degree,
+            &params,
+            1,
+            params.witness_chunk.num_chunks,
+        )?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
                 "generated recursive fold {index} uses unsupported compression-source geometry"
             ))
-                })?;
+        })?;
         expanded.push((params, input_witness_len, output_witness_len));
         input_witness_len = output_witness_len;
     }

@@ -6,6 +6,7 @@ use super::stage1::FlatBooleanDomain;
 use crate::layout::{
     validate_role_dims, witness_commitment_domain_len, CommitmentRingDims, RingRole,
 };
+use crate::RelationWitnessGeometry;
 
 /// Checked address geometry for one compact relation witness.
 ///
@@ -23,6 +24,27 @@ pub struct RelationAddressGeometry {
 }
 
 impl RelationAddressGeometry {
+    /// Validate Stage-2 address geometry from the canonical relation rows.
+    pub fn for_relation(
+        relation_geometry: &RelationWitnessGeometry,
+        outgoing_witness_ring_dimension: usize,
+        live_witness_coeff_len: usize,
+    ) -> Result<Self, AkitaError> {
+        let layout = relation_geometry.rhs_layout();
+        let role_dims = layout
+            .groups
+            .first()
+            .map(|group| group.role_dims)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation groups are empty".into()))?;
+        let relation_coefficient_block_len = relation_geometry.relation_coefficient_block_len()?;
+        Self::new_with_coefficient_block(
+            role_dims,
+            relation_coefficient_block_len,
+            outgoing_witness_ring_dimension,
+            live_witness_coeff_len,
+        )
+    }
+
     /// Validate scalar compact relation geometry.
     pub fn new(
         role_dims: CommitmentRingDims,
@@ -75,6 +97,32 @@ impl RelationAddressGeometry {
             ));
         }
 
+        Self::new_with_coefficient_block(
+            role_dims,
+            relation_coefficient_block_len,
+            outgoing_witness_ring_dimension,
+            live_witness_coeff_len,
+        )
+    }
+
+    fn new_with_coefficient_block(
+        role_dims: CommitmentRingDims,
+        relation_coefficient_block_len: usize,
+        outgoing_witness_ring_dimension: usize,
+        live_witness_coeff_len: usize,
+    ) -> Result<Self, AkitaError> {
+        validate_role_dims(role_dims)?;
+        if relation_coefficient_block_len == 0
+            || !relation_coefficient_block_len.is_power_of_two()
+            || outgoing_witness_ring_dimension == 0
+            || !outgoing_witness_ring_dimension.is_power_of_two()
+            || live_witness_coeff_len == 0
+            || !live_witness_coeff_len.is_multiple_of(relation_coefficient_block_len)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation witness does not admit one aligned coefficient block".into(),
+            ));
+        }
         let committed_witness_coeff_len =
             witness_commitment_domain_len(live_witness_coeff_len, outgoing_witness_ring_dimension)?;
         if !committed_witness_coeff_len.is_power_of_two()

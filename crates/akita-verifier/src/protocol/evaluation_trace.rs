@@ -441,7 +441,6 @@ where
                 continue;
             }
             let first_claim_coefficient = unit.e_coefficient_index(
-                group_dims.d_a(),
                 group_dims.d_d(),
                 num_claims,
                 digit_count,
@@ -766,9 +765,16 @@ mod tests {
             .final_group
             .commitment
             .clone();
+        let relation_witness_geometry =
+            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+                &level_params,
+                &opening_batch,
+            )
+            .expect("evaluation-trace relation geometry");
         let witness_layout = WitnessLayout::new(
             &level_params,
             &opening_batch,
+            &relation_witness_geometry,
             2,
             r_decomp_levels::<F>(level_params.log_basis_open),
         )
@@ -778,6 +784,7 @@ mod tests {
             RelationAddressGeometry::new(level_params.role_dims(), D / 2, live_len)
                 .expect("flat trace domain");
         let plan = RelationRangeImagePlan::new(
+            relation_witness_geometry,
             relation_address_geometry,
             DigitRangePlan::new(1usize << level_params.log_basis_open).expect("range basis"),
             witness_layout,
@@ -872,7 +879,6 @@ mod tests {
                                             parameters.opening_digit_weights().len(),
                                             local_claim,
                                             block,
-                                            role_subcolumn,
                                             digit,
                                             role_coefficient,
                                         )

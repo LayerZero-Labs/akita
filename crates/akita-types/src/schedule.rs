@@ -15,11 +15,7 @@ pub use profiles::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
     PrecommittedGroupProfiles,
 };
-pub use sizing::{
-    detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
-    intermediate_w_ring_element_count_with_counts,
-    intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels,
-};
+pub use sizing::{detect_field_modulus, r_decomp_levels};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

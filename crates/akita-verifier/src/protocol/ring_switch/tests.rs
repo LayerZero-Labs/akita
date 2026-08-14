@@ -44,7 +44,13 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     )
     .with_decomp(1, 1, 1, 1, 1)
     .unwrap();
-    let witness_layout = WitnessLayout::new(&valid_lp, &opening_batch, 1, 1).unwrap();
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+        &valid_lp,
+        &opening_batch,
+    )
+    .unwrap();
+    let witness_layout =
+        WitnessLayout::new(&valid_lp, &opening_batch, &relation_geometry, 1, 1).unwrap();
     let setup_groups = vec![SetupContributionGroupInputs {
         group_id: 0,
         num_claims: 1,
@@ -117,7 +123,11 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();
     let quotient_depth = r_decomp_levels::<MixedF>(lp.log_basis_open);
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, quotient_depth).unwrap();
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+            .unwrap();
+    let witness_layout =
+        WitnessLayout::new(&lp, &opening_batch, &relation_geometry, 1, quotient_depth).unwrap();
     let role_dims = lp.role_dims();
     let relation_address_geometry =
         RelationAddressGeometry::new(role_dims, D_PROJECTED, witness_layout.live_coeff_len())

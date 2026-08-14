@@ -66,7 +66,6 @@ where
                     continue;
                 }
                 let physical_coefficient_start = unit.e_coefficient_index(
-                    group_dims.d_a(),
                     group_dims.d_d(),
                     group_layout.num_polynomials(),
                     parameters.opening_digit_weights().len(),

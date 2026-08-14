@@ -615,9 +615,12 @@ fn emit_r_rows<F: CanonicalField>(
             .r_rows()
             .get(row_index)
             .ok_or(AkitaError::InvalidProof)?;
-        if row_layout.ring_dim() != row.ring_dim() {
+        let geometry = row_layout.geometry();
+        if geometry.coordinate_plane_count() != 1
+            || geometry.polynomial_modulus_dimension() != row.ring_dim()
+        {
             return Err(AkitaError::InvalidSize {
-                expected: row_layout.ring_dim(),
+                expected: geometry.physical_coefficient_width(),
                 actual: row.ring_dim(),
             });
         }

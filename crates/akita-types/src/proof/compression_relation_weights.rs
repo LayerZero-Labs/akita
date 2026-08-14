@@ -12,8 +12,8 @@ use akita_field::{
 use std::ops::Range;
 
 use crate::{
-    gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, RelationRowFamily, RingRelationInstance, WitnessLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
+    RelationRowFamily, RingRelationInstance, WitnessLayout,
 };
 
 #[derive(Clone, Debug)]
@@ -393,7 +393,9 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
-    let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+    let relation_geometry =
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+    let relation_layout = relation_geometry.rhs_layout();
     let row_families = relation_layout.row_families()?;
     let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;
     let coefficient_block_len = lp
@@ -405,7 +407,7 @@ where
         .coefficient_block_len();
     let maximum_dimension = row_families
         .iter()
-        .map(|row| row.ring_dim())
+        .map(|row| row.geometry().polynomial_modulus_dimension())
         .max()
         .ok_or(AkitaError::InvalidProof)?;
     let mut weights = CompressionRelationWeights {
@@ -458,7 +460,7 @@ where
         opening_stage.range().start,
         opening_stage.map().ring_dimension(),
         opening_plan.source_coefficients(),
-        relation_layout.opening_ring_dim,
+        relation_layout.d_ring_dimension,
         d_start,
         relation_layout.n_d,
         field_bits,
@@ -583,7 +585,7 @@ where
                 .enumerate()
         {
             weights.push(
-                witness_layout.r_coefficient_index(row_index, digit, 0)?,
+                witness_layout.r_coefficient_index(row_index, digit, 0, 0)?,
                 map.ring_dimension(),
                 0,
                 -(row_weight * denominator * E::lift_base(gadget)),

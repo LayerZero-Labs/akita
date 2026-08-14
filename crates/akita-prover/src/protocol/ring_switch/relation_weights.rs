@@ -14,9 +14,9 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry,
-    RelationRowFamily, RingRelationInstance, SetupProjectionGeometry,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
+    OpeningClaimsLayout, RelationAddressGeometry, RelationRowFamily, RingRelationInstance,
+    SetupProjectionGeometry,
 };
 use setup_columns::{evaluate_setup_columns, SetupRows};
 
@@ -424,11 +424,13 @@ where
     let d_d = role_dims.d_d();
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
-    let relation_rhs_layout = relation_rhs_layout_for(lp, opening_batch)?;
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+    let relation_rhs_layout = relation_geometry.rhs_layout();
     let row_families = relation_rhs_layout.row_families()?;
     let quotient_row_dims = row_families
         .iter()
-        .map(|row| row.ring_dim())
+        .map(|row| row.geometry().polynomial_modulus_dimension())
         .collect::<Vec<_>>();
     let rows = quotient_row_dims.len();
     if rows != lp.relation_matrix_row_count(opening_batch.num_groups())? {
@@ -464,7 +466,9 @@ where
         ));
     }
     for (row, &row_dim) in witness_layout.r_rows().iter().zip(&quotient_row_dims) {
-        if row.ring_dim() != row_dim {
+        if row.geometry().coordinate_plane_count() != 1
+            || row.geometry().polynomial_modulus_dimension() != row_dim
+        {
             return Err(AkitaError::InvalidSetup(
                 "relation quotient dimensions disagree with witness layout".into(),
             ));
@@ -723,7 +727,6 @@ where
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
                     for role_subcol in 0..d_ratio {
                         let physical_start = unit.e_coefficient_index(
-                            group_d_a,
                             group_d_d,
                             k_g,
                             depth_open,
@@ -927,7 +930,7 @@ where
         };
         let row_denom = row_alpha_pows[row_dim - 1] * alpha + E::one();
         for (digit, gadget) in r_gadget.iter().enumerate() {
-            let physical_start = witness_layout.r_coefficient_index(row, digit, 0)?;
+            let physical_start = witness_layout.r_coefficient_index(row, digit, 0, 0)?;
             relation_events.push_native_ring(
                 physical_start,
                 row_dim,

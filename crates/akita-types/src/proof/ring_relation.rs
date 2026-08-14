@@ -346,10 +346,13 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     ) -> Result<WitnessLayout, AkitaError> {
         lp.witness_chunk.validate()?;
         let num_chunks = lp.witness_chunk.num_chunks;
-        let relation_rhs_layout =
-            crate::proof::relation::relation_rhs_layout_for(lp, &self.opening_batch)?;
+        let relation_geometry = crate::RelationWitnessGeometry::for_evaluation_trace_execution(
+            lp,
+            &self.opening_batch,
+        )?;
+        let relation_rhs_layout = relation_geometry.rhs_layout();
         let expected_rhs_coeff_len =
-            crate::proof::relation::relation_rhs_coeff_len(&relation_rhs_layout)?;
+            crate::proof::relation::relation_rhs_coeff_len(relation_rhs_layout)?;
         if self.rhs.coeff_len() != expected_rhs_coeff_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "ring relation rhs coefficient length {} does not match per-role layout (expected {expected_rhs_coeff_len})",
@@ -359,7 +362,13 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         // `EvaluationTrace` is a logical relation row used by Stage 2. It is
         // not materialized in the quotient witness's shared `r` tail.
         let r_levels = r_decomp_levels::<F>(lp.log_basis_open);
-        let layout = WitnessLayout::new(lp, &self.opening_batch, num_chunks, r_levels)?;
+        let layout = WitnessLayout::new(
+            lp,
+            &self.opening_batch,
+            &relation_geometry,
+            num_chunks,
+            r_levels,
+        )?;
         if let Some(capacity) = witness_coeff_len {
             if layout.live_coeff_len() > capacity {
                 return Err(AkitaError::InvalidSetup(format!(
@@ -379,8 +388,8 @@ mod tests {
     use crate::DigitBlocks;
     use crate::{
         emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
-        relation_rhs_coeff_len, relation_rhs_layout_for, InnerCommitMatrixParams,
-        OuterCommitMatrixParams, PolynomialGroupLayout, RingOpeningPoint,
+        relation_rhs_coeff_len, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        PolynomialGroupLayout, RingOpeningPoint,
     };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
@@ -388,6 +397,16 @@ mod tests {
     type F = Fp32<251>;
     const D: usize = 32;
     const MULTI_GROUP_D: usize = 64;
+
+    fn relation_layout(
+        lp: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> crate::RelationRhsLayout {
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)
+            .expect("relation geometry")
+            .rhs_layout()
+            .clone()
+    }
 
     fn marker<const N: usize>(index: usize) -> [i8; N] {
         let value = (index % 100 + 1) as i8;
@@ -525,10 +544,8 @@ mod tests {
         _num_rows: usize,
     ) -> RingRelationInstance<F> {
         let opening_batch = OpeningClaimsLayout::new(8, num_claims).expect("opening batch");
-        let rhs_coeff_len = relation_rhs_coeff_len(
-            &relation_rhs_layout_for(lp, &opening_batch).expect("relation layout"),
-        )
-        .expect("relation rhs length");
+        let rhs_coeff_len = relation_rhs_coeff_len(&relation_layout(lp, &opening_batch))
+            .expect("relation rhs length");
         let opening_point = opening_point(lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         RingRelationInstance::<F>::new(
@@ -688,7 +705,7 @@ mod tests {
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
-        let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch).expect("layout");
+        let relation_rhs_layout = relation_layout(&lp, &opening_batch);
         let rhs_coeff_len = relation_rhs_coeff_len(&relation_rhs_layout).expect("rhs length");
         let instance = RingRelationInstance::<F>::new(
             vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
@@ -766,10 +783,8 @@ mod tests {
     #[test]
     fn multi_group_segment_layout_total_matches_next_w_len() {
         let (lp, opening_batch) = multi_group_one_three_fixture();
-        let relation_rhs_coefficients = relation_rhs_coeff_len(
-            &relation_rhs_layout_for(&lp, &opening_batch).expect("relation layout"),
-        )
-        .expect("rhs length");
+        let relation_rhs_coefficients =
+            relation_rhs_coeff_len(&relation_layout(&lp, &opening_batch)).expect("rhs length");
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
@@ -803,7 +818,7 @@ mod tests {
         let quotient_coeff_len = layout
             .r_rows()
             .iter()
-            .map(|row| row.ring_dim() * quotient_depth)
+            .map(|row| row.geometry().physical_coefficient_width() * quotient_depth)
             .sum::<usize>();
 
         let mut base = 0usize;
@@ -822,7 +837,7 @@ mod tests {
         }
 
         let expected_witness_len = lp
-            .output_witness_len::<F>(&opening_batch)
+            .output_witness_len::<F>(&opening_batch, 1)
             .expect("next w len");
         assert_eq!(layout.live_coeff_len(), expected_witness_len);
     }
@@ -834,10 +849,8 @@ mod tests {
             num_chunks: 2,
             num_activated_levels: 1,
         };
-        let relation_rhs_coefficients = relation_rhs_coeff_len(
-            &relation_rhs_layout_for(&lp, &opening_batch).expect("relation layout"),
-        )
-        .expect("rhs length");
+        let relation_rhs_coefficients =
+            relation_rhs_coeff_len(&relation_layout(&lp, &opening_batch)).expect("rhs length");
         let opening_point_pre = opening_point(&lp);
         let opening_point_final = opening_point(&lp);
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
@@ -996,9 +1009,9 @@ mod tests {
         let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
         for (row_index, row) in layout.r_rows().iter().enumerate() {
             for digit in 0..quotient_depth {
-                for coefficient in 0..row.ring_dim() {
+                for coefficient in 0..row.geometry().polynomial_modulus_dimension() {
                     let address = layout
-                        .r_coefficient_index(row_index, digit, coefficient)
+                        .r_coefficient_index(row_index, digit, 0, coefficient)
                         .expect("R address");
                     let value = ((row_index + digit + coefficient) % 100 + 1) as i8;
                     emitted[address] = value;

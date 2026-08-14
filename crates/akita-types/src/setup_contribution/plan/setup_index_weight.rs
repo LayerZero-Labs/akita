@@ -476,7 +476,6 @@ fn build_group_role_tensors<E: FieldCore>(
                 .and_then(|base| base.checked_mul(d_block_setup_stride))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
             let d_witness_coefficient = unit.e_coefficient_index(
-                group.role_dims.d_a(),
                 group.role_dims.d_d(),
                 group.num_claims,
                 group.depth_open,

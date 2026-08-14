@@ -346,20 +346,24 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
             .d_a(),
         128
     );
+    let relation_geometry =
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
+            .expect("relation geometry");
     let witness_layout = WitnessLayout::new(
         &lp,
         &batch,
+        &relation_geometry,
         lp.witness_chunk.num_chunks,
         crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open),
     )
     .expect("witness layout");
     assert_eq!(
-        lp.output_witness_len::<Prime128OffsetA7F7>(&batch)
+        lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)
             .expect("output witness length"),
         witness_layout.live_coeff_len()
     );
     assert_eq!(
-        lp.output_witness_len_for_field_bits(128, &batch)
+        lp.output_witness_len_for_field_bits(128, 1, &batch)
             .expect("policy-bound output witness length"),
         witness_layout.live_coeff_len()
     );
@@ -484,6 +488,55 @@ fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningC
 }
 
 #[test]
+fn relation_geometry_supports_mixed_root_opening_methods() {
+    let (mut lp, batch) = address_oracle_fixture(2);
+    lp.precommitted_groups[0].opening.opening_method =
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    lp.precommitted_groups[0].opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(64).expect("D64 challenge");
+
+    let geometry =
+        crate::RelationWitnessGeometry::for_level(&lp, &batch, 2).expect("mixed opening geometry");
+    let final_group = batch.root_final_group_index().expect("final group");
+    assert_eq!(
+        geometry.group_opening_geometry(final_group).unwrap(),
+        crate::RelationRowGeometry::native(64).unwrap()
+    );
+    let precommitted = geometry.group_opening_geometry(0).unwrap();
+    assert_eq!(precommitted.polynomial_modulus_dimension(), 64);
+    assert_eq!(precommitted.coordinate_plane_count(), 2);
+    assert_eq!(precommitted.physical_coefficient_width(), 128);
+    assert_eq!(geometry.relation_coefficient_block_len().unwrap(), 64);
+
+    let layout =
+        WitnessLayout::new(&lp, &batch, &geometry, 2, 2).expect("mixed-method witness layout");
+    assert_eq!(
+        layout
+            .unit(final_group, 0)
+            .unwrap()
+            .e_geometry()
+            .coordinate_plane_count(),
+        1
+    );
+    assert_eq!(layout.unit(0, 0).unwrap().e_geometry(), precommitted);
+    assert!(crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch).is_err());
+    assert!(lp.validate_opening_batch(&batch).is_err());
+}
+
+#[test]
+fn relation_geometry_revalidates_frozen_precommitted_profiles() {
+    let (mut lp, batch) = address_oracle_fixture(2);
+    lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .sis_table_key
+        .ring_dimension /= 2;
+    assert!(crate::RelationWitnessGeometry::for_level(&lp, &batch, 2).is_err());
+}
+
+#[test]
 fn compact_witness_addresses_match_independent_formula_matrix() {
     use akita_field::Prime128OffsetA7F7;
 
@@ -497,8 +550,12 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 num_activated_levels: usize::from(num_chunks > 1),
             };
             let quotient_depth = crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open);
-            let layout = WitnessLayout::new(&lp, &batch, num_chunks, quotient_depth)
-                .expect("compact witness layout");
+            let relation_geometry =
+                crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
+                    .expect("relation geometry");
+            let layout =
+                WitnessLayout::new(&lp, &batch, &relation_geometry, num_chunks, quotient_depth)
+                    .expect("compact witness layout");
             let mut cursor = 0usize;
             let mut unit_position = 0usize;
             for chunk in 0..num_chunks {
@@ -587,7 +644,6 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                                                 + coefficient);
                                         assert_eq!(
                                             unit.e_coefficient_index(
-                                                d_a,
                                                 d_d,
                                                 claims,
                                                 delta_d,
@@ -642,8 +698,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     }
                 }
             }
-            let relation_layout =
-                crate::relation_rhs_layout_for(&lp, &batch).expect("compression relation layout");
+            let relation_layout = relation_geometry.rhs_layout();
             assert_eq!(layout.r_range().start, cursor);
             let mut expected_r_dims = Vec::new();
             for &group_index in &group_order {
@@ -686,13 +741,13 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 .take(ordinary_row_count)
                 .enumerate()
             {
-                assert_eq!(row.ring_dim(), ring_dim);
+                assert_eq!(row.geometry().physical_coefficient_width(), ring_dim);
                 assert_eq!(row.range(), cursor..cursor + quotient_depth * ring_dim);
                 for digit in 0..quotient_depth {
                     for coefficient in 0..ring_dim {
                         assert_eq!(
                             layout
-                                .r_coefficient_index(row_index, digit, coefficient)
+                                .r_coefficient_index(row_index, digit, 0, coefficient)
                                 .expect("R address"),
                             cursor + digit * ring_dim + coefficient
                         );
@@ -753,14 +808,15 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     let row = &layout.r_rows()[row_index];
                     assert_eq!(
                         row.range(),
-                        cursor..cursor + quotient_depth * row.ring_dim()
+                        cursor
+                            ..cursor + quotient_depth * row.geometry().physical_coefficient_width()
                     );
                     cursor = row.range().end;
                 }
                 let h_row = &layout.r_rows()[layer.h_quotient_row()];
                 assert_eq!(
                     h_row.range(),
-                    cursor..cursor + quotient_depth * h_row.ring_dim()
+                    cursor..cursor + quotient_depth * h_row.geometry().physical_coefficient_width()
                 );
                 cursor = h_row.range().end;
             }
@@ -774,7 +830,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
             assert_eq!(layout.r_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
-                lp.output_witness_len::<Prime128OffsetA7F7>(&batch)
+                lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)
                     .expect("canonical witness length"),
                 cursor
             );

@@ -127,9 +127,15 @@ fn make_case_with_shape(
     );
     let depth_fold = level_params.num_digits_fold();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+        &level_params,
+        &opening_batch,
+    )
+    .unwrap();
     let layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
+        &relation_geometry,
         num_live_blocks / blocks_per_chunk,
         r_decomp_levels::<F>(log_basis),
     )

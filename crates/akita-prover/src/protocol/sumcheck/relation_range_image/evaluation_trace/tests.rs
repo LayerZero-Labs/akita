@@ -87,9 +87,16 @@ where
         .final_group
         .commitment
         .clone();
+    let relation_witness_geometry =
+        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+            &level_params,
+            &opening_batch,
+        )
+        .unwrap();
     let witness_layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
+        &relation_witness_geometry,
         2,
         r_decomp_levels::<F>(level_params.log_basis_open),
     )
@@ -99,6 +106,7 @@ where
         RelationAddressGeometry::new(level_params.role_dims(), D, live_len).unwrap();
     let common_coefficient_count = relation_address_geometry.relation_coefficient_block_len();
     let plan = RelationRangeImagePlan::new(
+        relation_witness_geometry,
         relation_address_geometry,
         DigitRangePlan::new(1usize << level_params.log_basis_open).unwrap(),
         witness_layout,

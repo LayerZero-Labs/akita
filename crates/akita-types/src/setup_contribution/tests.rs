@@ -316,6 +316,7 @@ fn test_witness_layout(
             chunk_num_live_blocks,
             z_range,
             e_range,
+            crate::RelationRowGeometry::native(TEST_D).unwrap(),
             t_range,
         ));
     }
@@ -323,7 +324,10 @@ fn test_witness_layout(
         .map(|_| {
             let range = cursor..cursor + quotient_depth * TEST_D;
             cursor = range.end;
-            WitnessQuotientRowLayout::new_for_test(TEST_D, range)
+            WitnessQuotientRowLayout::new_for_test(
+                crate::RelationRowGeometry::native(TEST_D).unwrap(),
+                range,
+            )
         })
         .collect();
     WitnessLayout::new_for_test(units, r_rows, quotient_depth)
@@ -616,6 +620,7 @@ fn structured_weight_fixture_with_slices(
                 blocks,
                 z_range,
                 e_range,
+                crate::RelationRowGeometry::native(role_dims.d_a()).unwrap(),
                 t_range,
             );
             global_block_base += blocks;
@@ -626,7 +631,10 @@ fn structured_weight_fixture_with_slices(
         .map(|_| {
             let range = cursor..cursor + depth_fold * role_dims.d_d();
             cursor = range.end;
-            WitnessQuotientRowLayout::new_for_test(role_dims.d_d(), range)
+            WitnessQuotientRowLayout::new_for_test(
+                crate::RelationRowGeometry::native(role_dims.d_d()).unwrap(),
+                range,
+            )
         })
         .collect();
     let layout = WitnessLayout::new_for_test(ownership_units, r_rows, depth_fold);
@@ -780,9 +788,15 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         },
     );
     retarget_precommitted_test_role_dims(&mut inputs.level_params, 0, 64, 64);
+    let joint_geometry = crate::RelationWitnessGeometry::for_evaluation_trace_execution(
+        &inputs.level_params,
+        &inputs.opening_batch,
+    )
+    .unwrap();
     let witness_layout = WitnessLayout::new(
         &inputs.level_params,
         &inputs.opening_batch,
+        &joint_geometry,
         1,
         quotient_depth,
     )
@@ -922,9 +936,15 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         log_basis,
         vec![test_scalar(11), test_scalar(12)],
     );
+    let joint_geometry = crate::RelationWitnessGeometry::for_evaluation_trace_execution(
+        &inputs.level_params,
+        &inputs.opening_batch,
+    )
+    .unwrap();
     let layout = WitnessLayout::new(
         &inputs.level_params,
         &inputs.opening_batch,
+        &joint_geometry,
         1,
         inputs.depth_fold().unwrap(),
     )

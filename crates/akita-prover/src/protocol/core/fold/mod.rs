@@ -440,14 +440,19 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
 
+    let relation_geometry = RelationWitnessGeometry::for_evaluation_trace_execution(
+        lp,
+        prepared_fold.instance.opening_batch(),
+    )?;
     let relation_range_image_plan = RelationRangeImagePlan::new(
+        relation_geometry.clone(),
         rs.relation_address_geometry,
         DigitRangePlan::new(rs.b)?,
         prepared_fold.instance.segment_layout(lp, None)?,
         prepared_fold.instance.opening_batch(),
     )?;
 
-    let relation_rhs_layout = relation_rhs_layout_for(lp, prepared_fold.instance.opening_batch())?;
+    let relation_rhs_layout = relation_geometry.rhs_layout();
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         &relation_rhs_layout,
         &rs.tau1,

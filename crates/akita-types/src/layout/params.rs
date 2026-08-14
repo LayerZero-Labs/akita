@@ -745,18 +745,10 @@ impl CommittedGroupParams {
         OpeningClaimsLayout::from_root_groups(&precommitted, final_group)
     }
 
-    pub fn validate_opening_batch(
+    pub(crate) fn validate_opening_batch_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
-        if matches!(
-            self.opening_method,
-            OpeningMethod::SubringCoefficientPacking { .. }
-        ) {
-            return Err(AkitaError::InvalidSetup(
-                "subring coefficient packing is not implemented yet".to_string(),
-            ));
-        }
         opening_batch.check()?;
         if self.log_basis_open < self.log_basis_outer {
             return Err(AkitaError::InvalidSetup(
@@ -772,7 +764,7 @@ impl CommittedGroupParams {
             let group_params = self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            group_params.validate()?;
+            group_params.validate_geometry()?;
             if group_params.opening.log_basis_open != self.log_basis_open {
                 return Err(AkitaError::InvalidSetup(
                     "all opening groups must use the batch-shared opening basis".to_string(),
@@ -786,6 +778,26 @@ impl CommittedGroupParams {
             }
         }
         opening_batch.root_final_group_index()
+    }
+
+    pub fn validate_opening_batch(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        if matches!(
+            self.opening_method,
+            OpeningMethod::SubringCoefficientPacking { .. }
+        ) || self.precommitted_group_iter().any(|group| {
+            matches!(
+                group.opening.opening_method,
+                OpeningMethod::SubringCoefficientPacking { .. }
+            )
+        }) {
+            return Err(AkitaError::InvalidSetup(
+                "subring coefficient packing is not implemented yet".to_string(),
+            ));
+        }
+        self.validate_opening_batch_geometry(opening_batch)
     }
 
     /// Resolve one opening group's A/B dimensions with this level's shared D.
@@ -809,6 +821,23 @@ impl CommittedGroupParams {
         Ok(dims)
     }
 
+    pub(crate) fn group_role_dims_geometry(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<CommitmentRingDims, AkitaError> {
+        let final_group_index = self.validate_opening_batch_geometry(opening_batch)?;
+        let dims = if group_index == final_group_index {
+            self.role_dims()
+        } else {
+            self.precommitted_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .role_dims(self.open_commit_matrix.ring_dimension())
+        };
+        dims.validate_role_projection()?;
+        Ok(dims)
+    }
+
     /// Resolve flat relation-address geometry across every opening group's
     /// native A/B dimensions and this level's shared D dimension.
     pub fn relation_address_geometry(
@@ -818,12 +847,10 @@ impl CommittedGroupParams {
         live_witness_coeff_len: usize,
     ) -> Result<RelationAddressGeometry, AkitaError> {
         self.validate_opening_batch(opening_batch)?;
-        let group_role_dims = (0..opening_batch.num_groups())
-            .map(|group_index| self.group_role_dims(opening_batch, group_index))
-            .collect::<Result<Vec<_>, _>>()?;
-        RelationAddressGeometry::new_for_groups(
-            self.role_dims(),
-            &group_role_dims,
+        let relation_geometry =
+            crate::RelationWitnessGeometry::for_evaluation_trace_execution(self, opening_batch)?;
+        RelationAddressGeometry::for_relation(
+            &relation_geometry,
             outgoing_witness_ring_dimension,
             live_witness_coeff_len,
         )
@@ -836,7 +863,10 @@ impl CommittedGroupParams {
         outgoing_witness_ring_dimension: usize,
         live_witness_coeff_len: usize,
     ) -> Result<CompressionRelationAddressGeometry, AkitaError> {
-        let compression_row_dims = crate::relation_rhs_layout_for(self, opening_batch)?
+        let relation_geometry =
+            crate::RelationWitnessGeometry::for_evaluation_trace_execution(self, opening_batch)?;
+        let compression_row_dims = relation_geometry
+            .rhs_layout()
             .row_families()?
             .into_iter()
             .filter_map(|row| {
@@ -844,7 +874,7 @@ impl CommittedGroupParams {
                     row,
                     RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
                 )
-                .then_some(row.ring_dim())
+                .then_some(row.geometry().polynomial_modulus_dimension())
             })
             .collect::<Vec<_>>();
         CompressionRelationAddressGeometry::new(
@@ -882,6 +912,20 @@ impl CommittedGroupParams {
         group_index: usize,
     ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
+        if group_index == final_group_index {
+            return Ok(self);
+        }
+        self.precommitted_group_params(group_index)
+            .map(|group| group as &dyn LevelParamsLike)
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    pub(crate) fn group_params_geometry<'a>(
+        &'a self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+        let final_group_index = self.validate_opening_batch_geometry(opening_batch)?;
         if group_index == final_group_index {
             return Ok(self);
         }
@@ -1070,8 +1114,9 @@ impl CommittedGroupParams {
     pub fn output_witness_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
+        extension_degree: usize,
     ) -> Result<usize, AkitaError> {
-        self.output_witness_len_for_field_bits(F::modulus_bits(), opening_batch)
+        self.output_witness_len_for_field_bits(F::modulus_bits(), extension_degree, opening_batch)
     }
 
     /// Exact live next-witness length using an explicit base-field bit width.
@@ -1081,14 +1126,17 @@ impl CommittedGroupParams {
     pub fn output_witness_len_for_field_bits(
         &self,
         field_bits: u32,
+        extension_degree: usize,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
-        self.validate_opening_batch(opening_batch)?;
+        let relation_geometry =
+            crate::RelationWitnessGeometry::for_level(self, opening_batch, extension_degree)?;
         let witness_layout = crate::WitnessLayout::new(
             self,
             opening_batch,
+            &relation_geometry,
             self.witness_chunk.num_chunks,
             crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_open),
         )?;

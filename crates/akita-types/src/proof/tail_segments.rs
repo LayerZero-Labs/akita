@@ -1115,7 +1115,6 @@ pub fn emit_witness_e_planes<const D_A: usize, const D_ROLE: usize>(
                         let source =
                             (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
                         let destination = unit.e_coefficient_index(
-                            D_A,
                             D_ROLE,
                             num_claims,
                             depth_open,
@@ -1267,8 +1266,10 @@ pub fn emit_witness_r_planes<const D: usize>(
     quotient_depth: usize,
     planes: &[[i8; D]],
 ) -> Result<(), AkitaError> {
-    if layout.r_rows().iter().any(|row| row.ring_dim() != D)
-        || quotient_depth != layout.quotient_depth()
+    if layout.r_rows().iter().any(|row| {
+        row.geometry().polynomial_modulus_dimension() != D
+            || row.geometry().coordinate_plane_count() != 1
+    }) || quotient_depth != layout.quotient_depth()
     {
         return Err(AkitaError::InvalidSetup(
             "witness R source shape is malformed".into(),
@@ -1289,7 +1290,7 @@ pub fn emit_witness_r_planes<const D: usize>(
         for digit in 0..quotient_depth {
             write_witness_coefficients(
                 out,
-                layout.r_coefficient_index(row, digit, 0)?,
+                layout.r_coefficient_index(row, digit, 0, 0)?,
                 &planes[row * quotient_depth + digit],
             )?;
         }

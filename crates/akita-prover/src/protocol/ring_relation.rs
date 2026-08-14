@@ -20,9 +20,7 @@ use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
 use akita_types::RingMultiplierOpeningPoint;
-use akita_types::{
-    assemble_compressed_relation_rhs, assemble_relation_rhs, relation_rhs_layout_for, RingVec,
-};
+use akita_types::{assemble_compressed_relation_rhs, assemble_relation_rhs, RingVec};
 use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{CommittedGroupParams, RingRelationInstance};
 
@@ -391,7 +389,12 @@ impl RingRelationProver {
         for group_index in 0..num_groups {
             hints.push(block_claims.group_hint(group_index)?.clone());
         }
-        let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
+        let relation_geometry =
+            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+                &lp,
+                &opening_batch,
+            )?;
+        let relation_rhs_layout = relation_geometry.rhs_layout();
         // Compressed commitments contain terminal F payloads, whose complete
         // B images are recovered from the retained first-map digits. Raw
         // suffix commitments already contain those B images directly.

@@ -152,6 +152,7 @@ fn precommitted_groups_for_open_basis(
 
 pub(crate) fn root_batch_next_w_len(
     field_bits: u32,
+    extension_degree: usize,
     params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<Option<usize>, AkitaError> {
@@ -159,7 +160,7 @@ pub(crate) fn root_batch_next_w_len(
         return Ok(None);
     }
     params
-        .output_witness_len_for_field_bits(field_bits, opening_batch)
+        .output_witness_len_for_field_bits(field_bits, extension_degree, opening_batch)
         .map(Some)
 }
 
@@ -306,8 +307,12 @@ pub(crate) fn root_level_candidates_for_basis(
             &opening_batch,
             slice_candidates,
         )? {
-            let Some(output_witness_len) =
-                root_batch_next_w_len(field_bits, &candidate_params, &opening_batch)?
+            let Some(output_witness_len) = root_batch_next_w_len(
+                field_bits,
+                policy.claim_ext_degree,
+                &candidate_params,
+                &opening_batch,
+            )?
             else {
                 continue;
             };

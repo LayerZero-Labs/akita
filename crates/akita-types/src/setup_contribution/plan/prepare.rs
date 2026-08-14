@@ -58,8 +58,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let (d_rows, d_physical_cols, d_weights) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
             let d_rows = level_params.open_commit_matrix.output_rank();
-            let row_families =
-                crate::relation_rhs_layout_for(level_params, opening_batch)?.row_families()?;
+            let relation_geometry = crate::RelationWitnessGeometry::for_evaluation_trace_execution(
+                level_params,
+                opening_batch,
+            )?;
+            let row_families = relation_geometry.rhs_layout().row_families()?;
             let d_row_start = row_families
                 .iter()
                 .position(|family| matches!(family, crate::RelationRowFamily::Opening { .. }))

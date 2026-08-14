@@ -321,7 +321,9 @@ where
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    let rhs_layout = akita_types::relation_rhs_layout_for(lp, opening_batch)?;
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+    let rhs_layout = relation_geometry.rhs_layout();
     let row_families = rhs_layout.row_families()?;
     let num_rows = row_families.len();
     let n_d_active = lp.open_commit_matrix.output_rank();
@@ -347,7 +349,7 @@ where
         })
         .try_fold(0usize, |length, row| {
             length
-                .checked_add(row.ring_dim())
+                .checked_add(row.geometry().physical_coefficient_width())
                 .ok_or(AkitaError::InvalidProof)
         })?;
     if compression.is_some()
@@ -615,7 +617,7 @@ where
 
     if n_d_active != 0 {
         let d_coeff_len = n_d_active
-            .checked_mul(rhs_layout.opening_ring_dim)
+            .checked_mul(rhs_layout.d_ring_dimension)
             .ok_or(AkitaError::InvalidProof)?;
         let d_end = y_offset
             .checked_add(d_coeff_len)
@@ -623,7 +625,7 @@ where
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
-            rhs_layout.opening_ring_dim,
+            rhs_layout.d_ring_dimension,
             |D_D| {
                 let d_rows = d_quotients.as_ring_slice::<D_D>()?;
                 if d_rows.len() != n_d_active {
@@ -639,22 +641,28 @@ where
         y_offset = d_end;
     }
     for (row_index, family) in row_families.iter().enumerate() {
-        let (source, map_index, ring_dim) = match *family {
+        let (source, map_index, geometry) = match *family {
             akita_types::RelationRowFamily::CompressionF {
                 group_index,
                 map_index,
-                ring_dim,
+                geometry,
             } => (
                 CompressionSourceId::Outer { group_index },
                 map_index,
-                ring_dim,
+                geometry,
             ),
             akita_types::RelationRowFamily::CompressionH {
                 map_index,
-                ring_dim,
-            } => (CompressionSourceId::Opening, map_index, ring_dim),
+                geometry,
+            } => (CompressionSourceId::Opening, map_index, geometry),
             _ => continue,
         };
+        if geometry.coordinate_plane_count() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "compression quotient requires one native coordinate plane".into(),
+            ));
+        }
+        let ring_dim = geometry.polynomial_modulus_dimension();
         let compression = compression.ok_or(AkitaError::InvalidProof)?;
         let quotient = compression
             .source(source)?

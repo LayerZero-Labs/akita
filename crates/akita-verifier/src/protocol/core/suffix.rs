@@ -48,7 +48,9 @@ fn suffix_commitment_payloads<F: FieldCore>(
         return Err(AkitaError::InvalidProof);
     }
 
-    let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+    let relation_geometry =
+        RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+    let relation_layout = relation_geometry.rhs_layout();
     let mut ordered = Vec::with_capacity(group_payloads.len());
     for (relation_group_index, group_index) in
         opening_batch.root_group_order()?.into_iter().enumerate()

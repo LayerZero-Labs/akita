@@ -201,7 +201,9 @@ where
                 "root commitment group count does not match opening batch".to_string(),
             ));
         }
-        let relation_layout = relation_rhs_layout_for(root_params, &opening_batch)?;
+        let relation_geometry =
+            RelationWitnessGeometry::for_evaluation_trace_execution(root_params, &opening_batch)?;
+        let relation_layout = relation_geometry.rhs_layout();
         for (group_index, commitment) in commitments.iter().enumerate() {
             let plan = relation_layout.compression_plan_for_group(group_index)?;
             if commitment.rows().coeff_len() != plan.terminal_coefficients() {
