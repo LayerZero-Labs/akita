@@ -137,7 +137,7 @@ pub use proof::{
     RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationGroupOpening, RingRelationGroupOpeningView,
     RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
-    RootSourceProfile, ScheduledSetupPrefix, SetupMatrixCapacity, SetupPrefixProverRegistry,
+    ScheduledSetupPrefix, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
     SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof,
     SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,

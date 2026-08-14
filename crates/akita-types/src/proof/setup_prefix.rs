@@ -297,17 +297,6 @@ fn serialize_committed_group_profile<W: Write>(
         .num_polynomials()
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .group
-        .source()
-        .tag()
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .group
-        .source()
-        .onehot_chunk_size()
-        .unwrap_or(0)
-        .serialize_with_mode(&mut writer, compress)?;
-    params
         .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
@@ -389,13 +378,6 @@ fn committed_group_profile_serialized_size(
     params.version.serialized_size(compress)
         + params.group.num_vars().serialized_size(compress)
         + params.group.num_polynomials().serialized_size(compress)
-        + params.group.source().tag().serialized_size(compress)
-        + params
-            .group
-            .source()
-            .onehot_chunk_size()
-            .unwrap_or(0)
-            .serialized_size(compress)
         + params
             .num_live_ring_elements_per_claim
             .serialized_size(compress)

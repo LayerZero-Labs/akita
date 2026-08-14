@@ -21,14 +21,14 @@ use crate::generated::{
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_inner,
-    num_digits_open, num_digits_setup_prefix_commit, projected_role_ring_count,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisTableKey,
+    num_digits_open, projected_role_ring_count, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommitmentSliceCount,
-    CommitmentSliceGeometry, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedLevelParams, TerminalCommittedGroupParams,
+    CommitmentSliceGeometry, CommittedGroupParams, DecompositionParams, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedLevelParams,
+    TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -73,185 +73,52 @@ impl GeneratedSetupPrefixInput {
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
-        super::validate_certified_bases(
-            self.generated_commitment.inner_commit_matrix.log_basis,
-            self.generated_commitment.outer_commit_matrix.log_basis,
-            log_basis_open,
-            policy,
-            "generated setup-prefix group",
-        )?;
-        let dimensions = CommitmentRingDims {
-            inner: self.generated_commitment.inner_commit_matrix.ring_dimension as usize,
-            outer: self.generated_commitment.outer_commit_matrix.ring_dimension as usize,
-            // A setup-prefix group is opened by its consuming fold's D matrix,
-            // so only its persisted A/B dimensions are reconstructed here.
-            opening: self.generated_commitment.outer_commit_matrix.ring_dimension as usize,
-        };
-        validate_role_dims(dimensions)?;
-        let d_a = dimensions.d_a();
-        let d_b = dimensions.d_b();
-        let ring_challenge_cfg = ring_challenge_config(d_a)?;
-        let sis_modulus_profile = policy.sis_modulus_profile;
-        let sis_policy = policy.sis_security_policy;
-        let geometry = self.generated_commitment.geometry;
-        let num_live_ring_elements_per_claim = generated_count(
-            geometry.live_ring_elements_per_claim,
-            "live ring-element count",
-        )?;
-        let num_positions_per_block =
-            generated_count(geometry.positions_per_block, "positions per block")?;
-        let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
-        let outer_slice_count =
-            CommitmentSliceCount::try_new(self.generated_commitment.outer_slice_count as usize)?;
-        outer_slice_count.validate_for_commitment(
-            0,
-            akita_types::CommitmentPayloadMode::Compressed,
-            num_live_blocks,
-        )?;
-        let n_prefix = num_live_ring_elements_per_claim
+        let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
+        let d_a = self.commitment.inner_commit_matrix.ring_dimension();
+        let committed_len = self
+            .commitment
+            .num_live_ring_elements_per_claim
             .checked_mul(d_a)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
             })?;
-        if n_prefix == 0 || !n_prefix.is_power_of_two() {
+        if natural_len == 0 || natural_len.checked_next_power_of_two() != Some(committed_len) {
             return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix length must be a power of two".into(),
+                "generated setup-prefix natural length disagrees with its frozen commitment".into(),
             ));
         }
-        let prefix_num_vars = n_prefix.trailing_zeros() as usize;
-        let inner_decomp = DecompositionParams {
-            log_basis: self.generated_commitment.inner_commit_matrix.log_basis,
-            ..policy.decomposition
+        let challenge_dimension = match self.opening.opening_method {
+            akita_types::OpeningMethod::EvaluationTrace => d_a,
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => challenge_subring_dimension,
         };
-        let outer_decomp = DecompositionParams {
-            log_basis: self.generated_commitment.outer_commit_matrix.log_basis,
-            ..policy.decomposition
-        };
-        let open_decomp = DecompositionParams {
-            log_basis: log_basis_open,
-            ..policy.decomposition
-        };
-        let num_digits_inner = num_digits_setup_prefix_commit(inner_decomp);
-        let num_digits_outer = num_digits_open(outer_decomp);
-        let num_digits_open_val = num_digits_open(open_decomp);
-        let no_layout = |role: &str| {
-            AkitaError::InvalidSetup(format!(
-                "no audited setup-prefix {role}-role layout for generated schedule \
-                 (profile={sis_modulus_profile:?}, dims={dimensions:?}, inner={}, outer={}, open={})",
-                self.generated_commitment.inner_commit_matrix.log_basis,
-                self.generated_commitment.outer_commit_matrix.log_basis,
-                log_basis_open
-            ))
-        };
-        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
-            .ok_or_else(|| no_layout("A"))?;
-        let num_digits_fold = usize::try_from(self.num_digits_fold).map_err(|_| {
-            AkitaError::InvalidSetup(
-                "generated setup-prefix fold digit depth does not fit the target platform".into(),
-            )
-        })?;
-        if num_digits_fold == 0 {
+        if ring_challenge_config(challenge_dimension)? != self.opening.fold_challenge_config
+            || self.opening.log_basis_open != log_basis_open
+        {
             return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix fold digit depth must be nonzero".into(),
+                "generated setup-prefix opening plan disagrees with its consuming fold".into(),
             ));
         }
-        let a_bucket = rounded_up_role_a_inf_norm(
-            sis_policy,
-            policy.sis_table_digest,
-            sis_modulus_profile,
-            d_a,
-            log_basis_open,
-            &ring_challenge_cfg,
-            num_digits_fold,
-        )
-        .ok_or_else(|| no_layout("A"))?;
-        let n_a = secure_rank(
-            "setup-prefix a",
-            sis_key(
-                policy,
-                akita_types::SisMatrixRole::Inner,
-                d_a as u32,
-                a_bucket,
-            ),
-            inner_width,
-        )?;
-        let b_bucket = rounded_up_collision_inf_norm(
-            sis_policy,
-            sis_modulus_profile,
-            akita_types::SisMatrixRole::Outer,
-            d_b,
-            log_basis_open,
-        )
-        .ok_or_else(|| no_layout("B"))?;
-        let outer_width = CommitmentSliceGeometry::try_new(
-            outer_slice_count,
-            num_live_blocks,
-            1,
-            n_a,
-            num_digits_outer,
-            d_a,
-            d_b,
-        )?
-        .physical_input_width();
-        let n_b = secure_rank(
-            "setup-prefix b",
-            sis_key(
-                policy,
-                akita_types::SisMatrixRole::Outer,
-                d_b as u32,
-                b_bucket,
-            ),
-            outer_width,
-        )?;
-        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
-            sis_policy,
-            policy.sis_table_digest,
-            sis_modulus_profile,
-            n_a,
-            inner_width,
-            a_bucket,
-            d_a,
-        )?;
-        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
-            sis_policy,
-            policy.sis_table_digest,
-            sis_modulus_profile,
-            n_b,
-            outer_width,
-            b_bucket,
-            d_b,
-        )?;
-        let layout = CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
-            group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-            outer_slice_count,
-            log_basis_inner: self.generated_commitment.inner_commit_matrix.log_basis,
-            num_digits_inner,
-            inner_commit_matrix,
-            log_basis_outer: self.generated_commitment.outer_commit_matrix.log_basis,
-            num_digits_outer,
-            outer_commit_matrix,
+        let admission_policy = akita_types::PrecommittedGroupAdmissionPolicy {
+            decomposition: policy.decomposition,
+            sis_security_policy: policy.sis_security_policy,
+            sis_table_digest: policy.sis_table_digest,
+            sis_modulus_profile: policy.sis_modulus_profile,
         };
-        layout.validate_root_geometry()?;
-        let replayed_opening = akita_types::GroupOpeningPlan::evaluation_trace(
-            ring_challenge_cfg,
+        let mut params = PrecommittedLevelParams::admit(
+            self.commitment,
+            self.opening.num_digits_fold,
+            admission_policy,
+            self.opening.fold_challenge_config,
             log_basis_open,
-            num_digits_open_val,
-            num_digits_fold,
-        );
-        if layout != self.commitment || replayed_opening != self.opening {
+        )?;
+        params.opening.opening_method = self.opening.opening_method;
+        if params.opening != self.opening {
             return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix replay disagrees with its frozen commitment or opening plan"
-                    .into(),
+                "generated setup-prefix opening plan is not the canonical admitted plan".into(),
             ));
         }
-        let params = PrecommittedLevelParams {
-            layout: self.commitment,
-            opening: self.opening,
-        };
         params.validate()?;
         Ok(params)
     }

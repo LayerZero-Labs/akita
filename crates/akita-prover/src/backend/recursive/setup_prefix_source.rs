@@ -734,7 +734,8 @@ mod tests {
             D,
         );
         let profile =
-            CommittedGroupProfile::from_params(PolynomialGroupLayout::singleton(9), &params);
+            CommittedGroupProfile::try_from_params(PolynomialGroupLayout::singleton(9), &params)
+                .expect("valid setup-prefix profile");
         let fields = (0..512)
             .map(|index| F::from_i64((index % 17) as i64 - 8))
             .collect::<Vec<_>>();

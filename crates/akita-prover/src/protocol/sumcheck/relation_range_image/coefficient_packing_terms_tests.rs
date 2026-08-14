@@ -252,11 +252,11 @@ fn structured_terms_cover_four_planes_and_exact_overlap_without_width_dispatch()
 fn structured_terms_merge_in_authenticated_root_group_order() {
     type RootF = Prime128OffsetA7F7;
     type RootE = RootF;
-    let precommitted_layout = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
-    let final_layout = PolynomialGroupLayout::unit_one_hot(32, 2, 256);
+    let precommitted_layout = PolynomialGroupLayout::new(16, 1);
+    let final_layout = PolynomialGroupLayout::new(32, 2);
     let precommitted = fp128::OneHot::profile_without_precommitted_groups(precommitted_layout)
         .expect("independent precommitted profile");
-    let mut params = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey {
+    let mut params = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
         final_group: final_layout,
         precommitteds: vec![precommitted, precommitted],
     })

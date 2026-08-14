@@ -395,7 +395,14 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             collect_group_ring_dimensions(fold.witness, &mut dims);
             push_unique(&mut dims, fold.open_commit_matrix.ring_dimension as usize);
             if let Some(prefix) = fold.incoming_setup_prefix {
-                collect_group_ring_dimensions(prefix.generated_commitment, &mut dims);
+                push_unique(
+                    &mut dims,
+                    prefix.commitment.inner_commit_matrix.ring_dimension(),
+                );
+                push_unique(
+                    &mut dims,
+                    prefix.commitment.outer_commit_matrix.ring_dimension(),
+                );
             }
         }
         push_unique(
@@ -583,7 +590,6 @@ fn entries_key_digest_with_setup_prefix_content_mode(
                     write_setup_prefix_content_mode_full_prefix(&mut h);
                 }
                 h.write_u64(prefix.natural_len);
-                write_generated_group(&mut h, prefix.generated_commitment);
                 h.write_bytes(&prefix.commitment.canonical_descriptor_bytes());
                 h.write_bytes(&prefix.opening.canonical_descriptor_bytes());
             }

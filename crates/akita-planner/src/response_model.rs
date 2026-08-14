@@ -624,7 +624,7 @@ pub(crate) fn root_group_source_moments(
     let mut moments = Vec::with_capacity(opening_layout.num_groups());
     for group_index in 0..opening_layout.num_groups() {
         let group_layout = *opening_layout.group_layout(group_index)?;
-        let group_params = params.group_params(opening_layout, group_index)?;
+        let group_params = params.group_params_geometry(opening_layout, group_index)?;
         let logical_len =
             checked_logical_group_len(group_layout.num_vars(), group_layout.num_polynomials())?;
         let policy = if group_index == final_group_index {
@@ -718,9 +718,12 @@ pub(crate) fn next_source_moment(
         ));
     }
     let quotient_depth = compute_num_digits_field_width(field_bits, params.log_basis_open);
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
     let layout = WitnessLayout::new(
         params,
         opening_layout,
+        &relation_geometry,
         params.witness_chunk.num_chunks,
         quotient_depth,
     )?;
@@ -728,7 +731,7 @@ pub(crate) fn next_source_moment(
 
     for unit in layout.units() {
         let group_index = unit.group_index();
-        let group_params = params.group_params(opening_layout, group_index)?;
+        let group_params = params.group_params_geometry(opening_layout, group_index)?;
         let group_source = source_groups
             .get(group_index)
             .copied()
@@ -745,7 +748,12 @@ pub(crate) fn next_source_moment(
             .and_then(|value| value.checked_add(total_blocks as u128 - 1))
             .map(|rounded| rounded / total_blocks as u128)
             .ok_or_else(|| AkitaError::InvalidSetup("chunk source energy overflow".into()))?;
-        let group_d_a = params.group_role_dims(opening_layout, group_index)?.d_a();
+        let group_d_a = relation_geometry
+            .rhs_layout()
+            .groups
+            .iter()
+            .find_map(|group| (group.group_index == group_index).then_some(group.role_dims.d_a()))
+            .ok_or_else(|| AkitaError::InvalidSetup("response relation group is missing".into()))?;
         let response_energy = chunk_source
             .checked_mul(group_params.fold_challenge_config().challenge_l2_sq_max())
             .ok_or_else(|| AkitaError::InvalidSetup("fold response energy overflow".into()))?;
@@ -769,9 +777,12 @@ pub(crate) fn next_source_moment(
         }
 
         let num_claims = opening_layout.group_layout(group_index)?.num_polynomials();
+        let opening_width = relation_geometry
+            .group_opening_geometry(group_index)?
+            .physical_coefficient_width();
         let e_scalar_count = num_claims
             .checked_mul(unit.num_live_blocks())
-            .and_then(|count| count.checked_mul(group_d_a))
+            .and_then(|count| count.checked_mul(opening_width))
             .ok_or_else(|| AkitaError::InvalidSetup("live E source length overflow".into()))?;
         let allocated_e_scalar_count = unit.e_range().len() / group_params.num_digits_open();
         if e_scalar_count > allocated_e_scalar_count {
@@ -788,8 +799,10 @@ pub(crate) fn next_source_moment(
             )?;
             checked_add_component(&mut logical_components, E_COMPONENT, energy, peak)?;
         }
-        let t_scalar_count = e_scalar_count
-            .checked_mul(group_params.a_rows_len())
+        let t_scalar_count = num_claims
+            .checked_mul(unit.num_live_blocks())
+            .and_then(|count| count.checked_mul(group_d_a))
+            .and_then(|count| count.checked_mul(group_params.a_rows_len()))
             .ok_or_else(|| AkitaError::InvalidSetup("live T source length overflow".into()))?;
         let allocated_t_scalar_count = unit.t_range().len() / group_params.num_digits_outer();
         if t_scalar_count > allocated_t_scalar_count {

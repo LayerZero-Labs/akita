@@ -50,7 +50,7 @@ fn committed_params_with_geometry(
     num_positions_per_block: usize,
     num_live_ring_elements_per_claim: usize,
 ) -> CommittedGroupParams {
-    CommittedGroupParams::params_only(
+    let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         ring_dimension,
         3,
@@ -66,7 +66,33 @@ fn committed_params_with_geometry(
         2,
         2,
     )
-    .expect("schedule validation params")
+    .expect("schedule validation params");
+    let inner = params.inner_commit_matrix;
+    params.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        TEST_TERMINAL_A_BUCKET,
+        inner.ring_dimension(),
+    )
+    .expect("audited schedule A matrix");
+    let outer = params.outer_commit_matrix;
+    params.outer_commit_matrix = crate::OuterCommitMatrixParams::try_new(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width(),
+        3,
+        outer.ring_dimension(),
+    )
+    .expect("audited schedule B matrix");
+    params
 }
 
 fn retarget_outer_dimension(
@@ -127,6 +153,11 @@ fn recursive_schedule(
 ) -> FoldSchedule {
     let predecessor = committed_params(predecessor_ring_dimension);
     let mut successor = committed_params(successor_ring_dimension);
+    if offload {
+        successor.fold_challenge_config =
+            SparseChallengeConfig::production_for_ring_dim(successor_ring_dimension)
+                .expect("production setup-prefix challenge");
+    }
     let incoming_setup_prefix = offload.then(|| {
         let natural_len = successor_ring_dimension;
         let commitment_params = crate::setup_prefix_precommitted_params(&successor, natural_len)
@@ -453,7 +484,9 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 
     let n_prefix = crate::padded_setup_prefix_len(natural_len);
     let prefix_ring_slots = n_prefix / 64;
-    let consumer = committed_params_with_geometry(64, prefix_ring_slots, 64);
+    let mut consumer = committed_params_with_geometry(64, prefix_ring_slots, 64);
+    consumer.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64)
+        .expect("production setup-prefix challenge");
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
         .expect("consumer-compatible prefix commitment");
     let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
@@ -1176,7 +1209,7 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
 fn schedule_row_identity_binds_setup_prefix_opening_method() {
     let schedule = recursive_schedule(64, 64, true);
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params(
+        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),
@@ -1234,7 +1267,7 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
 fn schedule_row_identity_binds_main_opening_method() {
     let schedule = recursive_schedule(64, 64, false);
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params(
+        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),
@@ -1345,7 +1378,7 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
         .expect("valid root precommitted schedule");
 
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params(
+        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),

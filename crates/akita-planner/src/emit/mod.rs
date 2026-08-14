@@ -168,23 +168,6 @@ fn setup_prefix_slot_input(slot: &ScheduledSetupPrefix) -> GeneratedSetupPrefixI
     let group = &slot.commitment_params;
     GeneratedSetupPrefixInput {
         natural_len: slot.natural_len as u64,
-        num_digits_fold: group.opening.num_digits_fold as u32,
-        generated_commitment: GeneratedCommittedGroup {
-            geometry: GeneratedBlockGeometry {
-                live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim as u64,
-                positions_per_block: group.layout.num_positions_per_block as u64,
-                live_blocks: group.layout.num_live_blocks as u64,
-            },
-            inner_commit_matrix: GeneratedInnerCommitMatrix {
-                ring_dimension: group.layout.inner_commit_matrix.ring_dimension() as u32,
-                log_basis: group.layout.log_basis_inner,
-            },
-            outer_commit_matrix: GeneratedOuterCommitMatrix {
-                ring_dimension: group.layout.outer_commit_matrix.ring_dimension() as u32,
-                log_basis: group.layout.log_basis_outer,
-            },
-            outer_slice_count: group.layout.outer_slice_count.get() as u32,
-        },
         commitment: group.layout,
         opening: group.opening,
     }
@@ -426,10 +409,8 @@ fn emit_opening_method(value: akita_types::OpeningMethod) -> String {
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, num_digits_fold: {}, generated_commitment: {}, commitment: {}, opening: {} }})",
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, commitment: {}, opening: {} }})",
             value.natural_len,
-            value.num_digits_fold,
-            emit_committed_group(value.generated_commitment),
             emit_precommitted_group_key(&value.commitment),
             emit_group_opening_plan(value.opening),
         ),

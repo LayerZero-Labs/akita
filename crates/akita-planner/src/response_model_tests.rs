@@ -32,10 +32,9 @@ fn response_geometry_params(opening_method: akita_types::OpeningMethod) -> Commi
 fn next_source_moment_prices_packing_e_and_r_but_keeps_ambient_t() {
     let opening = OpeningClaimsLayout::new(0, 1).expect("opening batch");
     let source = SourceMomentEstimate::new(1 << 16).expect("source moment");
-    let packing =
-        response_geometry_params(akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        });
+    let packing = response_geometry_params(akita_types::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    });
     let trace = response_geometry_params(akita_types::OpeningMethod::EvaluationTrace);
     let packing_moment =
         next_source_moment(&packing, &opening, &[source], 128, 2).expect("packing source moment");

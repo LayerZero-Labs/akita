@@ -66,9 +66,6 @@ pub struct GeneratedRootFold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
-    /// Compact fields retained for independent replay auditing.
-    pub num_digits_fold: u32,
-    pub generated_commitment: GeneratedCommittedGroup,
     /// Exact frozen commitment identity emitted by the planner.
     pub commitment: akita_types::CommittedGroupProfile,
     pub opening: akita_types::GroupOpeningPlan,
@@ -344,35 +341,6 @@ pub(crate) fn validate_entry_key(
             "generated schedule key mismatch".to_string(),
         ))
     }
-}
-
-pub(crate) fn validate_certified_bases(
-    log_basis_inner: u32,
-    log_basis_outer: u32,
-    log_basis_open: u32,
-    policy: &crate::PlannerPolicy,
-    context: &str,
-) -> Result<(), akita_field::AkitaError> {
-    let (inner_min, inner_max) = policy.inner_basis_range;
-    if log_basis_inner < inner_min || log_basis_inner > inner_max {
-        return Err(akita_field::AkitaError::InvalidSetup(format!(
-            "{context} inner basis {log_basis_inner} outside policy range [{inner_min}, {inner_max}]"
-        )));
-    }
-    let (min, max) = policy.opening_basis_range;
-    for (role, basis) in [("outer", log_basis_outer), ("open", log_basis_open)] {
-        if basis < min || basis > max {
-            return Err(akita_field::AkitaError::InvalidSetup(format!(
-                "{context} {role} basis {basis} outside policy range [{min}, {max}]"
-            )));
-        }
-    }
-    if log_basis_open < log_basis_outer {
-        return Err(akita_field::AkitaError::InvalidSetup(format!(
-            "{context} certified open basis must dominate the outer basis"
-        )));
-    }
-    Ok(())
 }
 
 // @generated schedule module wiring begin
