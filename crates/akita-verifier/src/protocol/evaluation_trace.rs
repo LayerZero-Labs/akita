@@ -204,6 +204,14 @@ pub(crate) struct PreparedEvaluationTrace<E: FieldCore> {
 }
 
 impl<E: FieldCore> PreparedEvaluationTrace<E> {
+    #[cfg(test)]
+    pub(crate) fn empty_for_test(num_variables: usize) -> Self {
+        Self {
+            groups: Vec::new(),
+            num_variables,
+        }
+    }
+
     /// Evaluate the trace-weight MLE without constructing prover terms or
     /// scanning physical coefficient support.
     pub(crate) fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {

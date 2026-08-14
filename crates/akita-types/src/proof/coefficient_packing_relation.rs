@@ -3,6 +3,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
+use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_field::{
     canonical_extension_basis, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
@@ -101,6 +103,90 @@ impl<E: FieldCore> CoefficientPackingRelationEvents<E> {
     pub const fn physical_field_len(&self) -> usize {
         self.physical_field_len
     }
+
+    /// Evaluate the sparse packing E and quotient events at one flat point.
+    ///
+    /// The returned value already includes every event's alpha powers. A
+    /// caller that separately contracts the native common-alpha factor must
+    /// add this value afterwards, without multiplying by that factor again.
+    pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let point_variables = u32::try_from(point.len())
+            .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
+        let expected = 1usize
+            .checked_shl(point_variables)
+            .ok_or_else(|| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
+        let padded_field_len = self
+            .physical_field_len
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("packing field domain overflow".into()))?;
+        if expected != padded_field_len {
+            return Err(AkitaError::InvalidSize {
+                expected: padded_field_len.trailing_zeros() as usize,
+                actual: point.len(),
+            });
+        }
+        let block = self.relation_coefficient_block_len;
+        let low_variables = block.trailing_zeros() as usize;
+        let equality =
+            OffsetEqWindow::new(point.get(low_variables..).ok_or(AkitaError::InvalidProof)?)?;
+        let mut work = 0usize;
+        for event in &self.events {
+            work = work
+                .checked_add(event.physical_coefficients().len() / block)
+                .ok_or_else(|| AkitaError::InvalidSetup("packing event work overflow".into()))?;
+        }
+        if work > MAX_COMPACT_STRIDE_TERMS {
+            return Err(AkitaError::InvalidSize {
+                expected: MAX_COMPACT_STRIDE_TERMS,
+                actual: work,
+            });
+        }
+        let mut alpha_cache = Vec::new();
+        self.events.iter().try_fold(E::zero(), |sum, event| {
+            let coefficients = event.physical_coefficients();
+            if !coefficients.start.is_multiple_of(block)
+                || !coefficients.len().is_multiple_of(block)
+                || !event.alpha_exponent_start().is_multiple_of(block)
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            (0..coefficients.len())
+                .step_by(block)
+                .try_fold(sum, |acc, coefficient_offset| {
+                    let alpha_start = event
+                        .alpha_exponent_start()
+                        .checked_add(coefficient_offset)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("packing alpha range overflow".into())
+                        })?;
+                    let alpha_eval = if let Some((_, value)) = alpha_cache
+                        .iter()
+                        .find(|(cached_start, _)| *cached_start == alpha_start)
+                    {
+                        *value
+                    } else {
+                        let alpha_end = alpha_start.checked_add(block).ok_or_else(|| {
+                            AkitaError::InvalidSetup("packing alpha range overflow".into())
+                        })?;
+                        let value = multilinear_eval(
+                            self.alpha_powers
+                                .get(alpha_start..alpha_end)
+                                .ok_or(AkitaError::InvalidProof)?,
+                            &point[..low_variables],
+                        )?;
+                        alpha_cache.push((alpha_start, value));
+                        value
+                    };
+                    let physical = coefficients
+                        .start
+                        .checked_add(coefficient_offset)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("packing event address overflow".into())
+                        })?;
+                    Ok(acc + event.scalar() * alpha_eval * equality.eval(physical / block))
+                })
+        })
+    }
 }
 
 /// Shared source selected by one structured Stage 2 term.
@@ -162,6 +248,7 @@ pub struct CoefficientPackingStage2Terms<E: FieldCore> {
     segments: Vec<CoefficientPackingStage2Segment>,
     terms: Vec<CoefficientPackingStage2Term<E>>,
     physical_field_len: usize,
+    relation_coefficient_block_len: usize,
     group_claim_range: Range<usize>,
     scalar_claim_weight: E,
 }
@@ -201,6 +288,106 @@ impl<E: FieldCore> CoefficientPackingStage2Terms<E> {
     pub const fn scalar_claim_weight(&self) -> E {
         self.scalar_claim_weight
     }
+
+    /// Evaluate the structured direct-opening and packing-Z terms at one flat
+    /// witness point without materializing a witness-sized weight table.
+    pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let point_variables = u32::try_from(point.len())
+            .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
+        let expected = 1usize
+            .checked_shl(point_variables)
+            .ok_or_else(|| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
+        let padded_field_len = self
+            .physical_field_len
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("packing field domain overflow".into()))?;
+        if expected != padded_field_len {
+            return Err(AkitaError::InvalidSize {
+                expected: padded_field_len.trailing_zeros() as usize,
+                actual: point.len(),
+            });
+        }
+        let block = self.relation_coefficient_block_len;
+        let low_variables = block.trailing_zeros() as usize;
+        let equality =
+            OffsetEqWindow::new(point.get(low_variables..).ok_or(AkitaError::InvalidProof)?)?;
+        let mut work = 0usize;
+        for term in &self.terms {
+            for segment in self
+                .segments
+                .get(term.segments())
+                .ok_or(AkitaError::InvalidProof)?
+            {
+                work = work
+                    .checked_add(segment.physical_coefficients().len() / block)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("packing Stage 2 work overflow".into())
+                    })?;
+            }
+        }
+        if work > MAX_COMPACT_STRIDE_TERMS {
+            return Err(AkitaError::InvalidSize {
+                expected: MAX_COMPACT_STRIDE_TERMS,
+                actual: work,
+            });
+        }
+        let mut source_cache = Vec::new();
+        self.terms.iter().try_fold(E::zero(), |sum, term| {
+            let source = match term.source() {
+                CoefficientPackingStage2Source::DirectOpening => self.direct_opening_source(),
+                CoefficientPackingStage2Source::PackingZ => self.packing_z_source(),
+            };
+            let segments = self
+                .segments
+                .get(term.segments())
+                .ok_or(AkitaError::InvalidProof)?;
+            segments.iter().try_fold(sum, |term_sum, segment| {
+                let physical = segment.physical_coefficients();
+                let source_range = segment.source_coefficients();
+                if physical.len() != source_range.len()
+                    || !physical.start.is_multiple_of(block)
+                    || !physical.len().is_multiple_of(block)
+                    || !source_range.start.is_multiple_of(block)
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                (0..physical.len())
+                    .step_by(block)
+                    .try_fold(term_sum, |acc, offset| {
+                        let physical_index =
+                            physical.start.checked_add(offset).ok_or_else(|| {
+                                AkitaError::InvalidSetup("packing Stage 2 address overflow".into())
+                            })?;
+                        let source_index =
+                            source_range.start.checked_add(offset).ok_or_else(|| {
+                                AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
+                            })?;
+                        let source_value = if let Some((_, _, value)) =
+                            source_cache
+                                .iter()
+                                .find(|(cached_source, cached_index, _)| {
+                                    *cached_source == term.source() && *cached_index == source_index
+                                }) {
+                            *value
+                        } else {
+                            let source_end = source_index.checked_add(block).ok_or_else(|| {
+                                AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
+                            })?;
+                            let value = multilinear_eval(
+                                source
+                                    .get(source_index..source_end)
+                                    .ok_or(AkitaError::InvalidProof)?,
+                                &point[..low_variables],
+                            )?;
+                            source_cache.push((term.source(), source_index, value));
+                            value
+                        };
+                        Ok(acc
+                            + term.factor() * source_value * equality.eval(physical_index / block))
+                    })
+            })
+        })
+    }
 }
 
 /// One group's joined coefficient-packing relation semantics.
@@ -210,6 +397,68 @@ pub struct CoefficientPackingGroupSemantics<E: FieldCore> {
     geometry: SubringCoefficientPackingGeometry,
     relation_events: CoefficientPackingRelationEvents<E>,
     stage2_terms: CoefficientPackingStage2Terms<E>,
+}
+
+/// Exact authority used to prepare every packing group in one fold.
+pub struct CoefficientPackingBatchSemanticInputs<'a, F: FieldCore, E: FieldCore> {
+    pub level_params: &'a CommittedGroupParams,
+    pub opening_batch: &'a OpeningClaimsLayout,
+    pub relation_plan: &'a RelationRangeImagePlan,
+    pub relation: &'a RingRelationInstance<F>,
+    /// Prepared public points keyed by authenticated group index.
+    pub prepared_points: &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<E>)],
+    pub alpha: E,
+    pub tau1: &'a [E],
+    pub claim_coefficients: &'a [E],
+}
+
+/// Checked packing semantics for every packing group in one exact relation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoefficientPackingBatchSemantics<F: FieldCore, E: FieldCore> {
+    level_params: CommittedGroupParams,
+    opening_batch: OpeningClaimsLayout,
+    relation_plan: RelationRangeImagePlan,
+    relation: RingRelationInstance<F>,
+    alpha: E,
+    tau1: Arc<[E]>,
+    claim_coefficients: Arc<[E]>,
+    groups: Vec<CoefficientPackingGroupSemantics<E>>,
+}
+
+impl<F: FieldCore, E: FieldCore> CoefficientPackingBatchSemantics<F, E> {
+    #[must_use]
+    pub fn groups(&self) -> &[CoefficientPackingGroupSemantics<E>] {
+        &self.groups
+    }
+
+    #[must_use]
+    pub const fn relation_plan(&self) -> &RelationRangeImagePlan {
+        &self.relation_plan
+    }
+
+    /// Rejoin this prepared batch to the exact authority that created it.
+    pub fn validate_context(
+        &self,
+        level_params: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+        relation: &RingRelationInstance<F>,
+        alpha: E,
+        tau1: &[E],
+        claim_coefficients: &[E],
+    ) -> Result<(), AkitaError> {
+        if &self.level_params != level_params
+            || &self.opening_batch != opening_batch
+            || &self.relation != relation
+            || self.alpha != alpha
+            || self.tau1.as_ref() != tau1
+            || self.claim_coefficients.as_ref() != claim_coefficients
+        {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing batch authority disagrees with its consumer".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl<E: FieldCore> CoefficientPackingGroupSemantics<E> {
@@ -751,9 +1000,94 @@ where
             segments,
             terms,
             physical_field_len,
+            relation_coefficient_block_len: coefficient_block,
             group_claim_range,
             scalar_claim_weight,
         },
+    })
+}
+
+/// Prepare all packing groups for one exact fold authority.
+pub fn prepare_coefficient_packing_batch_semantics<F, E>(
+    inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
+) -> Result<CoefficientPackingBatchSemantics<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+{
+    let expected_geometry = RelationWitnessGeometry::for_level(
+        inputs.level_params,
+        inputs.opening_batch,
+        E::EXT_DEGREE,
+    )?;
+    if inputs.relation_plan.relation_witness_geometry() != &expected_geometry
+        || inputs.relation.opening_batch() != inputs.opening_batch
+        || inputs.prepared_points.len() > inputs.opening_batch.num_groups()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing batch authorities disagree".into(),
+        ));
+    }
+    let mut points = vec![None; inputs.opening_batch.num_groups()];
+    for &(group_index, point) in inputs.prepared_points {
+        let slot = points
+            .get_mut(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if slot.replace(point).is_some() {
+            return Err(AkitaError::InvalidInput(
+                "coefficient-packing prepared point appears more than once".into(),
+            ));
+        }
+    }
+    let mut groups = Vec::new();
+    for group_plan in inputs.relation_plan.groups() {
+        let group_index = group_plan.group_index();
+        match expected_geometry.group_opening_method(group_index)? {
+            OpeningMethod::EvaluationTrace => {
+                if points[group_index].is_some() {
+                    return Err(AkitaError::InvalidInput(
+                        "EvaluationTrace group supplied a packing point".into(),
+                    ));
+                }
+            }
+            OpeningMethod::SubringCoefficientPacking { .. } => {
+                let prepared_point = points[group_index].ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "coefficient-packing group is missing its prepared point".into(),
+                    )
+                })?;
+                groups.push(prepare_coefficient_packing_group_semantics(
+                    CoefficientPackingGroupSemanticInputs {
+                        level_params: inputs.level_params,
+                        opening_batch: inputs.opening_batch,
+                        relation_plan: inputs.relation_plan,
+                        relation: inputs.relation,
+                        group_index,
+                        prepared_point,
+                        alpha: inputs.alpha,
+                        tau1: inputs.tau1,
+                        claim_coefficients: inputs.claim_coefficients,
+                    },
+                )?);
+            }
+        }
+    }
+    if points.iter().enumerate().any(|(group, point)| {
+        point.is_some() && groups.iter().all(|plan| plan.group_index() != group)
+    }) {
+        return Err(AkitaError::InvalidInput(
+            "coefficient-packing prepared point is outside the relation group order".into(),
+        ));
+    }
+    Ok(CoefficientPackingBatchSemantics {
+        level_params: inputs.level_params.clone(),
+        opening_batch: inputs.opening_batch.clone(),
+        relation_plan: inputs.relation_plan.clone(),
+        relation: inputs.relation.clone(),
+        alpha: inputs.alpha,
+        tau1: inputs.tau1.into(),
+        claim_coefficients: inputs.claim_coefficients.into(),
+        groups,
     })
 }
 

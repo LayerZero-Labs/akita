@@ -14,8 +14,9 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
-    OpeningClaimsLayout, RelationAddressGeometry, RelationRowFamily, RingRelationInstance,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CoefficientPackingBatchSemantics,
+    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningMethod,
+    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry, RingRelationInstance,
     SetupProjectionGeometry,
 };
 use setup_columns::{evaluate_setup_columns, SetupRows};
@@ -83,6 +84,10 @@ pub struct RelationWeightEventInputs<'a, F: FieldCore, E: FieldCore> {
     pub claim_coefficients: &'a [E],
     pub opening_source_len: usize,
     pub opening_ring_dim: usize,
+    /// Checked packing semantics in authenticated group order.
+    ///
+    /// Empty for the byte-identical EvaluationTrace path.
+    pub coefficient_packing_batch: Option<&'a CoefficientPackingBatchSemantics<F, E>>,
 }
 
 /// Checked relation events plus the domain data needed by every consumer.
@@ -344,11 +349,20 @@ impl<E: FieldCore> RelationWeightEvents<E> {
 fn relation_d_group_width(
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
+    relation_geometry: &RelationWitnessGeometry,
     group_index: usize,
 ) -> Result<usize, AkitaError> {
-    let group_lp = lp.group_params(opening_batch, group_index)?;
-    let group_dims = lp.group_role_dims(opening_batch, group_index)?;
-    let (_, d_subcolumns) = SetupProjectionGeometry::native_role_subcolumn_counts(group_dims)?;
+    let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
+    let group_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
+    let opening_width = relation_geometry
+        .group_opening_geometry(group_index)?
+        .physical_coefficient_width();
+    let d_subcolumns = opening_width
+        .checked_div(group_dims.d_d())
+        .filter(|count| *count > 0 && opening_width.is_multiple_of(group_dims.d_d()))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("opening width does not factor the D role".into())
+        })?;
     let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
     num_claims
         .checked_mul(group_lp.num_live_blocks())
@@ -360,6 +374,7 @@ fn relation_d_group_width(
 fn relation_d_column_ranges(
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
+    relation_geometry: &RelationWitnessGeometry,
 ) -> Result<Vec<Range<usize>>, AkitaError> {
     let mut cursor = 0usize;
     let mut seen = vec![false; opening_batch.num_groups()];
@@ -373,7 +388,7 @@ fn relation_d_column_ranges(
                 "setup D group id appears more than once".into(),
             ));
         }
-        let width = relation_d_group_width(lp, opening_batch, group_id)?;
+        let width = relation_d_group_width(lp, opening_batch, relation_geometry, group_id)?;
         let end = cursor
             .checked_add(width)
             .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
@@ -386,6 +401,27 @@ fn relation_d_column_ranges(
         ));
     }
     Ok(ranges)
+}
+
+fn matching_row_range(
+    row_families: &[RelationRowFamily],
+    mut matches: impl FnMut(&RelationRowFamily) -> bool,
+) -> Result<Range<usize>, AkitaError> {
+    let mut matched = row_families
+        .iter()
+        .enumerate()
+        .filter_map(|(row, family)| matches(family).then_some(row));
+    let start = matched.next().ok_or(AkitaError::InvalidProof)?;
+    let mut end = start + 1;
+    for row in matched {
+        if row != end {
+            return Err(AkitaError::InvalidSetup(
+                "relation row family is not contiguous".into(),
+            ));
+        }
+        end += 1;
+    }
+    Ok(start..end)
 }
 
 /// Emit the complete checked relation semantics for one fold.
@@ -406,10 +442,10 @@ where
         claim_coefficients: gamma,
         opening_source_len,
         opening_ring_dim,
+        coefficient_packing_batch,
     } = inputs;
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
-    lp.validate_opening_batch(opening_batch)?;
     if gamma.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
@@ -425,7 +461,7 @@ where
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+        RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
     let relation_rhs_layout = relation_geometry.rhs_layout();
     let row_families = relation_rhs_layout.row_families()?;
     let quotient_row_dims = row_families
@@ -433,10 +469,8 @@ where
         .map(|row| row.geometry().polynomial_modulus_dimension())
         .collect::<Vec<_>>();
     let rows = quotient_row_dims.len();
-    if rows != lp.relation_matrix_row_count(opening_batch.num_groups())? {
-        return Err(AkitaError::InvalidSetup(
-            "relation quotient row dimensions disagree with the matrix layout".into(),
-        ));
+    if rows == 0 {
+        return Err(AkitaError::InvalidProof);
     }
     let mut additional_quotient_alpha_powers = Vec::new();
     for &row_dim in &quotient_row_dims {
@@ -465,10 +499,8 @@ where
             "relation matrix dimensions disagree with witness layout".to_string(),
         ));
     }
-    for (row, &row_dim) in witness_layout.r_rows().iter().zip(&quotient_row_dims) {
-        if row.geometry().coordinate_plane_count() != 1
-            || row.geometry().polynomial_modulus_dimension() != row_dim
-        {
+    for (row, family) in witness_layout.r_rows().iter().zip(&row_families) {
+        if row.geometry() != family.geometry() {
             return Err(AkitaError::InvalidSetup(
                 "relation quotient dimensions disagree with witness layout".into(),
             ));
@@ -490,20 +522,34 @@ where
     };
     let setup_is_deferred = setup_matrix.is_none();
     let d_column_ranges = if setup_matrix.is_some() {
-        relation_d_column_ranges(lp, opening_batch)?
+        relation_d_column_ranges(lp, opening_batch, &relation_geometry)?
     } else {
         Vec::new()
     };
-    let group_role_dims = (0..opening_batch.num_groups())
-        .map(|group_index| lp.group_role_dims(opening_batch, group_index))
-        .collect::<Result<Vec<_>, _>>()?;
-    let relation_coefficient_block_len = RelationAddressGeometry::new_for_groups(
-        role_dims,
-        &group_role_dims,
+    let relation_coefficient_block_len = RelationAddressGeometry::for_relation(
+        &relation_geometry,
         opening_ring_dim,
         live_witness_coeff_len,
     )?
     .relation_coefficient_block_len();
+    if let Some(batch) = coefficient_packing_batch {
+        batch.validate_context(lp, opening_batch, instance, alpha, tau1, gamma)?;
+        if batch.relation_plan().relation_witness_geometry() != &relation_geometry
+            || batch.relation_plan().witness_layout() != &witness_layout
+            || batch
+                .relation_plan()
+                .relation_address_geometry()
+                .relation_coefficient_block_len()
+                != relation_coefficient_block_len
+        {
+            return Err(AkitaError::InvalidSetup(
+                "packing relation batch plan disagrees with the current ring switch".into(),
+            ));
+        }
+    }
+    let coefficient_packing_groups = coefficient_packing_batch
+        .map(CoefficientPackingBatchSemantics::groups)
+        .unwrap_or(&[]);
     let mut relation_events = RelationWeightEvents {
         events: Vec::new(),
         alpha_powers: scalar_powers(
@@ -518,6 +564,37 @@ where
         physical_field_len,
         setup_is_deferred,
     };
+    let mut packing_semantics_by_group = vec![None; opening_batch.num_groups()];
+    for semantics in coefficient_packing_groups {
+        let group_index = semantics.group_index();
+        let slot = packing_semantics_by_group
+            .get_mut(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if slot.replace(semantics).is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "packing relation group appears more than once".into(),
+            ));
+        }
+        if semantics.relation_events().physical_field_len() != live_witness_coeff_len {
+            return Err(AkitaError::InvalidSetup(
+                "packing relation live domain disagrees with the current ring switch".into(),
+            ));
+        }
+        if semantics.relation_events().relation_coefficient_block_len()
+            != relation_coefficient_block_len
+        {
+            return Err(AkitaError::InvalidSetup(
+                "packing relation coefficient block disagrees with the current ring switch".into(),
+            ));
+        }
+        if semantics.relation_events().alpha_powers()
+            != scalar_powers(alpha, semantics.geometry().challenge_subring_dimension())
+        {
+            return Err(AkitaError::InvalidSetup(
+                "packing relation alpha disagrees with the current ring switch".into(),
+            ));
+        }
+    }
     let d_view = if let Some(setup) = setup_matrix {
         let d_physical_columns = d_column_ranges
             .iter()
@@ -545,7 +622,7 @@ where
         .iter()
         .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))
         .ok_or(AkitaError::InvalidProof)?;
-    for group_index in 0..opening_batch.num_groups() {
+    for (group_index, &packing_semantics) in packing_semantics_by_group.iter().enumerate() {
         let e_setup_offset = if setup_matrix.is_some() {
             d_column_ranges
                 .get(group_index)
@@ -554,12 +631,21 @@ where
         } else {
             0
         };
-        let group_lp = lp.group_params(opening_batch, group_index)?;
-        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
         let group_d_a = group_dims.d_a();
         let group_d_b = group_dims.d_b();
         let group_d_d = group_dims.d_d();
-        let (b_ratio, d_ratio) = SetupProjectionGeometry::native_role_subcolumn_counts(group_dims)?;
+        let (b_ratio, _) = SetupProjectionGeometry::native_role_subcolumn_counts(group_dims)?;
+        let opening_width = relation_geometry
+            .group_opening_geometry(group_index)?
+            .physical_coefficient_width();
+        let d_ratio = opening_width
+            .checked_div(group_d_d)
+            .filter(|count| *count > 0 && opening_width.is_multiple_of(group_d_d))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("opening width does not factor the D role".into())
+            })?;
         let group_alpha_pows_a = scalar_powers(alpha, group_d_a);
         let group_alpha_pows_b = scalar_powers(alpha, group_d_b);
         let group_alpha_pows_d = scalar_powers(alpha, group_d_d);
@@ -567,11 +653,25 @@ where
         let group_id = group_index;
         let units = witness_layout.units_for_group(group_id)?;
         let k_g = group_layout.num_polynomials();
-        let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
+        let opening_method = relation_geometry.group_opening_method(group_index)?;
+        match (opening_method, packing_semantics) {
+            (OpeningMethod::EvaluationTrace, None) => {}
+            (OpeningMethod::SubringCoefficientPacking { .. }, Some(semantics))
+                if semantics.geometry().a_ring_dimension() == group_d_a => {}
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "packing semantic groups do not match scheduled opening methods".into(),
+                ));
+            }
+        }
+        let ring_multiplier_point = matches!(opening_method, OpeningMethod::EvaluationTrace)
+            .then(|| instance.group_ring_multiplier_point(group_index))
+            .transpose()?;
         let challenges = instance.group_ambient_a_challenges(group_index)?;
-        if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
-            || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
-        {
+        if ring_multiplier_point.is_some_and(|point| {
+            point.position_len() != group_lp.num_positions_per_block()
+                || point.fold_len() != group_lp.num_live_blocks()
+        }) {
             return Err(AkitaError::InvalidInput(
                 "relation matrix col eval multiplier layout mismatch".to_string(),
             ));
@@ -630,10 +730,21 @@ where
         } else {
             (None, None)
         };
-        let a_range = lp.a_row_range(opening_batch, group_index)?;
-        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
-        let consistency_weight =
-            eq_tau1.eval_at(lp.consistency_row_index(opening_batch, group_index)?)?;
+        let a_range = matching_row_range(
+            &row_families,
+            |family| matches!(family, RelationRowFamily::Inner { group_index: group, .. } if *group == group_index),
+        )?;
+        let b_range = matching_row_range(
+            &row_families,
+            |family| matches!(family, RelationRowFamily::Outer { group_index: group, .. } if *group == group_index),
+        )?;
+        let consistency_row = row_families
+            .iter()
+            .position(|family| {
+                matches!(family, RelationRowFamily::Consistency { group_index: group, .. } if *group == group_index)
+            })
+            .ok_or(AkitaError::InvalidProof)?;
+        let consistency_weight = eq_tau1.eval_at(consistency_row)?;
         if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() || b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }
@@ -753,13 +864,15 @@ where
                         } else {
                             E::zero()
                         };
-                        relation_events.push(
-                            physical_start,
-                            group_d_d,
-                            role_subcol * group_d_d,
-                            consistency_acc,
-                            RelationWeightContribution::Constraint,
-                        )?;
+                        if matches!(opening_method, OpeningMethod::EvaluationTrace) {
+                            relation_events.push(
+                                physical_start,
+                                group_d_d,
+                                role_subcol * group_d_d,
+                                consistency_acc,
+                                RelationWeightContribution::Constraint,
+                            )?;
+                        }
                         if d_setup_accs.is_some() {
                             relation_events.push(
                                 physical_start,
@@ -849,9 +962,13 @@ where
             .map(|k| {
                 let block_idx = k / depth_witness;
                 let digit_idx = k % depth_witness;
-                let opening_a_eval =
-                    ring_multiplier_point.eval_position_at::<E>(block_idx, &group_alpha_pows_a)?;
-                let constraint = consistency_weight * opening_a_eval * witness_gadget[digit_idx];
+                let constraint = if let Some(point) = ring_multiplier_point {
+                    consistency_weight
+                        * point.eval_position_at::<E>(block_idx, &group_alpha_pows_a)?
+                        * witness_gadget[digit_idx]
+                } else {
+                    E::zero()
+                };
                 let mut setup = E::zero();
                 if let Some(setup_a_family) = &setup_a_family {
                     for a_idx in 0..n_a {
@@ -883,12 +1000,14 @@ where
                             fold_digit,
                             0,
                         )?;
-                        relation_events.push_native_ring(
-                            physical_start,
-                            group_d_a,
-                            -(z_bases[phys_k].0 * fold),
-                            RelationWeightContribution::Constraint,
-                        )?;
+                        if matches!(opening_method, OpeningMethod::EvaluationTrace) {
+                            relation_events.push_native_ring(
+                                physical_start,
+                                group_d_a,
+                                -(z_bases[phys_k].0 * fold),
+                                RelationWeightContribution::Constraint,
+                            )?;
+                        }
                         if setup_matrix.is_some() {
                             relation_events.push_native_ring(
                                 physical_start,
@@ -910,6 +1029,15 @@ where
         if matches!(
             row_families[row],
             RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+        ) {
+            continue;
+        }
+        if matches!(
+            row_families[row],
+            RelationRowFamily::Consistency {
+                opening_method: OpeningMethod::SubringCoefficientPacking { .. },
+                ..
+            }
         ) {
             continue;
         }
@@ -935,6 +1063,17 @@ where
                 physical_start,
                 row_dim,
                 -(eq_weight * row_denom * *gadget),
+                RelationWeightContribution::Constraint,
+            )?;
+        }
+    }
+    for semantics in coefficient_packing_groups {
+        for event in semantics.relation_events().events() {
+            relation_events.push(
+                event.physical_coefficients().start,
+                event.physical_coefficients().len(),
+                event.alpha_exponent_start(),
+                event.scalar(),
                 RelationWeightContribution::Constraint,
             )?;
         }

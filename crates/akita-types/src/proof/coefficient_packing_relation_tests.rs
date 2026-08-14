@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_field::{
     CanonicalField, Ext2, FieldCore, FpExt4, FromPrimitiveInt, LiftBase, Prime128OffsetA7F7,
@@ -233,6 +234,64 @@ fn materialize_stage2_source<Extension: FieldCore>(
         }
     }
     dense
+}
+
+#[test]
+fn compact_consumers_match_dense_event_and_stage2_oracles() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        2,
+    );
+    for alpha in [E::zero(), E::one(), E::from_u64(17)] {
+        let semantics = prepare(&fixture, alpha);
+        let padded_len = semantics
+            .relation_events()
+            .physical_field_len()
+            .next_power_of_two();
+        let point = (0..padded_len.trailing_zeros())
+            .map(|index| E::from_u64(23 + index as u64))
+            .collect::<Vec<_>>();
+        let mut dense_events = materialize_events(semantics.relation_events());
+        dense_events.resize(padded_len, E::zero());
+        assert_eq!(
+            semantics
+                .relation_events()
+                .evaluate_at_point(&point)
+                .unwrap(),
+            multilinear_eval(&dense_events, &point).unwrap()
+        );
+        let mut dense_stage2 = materialize_stage2_source(
+            semantics.stage2_terms(),
+            CoefficientPackingStage2Source::DirectOpening,
+        );
+        let z = materialize_stage2_source(
+            semantics.stage2_terms(),
+            CoefficientPackingStage2Source::PackingZ,
+        );
+        for (sum, contribution) in dense_stage2.iter_mut().zip(z) {
+            *sum += contribution;
+        }
+        dense_stage2.resize(padded_len, E::zero());
+        assert_eq!(
+            semantics.stage2_terms().evaluate_at_point(&point).unwrap(),
+            multilinear_eval(&dense_stage2, &point).unwrap()
+        );
+        assert!(semantics
+            .relation_events()
+            .evaluate_at_point(&point[..point.len() - 1])
+            .is_err());
+        assert!(semantics
+            .stage2_terms()
+            .evaluate_at_point(&point[..point.len() - 1])
+            .is_err());
+    }
 }
 
 #[test]

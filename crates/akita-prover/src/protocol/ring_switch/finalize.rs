@@ -122,6 +122,7 @@ where
             claim_coefficients: gamma,
             opening_source_len,
             opening_ring_dim,
+            coefficient_packing_batch: None,
         })?;
         let ordinary = events.factor_common_alpha()?;
         let compression = lp

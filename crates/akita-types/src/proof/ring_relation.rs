@@ -247,7 +247,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 /// Ring dimension is stored at runtime; hot paths inside `dispatch_ring_dim`
 /// closures borrow typed role-local ring rows via [`Self::v_trusted`],
 /// and [`Self::row_coefficient_rings_trusted`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingRelationInstance<F: FieldCore> {
     group_openings: Vec<RingRelationGroupOpening<F>>,
     extension_degree: usize,

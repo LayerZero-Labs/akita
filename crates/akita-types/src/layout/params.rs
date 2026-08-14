@@ -821,7 +821,12 @@ impl CommittedGroupParams {
         Ok(dims)
     }
 
-    pub(crate) fn group_role_dims_geometry(
+    /// Resolve one opening group's structural A/B/D dimensions without
+    /// requiring that its opening method is executable by the caller.
+    ///
+    /// Consumers must still apply their own method admission before executing
+    /// method-specific algebra.
+    pub fn group_role_dims_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,

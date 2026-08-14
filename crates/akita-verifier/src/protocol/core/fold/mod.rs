@@ -189,6 +189,9 @@ fn verify_stage2<F, E, T>(
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
+    relation: &RingRelationInstance<F>,
+    relation_row_point: &[E],
+    claim_coefficients: &[E],
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -208,6 +211,9 @@ where
         evaluation_trace,
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
+        relation,
+        relation_row_point,
+        claim_coefficients,
     )
 }
 
@@ -224,6 +230,9 @@ fn verify_stage2_kernel<F, E, T>(
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
+    relation: &RingRelationInstance<F>,
+    relation_row_point: &[E],
+    claim_coefficients: &[E],
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -249,6 +258,11 @@ where
         evaluation_trace,
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
+        relation,
+        relation_row_point,
+        claim_coefficients,
+        None,
+        &[],
         stage1.physical_l2_claim,
         stage1.physical_l2_families,
     )?;
@@ -567,6 +581,9 @@ where
         evaluation_trace,
         evaluation_trace_weight,
         evaluation_trace_opening_claim,
+        &relation_instance,
+        &rs.tau1,
+        &prefix.row_coefficients,
     )
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed stage-2 replay failed: {error:?}"))
