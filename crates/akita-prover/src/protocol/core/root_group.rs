@@ -6,7 +6,6 @@ use crate::compute::{
     RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
 use crate::{PreparedProverGroup, RootTensorProjectionPoly};
-use akita_challenges::Challenges;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::LevelParamsLike;
@@ -46,7 +45,7 @@ where
     fn probe_fold(
         &self,
         ctx: &OperationCtx<'_, F, B>,
-        challenges: &Challenges,
+        challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
     ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError>;
@@ -181,7 +180,7 @@ where
     fn probe_fold(
         &self,
         ctx: &OperationCtx<'_, F, B>,
-        challenges: &Challenges,
+        challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
     ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError> {
@@ -196,7 +195,7 @@ where
                     crate::protocol::fold_grind::fold_probe_witness_kernel::<F, P, B, D>(
                         ctx.backend(),
                         Some(ctx.prepared()),
-                        challenges,
+                        challenges.ambient_a(),
                         self.polynomial_refs(),
                         &point_indices,
                         root_params,

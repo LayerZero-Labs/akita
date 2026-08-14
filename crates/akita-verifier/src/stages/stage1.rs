@@ -78,6 +78,7 @@ where
         .flatten();
         group_challenges.push(
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
+                akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 group_dims.d_a(),
                 group_index,
                 group_lp.num_live_blocks(),

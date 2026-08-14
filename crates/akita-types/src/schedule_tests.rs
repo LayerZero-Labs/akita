@@ -1203,6 +1203,7 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
         crate::schedule_row_digest(&profiles, &changed).expect("changed opening-method digest")
     );
     assert!(changed.validate_structure().is_err());
+    assert!(changed.validate_evaluation_trace_execution().is_err());
 
     let mut changed_dimension = changed.clone();
     changed_dimension.recursive_folds[0]
@@ -1251,6 +1252,17 @@ fn schedule_row_identity_binds_main_opening_method() {
             .expect("changed main opening-method digest")
     );
     assert!(changed.validate_structure().is_err());
+    assert!(changed.validate_evaluation_trace_execution().is_err());
+}
+
+#[test]
+fn evaluation_trace_execution_rejects_recursive_packing() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    schedule.recursive_folds[0].params.witness.opening_method =
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    assert!(schedule.validate_evaluation_trace_execution().is_err());
 }
 
 #[test]
@@ -1353,4 +1365,5 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
             .expect("changed root precommitted opening-method digest")
     );
     assert!(changed.validate_structure().is_err());
+    assert!(changed.validate_evaluation_trace_execution().is_err());
 }

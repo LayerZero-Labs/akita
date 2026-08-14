@@ -489,6 +489,45 @@ impl FoldSchedule {
         Ok(())
     }
 
+    /// Validate that every nonterminal opening uses the currently executable
+    /// evaluation-trace path.
+    ///
+    /// Provers and verifiers call this before transcript mutation while the
+    /// coefficient-packing relation and verifier cutover remain incomplete.
+    pub fn validate_evaluation_trace_execution(&self) -> Result<(), AkitaError> {
+        self.validate_structure()?;
+        let root_uses_packing = matches!(
+            self.root.params.final_group.commitment.opening_method,
+            crate::OpeningMethod::SubringCoefficientPacking { .. }
+        ) || self.root.params.precommitted_groups.iter().any(|group| {
+            matches!(
+                group.commitment.opening.opening_method,
+                crate::OpeningMethod::SubringCoefficientPacking { .. }
+            )
+        });
+        let recursive_uses_packing = self.recursive_folds.iter().any(|step| {
+            matches!(
+                step.params.witness.opening_method,
+                crate::OpeningMethod::SubringCoefficientPacking { .. }
+            ) || step
+                .params
+                .incoming_setup_prefix
+                .as_ref()
+                .is_some_and(|prefix| {
+                    matches!(
+                        prefix.commitment_params.opening.opening_method,
+                        crate::OpeningMethod::SubringCoefficientPacking { .. }
+                    )
+                })
+        });
+        if root_uses_packing || recursive_uses_packing {
+            return Err(AkitaError::InvalidSetup(
+                "subring coefficient packing execution is not implemented yet".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn initial_witness_len(&self) -> usize {
         self.root.input_witness_len
     }

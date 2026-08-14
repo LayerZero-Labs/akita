@@ -666,7 +666,7 @@ impl RingRelationProver {
         let mut group_challenges = Vec::with_capacity(num_groups);
         let mut group_z = Vec::with_capacity(num_groups);
         for output in grind_outputs {
-            group_challenges.push(output.challenges);
+            group_challenges.push(output.challenges.into_evaluation_trace()?);
             group_z.push((output.witness, output.coefficients));
         }
         drop(fold_grind_span);

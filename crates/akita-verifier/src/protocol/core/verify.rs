@@ -328,7 +328,7 @@ where
     validate_schedule_ring_dims(schedule)?;
     ensure_verifier_schedule_fits_setup(setup.expanded.as_ref(), schedule, &opening_batch)?;
     schedule
-        .validate_structure()
+        .validate_evaluation_trace_execution()
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_proof_against_schedule(proof, schedule).map_err(|error| {
         AkitaError::InvalidInput(format!(

@@ -340,6 +340,7 @@ where
         None
     };
     let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
+        akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
         0,
         params.num_live_blocks,

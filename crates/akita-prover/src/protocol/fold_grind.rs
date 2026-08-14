@@ -4,15 +4,17 @@ use crate::compute::{
     OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
     RuntimeOpeningSource,
 };
-use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
+use akita_challenges::{
+    Challenges, FoldChallengeDrawDomain, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
+};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     dyadic_block_ranges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
     golomb_rice_zigzag_width, CommittedGroupParams, FoldLinfProtocolBinding,
-    InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout, TerminalCommittedGroupParams,
-    TerminalResponseShape,
+    InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout, OpeningMethod,
+    SubringCoefficientPackingGeometry, TerminalCommittedGroupParams, TerminalResponseShape,
 };
 
 use super::ring_relation::{
@@ -142,7 +144,41 @@ impl<G> Clone for FoldGrindGroup<'_, '_, G> {
 pub(crate) struct FoldProbeOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) coefficients: FoldChunkCoefficients,
-    pub(crate) challenges: Challenges,
+    pub(crate) challenges: GroupFoldChallenges,
+}
+
+/// One sampled fold challenge with its method-specific algebraic views.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GroupFoldChallenges(GroupFoldChallengeViews);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GroupFoldChallengeViews {
+    EvaluationTrace(Challenges),
+    SubringCoefficientPacking {
+        geometry: SubringCoefficientPackingGeometry,
+        subring: Challenges,
+        embedded_a: Challenges,
+    },
+}
+
+impl GroupFoldChallenges {
+    pub(crate) fn ambient_a(&self) -> &Challenges {
+        match &self.0 {
+            GroupFoldChallengeViews::EvaluationTrace(challenges) => challenges,
+            GroupFoldChallengeViews::SubringCoefficientPacking { embedded_a, .. } => embedded_a,
+        }
+    }
+
+    pub(crate) fn into_evaluation_trace(self) -> Result<Challenges, AkitaError> {
+        match self.0 {
+            GroupFoldChallengeViews::EvaluationTrace(challenges) => Ok(challenges),
+            GroupFoldChallengeViews::SubringCoefficientPacking { .. } => {
+                Err(AkitaError::InvalidSetup(
+                    "coefficient-packing relation execution is not implemented yet".into(),
+                ))
+            }
+        }
+    }
 }
 
 pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {
@@ -204,6 +240,7 @@ where
         first_jointly_accepted_nonce(binding.max_grind_attempts, |nonce| {
             let mut preview = PreviewFoldDraw::new(transcript);
             let challenges = preview.draw_folding_challenges_with_rejection(
+                akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
                 0,
                 params.num_live_blocks,
@@ -255,6 +292,7 @@ where
         })?;
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
     let live_challenges = live.draw_folding_challenges_with_rejection(
+        akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
         0,
         params.num_live_blocks,
@@ -386,6 +424,88 @@ fn first_jointly_accepted_nonce<T>(
     )))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn draw_group_fold_challenges<F: FieldCore, E: akita_field::ExtField<F>, D: FoldDraw>(
+    draw: &mut D,
+    params: &(impl LevelParamsLike + ?Sized),
+    group_index: usize,
+    num_claims: usize,
+    grind_nonce: u32,
+) -> Result<GroupFoldChallenges, AkitaError> {
+    let d_a = params.inner_commit_matrix_params().ring_dimension();
+    let config = params.fold_challenge_config();
+    match params.opening_method() {
+        OpeningMethod::EvaluationTrace => {
+            let rejection = matches!(
+                params.inner_commit_matrix_params().security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+            .then(|| akita_challenges::selective_l2_operator_norm_rejection(d_a, &config))
+            .flatten();
+            draw.draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                d_a,
+                group_index,
+                params.num_live_blocks(),
+                num_claims,
+                &config,
+                grind_nonce,
+                rejection,
+            )
+            .map(|challenges| {
+                GroupFoldChallenges(GroupFoldChallengeViews::EvaluationTrace(challenges))
+            })
+        }
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => {
+            if !matches!(
+                params.inner_commit_matrix_params().security_route(),
+                InnerCommitSecurityRoute::Linf(_)
+            ) {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient packing requires an L-infinity A security route".into(),
+                ));
+            }
+            let geometry = SubringCoefficientPackingGeometry::try_new(
+                E::EXT_DEGREE,
+                d_a,
+                challenge_subring_dimension,
+            )?;
+            if config != geometry.fold_challenge_config() {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient-packing challenge config is not the audited production family"
+                        .into(),
+                ));
+            }
+            let subring = draw.draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::SubringCoefficientPacking {
+                    challenge_subring_dimension,
+                },
+                challenge_subring_dimension,
+                group_index,
+                params.num_live_blocks(),
+                num_claims,
+                &config,
+                grind_nonce,
+                None,
+            )?;
+            let embedded_a = subring.embed_subring_positions(
+                challenge_subring_dimension,
+                geometry.subring_embedding_stride(),
+                d_a,
+            )?;
+            Ok(GroupFoldChallenges(
+                GroupFoldChallengeViews::SubringCoefficientPacking {
+                    geometry,
+                    subring,
+                    embedded_a,
+                },
+            ))
+        }
+    }
+}
+
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
@@ -418,27 +538,12 @@ where
                 let mut preview = PreviewFoldDraw::new(transcript);
                 for prepared_group in groups {
                     let group = &prepared_group.input;
-                    let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
-                    let challenge_config = group.params.fold_challenge_config();
-                    let rejection = matches!(
-                        group.params.inner_commit_matrix_params().security_route(),
-                        InnerCommitSecurityRoute::L2 { .. }
-                    )
-                    .then(|| {
-                        akita_challenges::selective_l2_operator_norm_rejection(
-                            ring_d,
-                            &challenge_config,
-                        )
-                    })
-                    .flatten();
-                    let challenges = preview.draw_folding_challenges_with_rejection(
-                        ring_d,
+                    let challenges = draw_group_fold_challenges::<F, E, _>(
+                        &mut preview,
+                        group.params,
                         group.group_index,
-                        group.params.num_live_blocks(),
                         group.group.num_polynomials(),
-                        &challenge_config,
                         nonce,
-                        rejection,
                     )?;
                     let output =
                         group
@@ -468,24 +573,14 @@ where
             groups.iter().zip(candidate_outputs.iter_mut())
         {
             let group = &prepared_group.input;
-            let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
+            #[cfg(feature = "response-model-diagnostics")]
             let challenge_config = group.params.fold_challenge_config();
-            let rejection = matches!(
-                group.params.inner_commit_matrix_params().security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-            .then(|| {
-                akita_challenges::selective_l2_operator_norm_rejection(ring_d, &challenge_config)
-            })
-            .flatten();
-            let challenges = live.draw_folding_challenges_with_rejection(
-                ring_d,
+            let challenges = draw_group_fold_challenges::<F, E, _>(
+                &mut live,
+                group.params,
                 group.group_index,
-                group.params.num_live_blocks(),
                 group.group.num_polynomials(),
-                &challenge_config,
                 nonce,
-                rejection,
             )?;
             if challenges != output.challenges {
                 return Err(AkitaError::InvalidInput(
@@ -512,7 +607,7 @@ where
                         group_index = group.group_index,
                         nonce,
                         attempts = nonce + 1,
-                        ring_dimension = ring_d,
+                        ring_dimension = group.params.inner_commit_matrix_params().ring_dimension(),
                         num_polynomials = group.group.num_polynomials(),
                         num_live_blocks = group.params.num_live_blocks(),
                         num_positions_per_block = group.params.num_positions_per_block(),
@@ -631,9 +726,94 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallenge;
+    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+    use akita_types::SisModulusProfileId;
 
     type F = akita_field::Prime128Offset275;
+
+    #[derive(Default)]
+    struct FixedDraw {
+        draws: usize,
+    }
+
+    impl FoldDraw for FixedDraw {
+        fn absorb_and_squeeze(&mut self, _label: &[u8], _payload: &[u8]) -> Vec<u8> {
+            self.draws += 1;
+            vec![11; akita_transcript::FOLD_CHALLENGE_SEED_LEN]
+        }
+    }
+
+    #[test]
+    fn packing_draw_has_one_subring_value_and_derived_a_view() {
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            128,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+        )
+        .with_decomp(4, 6, 2, 2, 2)
+        .unwrap();
+        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+
+        let mut draw = FixedDraw::default();
+        let challenges =
+            draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 3, 2, 7).unwrap();
+        assert_eq!(draw.draws, 1);
+        let GroupFoldChallenges(GroupFoldChallengeViews::SubringCoefficientPacking {
+            geometry,
+            subring,
+            embedded_a,
+        }) = challenges
+        else {
+            panic!("expected coefficient-packing challenges");
+        };
+        assert_eq!(geometry.subring_embedding_stride(), 2);
+        assert_eq!(subring.len(), 4);
+        assert_eq!(embedded_a.len(), subring.len());
+        for (canonical, embedded) in subring.as_slice().iter().zip(embedded_a.as_slice()) {
+            assert_eq!(canonical.coeffs, embedded.coeffs);
+            assert_eq!(canonical.positions.len(), embedded.positions.len());
+            for (&subring_position, &ambient_position) in
+                canonical.positions.iter().zip(&embedded.positions)
+            {
+                assert_eq!(ambient_position, 2 * subring_position);
+            }
+        }
+    }
+
+    #[test]
+    fn packing_draw_rejects_unaudited_family_before_squeeze() {
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            128,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+        )
+        .with_decomp(4, 6, 2, 2, 2)
+        .unwrap();
+        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+
+        for config in [
+            SparseChallengeConfig::pm1_only(0),
+            SparseChallengeConfig::pm1_only(1),
+        ] {
+            params.fold_challenge_config = config;
+            let mut draw = FixedDraw::default();
+            assert!(draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 0, 1, 0).is_err());
+            assert_eq!(draw.draws, 0);
+        }
+    }
 
     #[test]
     fn empty_chunk_window_has_zero_fold_challenges() {
