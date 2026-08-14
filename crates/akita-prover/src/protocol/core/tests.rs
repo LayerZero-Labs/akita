@@ -50,7 +50,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 }
 
 #[test]
-fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
+fn extension_opening_reduction_shares_challenges_across_groups() {
     let short_witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 64]);
     let mut long_digits = vec![0; 3 * 64];
     long_digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
@@ -87,11 +87,11 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
         &mut transcript,
         "recursive",
     )
-    .expect("all groups should reduce through one sumcheck");
+    .expect("all groups should reduce through one shared challenge sequence");
 
     assert_eq!(proved.protocol_points.len(), 2);
     assert_eq!(proved.reduction.final_factors.len(), 2);
-    assert_ne!(proved.row_coefficients, vec![E::one(); 2]);
+    assert_eq!(proved.reduction.final_claims.len(), 2);
     assert_eq!(proved.reduction.proof.num_rounds(), long_point.len() - 1);
 }
 

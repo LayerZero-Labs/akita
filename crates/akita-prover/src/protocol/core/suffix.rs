@@ -286,7 +286,7 @@ where
     let polys = [&logical_source];
     let logical_group = PreparedProverGroup::from_refs(&polys)?;
     let needs_reduction = E::EXT_DEGREE > 1;
-    let (protocol_point, reduction, row_coefficients) = if needs_reduction {
+    let (protocol_point, reduction) = if needs_reduction {
         let eor_inputs = vec![ExtensionOpeningGroupInput {
             group: &logical_group,
             point: &sumcheck_challenges,
@@ -306,10 +306,9 @@ where
                 .next()
                 .ok_or(AkitaError::InvalidProof)?,
             Some(proved.reduction),
-            Some(proved.row_coefficients),
         )
     } else {
-        (sumcheck_challenges, None, None)
+        (sumcheck_challenges, None)
     };
     for coordinate in &protocol_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
@@ -338,7 +337,6 @@ where
                 alpha_bits,
                 BasisMode::Lagrange,
                 &opening_batch,
-                row_coefficients,
                 transcript,
             )?;
             // The EOR proof binds the carried extension-field opening to its
@@ -560,11 +558,11 @@ mod tests {
         let reduction = Some(ExtensionOpeningReduction {
             proof: ExtensionOpeningReductionProof {
                 partials: Vec::new(),
-                sumcheck: SumcheckProof {
+                sumcheck: akita_sumcheck::SharedChallengeSumcheckProof {
                     round_polys: Vec::new(),
                 },
             },
-            final_claim: TestF::one(),
+            final_claims: vec![TestF::one()],
             final_factors: vec![TestF::one()],
         });
 
@@ -574,7 +572,6 @@ mod tests {
             &reduction,
             &openings,
             &opening_batch,
-            Some(vec![TestF::one()]),
             &mut transcript,
         ) {
             Ok(_) => panic!("non-zk EOR mismatch should reject"),

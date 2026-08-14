@@ -344,7 +344,6 @@ pub(crate) fn derive_selected_suffix_schedule(
         policy,
         default_ring_challenge_cfg,
         ring_challenge_config,
-        num_vars,
         key,
         setup_field_budget: _,
         root_lookup_key,
@@ -408,13 +407,6 @@ pub(crate) fn derive_selected_suffix_schedule(
                 .map(|total_polys| PolynomialGroupLayout::new(root_key.max_num_vars(), total_polys))
         })
         .transpose()?;
-    let eor_key = root_eor_key.unwrap_or_else(|| {
-        if level_zero_is_root && level == 0 {
-            key
-        } else {
-            PolynomialGroupLayout::singleton(num_vars)
-        }
-    });
     let scalar_opening_layout = if root_level_key.is_some() {
         None
     } else {
@@ -422,6 +414,16 @@ pub(crate) fn derive_selected_suffix_schedule(
             current_witness_len,
             incoming_setup_prefix,
         )?)
+    };
+    let eor_key = if let Some(root_eor_key) = root_eor_key {
+        root_eor_key
+    } else if level_zero_is_root && level == 0 {
+        key
+    } else {
+        let layout = scalar_opening_layout.as_ref().ok_or_else(|| {
+            AkitaError::InvalidSetup("suffix opening layout is missing".to_string())
+        })?;
+        PolynomialGroupLayout::new(layout.max_num_vars(), layout.num_total_polynomials())
     };
     let inner_source = if level_zero_is_root && level == 0 {
         super::root_inner_basis_source(

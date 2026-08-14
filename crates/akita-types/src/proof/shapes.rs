@@ -18,8 +18,9 @@ pub struct AkitaStage1StageShape {
 pub struct ExtensionOpeningReductionShape {
     /// Number of partial evaluations serialized before the sumcheck.
     pub partials: usize,
-    /// Reduction sumcheck shape: one compact coefficient count per round.
-    pub sumcheck: SumcheckProofShape,
+    /// Round-major reduction shape with one compact coefficient count per
+    /// independently checked opening claim.
+    pub sumcheck: SharedChallengeSumcheckProofShape,
 }
 
 /// Headerless shape for [`SetupSumcheckProof`].
@@ -31,10 +32,14 @@ pub struct SetupProductSumcheckShape {
 
 impl ExtensionOpeningReductionShape {
     /// Construct the standard degree-two reduction shape.
-    pub fn standard(partials: usize, num_rounds: usize) -> Self {
+    pub fn standard(partials: usize, num_rounds: usize, num_claims: usize) -> Self {
         Self {
             partials,
-            sumcheck: uniform_sumcheck_shape(num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
+            sumcheck: uniform_shared_challenge_sumcheck_shape(
+                num_rounds,
+                num_claims,
+                EXTENSION_OPENING_REDUCTION_DEGREE,
+            ),
         }
     }
 }
@@ -59,13 +64,30 @@ impl Valid for ExtensionOpeningReductionShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.partials)?;
         checked_shape_sequence_len(self.sumcheck.len())?;
-        for &degree in &self.sumcheck {
-            checked_shape_len(degree)?;
-            if degree != EXTENSION_OPENING_REDUCTION_DEGREE {
-                return Err(SerializationError::InvalidData(format!(
-                    "extension opening reduction degree {} does not match expected degree {}",
-                    degree, EXTENSION_OPENING_REDUCTION_DEGREE
-                )));
+        if self.sumcheck.is_empty() {
+            return Ok(());
+        }
+        let num_claims = self.sumcheck.first().map_or(0, Vec::len);
+        if num_claims == 0 {
+            return Err(SerializationError::InvalidData(
+                "extension opening reduction shape must contain rounds and claims".to_string(),
+            ));
+        }
+        for round in &self.sumcheck {
+            checked_shape_sequence_len(round.len())?;
+            if round.len() != num_claims {
+                return Err(SerializationError::InvalidData(
+                    "extension opening reduction claim count changes across rounds".to_string(),
+                ));
+            }
+            for &degree in round {
+                checked_shape_len(degree)?;
+                if degree != EXTENSION_OPENING_REDUCTION_DEGREE {
+                    return Err(SerializationError::InvalidData(format!(
+                        "extension opening reduction degree {} does not match expected degree {}",
+                        degree, EXTENSION_OPENING_REDUCTION_DEGREE
+                    )));
+                }
             }
         }
         Ok(())
@@ -618,7 +640,9 @@ impl AkitaBatchedProofShape {
         ) -> Result<(), SerializationError> {
             if let Some(shape) = shape {
                 add(total, shape.partials)?;
-                add_sumcheck(total, &shape.sumcheck)?;
+                for round in &shape.sumcheck {
+                    add_sumcheck(total, round)?;
+                }
             }
             Ok(())
         }

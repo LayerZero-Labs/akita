@@ -11,5 +11,6 @@ pub use eq_factored::{
     EqFactoredSumcheckInstanceVerifierExt,
 };
 pub use standard::{
-    check_sumcheck_output_claim, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
+    check_sumcheck_output_claim, prove_shared_challenge_sumcheck,
+    SharedChallengeSumcheckProverOutput, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };

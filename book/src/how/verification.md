@@ -95,8 +95,11 @@ Root replay reads each commitment group's point directly from
 `PolynomialGroupClaims`.
 The verifier prepares the per-group relation and extension-opening factors from
 that complete point, without reconstructing a common point.
-When EOR is required, the groups enter one batched reduction but retain their
-own public points and native arities.
+When EOR is required, every opening claim retains an independent sumcheck state.
+The states share each round challenge, so groups retain their own public points
+and native arities while deriving one compatible relation point per group. The
+verifier absorbs the complete opening payload before it samples the application
+row coefficients that combine the reduced claims.
 
 At a recursive boundary, Stage 2 supplies the next-witness claim
 `(stage2_point, stage2_next_w_eval)`.

@@ -78,6 +78,7 @@ where
     Ok(FoldClaimMaterial {
         prepared_points,
         openings: openings.to_vec(),
+        reduction_final_claims: None,
         reduction_factors: None,
     })
 }

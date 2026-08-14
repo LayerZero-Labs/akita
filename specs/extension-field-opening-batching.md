@@ -940,8 +940,9 @@ extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>
 struct ExtensionOpeningReductionProof<L> {
     /// Column-view tensor partials `S_v = f(v, r_tail)`, lifted to `L`.
     partials: Vec<L>,
-    /// Sumcheck proof for `sum_w g(w) * A_eta(w) = c_eta`.
-    sumcheck: SumcheckProof<L>,
+    /// Round-major messages with one polynomial per opening claim. All claims
+    /// share the challenge sampled after each complete round vector.
+    sumcheck: SharedChallengeSumcheckProof<L>,
 }
 ```
 
@@ -959,12 +960,16 @@ object-free reduction names, and avoid names containing `ring_switch`.
 2. The prover sends the column-view tensor partials `S_v = f(v, r_tail)`.
 3. The verifier checks those partials against the logical claim, absorbs them
    into the transcript, derives the row-view partials, then samples `eta`.
-4. Prover and verifier run the degree-two sumcheck for
-   `g(w) * A_eta(w)`.
-5. The verifier replays the reduction sumcheck rounds to recover `rho` and the
-   final claim, evaluates the transparent factor `A_eta(rho)`, and checks it
-   against the recovered single value `g(rho)`.
-6. Recursive public-row accounting uses one carried opening row, not
+4. Prover and verifier run one degree-two sumcheck state per opening claim. In
+   each round they absorb all claim polynomials and sample one shared challenge.
+5. The verifier replays the reduction rounds to recover `rho` and one final
+   claim per opening. It evaluates the transparent factor `A_eta(rho)` for each
+   group.
+6. The prover constructs the opening payload at the shared reduced points. The
+   transcript absorbs the complete payload before sampling application row
+   coefficients. The final relation combines the per-claim EOR outputs only
+   with those later coefficients.
+7. Recursive public-row accounting uses one carried opening row, not
    `2^kappa` Frobenius rows.
 
 #### Root-Layer Cutover

@@ -71,7 +71,6 @@ where
     block_claims: ProverOpeningData<'a, E, Q, F>,
     protocol_points: &'a [Vec<E>],
     reduction: Option<ExtensionOpeningReduction<E>>,
-    row_coefficients: Option<Vec<E>>,
     trace_opening_batch: &'a OpeningClaimsLayout,
     level_params: &'a CommittedGroupParams,
     basis: BasisMode,
@@ -113,7 +112,6 @@ where
         block_claims,
         protocol_points,
         reduction,
-        row_coefficients,
         trace_opening_batch,
         level_params,
         basis,
@@ -205,7 +203,6 @@ where
                 &reduction,
                 &scalar_openings,
                 trace_opening_batch,
-                row_coefficients,
                 transcript,
             )
             .map_err(|err| {

@@ -1,7 +1,7 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::super::*;
-use super::{absorb_protocol_opening_points, FoldPrefix};
+use super::{absorb_protocol_opening_points, FoldClaimMaterial};
 use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
 pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
@@ -11,7 +11,7 @@ pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: Fiel
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) groups: Vec<PreparedProtocolPoint<F, E>>,
-    pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
+    pub(in crate::protocol::core) final_relation: Option<(Vec<E>, Vec<E>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -23,7 +23,7 @@ struct EorReductionShape {
 
 struct EorSumcheckReplay<E: FieldCore> {
     rho: Vec<E>,
-    final_claim: E,
+    final_claims: Vec<E>,
     final_factors: Vec<E>,
 }
 
@@ -54,39 +54,31 @@ where
     })
 }
 
-fn eor_input_claim_from_partials<F, E>(
+fn eor_input_claims_from_partials<F, E>(
     partials: &[E],
     shape: EorReductionShape,
     eta: &[E],
-    row_coefficients: &[E],
-) -> Result<E, AkitaError>
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if shape.width == 0
-        || !partials.len().is_multiple_of(shape.width)
-        || row_coefficients.len() != partials.len() / shape.width
-    {
+    if shape.width == 0 || !partials.len().is_multiple_of(shape.width) {
         return Err(AkitaError::InvalidProof);
     }
-    let mut input_claim = E::zero();
-    for (&row_coefficient, partials) in row_coefficients
-        .iter()
-        .zip(partials.chunks_exact(shape.width))
-    {
-        let row_partials = tensor_row_partials_from_columns::<F, E>(partials)?;
-        let claim = tensor_reduction_claim_from_rows::<F, E>(&row_partials, eta)?;
-        input_claim += row_coefficient * claim;
-    }
-    Ok(input_claim)
+    partials
+        .chunks_exact(shape.width)
+        .map(|partials| {
+            let row_partials = tensor_row_partials_from_columns::<F, E>(partials)?;
+            tensor_reduction_claim_from_rows::<F, E>(&row_partials, eta)
+        })
+        .collect()
 }
 
 fn verify_eor_sumcheck<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     group_points: &[&[E]],
     openings: &[E],
-    row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     requires_reduction: bool,
     transcript: &mut T,
@@ -97,10 +89,7 @@ where
     T: Transcript<F>,
 {
     let num_claims = opening_batch.num_total_polynomials();
-    if openings.len() != num_claims
-        || row_coefficients.len() != num_claims
-        || group_points.len() != opening_batch.num_groups()
-    {
+    if openings.len() != num_claims || group_points.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidProof);
     }
     // Exact presence: the per-level predicate is the sole authority, so a
@@ -157,10 +146,12 @@ where
     let eta = (0..shape.split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
-    let input_claim =
-        eor_input_claim_from_partials::<F, E>(&reduction.partials, shape, &eta, row_coefficients)?;
-    let (final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
-        input_claim,
+    let input_claims = eor_input_claims_from_partials::<F, E>(&reduction.partials, shape, &eta)?;
+    if input_claims.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
+    let (final_claims, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
+        &input_claims,
         shape.num_rounds,
         &reduction.sumcheck,
         transcript,
@@ -185,7 +176,7 @@ where
     }
     Ok(Some(EorSumcheckReplay {
         rho,
-        final_claim,
+        final_claims,
         final_factors,
     }))
 }
@@ -200,7 +191,6 @@ pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     challenge_point: &[E],
     openings: &[E],
-    row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     d_a: usize,
@@ -219,7 +209,6 @@ where
             extension_opening_reduction,
             challenge_point,
             openings,
-            row_coefficients,
             opening_batch,
             basis,
             num_positions_per_block,
@@ -236,7 +225,6 @@ fn verify_terminal_fold_eor_kernel<F, E, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     challenge_point: &[E],
     openings: &[E],
-    row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     num_positions_per_block: usize,
@@ -259,7 +247,6 @@ where
         extension_opening_reduction,
         &[eor_point.as_slice()],
         openings,
-        row_coefficients,
         opening_batch,
         requires_reduction,
         transcript,
@@ -283,20 +270,20 @@ where
     };
     Ok(FoldEorReplay {
         groups,
-        final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
+        final_relation: replay.map(|replay| (replay.final_claims, replay.final_factors)),
     })
 }
 
 /// Verify one fold's extension-opening reduction over all opening groups.
 ///
 /// Every group retains its native opening point and committed geometry. The
-/// groups share one batched sumcheck challenge sequence.
+/// groups share one challenge sequence while each claim keeps its own
+/// sumcheck recurrence.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     group_points: &[&[E]],
     openings: &[E],
-    row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
@@ -312,7 +299,6 @@ where
         extension_opening_reduction,
         group_points,
         openings,
-        row_coefficients,
         opening_batch,
         requires_reduction,
         transcript,
@@ -359,13 +345,13 @@ where
     }
     Ok(FoldEorReplay {
         groups,
-        final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
+        final_relation: replay.map(|replay| (replay.final_claims, replay.final_factors)),
     })
 }
 
 /// Extension-claim root prefix: per-group point width checks, direct
-/// preparation at gate-off roots, and one batched EOR sumcheck at gate-on
-/// roots. Payload presence is enforced exactly against the per-level
+/// preparation at gate-off roots, and one shared-challenge EOR vector at
+/// gate-on roots. Payload presence is enforced exactly against the per-level
 /// predicate inside `verify_eor_sumcheck`.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
@@ -376,7 +362,7 @@ pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<FoldPrefix<F, E>, AkitaError>
+) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -426,16 +412,10 @@ where
             prepared_points.push(prepared);
         }
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
-        opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
-        transcript,
-    )?;
     let eor_replay = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
         &group_points,
         openings,
-        &row_coefficients,
         opening_batch,
         basis,
         root_lp,
@@ -453,26 +433,20 @@ where
     if prepared_points.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidProof);
     }
-    let trace_claim_coefficients = if let Some((_, final_factors)) = &eor_final_relation {
-        opening_batch.scale_row_coefficients_by_group(&row_coefficients, final_factors)?
-    } else {
-        row_coefficients.clone()
-    };
-    let trace_eval_target = if let Some((final_claim, _)) = eor_final_relation {
-        final_claim
-    } else {
-        opening_batch.batched_eval_target(&row_coefficients, openings)?
-    };
-    Ok(FoldPrefix {
+    let (reduction_final_claims, reduction_factors) = eor_final_relation
+        .map_or((None, None), |(claims, factors)| {
+            (Some(claims), Some(factors))
+        });
+    Ok(FoldClaimMaterial {
         prepared_points,
-        row_coefficients,
-        trace_eval_target,
-        trace_claim_coefficients,
+        openings: openings.to_vec(),
+        reduction_final_claims,
+        reduction_factors,
     })
 }
 
-/// Terminal-suffix extension-claim prefix: one batched EOR replay over the
-/// recursive opening group, then the prepared points are absorbed.
+/// Terminal-suffix extension-claim prefix: one shared-challenge EOR replay over
+/// the recursive opening group, then the prepared points are absorbed.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
@@ -489,11 +463,6 @@ where
     T: Transcript<F>,
 {
     append_claim_values_to_transcript::<F, E, T>(std::slice::from_ref(opening), transcript);
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
-        opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
-        transcript,
-    )?;
     let FoldEorReplay {
         groups,
         final_relation,
@@ -501,7 +470,6 @@ where
         extension_opening_reduction,
         protocol_point,
         std::slice::from_ref(opening),
-        &row_coefficients,
         opening_batch,
         basis,
         params.d_a(),
@@ -526,20 +494,19 @@ where
     })
 }
 
-/// Recursive-suffix extension-claim prefix: one batched EOR replay over the
-/// suffix opening groups; the trace target and claim coefficients come from
-/// the replay relation, which exact presence makes total here.
+/// Recursive-suffix extension-claim prefix: one shared-challenge EOR replay
+/// over the suffix opening groups. Application claim batching remains pending
+/// until the opening payload is absorbed.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     group_points: &[&[E]],
     openings: &[E],
-    row_coefficients: Vec<E>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<FoldPrefix<F, E>, AkitaError>
+) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -552,7 +519,6 @@ where
         extension_opening_reduction,
         group_points,
         openings,
-        &row_coefficients,
         opening_batch,
         basis,
         lp,
@@ -564,14 +530,12 @@ where
         .map(|group| group.protocol.as_slice())
         .collect::<Vec<_>>();
     absorb_protocol_opening_points(&protocol_point_refs, transcript);
-    let (final_claim, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
-    let trace_claim_coefficients =
-        opening_batch.scale_row_coefficients_by_group(&row_coefficients, &factors_by_group)?;
-    Ok(FoldPrefix {
+    let (final_claims, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
+    Ok(FoldClaimMaterial {
         prepared_points: groups.into_iter().map(|group| group.prepared).collect(),
-        row_coefficients,
-        trace_eval_target: final_claim,
-        trace_claim_coefficients,
+        openings: openings.to_vec(),
+        reduction_final_claims: Some(final_claims),
+        reduction_factors: Some(factors_by_group),
     })
 }
 
@@ -580,7 +544,7 @@ mod tests {
     use super::*;
     use akita_algebra::CompressedUniPoly;
     use akita_field::{FpExt4, Prime32Offset99};
-    use akita_sumcheck::SumcheckProof;
+    use akita_sumcheck::SharedChallengeSumcheckProof;
     use akita_transcript::AkitaTranscript;
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
 
@@ -616,18 +580,22 @@ mod tests {
         ];
         let group_point_refs = [group_points[0].as_slice(), group_points[1].as_slice()];
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
-        let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
         let max_tail_rounds = WITNESS_VARS - split_bits;
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
-            sumcheck: SumcheckProof {
+            sumcheck: SharedChallengeSumcheckProof {
                 round_polys: (0..max_tail_rounds)
-                    .map(|_| CompressedUniPoly {
-                        coeffs_except_linear_term: vec![
-                            E::zero();
-                            EXTENSION_OPENING_REDUCTION_DEGREE
-                        ],
+                    .map(|_| {
+                        vec![
+                            CompressedUniPoly {
+                                coeffs_except_linear_term: vec![
+                                    E::zero();
+                                    EXTENSION_OPENING_REDUCTION_DEGREE
+                                ],
+                            };
+                            opening_batch.num_total_polynomials()
+                        ]
                     })
                     .collect(),
             },
@@ -638,7 +606,6 @@ mod tests {
             Some(&reduction),
             &group_point_refs,
             &openings,
-            &row_coefficients,
             &opening_batch,
             true,
             &mut transcript,
@@ -648,6 +615,23 @@ mod tests {
         assert_eq!(replay.rho.len(), max_tail_rounds);
         assert_eq!(replay.final_factors.len(), 2);
 
+        let mut missing_claim_round = reduction.clone();
+        missing_claim_round.sumcheck.round_polys[0].pop();
+        let mut missing_claim_transcript =
+            AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
+        let missing_claim_result = verify_eor_sumcheck::<F, E, _>(
+            Some(&missing_claim_round),
+            &group_point_refs,
+            &openings,
+            &opening_batch,
+            true,
+            &mut missing_claim_transcript,
+        );
+        assert!(
+            matches!(missing_claim_result, Err(AkitaError::InvalidSize { .. })),
+            "every shared-challenge round must contain every opening claim"
+        );
+
         let mut tampered = reduction.clone();
         tampered.partials[0] += E::one();
         let mut tampered_transcript =
@@ -656,7 +640,6 @@ mod tests {
             Some(&tampered),
             &group_point_refs,
             &openings,
-            &row_coefficients,
             &opening_batch,
             true,
             &mut tampered_transcript,
@@ -672,7 +655,6 @@ mod tests {
             None,
             &group_point_refs,
             &openings,
-            &row_coefficients,
             &opening_batch,
             true,
             &mut missing_transcript,
@@ -692,17 +674,18 @@ mod tests {
         let group_point = extension_point(NUM_VARS, 10);
         let group_point_refs = [group_point.as_slice()];
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
-        let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
-            sumcheck: SumcheckProof {
+            sumcheck: SharedChallengeSumcheckProof {
                 round_polys: (0..NUM_VARS - split_bits)
-                    .map(|_| CompressedUniPoly {
-                        coeffs_except_linear_term: vec![
-                            E::zero();
-                            EXTENSION_OPENING_REDUCTION_DEGREE
-                        ],
+                    .map(|_| {
+                        vec![CompressedUniPoly {
+                            coeffs_except_linear_term: vec![
+                                E::zero();
+                                EXTENSION_OPENING_REDUCTION_DEGREE
+                            ],
+                        }]
                     })
                     .collect(),
             },
@@ -714,7 +697,6 @@ mod tests {
             None,
             &group_point_refs,
             &openings,
-            &row_coefficients,
             &opening_batch,
             false,
             &mut idle_transcript,
@@ -728,7 +710,6 @@ mod tests {
             Some(&reduction),
             &group_point_refs,
             &openings,
-            &row_coefficients,
             &opening_batch,
             false,
             &mut unsolicited_transcript,

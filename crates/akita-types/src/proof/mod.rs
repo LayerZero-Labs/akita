@@ -123,7 +123,9 @@ use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::EqFactoredSumcheckProof;
 use akita_sumcheck::{
-    uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
+    uniform_shared_challenge_sumcheck_shape, EqFactoredSumcheckProofShape,
+    SharedChallengeSumcheckProof, SharedChallengeSumcheckProofShape, SumcheckProof,
+    SumcheckProofShape,
 };
 use akita_transcript::Transcript;
 use std::io::{Read, Write};

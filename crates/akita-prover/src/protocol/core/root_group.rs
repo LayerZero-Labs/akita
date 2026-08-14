@@ -72,12 +72,11 @@ where
         ring_dimension: usize,
     ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>;
 
-    fn extension_opening_terms(
+    fn extension_opening_claim_terms(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
         ring_dimension: usize,
-        row_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
     ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>;
@@ -249,12 +248,11 @@ where
         )
     }
 
-    fn extension_opening_terms(
+    fn extension_opening_claim_terms(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
         ring_dimension: usize,
-        row_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
     ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
@@ -262,11 +260,10 @@ where
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             ring_dimension,
-            |D| build_extension_opening_reduction_terms::<F, E, P, B, D>(
+            |D| build_extension_opening_claim_terms::<F, E, P, B, D>(
                 backend,
                 prepared,
                 self.polynomial_refs(),
-                row_coefficients,
                 tail_point,
                 eta,
             )

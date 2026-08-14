@@ -24,7 +24,7 @@ use akita_field::{
     HalvingField, Invertible, LiftBase, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
+use akita_sumcheck::{prove_shared_challenge_sumcheck, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
     ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
@@ -54,11 +54,10 @@ use std::sync::Arc;
 
 pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: FieldCore> {
     pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<E>,
-    /// EOR final sumcheck claim and one transparent-factor evaluation per
-    /// opening group. Retained so the prepare step can fail-fast cross-check
-    /// the folded openings against the reduction output; the verifier enforces
-    /// the same relation.
-    pub(in crate::protocol::core) final_claim: E,
+    /// One final sumcheck claim per opening claim and one transparent-factor
+    /// evaluation per opening group. The application batches these claims only
+    /// after the complete opening payload is fixed.
+    pub(in crate::protocol::core) final_claims: Vec<E>,
     pub(in crate::protocol::core) final_factors: Vec<E>,
 }
 

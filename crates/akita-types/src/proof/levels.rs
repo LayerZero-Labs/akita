@@ -77,8 +77,9 @@ pub struct ExtensionOpeningReductionProof<E: FieldCore> {
     /// Transcript-bound partial evaluations used by the basis-conversion
     /// check.
     pub partials: Vec<E>,
-    /// Degree-two reduction sumcheck.
-    pub sumcheck: SumcheckProof<E>,
+    /// Degree-two reductions with one independently checked claim per opening
+    /// and one challenge shared across all claims in each round.
+    pub sumcheck: SharedChallengeSumcheckProof<E>,
 }
 
 /// Stage-3 proof for the public setup contribution.
@@ -106,7 +107,12 @@ impl<E: FieldCore> ExtensionOpeningReductionProof<E> {
     pub fn shape(&self) -> ExtensionOpeningReductionShape {
         ExtensionOpeningReductionShape {
             partials: self.partials.len(),
-            sumcheck: sumcheck_shape(&self.sumcheck),
+            sumcheck: self
+                .sumcheck
+                .round_polys
+                .iter()
+                .map(|round| round.iter().map(|poly| poly.degree()).collect())
+                .collect(),
         }
     }
 

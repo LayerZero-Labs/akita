@@ -62,7 +62,6 @@ where
         block_claims,
         protocol_points: &protocol_points,
         reduction: None,
-        row_coefficients: None,
         trace_opening_batch: &opening_batch,
         level_params,
         basis,

@@ -108,6 +108,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         extension_opening_reduction: Some(ExtensionOpeningReductionShape::standard(
             DEFAULT_MAX_SEQUENCE_LEN + 1,
             1,
+            1,
         )),
         opening_payload_coeffs: 1,
         stage1_stages: Vec::new(),
@@ -125,7 +126,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
     let wrong_degree = LevelProofShape {
         extension_opening_reduction: Some(ExtensionOpeningReductionShape {
             partials: 1,
-            sumcheck: vec![EXTENSION_OPENING_REDUCTION_DEGREE + 1],
+            sumcheck: vec![vec![EXTENSION_OPENING_REDUCTION_DEGREE + 1]],
         }),
         ..oversized
     };
@@ -173,10 +174,10 @@ fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
 fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
     ExtensionOpeningReductionProof {
         partials: vec![F::zero(), F::one()],
-        sumcheck: SumcheckProof {
-            round_polys: vec![CompressedUniPoly {
+        sumcheck: SharedChallengeSumcheckProof {
+            round_polys: vec![vec![CompressedUniPoly {
                 coeffs_except_linear_term: vec![F::zero(), F::one()],
-            }],
+            }]],
         },
     }
 }

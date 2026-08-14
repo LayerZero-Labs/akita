@@ -132,7 +132,6 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     alpha_bits: usize,
     basis: BasisMode,
     opening_batch: &OpeningClaimsLayout,
-    row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
 where
@@ -151,6 +150,12 @@ where
             expected: opening_batch.num_total_polynomials(),
             actual: folded_rings.len(),
         });
+    }
+    if reduction.as_ref().is_some_and(|reduction| {
+        reduction.final_claims.len() != opening_batch.num_total_polynomials()
+            || reduction.final_factors.len() != opening_batch.num_groups()
+    }) {
+        return Err(AkitaError::InvalidProof);
     }
     let inner_claim_point = &protocol_point[..protocol_point.len().min(alpha_bits)];
     let mut openings = Vec::with_capacity(opening_batch.num_total_polynomials());
@@ -185,16 +190,14 @@ where
         }
         claim_offset = end;
     }
-    let row_coefficients = if let Some(row_coefficients) = row_coefficients {
-        row_coefficients
-    } else {
+    if reduction.is_none() {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        sample_row_coefficients::<F, E, T>(
-            opening_batch,
-            akita_transcript::labels::CHALLENGE_EVAL_BATCH,
-            transcript,
-        )?
-    };
+    }
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
+        opening_batch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        transcript,
+    )?;
     let claim_coefficients = reduction.as_ref().map_or_else(
         || Ok(row_coefficients.clone()),
         |reduction| {
@@ -207,11 +210,18 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
         })?;
-    let trace_eval_target = reduction
-        .as_ref()
-        .map_or(expected_trace_eval_target, |reduction| {
-            reduction.final_claim
-        });
+    let trace_eval_target = reduction.as_ref().map_or_else(
+        || expected_trace_eval_target,
+        |reduction| {
+            reduction
+                .final_claims
+                .iter()
+                .zip(&row_coefficients)
+                .fold(E::zero(), |acc, (&claim, &coefficient)| {
+                    acc + coefficient * claim
+                })
+        },
+    );
     if trace_eval_target != expected_trace_eval_target {
         return Err(AkitaError::InvalidProof);
     }
@@ -300,7 +310,6 @@ pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
-    row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
@@ -314,15 +323,17 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = if let Some(row_coefficients) = row_coefficients {
-        row_coefficients
-    } else {
-        sample_row_coefficients::<F, E, T>(
-            opening_batch,
-            akita_transcript::labels::CHALLENGE_EVAL_BATCH,
-            transcript,
-        )?
-    };
+    if reduction.as_ref().is_some_and(|reduction| {
+        reduction.final_claims.len() != opening_batch.num_total_polynomials()
+            || reduction.final_factors.len() != opening_batch.num_groups()
+    }) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
+        opening_batch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        transcript,
+    )?;
     let claim_coefficients = reduction.as_ref().map_or_else(
         || Ok(row_coefficients.clone()),
         |reduction| {
@@ -335,11 +346,18 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
         })?;
-    let trace_eval_target = reduction
-        .as_ref()
-        .map_or(expected_trace_eval_target, |reduction| {
-            reduction.final_claim
-        });
+    let trace_eval_target = reduction.as_ref().map_or_else(
+        || expected_trace_eval_target,
+        |reduction| {
+            reduction
+                .final_claims
+                .iter()
+                .zip(&row_coefficients)
+                .fold(E::zero(), |acc, (&claim, &coefficient)| {
+                    acc + coefficient * claim
+                })
+        },
+    );
     if trace_eval_target != expected_trace_eval_target {
         return Err(AkitaError::InvalidProof);
     }

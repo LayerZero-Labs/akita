@@ -63,8 +63,7 @@ pub(in crate::protocol::core) use fold::{
     prepare_single_field_suffix_groups, prepare_single_field_terminal_suffix,
     verify_extension_claim_root_prefix, verify_extension_claim_suffix_prefix,
     verify_extension_claim_terminal_suffix, verify_fold, verify_single_field_root_prefix,
-    FoldClaimMaterial, FoldClaimState, PreparedFoldPayload, PreparedFoldReplay,
-    PreparedNextWitness,
+    FoldClaimMaterial, PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

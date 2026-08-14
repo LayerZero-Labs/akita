@@ -29,19 +29,15 @@ pub(in crate::protocol::core) struct FoldPrefix<F: FieldCore, E: FieldCore> {
 pub(in crate::protocol::core) struct FoldClaimMaterial<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) openings: Vec<E>,
+    pub(in crate::protocol::core) reduction_final_claims: Option<Vec<E>>,
     pub(in crate::protocol::core) reduction_factors: Option<Vec<E>>,
-}
-
-pub(in crate::protocol::core) enum FoldClaimState<F: FieldCore, E: FieldCore> {
-    Unbatched(FoldClaimMaterial<F, E>),
-    Bound(FoldPrefix<F, E>),
 }
 
 pub(in crate::protocol::core) fn bind_opening_payload_and_finalize_claims<F, E, T>(
     lp: &CommittedGroupParams,
     opening_shape: &OpeningClaimsLayout,
     opening_payload: &RingVec<F>,
-    state: FoldClaimState<F, E>,
+    material: FoldClaimMaterial<F, E>,
     transcript: &mut T,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
@@ -58,10 +54,6 @@ where
         geometry.transcript_ring_dimension(),
         transcript,
     )?;
-    let material = match state {
-        FoldClaimState::Unbatched(material) => material,
-        FoldClaimState::Bound(prefix) => return Ok(prefix),
-    };
     if material.openings.len() != opening_shape.num_total_polynomials()
         || material.prepared_points.len() != opening_shape.num_groups()
     {
@@ -76,8 +68,22 @@ where
         || Ok(row_coefficients.clone()),
         |factors| opening_shape.scale_row_coefficients_by_group(&row_coefficients, factors),
     )?;
-    let trace_eval_target =
-        opening_shape.batched_eval_target(&trace_claim_coefficients, &material.openings)?;
+    let trace_eval_target = if let Some(final_claims) = &material.reduction_final_claims {
+        if final_claims.len() != row_coefficients.len() || material.reduction_factors.is_none() {
+            return Err(AkitaError::InvalidProof);
+        }
+        final_claims
+            .iter()
+            .zip(&row_coefficients)
+            .fold(E::zero(), |acc, (&claim, &coefficient)| {
+                acc + coefficient * claim
+            })
+    } else {
+        if material.reduction_factors.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        opening_shape.batched_eval_target(&trace_claim_coefficients, &material.openings)?
+    };
     Ok(FoldPrefix {
         prepared_points: material.prepared_points,
         row_coefficients,

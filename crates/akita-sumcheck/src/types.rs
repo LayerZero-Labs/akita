@@ -162,6 +162,104 @@ pub struct SumcheckProof<E: FieldCore> {
     pub round_polys: Vec<CompressedUniPoly<E>>,
 }
 
+/// Sumcheck proof for several claims that use one challenge in each round.
+///
+/// The outer vector is round-major. Every inner vector contains one compressed
+/// polynomial per claim in the caller's canonical claim order. A verifier
+/// absorbs the complete inner vector before sampling the shared round
+/// challenge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedChallengeSumcheckProof<E: FieldCore> {
+    /// One vector of compressed claim polynomials per sumcheck round.
+    pub round_polys: Vec<Vec<CompressedUniPoly<E>>>,
+}
+
+impl<E: Valid + FieldCore> Valid for SharedChallengeSumcheckProof<E> {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.round_polys.check()
+    }
+}
+
+/// Headerless shape for a [`SharedChallengeSumcheckProof`].
+///
+/// The outer vector is indexed by round and the inner vector gives the stored
+/// coefficient count for each claim polynomial in that round.
+pub type SharedChallengeSumcheckProofShape = Vec<Vec<usize>>;
+
+/// Construct a uniform shared-challenge shape.
+pub fn uniform_shared_challenge_sumcheck_shape(
+    num_rounds: usize,
+    num_claims: usize,
+    degree: usize,
+) -> SharedChallengeSumcheckProofShape {
+    vec![vec![degree; num_claims]; num_rounds]
+}
+
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for SharedChallengeSumcheckProof<E> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        for round in &self.round_polys {
+            for poly in round {
+                poly.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.round_polys
+            .iter()
+            .flatten()
+            .map(|poly| poly.serialized_size(compress))
+            .sum()
+    }
+}
+
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for SharedChallengeSumcheckProof<E>
+{
+    type Context = SharedChallengeSumcheckProofShape;
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        ctx: &Self::Context,
+    ) -> Result<Self, SerializationError> {
+        let mut round_polys = Vec::new();
+        round_polys.try_reserve_exact(ctx.len()).map_err(|_| {
+            SerializationError::InvalidData(
+                "shared-challenge sumcheck round allocation failed".to_string(),
+            )
+        })?;
+        for round_shape in ctx {
+            let mut round = Vec::new();
+            round.try_reserve_exact(round_shape.len()).map_err(|_| {
+                SerializationError::InvalidData(
+                    "shared-challenge sumcheck claim allocation failed".to_string(),
+                )
+            })?;
+            for degree in round_shape {
+                round.push(CompressedUniPoly::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    degree,
+                )?);
+            }
+            round_polys.push(round);
+        }
+        let out = Self { round_polys };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
 impl<E: Valid + FieldCore> Valid for SumcheckProof<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.round_polys.check()
@@ -285,6 +383,69 @@ impl<E: FieldCore> SumcheckProof<E> {
         }
 
         Ok((claim, r))
+    }
+}
+
+impl<E: FieldCore> SharedChallengeSumcheckProof<E> {
+    /// Verify all claim recurrences while deriving one shared challenge point.
+    ///
+    /// This does not perform final oracle checks. The caller must bind every
+    /// returned final claim to its protocol-specific oracle value.
+    pub fn verify<F, T, S>(
+        &self,
+        input_claims: &[E],
+        num_rounds: usize,
+        degree_bound: usize,
+        transcript: &mut T,
+        mut sample_challenge: S,
+    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        T: Transcript<F>,
+        E: AkitaSerialize,
+        S: FnMut(&mut T) -> E,
+    {
+        if input_claims.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "shared-challenge sumcheck requires at least one claim".to_string(),
+            ));
+        }
+        if self.round_polys.len() != num_rounds {
+            return Err(AkitaError::InvalidSize {
+                expected: num_rounds,
+                actual: self.round_polys.len(),
+            });
+        }
+        for claim in input_claims {
+            transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, claim);
+        }
+
+        let mut claims = input_claims.to_vec();
+        let mut challenges = Vec::with_capacity(num_rounds);
+        for round in &self.round_polys {
+            if round.len() != claims.len() {
+                return Err(AkitaError::InvalidSize {
+                    expected: claims.len(),
+                    actual: round.len(),
+                });
+            }
+            for poly in round {
+                if poly.degree() > degree_bound {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "sumcheck round poly degree {} exceeds bound {}",
+                        poly.degree(),
+                        degree_bound
+                    )));
+                }
+                transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+            }
+            let challenge = sample_challenge(transcript);
+            challenges.push(challenge);
+            for (claim, poly) in claims.iter_mut().zip(round) {
+                *claim = poly.eval_from_hint(claim, &challenge);
+            }
+        }
+        Ok((claims, challenges))
     }
 }
 

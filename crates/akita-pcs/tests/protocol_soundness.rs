@@ -713,6 +713,10 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
         .expect("commit");
         let selection = selection_for::<Cfg>(&commitment);
 
+        #[cfg(feature = "logging-transcript")]
+        let mut prover_transcript =
+            akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<SF>::new(LABEL));
+        #[cfg(not(feature = "logging-transcript"))]
         let mut prover_transcript = AkitaTranscript::<SF>::new(LABEL);
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
@@ -728,15 +732,41 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
         );
 
         // Baseline: the honest proof verifies.
+        #[cfg(feature = "logging-transcript")]
+        let mut vt = akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<SF>::new(LABEL));
+        #[cfg(not(feature = "logging-transcript"))]
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
+        let honest_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut vt,
             verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
             BasisMode::Lagrange,
-        )
-        .expect("honest fp32 extension proof must verify");
+        );
+        #[cfg(feature = "logging-transcript")]
+        {
+            let prover_events = common::public_transcript_events(prover_transcript.events());
+            let verifier_events = common::public_transcript_events(vt.events());
+            if prover_events != verifier_events {
+                let first_difference = prover_events
+                    .iter()
+                    .zip(&verifier_events)
+                    .position(|(prover, verifier)| prover != verifier)
+                    .unwrap_or_else(|| prover_events.len().min(verifier_events.len()));
+                panic!(
+                    "fp32 extension transcript diverged at {first_difference}: prover={:?}, verifier={:?}, lengths=({}, {})",
+                    prover_events.get(first_difference),
+                    verifier_events.get(first_difference),
+                    prover_events.len(),
+                    verifier_events.len(),
+                );
+            }
+            assert!(
+                common::assert_claim_batching_follows_opening_payload(&prover_events) > 0,
+                "multi-claim EOR must batch claims after the opening payload"
+            );
+        }
+        honest_result.expect("honest fp32 extension proof must verify");
 
         // (1) A wrong second opening must be rejected.
         let mut wrong = openings.clone();
@@ -771,7 +801,31 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
         )
         .expect_err("tampered extension-opening reduction partial must reject");
 
-        // (3) Omitting the required EOR entirely must be rejected.
+        // (3) Each claim has its own EOR round message. Changing only the
+        // second claim must not be hidden by application batching.
+        let mut tampered = proof.clone();
+        *tampered
+            .root
+            .extension_opening_reduction
+            .as_mut()
+            .expect("root EOR payload")
+            .sumcheck
+            .round_polys
+            .last_mut()
+            .and_then(|round| round.get_mut(1))
+            .and_then(|poly| poly.coeffs_except_linear_term.first_mut())
+            .expect("two-claim EOR must carry a second round polynomial") += SE::one();
+        let mut vt = AkitaTranscript::<SF>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &tampered,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("tampered per-claim EOR round message must reject");
+
+        // (4) Omitting the required EOR entirely must be rejected.
         let mut stripped = proof.clone();
         stripped.root.extension_opening_reduction = None;
         let mut vt = AkitaTranscript::<SF>::new(LABEL);

@@ -41,8 +41,9 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
 /// Header-stripped byte size of an extension-opening reduction proof.
 ///
 /// The reduction proof serializes `partials` challenge-field elements followed
-/// by a fixed degree-two sumcheck over `opening_vars - log2(extension_width)`
-/// rounds. `extension_width = 1` means the claim field is already the base
+/// by one fixed degree-two sumcheck round polynomial per opening claim over
+/// `opening_vars - log2(extension_width)` rounds. All claims share each round
+/// challenge. `extension_width = 1` means the claim field is already the base
 /// field and contributes zero bytes.
 ///
 /// # Errors
@@ -71,13 +72,16 @@ pub fn extension_opening_reduction_proof_bytes(
     }
     let elem_bytes = field_bytes(challenge_field_bits);
     let rounds = opening_vars - split_bits;
-    Ok(partials
-        .saturating_mul(elem_bytes)
-        .saturating_add(sumcheck_bytes(
-            rounds,
-            EXTENSION_OPENING_REDUCTION_DEGREE,
-            elem_bytes,
-        )))
+    if !partials.is_multiple_of(extension_width) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "extension opening partial count {partials} is not divisible by width {extension_width}"
+        )));
+    }
+    let num_claims = partials / extension_width;
+    Ok(partials.saturating_mul(elem_bytes).saturating_add(
+        sumcheck_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
+            .saturating_mul(num_claims),
+    ))
 }
 
 /// Log2 of the next power-of-two Boolean cube width for recursive opening.
@@ -192,7 +196,7 @@ fn extension_opening_reduction_level_geometry(
     let opening_num_vars = if fold_level == 0 {
         key.num_vars()
     } else {
-        padded_boolean_opening_vars(input_witness_len)?
+        padded_boolean_opening_vars(input_witness_len)?.max(key.num_vars())
     };
     let requires_eor = if fold_level == 0 {
         crate::proof::root_tensor_projection_enabled_for_width(
@@ -212,7 +216,10 @@ fn extension_opening_reduction_level_geometry(
             key.num_vars(),
         )
     } else {
-        (extension_opening_width, opening_num_vars)
+        (
+            extension_opening_width.saturating_mul(key.num_polynomials()),
+            opening_num_vars,
+        )
     };
     let split_bits = extension_opening_width.trailing_zeros() as usize;
     if split_bits > opening_vars {
@@ -326,7 +333,7 @@ mod tests {
 
     #[test]
     fn candidate_aware_eor_distinguishes_local_miss_from_bad_policy() {
-        let key = PolynomialGroupLayout::singleton(12);
+        let key = PolynomialGroupLayout::singleton(2);
         assert_eq!(
             try_extension_opening_reduction_level_bytes(128, 16, 1, key, 8, 64)
                 .expect("valid policy"),
@@ -340,5 +347,23 @@ mod tests {
                 > 0
         );
         assert!(try_extension_opening_reduction_level_bytes(128, 3, 1, key, 16, 64).is_err());
+    }
+
+    #[test]
+    fn recursive_vector_eor_prices_each_claim_at_the_widest_group_arity() {
+        let bytes = extension_opening_reduction_level_bytes(
+            128,
+            4,
+            1,
+            PolynomialGroupLayout::new(12, 2),
+            8,
+            64,
+        )
+        .expect("two-claim recursive EOR");
+
+        let elem_bytes = field_bytes(128);
+        let partial_bytes = 4 * 2 * elem_bytes;
+        let sumcheck_bytes = (12 - 2) * EXTENSION_OPENING_REDUCTION_DEGREE * 2 * elem_bytes;
+        assert_eq!(bytes, partial_bytes + sumcheck_bytes);
     }
 }

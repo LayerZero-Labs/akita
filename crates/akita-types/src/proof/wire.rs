@@ -61,8 +61,12 @@ where
             &(),
         )?);
     }
-    let sumcheck =
-        SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
+    let sumcheck = SharedChallengeSumcheckProof::deserialize_with_mode(
+        &mut reader,
+        compress,
+        validate,
+        &shape.sumcheck,
+    )?;
     Ok(Some(ExtensionOpeningReductionProof { partials, sumcheck }))
 }
 

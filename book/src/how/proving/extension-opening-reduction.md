@@ -17,19 +17,20 @@ representatives visible to the hot loop.
 
 ## Multi-group openings
 
-A multi-group root still emits one EOR proof and runs one degree-two sumcheck.
-Group `g` contributes its own complete public point, native packed witness, and
+A multi-group root emits one EOR proof with one sumcheck state per opening
+claim. All states use the same challenge in each round. Group `g` and claim
+`i` contribute their own complete public point, native packed witness, and
 transparent factor:
 
 \\[
-\sum_g A_{\eta,g}(x)
-  \left(\sum_{i \in g}\gamma_i\,W_{g,i}(x)\right).
+A_{\eta,g}(x) W_{g,i}(x).
 \\]
 
 The public points are independent; equal, nested, and unrelated values use the
 same per-group preparation path.
-The reduction embeds all terms in one maximum-arity Boolean domain and samples
-one internal sumcheck challenge vector.
+The reduction embeds all claims in one maximum-arity Boolean domain. For every
+round, the prover sends one degree-two polynomial per claim. The transcript
+absorbs the complete vector before it samples the shared challenge.
 If a group has fewer variables, Akita treats its witness as independent of the
 additional high variables and multiplies it by equality to a fixed zero point
 on those variables.
@@ -41,11 +42,19 @@ to each group's native tail before preparing that group's resulting relation
 point.
 This internal shared reduction challenge is not an ambient public opening point.
 
+The application does not sample its row coefficients before EOR. EOR first
+authenticates every reduced claim and derives the shared relation points. The
+prover then builds the complete opening payload at those points. After the
+transcript absorbs that payload, prover and verifier sample the application row
+coefficients and combine the independently authenticated EOR claims. This order
+prevents errors in separate claims from cancelling under coefficients that the
+prover knew while constructing the payload.
+
 **Sources to fold in**
 
 - `crates/akita-prover/src/protocol/extension_opening_reduction/`.
 - `crates/akita-prover/src/protocol/core/extension_opening_reduction.rs`.
-- `crates/akita-verifier/src/protocol/core/fold/mod.rs`.
+- `crates/akita-verifier/src/protocol/core/fold/extension_claim.rs`.
 - `crates/akita-types/src/extension_opening_reduction.rs`.
 - Paper App B.4.1 `sec:akita-eor-sumcheck` (implemented prover paths, prefix-suffix tensor weight, streamed/staged prover).
 - `specs/extension-field-opening-batching.md` (trim stale `akita-scheme` refs), `specs/eor-streamed-prover.md` (active).

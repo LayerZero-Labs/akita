@@ -556,8 +556,8 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 /// Sample row-batching coefficients in the caller-selected transcript domain.
 ///
 /// Claimed values must already have been absorbed. Keeping message binding
-/// separate makes the phase boundary explicit: EOR may use an early internal
-/// batch, while public claim weights are drawn only after the opening payload.
+/// separate makes the phase boundary explicit. Public claim weights are drawn
+/// only after the opening payload, including when EOR prepared the points.
 pub fn sample_row_coefficients<F, L, T>(
     layout: &OpeningClaimsLayout,
     challenge_label: &'static [u8],

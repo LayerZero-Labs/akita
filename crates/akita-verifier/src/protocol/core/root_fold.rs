@@ -173,9 +173,9 @@ where
         .map_err(|error| {
             AkitaError::InvalidInput(format!("single-field root prefix failed: {error:?}"))
         })?;
-        FoldClaimState::Unbatched(material)
+        material
     } else {
-        let prefix = verify_extension_claim_root_prefix::<F, E, T>(
+        verify_extension_claim_root_prefix::<F, E, T>(
             claims,
             openings,
             opening_batch,
@@ -186,8 +186,7 @@ where
         )
         .map_err(|error| {
             AkitaError::InvalidInput(format!("extension root prefix failed: {error:?}"))
-        })?;
-        FoldClaimState::Bound(prefix)
+        })?
     };
     // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and

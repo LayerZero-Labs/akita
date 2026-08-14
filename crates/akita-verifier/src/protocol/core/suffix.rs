@@ -343,7 +343,10 @@ where
         AkitaError::InvalidInput(format!("terminal ring relation failed: {error:?}"))
     })?;
     let (target, scale) = match final_relation {
-        Some((claim, factors)) => (claim, *factors.first().ok_or(AkitaError::InvalidProof)?),
+        Some((claims, factors)) => (
+            *claims.first().ok_or(AkitaError::InvalidProof)?,
+            *factors.first().ok_or(AkitaError::InvalidProof)?,
+        ),
         None => (current_state.opening, E::one()),
     };
     super::terminal_direct::verify_terminal_trace(
@@ -446,31 +449,26 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         absorb_protocol_opening_points(&group_points, transcript);
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        FoldClaimState::Unbatched(FoldClaimMaterial {
+        FoldClaimMaterial {
             prepared_points,
             openings: openings.clone(),
+            reduction_final_claims: None,
             reduction_factors: None,
-        })
+        }
     } else {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-        let row_coefficients = sample_row_coefficients::<F, E, T>(
-            &opening_batch,
-            akita_transcript::labels::CHALLENGE_EVAL_BATCH,
-            transcript,
-        )?;
         let group_points = (0..opening_batch.num_groups())
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;
-        FoldClaimState::Bound(verify_extension_claim_suffix_prefix::<F, E, T>(
+        verify_extension_claim_suffix_prefix::<F, E, T>(
             proof.extension_opening_reduction,
             &group_points,
             &openings,
-            row_coefficients,
             &opening_batch,
             current_state.basis,
             lp,
             transcript,
-        )?)
+        )?
     };
 
     let witness_len = output_witness_len;

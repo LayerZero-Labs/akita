@@ -55,7 +55,7 @@ where
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let tensor = stack.tensor();
-    let (protocol_points, row_coefficients, reduction) = if run_eor {
+    let (protocol_points, reduction) = if run_eor {
         let eor_groups: Vec<&P> = match eor_source {
             ExtensionOpeningSource::CurrentClaims => block_claims.groups().collect(),
             ExtensionOpeningSource::Logical(groups) => groups.iter().collect(),
@@ -94,15 +94,11 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
-        (
-            proved.protocol_points,
-            Some(proved.row_coefficients),
-            Some(proved.reduction),
-        )
+        (proved.protocol_points, Some(proved.reduction))
     } else {
         let protocol_points =
             prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
-        (protocol_points, None, None)
+        (protocol_points, None)
     };
 
     // Tensor-project only when EOR ran without base-eval padding (root geometry).
@@ -141,7 +137,6 @@ where
             block_claims: transformed_block_claims,
             protocol_points: &protocol_points,
             reduction,
-            row_coefficients,
             trace_opening_batch: &opening_batch,
             level_params,
             basis,
@@ -154,7 +149,6 @@ where
             block_claims,
             protocol_points: &protocol_points,
             reduction,
-            row_coefficients,
             trace_opening_batch: &opening_batch,
             level_params,
             basis,
