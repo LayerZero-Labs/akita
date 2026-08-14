@@ -4,12 +4,12 @@
 //! point reductions, per-level parameter shapes, commitment API contracts, and
 //! generated schedule/SIS data shared by prover, verifier, and planner code.
 
-pub mod coefficient_carrier;
 pub mod commitment_slicing;
 pub mod compression;
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
+pub mod subring_coefficient_packing;
 pub use dispatch::{
     compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
     ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
@@ -37,7 +37,6 @@ pub mod trace_weight;
 pub mod transcript;
 pub mod witness;
 
-pub use coefficient_carrier::CarrierGeometry;
 pub use commitment_slicing::{
     CommitmentSliceCount, CommitmentSliceGeometry, MAX_COMMITMENT_SLICES,
 };
@@ -171,6 +170,7 @@ pub use sis::{
     SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
+pub use subring_coefficient_packing::SubringCoefficientPackingGeometry;
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{
     build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,

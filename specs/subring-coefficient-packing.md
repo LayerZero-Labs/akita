@@ -1,4 +1,4 @@
-# Spec: coefficient-carrier openings and subring fold challenges
+# Spec: subring coefficient packing
 
 | Field | Value |
 |---|---|
@@ -17,39 +17,42 @@ in all capitals.
 
 ## Decision
 
-Akita will support a direct opening mode for base-field committed tables opened
-at extension-field points. The mode keeps one coefficient axis explicit as a
-smaller cyclotomic **carrier ring** and contracts the other coefficient axes
-directly over the extension field. Fold challenges live in that smaller ring
-and embed sparsely into the ambient A ring. The challenge dimension and the
-ambient A-ring dimension are independent schedule choices, subject to the
+Akita will support the **subring coefficient packing** opening method for base
+field committed tables opened at extension field points. The method keeps one
+coefficient axis explicit in an extension opening ring and contracts the other
+coefficient axes over the extension field. Fold challenges live in a challenge
+subring and embed sparsely into the A ring. The challenge subring dimension and
+the A ring dimension are independent schedule choices, subject to the
 divisibility condition below.
 
-Generated schedules MUST use this direct mode at absolute fold levels 0 and 1
-when those nonterminal folds exist. This rule applies to every field profile.
-For extension fields, EOR is not available at those levels. For degree one
-fields, the same mode may reduce the partial opening and D or H source even
-though there is no EOR payload to remove.
+Generated schedules MUST use `SubringCoefficientPacking` at absolute fold
+levels 0 and 1 when those nonterminal folds exist. This rule applies to every
+field profile. For extension fields, EOR is not available at those levels. For
+degree one fields, the same method may reduce the partial opening and D or H
+source even though there is no EOR payload to remove.
 
-Carrier folds at levels 0 and 1 MUST use the Linf A security route. This keeps
-PR 369's rule that physical L2 admission starts at fold level 3. The planner
+Subring coefficient packing folds at levels 0 and 1 MUST use the Linf A
+security route. This keeps PR 369's rule that physical L2 admission starts at
+fold level 3. The planner
 MUST derive the Linf response bound through the same policy as PR 369. At the
 root, this includes the unconditional adversarial bound for caller controlled
 dense inputs. At level 1, it uses the propagated typed response model when the
 selected profile provides one. This feature does not add another response
 model.
 
-Later recursive folds and the terminal keep the current opening protocol. The
-feature does not add a carrier terminal and does not extend carrier search past
-the existing two level adaptive prefix. A short schedule uses carrier mode at
-each existing nonterminal fold with absolute index 0 or 1. The planner MUST NOT
-add a fold only to obtain two carrier levels.
+Later recursive folds and the terminal use `EvaluationTrace`. The feature does
+not add a subring packing terminal and does not extend subring packing search
+past the existing two level adaptive prefix. A short schedule uses
+`SubringCoefficientPacking` at each existing nonterminal fold with absolute
+index 0 or 1. The planner MUST NOT add a fold only to obtain two subring packing
+levels.
 
-The planner searches the carrier dimension `s` independently of the ambient A
-dimension `d_A` at levels 0 and 1. Both values are candidate coordinates. They
-are not explicit optimization components. The planner retains the current
-catalog objective, which minimizes setup matrix field elements first and proof
-payload second, followed by its current canonical deterministic ordering.
+The planner searches the challenge subring dimension `s` independently of the
+A ring dimension `d_A` at levels 0 and 1. Both values are candidate
+coordinates. They are not explicit optimization components. The planner
+retains the current catalog objective, which minimizes setup matrix field
+elements first and proof payload second, followed by its current canonical
+deterministic ordering.
 
 This specification is stacked on the selective L2 fold sizing work in
 [PR #369](https://github.com/LayerZero-Labs/akita/pull/369), at commit
@@ -65,28 +68,29 @@ degree-two sum-check and transcript-bound partial evaluations at every
 extension-valued recursive opening.
 
 The conversion is avoidable. A coefficient table can instead be viewed as a
-polynomial over a smaller carrier ring whose coefficients already lie in the
-extension field. This viewpoint has three useful consequences:
+polynomial in the extension opening ring, whose coefficients already lie in
+the extension field. This viewpoint has three useful consequences:
 
 1. The original extension-field point can be used directly, so L0 and L1 need
    no EOR proof.
-2. Each partial opening and its consistency quotient can use fewer base-field
-   coordinates than a full ambient-ring element.
+2. Each partial opening and its consistency quotient can use fewer base field
+   coordinates than a full A ring element.
 3. The current commitment type, A relation, B commitment, setup matrices, and
-   most NTT caches can remain over the ambient base field ring.
+   most NTT caches can remain over the A ring.
 
-The change is not unconditionally cheaper. A smaller carrier requires a
-different sparse challenge family. Meeting the same entropy target can increase
+The change is not unconditionally cheaper. A smaller challenge subring requires
+a different sparse challenge family. Meeting the same entropy target can
+increase
 the challenge's norm, which can enlarge the folded witness, the secure A rank,
-and the `t` part of the next witness. Near the recursive tail, a direct
-small-field opening may also require a larger A ring. This does not by itself
+and the `t` part of the next witness. Near the recursive tail, a subring
+coefficient packing opening may also require a larger A ring. This does not by itself
 make the candidate worse: a larger ring can need proportionally fewer A rows.
 The planner must compare exact field coordinate counts and the complete suffix.
 Neither `s` nor `d_A` is an optimization objective by itself.
 
 ## Scope and notation
 
-The direct-mode equations below describe one polynomial and one commitment
+The `SubringCoefficientPacking` equations below describe one polynomial and one commitment
 group. Existing claim batching and multi-group row coefficients apply outside
 these equations and do not change them.
 
@@ -94,16 +98,16 @@ these equations and do not change them.
 |---|---|
 | `K` | Base coefficient field `F_q` |
 | `E` | Challenge and evaluation field, with extension degree `k = [E:K]` |
-| `d_A` | Ambient A-ring dimension |
+| `d_A` | A ring dimension |
 | `n_A` | Secure output rank of the A matrix |
-| `s` | Carrier-ring dimension selected by the schedule |
-| `h` | Native-mode packing gain `d_A / (k s)` |
-| `R` | Ambient ring `K[X]/(X^{d_A}+1)` |
-| `S` | Challenge carrier `K[Y]/(Y^s+1)` |
-| `C` | Extension carrier `E[Y]/(Y^s+1)` |
+| `s` | Challenge subring dimension selected by the schedule |
+| `h` | Packing factor `d_A / (k s)` |
+| `R` | A ring `K[X]/(X^{d_A}+1)` |
+| `S` | Challenge subring `K[Y]/(Y^s+1)` |
+| `C` | Extension opening ring `E[Y]/(Y^s+1) = E tensor_K S` |
 | `beta_t` | Element `t` of Akita's fixed canonical `K`-basis of `E` |
 
-Every admitted direct candidate satisfies
+Every admitted subring packing candidate satisfies
 
 ```text
 d_A = k h s,
@@ -111,7 +115,7 @@ h >= 1,
 d_A, k, h, and s are powers of two.
 ```
 
-The embedding from the carrier into the ambient ring is
+The embedding from the challenge subring into the A ring is
 
 ```text
 S -> R,       Y -> X^(k h).
@@ -127,29 +131,30 @@ c(X^(k h)) = sum_(j < s) c_j X^(k h j).
 ```
 
 The implementation MUST use this canonical embedding. It MUST NOT search over
-coefficient permutations or alternative carrier embeddings.
+coefficient permutations or alternative subring embeddings.
 
 ### Protocol boundary
 
-There is one coefficient carrier opening relation. This implementation uses it
-only at nonterminal fold levels 0 and 1. Its partial digits become part of the
-ordinary flat witness committed for the next fold. The descriptor MUST bind
-`k`, `s`, and the extension coordinate order.
+There is one subring coefficient packing opening method. This implementation
+uses it only at nonterminal fold levels 0 and 1. Its partial digits become part
+of the ordinary flat witness committed for the next fold. The descriptor MUST
+bind `k`, `s`, and the extension coordinate order.
 
-The stored witness and its commitment do not have a carrier type. A later fold
-may open that flat base field witness with the current EOR path. The same rule
-applies to a precommitted group and to a setup prefix. The commitment fixes the
+The stored witness and its commitment do not have a subring packing type. A
+later fold may open that flat base field witness with `EvaluationTrace`. The
+same rule applies to a precommitted group and to a setup prefix. The commitment fixes the
 polynomial layout and commitment matrices. The consuming fold fixes the
-opening reduction and challenge family.
+opening method and challenge family.
 
 The current tensor EOR and Hachi terminal remain unchanged. The terminal
-analysis below explains why a hidden carrier tail would need another opening
-argument. That analysis is a security boundary, not implementation scope.
+analysis below explains why a hidden subring packing tail would need another
+opening argument. That analysis is a security boundary, not implementation
+scope.
 
 ### Why later folds and the terminal stay unchanged
 
-The current audited sparse challenge ladder starts at dimension 64. A native
-candidate using that smallest challenge therefore carries
+The current audited sparse challenge ladder starts at dimension 64. A subring
+packing candidate using that smallest challenge therefore contains
 
 ```text
 k s = 64       for fp128,
@@ -181,7 +186,8 @@ pricing at levels 0 and 1. It does not justify a new search policy after level
 
 ## Why this feature does not change the terminal
 
-Suppose the prover decomposes the native planes into short digits `ehat`, binds
+Suppose the prover decomposes the extension coordinate arrays into short digits
+`ehat`, binds
 
 ```text
 v_D = D ehat,
@@ -198,45 +204,45 @@ Stage 1 has the same final-oracle problem. The D image gives computational
 binding *if two short preimages are already known*; it is not by itself a
 polynomial-opening protocol.
 
-The current nonterminal protocol supplies the missing step by putting `ehat`
+The evaluation trace method supplies the missing step by putting `ehat`
 inside the recursively committed next witness and opening that commitment at
 the Stage 2 point. The current terminal supplies the needed authentication
 through the existing EOR and Hachi path.
 
-A future hidden carrier terminal would have to do all of the following:
+A future hidden subring packing terminal would have to do all of the following:
 
-1. bind the coefficient planes before the block-fold challenges;
+1. bind the extension coordinates before the block fold challenges;
 2. prove the bound witness is short;
 3. authenticate every final witness evaluation requested by the range and
    relation proofs; and
-4. enforce native carrier consistency and the exact `E`-valued opening on that
+4. enforce packing consistency and the exact `E`-valued opening on that
    same authenticated witness.
 
 Until item 3 has a concrete proof, no future planner may price the 512 byte D
 image and local sum check messages as a complete replacement for raw `e`. The
 previous 1,744 byte estimate omitted this opening argument and is invalid.
 
-Projecting the `k` coordinate planes to one carrier plane does not supply the
-missing opening either. For example, an `S`-linear projection
+Projecting the `k` extension coordinates to one coordinate does not supply the
+missing opening either. For example, an `S` linear projection
 
 ```text
 p_i = e_(i,0) + eta e_(i,1) + ... + eta^(k-1) e_(i,k-1)
 ```
 
-preserves the carrier-consistency equation, but it does not preserve the
+preserves the packing consistency equation, but it does not preserve the
 extension-field MLE opening equation. Multiplication by `eta` acts on the
-carrier coefficient index, while the extension-field opening weights act on
+subring coefficient index, while the extension-field opening weights act on
 the MLE indices and mix the `k` field coordinates. In general,
 
 ```text
 Open(eta e) != eta Open(e).
 ```
 
-The projected plane therefore authenticates only a projection of the carrier
-relation. It is not a complete terminal opening.
+The projected coordinate therefore authenticates only a projection of the
+packing consistency relation. It is not a complete terminal opening.
 
-For one claim, six live blocks, extension degree four, carrier dimension 64,
-and four byte base field elements, a transparent path would send
+For one claim, six live blocks, extension degree four, challenge subring
+dimension 64, and four byte base field elements, a transparent path would send
 
 ```text
 1 * 6 * 4 * 64 * 4 = 6,144 bytes
@@ -245,9 +251,9 @@ and four byte base field elements, a transparent path would send
 of raw partial openings. The representative EOR and Hachi baseline sends 3,072
 raw partial opening bytes and a 544 byte EOR proof, for 3,616 opening bytes.
 This comparison explains why the current terminal remains in scope and a
-carrier terminal does not.
+subring packing terminal does not.
 
-## Current protocol
+## Evaluation trace method
 
 For each live claim and block pair, the current prover produces a partial opening
 `e_i` as a full element of `R`, hence `d_A` base-field coordinates. At a
@@ -273,25 +279,25 @@ connect the ring partials to the original scalar opening. The ring-switch
 verifier evaluates every sparse challenge once at `X = alpha` and reuses that
 value in the consistency and A contractions.
 
-At levels 0 and 1, this specification changes four facts. A direct partial is
-not a full `R` element. The consistency row uses the carrier modulus. The
-scalar row uses direct coefficient weights. The carrier and A relations use
-different evaluations of the same challenge. Later folds and the terminal use
-the current protocol without these changes.
+At levels 0 and 1, this specification changes four facts. A partial opening is
+not a full `R` element. The consistency row uses the subring modulus. The
+scalar row uses coefficient packing weights. The packing consistency and A
+relations use different evaluations of the same challenge. Later folds and the
+terminal use the evaluation trace method without these changes.
 
-## Direct coefficient packing
+## Subring coefficient packing
 
 ### Canonical coefficient layout
 
-Write one ambient ring element at block `i` and position `x` as
+Write one A ring element at block `i` and position `x` as
 
 ```text
 F_(i,x)(X)
   = sum_(j < s) sum_(a < k h) f_(i,x,a,j) X^(a + k h j).
 ```
 
-Thus `a` is the low coefficient index and `j` is the carrier index. The physical
-ambient coefficient index is exactly
+Thus `a` is the low coefficient index and `j` is the subring coefficient index.
+The physical A ring coefficient index is exactly
 
 ```text
 a + k h j.
@@ -331,7 +337,7 @@ e_i(Y)
 The physical base-field layout is
 
 ```text
-[claim][block][extension coordinate t][carrier coefficient j].
+[claim][block][extension coordinate t][subring coefficient j].
 ```
 
 It contains exactly `k s` base-field coordinates per claim/block. Backends MAY
@@ -339,14 +345,16 @@ temporarily use packed `E` values, but transcript encoding, gadget
 decomposition, commitment input, range checking, and witness sizing MUST use
 the canonical base-field layout above.
 
-`Y` is a formal carrier indeterminate, not an opening-point coordinate. The
-scalar opening below contracts the coefficient table with `eq(r_tail,j)`.
-Ring switching later evaluates the carrier polynomial at `Y = alpha`; those are
-different operations with different purposes.
+`Y` is the formal indeterminate of the extension opening ring, not an opening
+point coordinate. The scalar opening below contracts the coefficient table
+with `eq(r_tail,j)`. Ring switching later evaluates the extension opening ring
+polynomial at `Y = alpha`; those are different operations with different
+purposes.
 
 ### Scalar opening equation
 
-For one polynomial with claimed opening `v`, the direct equation is
+For one polynomial with claimed opening `v`, the coefficient packing equation
+is
 
 ```text
 sum_i eq(r_B, i)
@@ -365,22 +373,22 @@ sum_i eq(r_B, i)
   = v.
 ```
 
-This replaces the current evaluation-trace formula for a direct-carrier group.
-It remains one logical field-level Stage-2 row, with the existing claim-batching
-coefficient applied outside the displayed equation. It has no cyclotomic
-quotient. The implementation SHOULD name its prepared weights as direct
-coefficient-opening weights rather than trace weights.
+This replaces the current evaluation trace formula for a subring coefficient
+packing group. It remains one logical field level Stage 2 row, with the
+existing claim batching coefficient applied outside the displayed equation.
+It has no cyclotomic quotient. The implementation SHOULD name its prepared
+weights as coefficient packing opening weights rather than trace weights.
 
 This equation is evaluated from digits authenticated through the next recursive
 witness. A grouped root has one schedule owned opening geometry per group, in
 canonical root group order. The precommitted profile freezes the commitment
 geometry. The root schedule separately freezes how that group is opened. The
-verifier MUST NOT apply one group's coefficient layout or carrier dimension to
-another group.
+verifier MUST NOT apply one group's coefficient layout or challenge subring
+dimension to another group.
 
 ## Fold challenges and the two relation rings
 
-### Carrier challenge
+### Challenge subring and embedding
 
 Each fold challenge is sampled as
 
@@ -389,29 +397,29 @@ c_i(Y) in S = K[Y]/(Y^s+1)
 ```
 
 using the challenge configuration audited for dimension `s`, not the one for
-`d_A`. The transcript sampler MUST bind the opening mode, `s`, the challenge
+`d_A`. The transcript sampler MUST bind the opening method, `s`, the challenge
 configuration, group identity, live block count, and claim count before
 expansion.
 
 The same challenge is used in two rings:
 
 ```text
-carrier relation:  c_i(Y)          in S;
-A relation:        c_i(X^(k h))    in R.
+packing consistency relation: c_i(Y)        in S;
+A relation:                   c_i(X^(k h))  in R.
 ```
 
-No second challenge is sampled. The ambient form is a coefficient-preserving
-embedding of the carrier form.
+No second challenge is sampled. The A ring form is the coefficient preserving
+embedding of the subring form.
 
-### Folded source and carrier linearity
+### Folded source and `S` linearity
 
-For each position `x`, the ambient folded source is
+For each position `x`, the A ring folded source is
 
 ```text
 Z_x(X) = sum_i c_i(X^(k h)) F_(i,x)(X)    in R.
 ```
 
-Let the direct coefficient contraction be
+Let the coefficient packing map be
 
 ```text
 L(F_i)(Y)
@@ -426,47 +434,48 @@ Because multiplying by `Y` advances only the `j` index, and because wrapping
 L(c_i(X^(k h)) F_i) = c_i(Y) L(F_i)    in C.
 ```
 
-Therefore honest witnesses satisfy the carrier consistency equation
+Therefore honest witnesses satisfy the packing consistency equation
 
 ```text
 L(Z)(Y) = sum_i c_i(Y) e_i(Y)          in C.
 ```
 
-This identity is the algebraic reason the direct protocol is complete.
+This identity is the algebraic reason the subring coefficient packing method is
+complete.
 
-### Carrier consistency quotient
+### Packing consistency quotient
 
 Use ordinary polynomial representatives of degree below `s`. Define
 
 ```text
-N_eval(Y) = sum_i c_i(Y) e_i(Y) - L(G z_hat)(Y).
+N_pack(Y) = sum_i c_i(Y) e_i(Y) - L(G z_hat)(Y).
 ```
 
 The consistency equation is equivalent to the existence of one quotient
 
 ```text
-Q_eval(Y) in E[Y],  degree(Q_eval) < s,
+Q_pack(Y) in E[Y],  degree(Q_pack) < s,
 
-N_eval(Y) = (Y^s + 1) Q_eval(Y).
+N_pack(Y) = (Y^s + 1) Q_pack(Y).
 ```
 
 This is **one quotient over `C`**, not `k` independent relation rows. If
 
 ```text
-Q_eval(Y) = sum_(j < s) (sum_(t < k) beta_t q_(t,j)) Y^j,
+Q_pack(Y) = sum_(j < s) (sum_(t < k) beta_t q_(t,j)) Y^j,
 ```
 
-then its physical witness layout is the `k` base-field coordinate planes
+then its physical witness layout is the `k` extension coordinate arrays
 
 ```text
-[extension coordinate t][carrier coefficient j].
+[extension coordinate t][subring coefficient j].
 ```
 
 The quotient contributes `k s` base-field coordinates before its ordinary
 gadget decomposition. Relation layout types MUST distinguish:
 
 - one logical row selector;
-- carrier modulus dimension `s`; and
+- subring modulus dimension `s`; and
 - physical coordinate width `k s`.
 
 Treating the row as a base-field ring of dimension `k s` is incorrect: it would
@@ -476,15 +485,15 @@ Since `L(G z_hat)` has degree below `s`, the quotient is just the high half of
 the challenge products:
 
 ```text
-Q_eval = high_s(sum_i c_i e_i).
+Q_pack = high_s(sum_i c_i e_i).
 ```
 
-The prover SHOULD compute this coordinatewise over the `k` base-field planes,
-sharing the sparse challenge positions across all planes.
+The prover SHOULD compute this coordinatewise over the `k` extension
+coordinates, sharing the sparse challenge positions across all coordinates.
 
-### A rows remain ambient
+### A rows remain in the A ring
 
-The A rows do not move to the carrier. They remain
+The A rows remain in the A ring:
 
 ```text
 [A G z_hat]_r
@@ -492,9 +501,9 @@ The A rows do not move to the carrier. They remain
   in R, for every A row r.
 ```
 
-They keep `n_A` logical rows, ambient dimension `d_A`, the existing A matrix,
-and the existing `t_hat` layout. Only the challenge support changes: carrier
-position `j` appears at ambient position `k h j`.
+They keep `n_A` logical rows, A ring dimension `d_A`, the existing A matrix,
+and the existing `t_hat` layout. Only the challenge support changes. Subring
+coefficient position `j` appears at A ring position `k h j`.
 
 The sparse challenge-times-`t` quotient can be viewed as `k h` independent
 length-`s` lanes. An implementation MAY exploit those lanes, but the result
@@ -505,7 +514,7 @@ MUST match multiplication by the embedded challenge in `R` exactly.
 B slicing from PR #388 is unchanged. B continues to bind `t_hat` using one
 physical matrix reused across its selected dyadic slices.
 
-D binds the gadget digits of the carrier partial openings at levels 0 and 1.
+D binds the gadget digits of the partial openings at levels 0 and 1.
 The first implementation requires
 
 ```text
@@ -517,62 +526,62 @@ partial is `selected_partial_width / d_D`. D ranks, compression source widths,
 and H compression geometry MUST be recomputed from that exact width. They MUST
 NOT be obtained by scaling an old `d_A` price after rank selection.
 
-### Relation and setup factorizations
+### Relation witness and setup projection layouts
 
-The Stage 2 relation address and the Stage 3 setup projection use different
-coefficient factorizations. They MUST have distinct checked geometry types.
+The Stage 2 relation witness and the Stage 3 setup projection use different
+coefficient layouts. They MUST have distinct checked geometry types.
 
 The Stage 2 relation coefficient block must factor every row modulus used in
-the combined relation, including the carrier modulus `s`. It may therefore be
+the combined relation, including the subring modulus `s`. It may therefore be
 smaller than each A, B, and D role dimension. This remains valid when `d_D`
-divides `k s` but does not divide `s`. The `k` carrier coordinate planes remain
-separate semantic planes even when the flat address calculation groups their
+divides `k s` but does not divide `s`. The `k` extension coordinates remain
+semantically separate even when the flat address calculation groups their
 coefficients into smaller common blocks.
 
 The Stage 3 setup projection keeps its existing base derived from the A, B, and
 D role dimensions. It does not shrink merely because Stage 2 includes a
-carrier row. The implementation MUST prove that both checked factorizations
+packing consistency row. The implementation MUST prove that both checked layouts
 produce the same flat coefficient weights for every shared A, B, and D scan.
-It MUST NOT strengthen the carrier admission rule from `d_D | k s` to
-`d_D | s` to make the two factorizations equal.
+It MUST NOT strengthen the subring packing admission rule from `d_D | k s` to
+`d_D | s` to make the two layouts equal.
 
 ## Ring switching
 
 ### Two evaluations of each challenge
 
 The ring-switch challenge `alpha` remains one element of `E`. The verifier MUST
-derive two values from every carrier challenge:
+derive two values from every subring challenge:
 
 ```text
-c_carrier_alpha = c_i(alpha)
+subring_challenge_at_alpha = c_i(alpha)
   = sum_(j < s) c_(i,j) alpha^j;
 
-c_ambient_alpha = c_i(alpha^(k h))
+embedded_challenge_at_alpha = c_i(alpha^(k h))
   = sum_(j < s) c_(i,j) alpha^(k h j).
 ```
 
-The carrier consistency row uses `c_carrier_alpha`. Every A row uses
-`c_ambient_alpha`.
+The packing consistency row uses `subring_challenge_at_alpha`. Every A row uses
+`embedded_challenge_at_alpha`.
 
 The current single `c_alphas` cache MUST be split or typed so that these values
 cannot be interchanged. Computing one and reusing it for both relations is a
 protocol error except in the degenerate case `k h = 1`.
 
-### Evaluating the carrier quotient
+### Evaluating the packing consistency quotient
 
-In native mode, the consistency check at `Y = alpha` is
+In subring coefficient packing method, the consistency check at `Y = alpha` is
 
 ```text
 sum_i c_i(alpha) e_i(alpha)
   - L(G z_hat)(alpha)
-  - (alpha^s + 1) Q_eval(alpha)
+  - (alpha^s + 1) Q_pack(alpha)
   = 0 in E.
 ```
 
-For a coordinate-plane representation,
+For an extension coordinate representation,
 
 ```text
-Q_eval(alpha)
+Q_pack(alpha)
   = sum_(t < k) beta_t sum_(j < s) q_(t,j) alpha^j.
 ```
 
@@ -582,9 +591,9 @@ coordinate polynomials gives one nonzero polynomial in `E[Y]`. Random `alpha`
 then tests that single polynomial. Cancellation at a particular `alpha` is
 already covered by its root bound.
 
-The prepared relation point MUST use the carrier powers
+The prepared relation point MUST use the subring powers
 `1, alpha, ..., alpha^(s-1)` and denominator `alpha^s+1` for this row. It MUST
-continue to use ambient powers and `alpha^{d_A}+1` for A rows.
+continue to use A ring powers and `alpha^{d_A}+1` for A rows.
 
 ### Cyclic and negacyclic products
 
@@ -604,41 +613,44 @@ H          = (cyclic - negacyclic) / 2.
 
 These identities still apply because the base characteristic is odd. They do
 not, by themselves, make a new persistent cache useful. Current sparse
-challenge products already compute only the high half. Native mode SHOULD
-extend that high-half kernel to `k` length-`s` coordinate planes.
+challenge products already compute only the high half. The
+`SubringCoefficientPacking` method SHOULD extend that high half kernel to `k`
+length `s` extension coordinate arrays.
 
-The existing cyclic and negacyclic setup caches for `A z` remain useful and remain
-ambient. This change MUST NOT replace them with extension-field setup matrices.
-D-side cache widths change with the shorter direct partial, and setup/cache
-requirements MUST be derived from the selected mode.
+The existing cyclic and negacyclic setup caches for `A z` remain useful and
+remain in the A ring. This change MUST NOT replace them with extension field
+setup matrices. D side cache widths change with the selected partial opening,
+and setup and cache requirements MUST be derived from the selected opening
+method.
 
 ## Soundness requirements
 
-This section states the security obligations introduced by the new mode. It
+This section states the security obligations introduced by the new method. It
 does not replace the existing MSIS binding proof for A, B, D, F, and H.
 
 ### Transcript order
 
-For each native group, the transcript MUST enforce this dependency order:
+For each subring coefficient packing group, the transcript MUST enforce this
+dependency order:
 
-1. Bind the instance, schedule, mode, dimensions, coefficient layout, group
+1. Bind the instance, schedule, opening method, dimensions, coefficient layout, group
    layout, opening point, and original commitment.
 2. Bind the complete D or H payload that commits to every base field coordinate
    of every `e_i`.
-3. Sample the carrier challenges `c_i` at dimension `s`.
-4. Bind the challenge-dependent folded witness, A/B data, carrier quotient, and
-   next-witness commitment.
+3. Sample the subring challenges `c_i` at dimension `s`.
+4. Bind the challenge dependent folded witness, A/B data, packing consistency
+   quotient, and next witness commitment.
 5. Sample `alpha`, relation-row coefficients, and later sum-check challenges.
 
 No coordinate of `e_i` may remain unbound when `c_i` is sampled. No coordinate
-of `Q_eval`, `z_hat`, or `t_hat` may remain unbound when `alpha` is sampled.
+of `Q_pack`, `z_hat`, or `t_hat` may remain unbound when `alpha` is sampled.
 Existing labels MAY be retained only when the serialized descriptor makes the
-mode and dimensions unambiguous. Otherwise new domain-separated labels are
+opening method and dimensions unambiguous. Otherwise new domain separated labels are
 REQUIRED.
 
 ### Challenge entropy and unit differences
 
-Every admitted carrier challenge configuration MUST meet the configured
+Every admitted subring challenge configuration MUST meet the configured
 per-draw Fiat-Shamir min-entropy target. The complete proof MUST use Akita's
 existing schedule error accounting, including the number of challenge
 coordinates and the public random oracle query bound. A raw 128-bit family is
@@ -682,16 +694,16 @@ certificate, registry, or planner gate. A future production field profile or
 challenge family must establish the same LS18 condition during review.
 
 If `delta(Y)` is a unit in `S`, then `delta(X^(k h))` is a unit in `R`: the
-carrier embedding maps the inverse of `delta` to an ambient inverse. The same
+subring embedding maps the inverse of `delta` to an A ring inverse. The same
 `delta` is also a unit after scalar extension to `C`.
 
-### L2 norm under the carrier embedding
+### L2 norm under the subring embedding
 
-Write an ambient coefficient index as `r + k h j`, where `r < k h` and
+Write an A ring coefficient index as `r + k h j`, where `r < k h` and
 `j < s`. Multiplication by `c(X^(k h))` preserves `r`. For each fixed `r`, its
 action is negacyclic multiplication by `c(Y)` on the `s` coefficients indexed
-by `j`. A coefficient permutation therefore writes the ambient multiplication
-matrix as a block diagonal matrix with `k h` identical carrier blocks.
+by `j`. A coefficient permutation therefore writes the A ring multiplication
+matrix as a block diagonal matrix with `k h` identical subring blocks.
 
 It follows that
 
@@ -699,10 +711,10 @@ It follows that
 ||M_(c(X^(k h)))||_2 = ||M_(c(Y))||_2.
 ```
 
-Tests MUST compare this block reduction with direct ambient multiplication and
+Tests MUST compare this block reduction with direct A ring multiplication and
 MUST cover the sign on negacyclic wraparound. The operator norm equality is
-retained as an algebraic fact for later work. It does not admit an L2 carrier
-candidate at levels 0 or 1 in this feature.
+retained as an algebraic fact for later work. It does not admit an L2 subring
+packing candidate at levels 0 or 1 in this feature.
 
 ### Forking extraction
 
@@ -719,7 +731,8 @@ After subtracting the accepted A relations,
 A (z - z') = delta(X^(k h)) t_j       in R^(n_A).
 ```
 
-In native mode, subtracting the accepted carrier consistency relations gives
+Under `SubringCoefficientPacking`, subtracting the accepted packing consistency
+relations gives
 
 ```text
 L(G(z - z')) = delta(Y) e_j           in C.
@@ -737,8 +750,8 @@ challenge entropy alone.
 
 ### Ring-switch polynomial check
 
-For an honest witness, the carrier numerator is identically zero after the
-quotient is included. For a false witness, it is one nonzero polynomial over
+For an honest witness, the packing consistency numerator is identically zero
+after the quotient is included. For a false witness, it is one nonzero polynomial over
 `E` of degree at most `2s-1`. Sampling `alpha` after the quotient is bound
 detects it except with probability at most
 
@@ -751,12 +764,12 @@ The coordinate basis does not multiply this error by `k`: basis independence
 shows that a nonzero coordinate vector is a nonzero coefficient in `E`, and
 the verifier tests the resulting single `E` polynomial.
 
-The final theorem statement for direct mode MUST include:
+The final theorem statement for `SubringCoefficientPacking` MUST include:
 
 - binding of the original and partial commitments;
-- the carrier challenge entropy condition and the fixed LS18 prime and
+- the subring challenge entropy condition and the fixed LS18 prime and
   shortness conditions;
-- the carrier polynomial root bound;
+- the subring polynomial root bound;
 - the existing A/B/D/F/H MSIS assumptions;
 - the existing range and sum-check soundness errors; and
 - random-oracle forking loss for the complete vector of fold challenges.
@@ -824,12 +837,13 @@ base before using them as current performance evidence.
 
 At that baseline, the catalogs spend 992 to 1,728 bytes on level 0 and level 1
 EOR, or 1.28% to 2.07% of the complete proof estimate. These are historical
-gross savings. They are not the final selective L2 planner result. Carrier mode
-also changes the next witness, ranks, sum check domains, and selected schedule.
+gross savings. They are not the final selective L2 planner result.
+`SubringCoefficientPacking` also changes the next witness, ranks, sum check
+domains, and selected schedule.
 
-### Carrier-coordinate savings
+### Base field coordinate savings
 
-Before digits, one direct partial and its consistency quotient each change from
+Before digits, one partial opening and its consistency quotient each change from
 
 ```text
 d_A base-field coordinates
@@ -854,8 +868,8 @@ to
 B * (k s / d_D) * delta_open    D-ring elements.
 ```
 
-The carrier quotient's base-field coordinate count changes by the same factor
-before quotient-digit decomposition. Compression output payloads may have fixed
+The packing consistency quotient's base field coordinate count changes by the
+same factor before quotient digit decomposition. Compression output payloads may have fixed
 sizes, so the planner MUST propagate the shorter witness through ranks,
 compression chains, relation domains, successor dimensions, and proof sizing;
 it MUST NOT report `h` as an automatic proof-size factor.
@@ -866,20 +880,20 @@ The candidates induced by the current production challenge ladder expose the
 main tradeoff. The fixed fp32 prime and every family in this table satisfy the
 LS18 condition above.
 
-| `s` | `h` | `k h` ambient stride | coordinates per partial | production sparse family at `s` | challenge `l1` mass |
+| `s` | `h` | `k h` subring embedding stride | coordinates per partial | production sparse family at `s` | challenge `l1` mass |
 |---:|---:|---:|---:|---|---:|
 | 64 | 4 | 16 | 256 | 31 coefficients in `±1`, 10 in `±2` | 51 |
 | 128 | 2 | 8 | 512 | 31 coefficients in `±1` | 31 |
 | 256 | 1 | 4 | 1,024 | 23 coefficients in `±1` | 23 |
 
-For the middle choice, coefficient index `a + 8j` maps carrier position `j`
-to ambient position `8j`. Every partial and carrier quotient uses four
-length-128 base-field coordinate planes, or 512 coordinates total, instead of
-1,024. The ring-switch verifier computes `c(alpha)` for the carrier row and
-`c(alpha^8)` for the A rows.
+For the middle choice, coefficient index `a + 8j` maps subring coefficient
+position `j` to A ring position `8j`. Every partial and packing consistency
+quotient uses four length 128 extension coordinate arrays, or 512 base field
+coordinates total, instead of 1,024. The ring switch verifier computes
+`c(alpha)` for the packing consistency row and `c(alpha^8)` for the A rows.
 
 The `s=64` choice gives a fourfold smaller partial than `s=256`, but it uses a
-heavier carrier challenge. At levels 0 and 1 it changes the digit count, D
+heavier subring challenge. At levels 0 and 1 it changes the digit count, D
 width, A response bound, and successor witness. The planner must compare the
 complete candidate rather than assuming that the smallest `s` wins.
 
@@ -891,30 +905,41 @@ Each opening group has one schedule owned opening plan. The exact type name may
 differ, but it must express the following choice.
 
 ```rust
-enum OpeningReductionMode {
-    Current,
-    CoefficientCarrier { carrier_dimension: usize },
+enum OpeningMethod {
+    EvaluationTrace,
+    SubringCoefficientPacking {
+        challenge_subring_dimension: usize,
+    },
 }
 ```
+
+`EvaluationTrace` uses full A ring partial openings and evaluation trace
+weights. It first runs EOR when `k > 1`. `SubringCoefficientPacking` uses the
+coefficient packing map and draws the fold challenge from the challenge
+subring.
+
+The methods coincide algebraically when `k = 1`, `h = 1`, and `s = d_A`. In
+that case `S = C = R`, up to the indeterminate name, the subring embedding is
+the identity, and the degree one trace is the identity. The schedule and
+transcript still bind one method tag. Generated levels 0 and 1 use
+`SubringCoefficientPacking`; later folds use `EvaluationTrace`. The planner
+MUST NOT enumerate both methods as separate candidates at one level merely
+because this overlap exists.
 
 The intended ownership split is equivalent to the following shape.
 
 ```rust
-struct PrecommittedCommitmentProfile {
-    layout: CommittedGroupProfile,
-}
-
-struct OpeningGroupPlan {
-    mode: OpeningReductionMode,
+struct GroupOpeningPlan {
+    opening_method: OpeningMethod,
     fold_challenge_config: SparseChallengeConfig,
     log_basis_open: u32,
     num_digits_open: usize,
     num_digits_fold: usize,
 }
 
-struct ScheduledPrecommittedGroup {
-    commitment: PrecommittedCommitmentProfile,
-    opening: OpeningGroupPlan,
+struct ScheduledGroupOpening {
+    commitment: CommittedGroupProfile,
+    opening: GroupOpeningPlan,
 }
 ```
 
@@ -923,29 +948,30 @@ each field. The implementation should split the current
 `PrecommittedLevelParams` fields along this boundary instead of adding a second
 copy of them.
 
-The mode and carrier dimension are protocol data. Runtime schedules, generated
-rows, canonical descriptors, catalog identity, proof size reports, and the
-transcript MUST bind them. The terminal always uses `Current` in this feature.
+The opening method and challenge subring dimension are protocol data. Runtime
+schedules, generated rows, canonical descriptors, catalog identity, proof size
+reports, and the transcript MUST bind them. The terminal always uses
+`EvaluationTrace` in this feature.
 
 A scalar recursive fold has one opening group. A grouped root stores one entry
 per group in `OpeningClaimsLayout::root_group_order`. All level 0 entries use
-the carrier mode, but their `d_A`, `s`, and derived `h` may differ. The planner
-does not pad them to one level wide `s`.
+`SubringCoefficientPacking`, but their `d_A`, `s`, and derived `h` may differ.
+The planner does not pad them to one level wide `s`.
 
 The consuming fold owns this plan. The commitment profile does not. A
 `CommittedGroupProfile` or setup prefix commitment fixes the source polynomial
 layout, the A and B matrices, and the commitment bytes. It does not fix whether
-a later fold uses EOR or a carrier opening.
+a later fold uses `EvaluationTrace` or `SubringCoefficientPacking`.
 
-The schedule fixes the opening mode, `s`, and the sparse challenge family
+The schedule fixes the opening method, `s`, and the sparse challenge family
 before proving begins. The transcript draws the actual sparse challenge at
 runtime after the D or H payload is bound. Neither the runtime draw nor the
-choice of opening reduction changes the earlier commitment bytes.
+choice of opening method changes the earlier commitment bytes.
 
 The implementation MUST keep commitment identity separate from opening
 admission data. In particular, a setup prefix registry key MUST NOT create two
 different commitments only because two consuming schedules choose different
-opening modes for the same content and matrix geometry. A composite schedule
+opening methods for the same content and matrix geometry. A composite schedule
 object may contain both kinds of data, but its commitment identity and opening
 plan must remain separate fields with separate validation.
 
@@ -953,32 +979,35 @@ The consuming fold validates the frozen A and B matrices against its selected
 challenge bounds. A commitment that is too narrow for the selected challenge
 is not admissible even though its bytes do not depend on the challenge draw.
 
-`h` and the ambient stride are derived from `(k, d_A, s)`. They MUST NOT be
-serialized as independent choices.
+`h` and the subring embedding stride are derived from `(k, d_A, s)`. They MUST
+NOT be serialized as independent choices.
 
 ### Transition after level 1
 
-A carrier fold outputs one canonical flat base field witness. Its partial
-opening digits and carrier quotient coordinates are ordinary fields in that
-witness. Their earlier meaning is checked while verifying the producing fold.
+A subring packing fold outputs one canonical flat base field witness. Its
+partial opening digits and packing consistency quotient coordinates are
+ordinary fields in that witness. Their earlier meaning is checked while
+verifying the producing fold.
 The next fold commits to and opens the flat witness selected by its own
-schedule. It does not reuse the previous fold's carrier ring.
+schedule. It does not reuse the previous fold's challenge subring.
 
 For example, suppose level 0 and level 1 both offload setup contributions.
-Level 1 consumes the first setup prefix with its scheduled carrier opening. It
-then produces a flat witness and a second setup prefix for level 2. Level 2
-opens both its witness and that second prefix with the current EOR path. No
-conversion is needed. The level 2 schedule binds EOR, and it checks the frozen
-commitment geometry against the level 2 challenge family.
+Level 1 consumes the first setup prefix with its scheduled
+`SubringCoefficientPacking` opening. It then produces a flat witness and a
+second setup prefix for level 2. Level 2 opens both its witness and that second
+prefix with `EvaluationTrace`. No conversion is needed. The level 2 schedule
+binds the method and its conditional EOR, and it checks the frozen commitment
+geometry against the level 2 challenge family.
 
 The selective L2 branch currently rejects setup prefix derivation from an A
-commitment that has no SIS table key. Carrier folds use Linf, so they do not
+commitment that has no SIS table key. Subring packing folds use Linf, so they do not
 enter that L2 path. The existing restriction remains unchanged for later
-current-protocol folds that consider L2.
+evaluation trace folds that consider L2.
 
 ### Candidate admission
 
-A carrier candidate is admitted only when all of the following conditions hold.
+A subring packing candidate is admitted only when all of the following
+conditions hold.
 
 1. `k`, `d_A`, and `s` are powers of two.
 2. `k s` divides `d_A`.
@@ -986,8 +1015,8 @@ A carrier candidate is admitted only when all of the following conditions hold.
 4. An audited sparse challenge configuration exists at dimension `s`.
 5. That configuration meets the existing challenge entropy and total schedule
    error requirements.
-6. The field and ring dispatcher supports the ambient A dimension and carrier
-   kernels.
+6. The field and ring dispatcher supports the A ring dimension and subring
+   packing kernels.
 7. `d_D` divides `k s` in the first implementation.
 8. Every D or H compression source satisfies its current byte cap.
 9. A, B, and D matrix widths have secure ranks at the exact candidate bounds.
@@ -1001,28 +1030,28 @@ kernels must be generic over checked `s`. The planner MUST NOT scan arbitrary
 integers or create a challenge family during schedule search.
 
 For `k = 1`, EOR is not valid and contributes no bytes. The planner still uses
-carrier mode at levels 0 and 1. It may choose `s < d_A` to reduce partial and
-quotient coordinates. The full ring candidate is `s = d_A` and `h = 1` when
-that `s` exists in the audited registry.
+`SubringCoefficientPacking` at levels 0 and 1. It may choose `s < d_A` to
+reduce partial and quotient coordinates. The overlap with `EvaluationTrace` is
+`s = d_A` and `h = 1` when that `s` exists in the audited registry.
 
 ### Linf security route and the preserved L2 identity
 
-Every carrier candidate at levels 0 and 1 uses the Linf A security route. The
-planner applies PR 369's current Linf derivation to the exact carrier geometry.
-The root uses the current root policy. A recursive carrier fold uses the typed
-response model when its profile provides one. Otherwise it uses the current
-universal Linf bound. The resulting bound determines the secure A rank at the
-ambient dimension `d_A`.
+Every subring packing candidate at levels 0 and 1 uses the Linf A security
+route. The planner applies PR 369's current Linf derivation to the exact
+subring coefficient packing geometry. The root uses the current root policy. A
+recursive subring packing fold uses the typed response model when its profile
+provides one. Otherwise it uses the current universal Linf bound. The resulting
+bound determines the secure A rank at the A ring dimension `d_A`.
 
 Multiplication by the embedded challenge `c(X^(k h))` preserves each residue
-class modulo `k h`. After a coefficient permutation, the ambient
+class modulo `k h`. After a coefficient permutation, the A ring
 multiplication map is a direct sum of `k h` copies of multiplication by
-`c(Y)` in the carrier ring. Its L2 operator norm is therefore exactly the
-carrier operator norm at dimension `s`. Physical response length, SIS rank,
-and A geometry still depend on ambient `d_A` and the complete response shape.
+`c(Y)` in the challenge subring. Its L2 operator norm is therefore exactly the
+subring operator norm at dimension `s`. Physical response length, SIS rank,
+and A geometry still depend on `d_A` and the complete response shape.
 
 The implementation MUST encode this reduction and compare it with a direct
-ambient multiplication reference for every admitted geometry. The identity is
+A ring multiplication reference for every admitted geometry. The identity is
 useful for later work, but this feature MUST NOT use it to select an L2 route
 at level 0 or 1.
 
@@ -1030,31 +1059,34 @@ at level 0 or 1.
 
 The policy applies to every field profile.
 
-1. Absolute nonterminal levels 0 and 1 enumerate carrier candidates only.
-2. Absolute nonterminal levels 2 and later use the current opening protocol.
-3. The terminal uses the current EOR and Hachi protocol where EOR applies.
-4. A schedule with only root and terminal uses carrier mode only at root.
-5. A schedule with root, one recursive fold, and terminal uses carrier mode at
-   both nonterminal folds.
-6. The planner does not add a fold to reach the two level carrier scope.
+1. Absolute nonterminal levels 0 and 1 enumerate subring packing candidates
+   only.
+2. Absolute nonterminal levels 2 and later use `EvaluationTrace`.
+3. The terminal uses `EvaluationTrace` and Hachi, with EOR where it applies.
+4. A schedule with only root and terminal uses `SubringCoefficientPacking`
+   only at root.
+5. A schedule with root, one recursive fold, and terminal uses
+   `SubringCoefficientPacking` at both nonterminal folds.
+6. The planner does not add a fold to reach the two level subring packing
+   scope.
 
 A precommitted root group freezes its commitment profile. Its root opening plan
 may choose any certified `s` compatible with the frozen `d_A` and security
 bounds. Level 1 sees the root output as one flat recursive witness and chooses
-one new `(d_A, s)` for that witness. It does not preserve one carrier geometry
-per original root group.
+one new `(d_A, s)` for that witness. It does not preserve one subring
+coefficient packing geometry per original root group.
 
 A setup prefix is another precommitted group at the fold that consumes it. It
-uses that consuming fold's opening mode. A prefix consumed at level 1 uses
-carrier mode. A prefix consumed at level 2 or later uses the current opening
-protocol.
+uses that consuming fold's opening method. A prefix consumed at level 1 uses
+`SubringCoefficientPacking`. A prefix consumed at level 2 or later uses
+`EvaluationTrace`.
 
-### Independent carrier and A dimensions
+### Independent challenge subring and A ring dimensions
 
-The carrier dimension `s` controls challenge entropy and the `k s` partial and
-quotient widths. The A dimension `d_A` controls the ambient A rows. Once `s` is
-fixed, changing `d_A` changes the packing gain and ambient geometry. It does
-not enlarge the carrier partial or quotient.
+The challenge subring dimension `s` controls challenge entropy and the `k s`
+partial and quotient widths. The A ring dimension `d_A` controls the A rows.
+Once `s` is fixed, changing `d_A` changes the packing factor and A ring
+geometry. It does not enlarge the partial opening or quotient.
 
 The planner enumerates every admitted `(d_A, s)` pair at levels 0 and 1 under
 the incoming dimension ceiling. It preserves the selective L2 branch's current
@@ -1072,13 +1104,13 @@ setup matrix field elements first and proof payload second. Exact ties use the
 branch's current canonical deterministic ordering. No new objective component
 for `s`, `d_A`, rank, or prover time is added.
 
-For every carrier candidate, the planner MUST recompute at least the following
-values.
+For every subring packing candidate, the planner MUST recompute at least the
+following values.
 
 1. Removed EOR bytes at levels 0 and 1.
 2. Partial coordinate count and opening gadget depth.
 3. D input width, secure D rank, H source, and compression geometry.
-4. Carrier quotient coordinates and quotient digit count.
+4. Packing consistency quotient coordinates and quotient digit count.
 5. Sparse challenge `l1`, `l2`, and `linf` bounds at `s`.
 6. The Linf folded `z` bound and secure A rank under PR 369's applicable root
    or recursive response model.
@@ -1088,23 +1120,26 @@ values.
 9. Setup prefix eligibility and setup matrix field elements.
 10. Successor witness length and the complete suffix cost.
 
-The report MUST show the selected mode, `s`, `d_A`, `h`, secure A route,
-partial coordinates, quotient coordinates, setup field elements, proof bytes,
-and successor witness length. It must list every catalog regression against the
-selective L2 baseline. A minor row may regress when the target presets and the
-overall catalog improve. Per row nonregression is not an acceptance condition.
+The report MUST show `opening_method`, `challenge_subring_dimension`,
+`a_ring_dimension`, `packing_factor`, `partial_base_field_width`,
+`packing_quotient_base_field_width`, the secure A route, setup field elements,
+proof bytes, and successor witness length. It must list every catalog
+regression against the selective L2 baseline. A minor row may regress when the
+target presets and the overall catalog improve. Per row nonregression is not an
+acceptance condition.
 
 ### B slicing interaction
 
-Carrier search and B slicing both apply at levels 0 and 1. The carrier shortens
-`e`, the D or H source, and the consistency quotient. B slicing shortens the
+Subring packing search and B slicing both apply at levels 0 and 1. Subring
+coefficient packing shortens `e`, the D or H source, and the consistency
+quotient. B slicing shortens the
 physical B matrix and may add logical rows.
 
-B width depends on `t_hat`. The `t_hat` geometry depends on the carrier
+B width depends on `t_hat`. The `t_hat` geometry depends on the subring
 challenge norm, the selected A dimension, and secure A rank. Candidate
 construction MUST use this order.
 
-1. Choose `d_A`, `s`, and the carrier challenge family.
+1. Choose `d_A`, `s`, and the subring challenge family.
 2. Derive the Linf response bound, A rank, and `t_hat` through PR 369's current
    root or recursive response model.
 3. Enumerate and prune the bounded B slice counts from PR 388.
@@ -1112,8 +1147,8 @@ construction MUST use this order.
 5. Construct the next witness and score the complete suffix.
 
 The planner MUST NOT choose a B slice count from geometry computed before the
-carrier candidate. The bounded slice set `{1, 2, 4, 8}` and its current local
-pruning rule remain unchanged.
+subring packing candidate. The bounded slice set `{1, 2, 4, 8}` and its current
+local pruning rule remain unchanged.
 
 ### Search control
 
@@ -1124,7 +1159,7 @@ The planner MUST keep the search bounded in the following ways.
 3. Use the fixed audited list of `s` values.
 4. Apply geometry, challenge entropy, dispatcher support, and divisibility
    admission before rank lookup.
-5. Search carrier candidates only at levels 0 and 1.
+5. Search subring packing candidates only at levels 0 and 1.
 6. Apply B slicing only after A and `t_hat` geometry is known.
 7. Keep the existing deterministic frontier and memo state objective.
 8. Keep the current uniform suffix after the adaptive prefix.
@@ -1134,13 +1169,15 @@ The planner MUST keep the search bounded in the following ways.
 
 ### `akita-types`
 
-- Add the schedule owned opening mode and checked carrier geometry.
-- Add canonical descriptor encoding for mode and `s`.
-- Represent the carrier consistency row as one logical row with carrier
-  dimension `s` and extension coordinate width `k`.
+- Add the schedule owned opening method and checked
+  `SubringCoefficientPackingGeometry`.
+- Add canonical descriptor encoding for the opening method and
+  `challenge_subring_dimension`.
+- Represent the packing consistency row as one logical row with challenge
+  subring dimension `s` and extension coordinate width `k`.
 - Extend witness and address layouts for `k s` partial and quotient coordinates.
-- Give the Stage 2 relation address and Stage 3 setup projection distinct
-  checked factorization types. Prove their flat A, B, and D weight equivalence.
+- Give the Stage 2 relation witness and Stage 3 setup projection distinct
+  checked layout types. Prove their flat A, B, and D weight equivalence.
 - Separate precommitted commitment identity from the opening plan selected by
   the consuming fold. Apply the same split to setup prefix slot identity.
 - Generalize proof size and successor witness sizing at levels 0 and 1.
@@ -1151,46 +1188,46 @@ The planner MUST keep the search bounded in the following ways.
 
 - Reuse the signed-sparse sampler at dimension `s`.
 - Reuse the existing challenge entropy audit. Do not add a separate unit
-  difference certificate or carrier L2 admission path.
+  difference certificate or subring embedding L2 admission path.
 - Keep the LS18 prime congruence and shortness condition with the fixed
   production field profiles rather than making it planner state.
-- Bind carrier dimension and mode in the draw domain.
-- Do not create a second ambient challenge draw.
+- Bind the challenge subring dimension and opening method in the draw domain.
+- Do not create a second A ring challenge draw.
 
 ### `akita-prover`
 
 - Add dense, one-hot, and recursive kernels that compute the `s` extension
   coefficients directly from the canonical coefficient split.
 - Decompose the resulting `k s` base-field coordinates into D-role `e_hat`.
-- Compute `Q_eval` with shared-challenge high-half accumulation over `k`
-  coordinate planes.
+- Compute `Q_pack` with shared challenge high half accumulation over `k`
+  extension coordinate arrays.
 - Keep A quotients over `d_A` with challenges embedded at stride `k h`.
-- Split carrier and ambient challenge evaluations in ring-switch preparation.
-- Replace the trace specific Stage 2 term with the direct coefficient opening
+- Split subring and embedded challenge evaluations in ring switch preparation.
+- Replace the trace specific Stage 2 term with the coefficient packing opening
   term at levels 0 and 1.
-- Use the current prover path at later folds and at the terminal.
+- Use the `EvaluationTrace` prover path at later folds and at the terminal.
 - Preserve current cyclic/negacyclic A setup caches.
 
 ### `akita-verifier`
 
-- Reconstruct the direct scalar-opening row from `r_B`, `r_tail`, the canonical
+- Reconstruct the coefficient packing scalar opening row from `r_B`, `r_tail`, the canonical
   extension basis, and opening gadget weights.
-- Evaluate carrier quotient planes with denominator `alpha^s+1`.
-- For native groups, evaluate the same challenge at `alpha` and
+- Evaluate the packing consistency quotient with denominator `alpha^s+1`.
+- For subring coefficient packing groups, evaluate the same challenge at `alpha` and
   `alpha^(k h)` for its two roles.
-- Use the current verifier path at later folds and at the terminal.
-- Reject mode/dimension/layout mismatches before allocation.
+- Use the `EvaluationTrace` verifier path at later folds and at the terminal.
+- Reject opening method, dimension, and layout mismatches before allocation.
 - Preserve the no-panic verifier contract.
 
 ### `akita-planner`, `akita-schedules`, and `akita-config`
 
-- Add bounded carrier candidates and the level policy above.
+- Add bounded subring packing candidates and the level policy above.
 - Extend the existing two level adaptive search with the bounded `s` registry.
   Keep the current uniform suffix after that prefix.
 - Recompute exact ranks, setup, compression, proof bytes, and successors.
 - Regenerate every affected catalog on top of the selective L2 branch.
-- Add report columns for opening mode, carrier geometry, security route, setup
-  field elements, and proof bytes.
+- Add report columns for opening method, challenge subring dimension, packing
+  factor, security route, setup field elements, and proof bytes.
 - Preserve the current setup first and proof payload second objective without
   adding an `s` or `d_A` objective component.
 - Report every catalog regression. Do not reject the feature only because a
@@ -1200,25 +1237,26 @@ The planner MUST keep the search bounded in the following ways.
 
 ### Algebra and completeness
 
-- [ ] Checked carrier geometry accepts exactly supported `(k,d_A,s)` triples and
-      derives `h` and stride without independent metadata.
+- [ ] `SubringCoefficientPackingGeometry` accepts exactly supported
+      `(k,d_A,s)` triples and derives `h` and stride without independent
+      metadata.
 - [ ] Coefficient index `a + k h j` round-trips for every supported geometry.
-- [ ] Dense, one-hot, and recursive direct partials match a flat MLE reference.
+- [ ] Dense, one-hot, and recursive partial openings match a flat MLE reference.
 - [ ] `L(c(X^(k h))F) = c(Y)L(F)` holds against a naive reference for random
       small fixtures and every supported field tier.
-- [ ] Ambient multiplication by `c(X^(k h))` matches `k h` permuted carrier
-      lanes, including negacyclic wraparound, and preserves the L2 operator
+- [ ] A ring multiplication by `c(X^(k h))` matches `k h` permuted subring
+      blocks, including negacyclic wraparound, and preserves the L2 operator
       norm.
-- [ ] Direct scalar-opening weights reproduce the claimed opening, including
+- [ ] Coefficient packing scalar opening weights reproduce the claimed opening, including
       partial final blocks, multiple polynomials, and multiple groups.
-- [ ] `Q_eval = high_s(sum_i c_i e_i)` satisfies the full ordinary-polynomial
+- [ ] `Q_pack = high_s(sum_i c_i e_i)` satisfies the full ordinary-polynomial
       divisibility identity in `E[Y]`.
-- [ ] The `k` base-field quotient planes evaluate to the same `E` value as a
+- [ ] The `k` extension coordinate arrays evaluate to the same `E` value as a
       packed-extension reference.
-- [ ] Honest carrier proofs verify at levels 0 and 1 for every supported field
+- [ ] Honest subring coefficient packing proofs verify at levels 0 and 1 for every supported field
       tier.
-- [ ] A level 2 fold opens the flat output of a carrier level 1 fold with the
-      current protocol without conversion or carrier metadata reuse.
+- [ ] A level 2 fold opens the flat output of a subring packing level 1 fold with the
+      evaluation trace method without conversion or subring metadata reuse.
 - [ ] Stage 2 accepts `d_D | k s` when `d_D` does not divide `s`, and its flat
       A, B, and D weights match the separate Stage 3 setup projection.
 
@@ -1228,29 +1266,29 @@ The planner MUST keep the search bounded in the following ways.
       and the complete proof meets the existing total schedule error budget.
 - [ ] The fixed production field table above remains part of security review,
       not schedule metadata or candidate admission.
-- [ ] Generated and supplied carrier schedules at levels 0 and 1 use the Linf A
+- [ ] Generated and supplied subring packing schedules at levels 0 and 1 use the Linf A
       security route and cannot select physical L2.
 - [ ] Nonterminal partial D or H payloads are transcript bound before their
-      carrier challenge draws.
-- [ ] Carrier quotient and next-witness data are bound before `alpha`.
-- [ ] Mode, `s`, challenge configuration, coefficient layout, and group identity
+      subring challenge draws.
+- [ ] Packing consistency quotient and next-witness data are bound before `alpha`.
+- [ ] Opening method, `s`, challenge configuration, coefficient layout, and group identity
       change the descriptor/transcript bytes.
 - [ ] The verifier computes distinct `c(alpha)` and `c(alpha^(k h))` values and
       tests fail when either is substituted for the other.
-- [ ] A nonzero coordinate-plane numerator is detected by the packed
+- [ ] A nonzero extension coordinate numerator is detected by the packed
       `E[Y]` ring-switch oracle.
-- [ ] The direct-mode theorem adds no `1/|K|` coordinate-projection term.
+- [ ] The subring coefficient packing theorem adds no `1/|K|` coordinate projection term.
 - [ ] Multi-fork extraction and total soundness-error accounting are documented
       alongside the implementation.
-- [ ] Malformed mode/dimension/coordinate counts return typed errors without
+- [ ] Malformed opening method, dimension, or coordinate counts return typed errors without
       panic or unbounded allocation.
 
 ### Planner and sizing
 
-- [ ] Generated schedules for every field tier use carrier mode at existing
+- [ ] Generated schedules for every field tier use `SubringCoefficientPacking` at existing
       nonterminal levels 0 and 1.
 - [ ] Extension field schedules contain no EOR at levels 0 and 1.
-- [ ] Later folds and the terminal retain their current opening protocol.
+- [ ] Later folds and the terminal retain `EvaluationTrace`.
 - [ ] Short schedule tests cover root to terminal and root to one recursive
       fold to terminal without inserting another fold.
 - [ ] The planner searches every admitted `(d_A, s)` pair only inside the two
@@ -1260,8 +1298,8 @@ The planner MUST keep the search bounded in the following ways.
       It has no explicit `s` or `d_A` objective component.
 - [ ] `d_D` not dividing the selected native or hidden-digit width rejects
       before matrix/rank construction.
-- [ ] Exact D/H and A/B/F ranks are recomputed from carrier geometry and norms.
-- [ ] PR 388 B slicing is enumerated only after carrier derived A and `t`
+- [ ] Exact D/H and A/B/F ranks are recomputed from subring coefficient packing geometry and norms.
+- [ ] PR 388 B slicing is enumerated only after subring challenge derived A and `t`
       geometry.
 - [ ] Bounded DP output matches an unpruned oracle on small search fixtures.
 - [ ] Reports reproduce the historical EOR census and show new results on the
@@ -1270,38 +1308,39 @@ The planner MUST keep the search bounded in the following ways.
       L0/L1 EOR removal in actual serialized proof breakdowns.
 - [ ] No generated catalog silently drops a previously supported row. Every
       regression is listed, but minor per row regressions are allowed.
-- [ ] Carrier setup prefix edges use Linf. Reports for later current-protocol
+- [ ] Subring packing setup prefix edges use Linf. Reports for later evaluation trace
       edges preserve PR 369's existing L2 admission result.
 
 ### Precommitment and setup prefixes
 
-- [ ] Commitment identity excludes the consuming opening mode, `s`, and
+- [ ] Commitment identity excludes the consuming opening method, `s`, and
       challenge draw.
 - [ ] Schedule and transcript identity include the consuming opening plan.
-- [ ] The same frozen precommitted commitment can be admitted under carrier or
-      current opening mode when its matrices meet the selected mode's security
+- [ ] The same frozen precommitted commitment can be admitted under
+      `SubringCoefficientPacking` or `EvaluationTrace` when its matrices meet
+      the selected method's security
       checks.
-- [ ] A setup prefix consumed at level 1 uses carrier mode. A setup prefix
-      consumed at level 2 uses the current protocol.
+- [ ] A setup prefix consumed at level 1 uses `SubringCoefficientPacking`. A
+      setup prefix consumed at level 2 uses `EvaluationTrace`.
 - [ ] A two level recursive offloading test verifies the transition from a
-      carrier consumer at level 1 to a current protocol consumer at level 2.
+      subring packing consumer at level 1 to an evaluation trace consumer at level 2.
 - [ ] Changing the opening plan does not duplicate identical setup prefix
       commitment bytes or alter the committed polynomial layout.
 
 ### Performance and caches
 
-- [ ] Direct partial and carrier quotient allocations contain exactly `k s`
+- [ ] Partial opening and packing consistency quotient allocations contain exactly `k s`
       base-field coordinates per semantic item before digits.
-- [ ] Carrier high-half construction does not materialize full extension-field
+- [ ] Packing quotient high half construction does not materialize full extension field
       convolution tables.
 - [ ] Existing A cyclic/negacyclic setup caches remain shared and correct.
-- [ ] D/H cache requirements use the selected carrier width and do not retain
+- [ ] D/H cache requirements use the selected partial opening width and do not retain
       old `d_A`-wide buffers.
 - [ ] Profile output records prover time, verifier time, peak memory, setup
       field elements, proof bytes, and per level witness sizes against the
       selective L2 baseline.
 - [ ] A packed-`E` verifier Horner loop is adopted only if it beats the canonical
-      coordinate-plane loop without changing bytes or arithmetic results.
+      extension coordinate loop without changing bytes or arithmetic results.
 
 ### Repository validation
 
@@ -1313,18 +1352,19 @@ The planner MUST keep the search bounded in the following ways.
 ## Non-goals
 
 - No implementation code lands in the initial spec-only commit.
-- No carrier relation after absolute fold level 1.
-- No carrier terminal or change to the current terminal protocol.
+- No packing consistency relation after absolute fold level 1.
+- No subring packing terminal or change to the evaluation trace and Hachi
+  terminal protocol.
 - No A dimension search beyond the current two level adaptive prefix.
-- No arbitrary integer carrier dimensions or coefficient layout search.
+- No arbitrary integer challenge subring dimensions or coefficient layout search.
 - No second independent challenge for the A rows.
 - No pure extension-field commitment or setup matrix.
-- No claim that the smallest carrier is always optimal.
+- No claim that the smallest challenge subring is always optimal.
 - No global objective component based on `s` or `d_A`.
 - No requirement that every catalog row improve. Minor regressions are allowed
   and must be reported.
-- No claim that flattening a native `k s` carrier and adding four public rows
-  yields a sound `s`-coordinate prechallenge carrier.
+- No claim that flattening a `k s` extension opening ring value and adding four
+  public rows yields a sound `s` coordinate prechallenge opening.
 - No claim that a D image plus local sum-checks forms a complete opening proof;
   short-preimage binding does not authenticate a final multilinear evaluation.
 - No use of the rejected ring-valued interpolation described below: its
@@ -1332,20 +1372,20 @@ The planner MUST keep the search bounded in the following ways.
 - No change to PR 388's B slice count set, dyadic partition, or 8 KiB
   compression-source limit.
 - No backward-compatible decoding of schedules or proofs that predate this
-  mode. Akita remains in development; affected catalogs and descriptors are
+  opening method. Akita remains in development; affected catalogs and descriptors are
   regenerated rather than aliased.
 
 ## Documentation follow-up
 
 The implementation PR must fold stable protocol prose into:
 
-- `book/src/how/proving/root-fold-ring-switch.md` for the carrier relation and
+- `book/src/how/proving/root-fold-ring-switch.md` for the packing consistency relation and
   two challenge evaluations;
 - `book/src/how/proving/extension-opening-reduction.md` for L0/L1 removal and
   the unchanged later fold and terminal boundary;
 - `book/src/how/configuration.md` for planner candidates, setup prefix
   ownership, and reports;
-- `book/src/foundations/rings-and-fields.md` for the carrier embedding and unit
+- `book/src/foundations/rings-and-fields.md` for the subring embedding and unit
   condition; and
 - `book/src/how/security.md` for the forking and polynomial-root arguments.
 
