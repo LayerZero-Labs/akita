@@ -786,11 +786,18 @@ pub fn multiply_a_ring_by_subring_challenge<F: FieldCore + FromPrimitiveInt>(
 /// the polynomial modulus used to derive them is `Y^s + 1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoefficientPackingFoldProduct<F: FieldCore> {
+    geometry: SubringCoefficientPackingGeometry,
     reduced_base_field_coordinates: Vec<F>,
     quotient_high_half_base_field_coordinates: Vec<F>,
 }
 
 impl<F: FieldCore> CoefficientPackingFoldProduct<F> {
+    /// Geometry under which both paired outputs were constructed.
+    #[must_use]
+    pub fn geometry(&self) -> SubringCoefficientPackingGeometry {
+        self.geometry
+    }
+
     /// Negacyclic reduction of `sum_i c_i(Y) e_i(Y)` modulo `Y^s + 1`.
     #[must_use]
     pub fn reduced_base_field_coordinates(&self) -> &[F] {
@@ -801,6 +808,19 @@ impl<F: FieldCore> CoefficientPackingFoldProduct<F> {
     #[must_use]
     pub fn quotient_high_half_base_field_coordinates(&self) -> &[F] {
         &self.quotient_high_half_base_field_coordinates
+    }
+
+    /// Consume the paired reduction and positive high half without separating
+    /// their construction authority.
+    #[must_use]
+    pub fn into_geometry_and_base_field_coordinates(
+        self,
+    ) -> (SubringCoefficientPackingGeometry, Vec<F>, Vec<F>) {
+        (
+            self.geometry,
+            self.reduced_base_field_coordinates,
+            self.quotient_high_half_base_field_coordinates,
+        )
     }
 }
 
@@ -953,6 +973,7 @@ pub fn fold_coefficient_packing_partials<F: FieldCore + FromPrimitiveInt>(
         }
     }
     Ok(CoefficientPackingFoldProduct {
+        geometry,
         reduced_base_field_coordinates: reduced,
         quotient_high_half_base_field_coordinates: quotient,
     })

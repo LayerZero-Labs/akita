@@ -4,11 +4,54 @@ use crate::compute::SubringCoefficientPackingPartials;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
+use akita_challenges::Challenges;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
-    CommittedGroupParams, DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
+    fold_coefficient_packing_partials, CoefficientPackingFoldProduct, CommittedGroupParams,
+    DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
     SubringCoefficientPackingGeometry,
 };
+
+/// Fold one group's canonical partials with its single sampled subring challenge batch.
+#[allow(dead_code)] // Reached after the Stage 2 structured-weight cutover opens execution.
+pub(crate) fn fold_coefficient_packing_group<F: FieldCore + akita_field::FromPrimitiveInt>(
+    geometry: SubringCoefficientPackingGeometry,
+    partials_by_claim: &[SubringCoefficientPackingPartials<F>],
+    challenges: &Challenges,
+) -> Result<CoefficientPackingFoldProduct<F>, AkitaError> {
+    if partials_by_claim.len() != challenges.num_claims()
+        || partials_by_claim.is_empty()
+        || partials_by_claim.iter().any(|partials| {
+            partials.geometry() != geometry
+                || partials.num_live_blocks() != challenges.num_live_blocks_per_claim()
+        })
+    {
+        return Err(AkitaError::InvalidInput(
+            "coefficient-packing fold inputs disagree on claims, blocks, or geometry".into(),
+        ));
+    }
+    let expected_challenges = partials_by_claim
+        .len()
+        .checked_mul(challenges.num_live_blocks_per_claim())
+        .ok_or_else(|| AkitaError::InvalidInput("packing challenge count overflow".into()))?;
+    if challenges.len() != expected_challenges {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_challenges,
+            actual: challenges.len(),
+        });
+    }
+    let expected_coordinates = expected_challenges
+        .checked_mul(geometry.partial_base_field_width())
+        .ok_or_else(|| AkitaError::InvalidInput("packing partial length overflow".into()))?;
+    let mut coordinates = Vec::new();
+    coordinates
+        .try_reserve_exact(expected_coordinates)
+        .map_err(|_| AkitaError::InvalidInput("packing partial fold allocation failed".into()))?;
+    for partials in partials_by_claim {
+        coordinates.extend_from_slice(partials.coordinates());
+    }
+    fold_coefficient_packing_partials(geometry, challenges.as_slice(), &coordinates)
+}
 
 /// Concatenate group-local D inputs in canonical relation order.
 pub(crate) fn concatenate_group_d_inputs(
@@ -189,7 +232,7 @@ pub(crate) fn materialize_coefficient_packing_d_input<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_challenges::SparseChallengeConfig;
+    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         gadget_row_scalars, CommittedGroupParams, OpenCommitMatrixParams, OpeningClaimsLayout,
@@ -197,6 +240,54 @@ mod tests {
     };
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn grouped_fold_preserves_claim_block_order_and_positive_high_half() {
+        let geometry = SubringCoefficientPackingGeometry::try_new(2, 128, 64).unwrap();
+        let partials = (0..2)
+            .map(|claim| {
+                SubringCoefficientPackingPartials::new(
+                    geometry,
+                    2,
+                    (0..256)
+                        .map(|index| F::from_i64(((claim * 256 + index) % 13) as i64 - 6))
+                        .collect(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let sparse = vec![
+            SparseChallenge {
+                positions: vec![0, 63].into(),
+                coeffs: vec![1, -1].into(),
+            },
+            SparseChallenge {
+                positions: vec![1, 62].into(),
+                coeffs: vec![2, 1].into(),
+            },
+            SparseChallenge {
+                positions: vec![2].into(),
+                coeffs: vec![-2].into(),
+            },
+            SparseChallenge {
+                positions: vec![31, 63].into(),
+                coeffs: vec![1, 2].into(),
+            },
+        ];
+        let challenges = Challenges::from_sparse(sparse.clone(), 2, 2).unwrap();
+        let got = fold_coefficient_packing_group(geometry, &partials, &challenges).unwrap();
+        assert_eq!(got.geometry(), geometry);
+        let flat = partials
+            .iter()
+            .flat_map(|partial| partial.coordinates().iter().copied())
+            .collect::<Vec<_>>();
+        let expected = fold_coefficient_packing_partials(geometry, &sparse, &flat).unwrap();
+        assert_eq!(got, expected);
+        assert!(got
+            .quotient_high_half_base_field_coordinates()
+            .iter()
+            .any(|coefficient| !coefficient.is_zero()));
+    }
 
     fn packing_fixture() -> (
         CommittedGroupParams,

@@ -22,7 +22,7 @@ use akita_types::dispatch_for_field;
 use akita_types::RingMultiplierOpeningPoint;
 use akita_types::{assemble_compressed_relation_rhs, assemble_relation_rhs, RingVec};
 use akita_types::{gadget_row_scalars, DigitBlocks};
-use akita_types::{CommittedGroupParams, RingRelationInstance};
+use akita_types::{CommittedGroupParams, RingRelationGroupOpening, RingRelationInstance};
 
 use super::coefficient_packing::concatenate_group_d_inputs;
 use super::fold_grind::{self, ProverTranscriptGrind};
@@ -701,9 +701,16 @@ impl RingRelationProver {
         }
         .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
+        let relation_group_openings = group_challenges
+            .into_iter()
+            .zip(group_ring_multiplier_points)
+            .map(|(challenges, ring_multiplier_point)| {
+                RingRelationGroupOpening::evaluation_trace(challenges, ring_multiplier_point)
+            })
+            .collect();
         let instance = RingRelationInstance::new(
-            group_challenges,
-            group_ring_multiplier_points,
+            relation_group_openings,
+            PointF::EXT_DEGREE,
             opening_batch.clone(),
             gamma,
             row_coefficient_rings,

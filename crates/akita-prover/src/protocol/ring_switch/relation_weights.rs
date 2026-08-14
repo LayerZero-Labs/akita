@@ -568,7 +568,7 @@ where
         let units = witness_layout.units_for_group(group_id)?;
         let k_g = group_layout.num_polynomials();
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
-        let challenges = &instance.group_challenges()[group_index];
+        let challenges = instance.group_ambient_a_challenges(group_index)?;
         if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
             || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
         {

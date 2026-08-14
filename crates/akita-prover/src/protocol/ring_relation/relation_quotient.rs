@@ -6,9 +6,10 @@ use crate::compute::{
     RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::ring_relation::{CompressionSourceId, CompressionWitnessMaterialization};
+use crate::protocol::ring_relation_witness::GroupFoldedOpening;
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
-use akita_types::{CommittedGroupParams, RingVec};
+use akita_types::{CommittedGroupParams, RelationRowGeometry, RingRelationGroupOpening, RingVec};
 
 #[inline]
 fn accumulate_small_signed<F: FieldCore + FromPrimitiveInt>(dst: &mut F, value: F, coeff: i64) {
@@ -77,7 +78,7 @@ where
 
 #[derive(Clone)]
 pub(crate) struct RelationQuotientRow<F: FieldCore> {
-    ring_dim: usize,
+    geometry: RelationRowGeometry,
     coeffs: Vec<F>,
 }
 
@@ -102,11 +103,26 @@ impl<F: FieldCore> RelationQuotientOutput<F> {
         Ok(Self { rows })
     }
 
-    fn row_from_ring<const D: usize>(ring: CyclotomicRing<F, D>) -> RelationQuotientRow<F> {
-        RelationQuotientRow {
-            ring_dim: D,
+    fn row_from_ring<const D: usize>(
+        ring: CyclotomicRing<F, D>,
+    ) -> Result<RelationQuotientRow<F>, AkitaError> {
+        Ok(RelationQuotientRow {
+            geometry: RelationRowGeometry::native(D)?,
             coeffs: ring.coefficients().to_vec(),
+        })
+    }
+
+    fn from_physical_coordinates(
+        geometry: RelationRowGeometry,
+        coeffs: Vec<F>,
+    ) -> Result<RelationQuotientRow<F>, AkitaError> {
+        if coeffs.len() != geometry.physical_coefficient_width() {
+            return Err(AkitaError::InvalidSize {
+                expected: geometry.physical_coefficient_width(),
+                actual: coeffs.len(),
+            });
         }
+        Ok(RelationQuotientRow { geometry, coeffs })
     }
 
     pub(crate) fn rows(&self) -> &[RelationQuotientRow<F>] {
@@ -115,8 +131,8 @@ impl<F: FieldCore> RelationQuotientOutput<F> {
 }
 
 impl<F: FieldCore> RelationQuotientRow<F> {
-    pub(crate) fn ring_dim(&self) -> usize {
-        self.ring_dim
+    pub(crate) fn geometry(&self) -> RelationRowGeometry {
+        self.geometry
     }
 
     pub(crate) fn coeffs(&self) -> &[F] {
@@ -202,8 +218,7 @@ where
 fn compute_group_a_relation_quotients<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     group: &PreparedRingSwitchGroup<'_, F>,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
-    challenges: &Challenges,
+    group_opening: &RingRelationGroupOpening<F>,
 ) -> Result<(RelationQuotientRow<F>, Vec<RelationQuotientRow<F>>), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -221,7 +236,7 @@ where
     let inner_width = group.params.a_col_len();
     let log_basis_outer = group.params.log_basis_outer();
     let log_basis_open = group.params.log_basis_open();
-    let e_folded = group.e_folded.as_ring_slice::<D>()?;
+    let challenges = group_opening.ambient_a_challenges();
     let recomposed_inner_rows = group.recomposed_inner_rows.as_ring_slice::<D>()?;
     let (z_centered, z_remainder) = group.z_centered.as_chunks::<D>();
     if !z_remainder.is_empty() || z_centered.len() != inner_width {
@@ -255,21 +270,48 @@ where
     }
     let a_quotients = relation_rows.a_quotients;
 
-    let consistency_z_quotient = if ring_multiplier_point.is_constant() {
-        CyclotomicRing::<F, D>::zero()
-    } else {
-        consistency_z_product_high_half::<F, D>(
-            ring_multiplier_point,
-            z_centered,
-            group.params.num_positions_per_block(),
-            group.params.num_digits_inner(),
-            group.params.log_basis_inner(),
-        )?
+    let consistency_quotient = match &group.folded_opening {
+        GroupFoldedOpening::EvaluationTrace(e_folded)
+            if group_opening.coefficient_packing_geometry().is_none() =>
+        {
+            let ring_multiplier_point = group_opening.evaluation_trace_multiplier_point()?;
+            let e_folded = e_folded.as_ring_slice::<D>()?;
+            let consistency_z_quotient = if ring_multiplier_point.is_constant() {
+                CyclotomicRing::<F, D>::zero()
+            } else {
+                consistency_z_product_high_half::<F, D>(
+                    ring_multiplier_point,
+                    z_centered,
+                    group.params.num_positions_per_block(),
+                    group.params.num_digits_inner(),
+                    group.params.log_basis_inner(),
+                )?
+            };
+            let quotient =
+                parallel_high_half_accumulate::<F, _, D>(challenges, |i| e_folded.get(i).copied())?;
+            let mut consistency_quotient = CyclotomicRing::from_slice(&quotient);
+            consistency_quotient -= consistency_z_quotient;
+            RelationQuotientOutput::row_from_ring(consistency_quotient)?
+        }
+        GroupFoldedOpening::SubringCoefficientPacking {
+            geometry,
+            quotient_high_half_coordinates,
+            ..
+        } if Some(*geometry) == group_opening.coefficient_packing_geometry() => {
+            RelationQuotientOutput::from_physical_coordinates(
+                RelationRowGeometry::new(
+                    geometry.challenge_subring_dimension(),
+                    geometry.extension_degree(),
+                )?,
+                quotient_high_half_coordinates.clone(),
+            )?
+        }
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "relation quotient opening method and witness disagree".into(),
+            ));
+        }
     };
-    let quotient =
-        parallel_high_half_accumulate::<F, _, D>(challenges, |i| e_folded.get(i).copied())?;
-    let mut consistency_quotient = CyclotomicRing::from_slice(&quotient);
-    consistency_quotient -= consistency_z_quotient;
 
     let num_live_blocks_per_claim = group.params.num_live_blocks();
     let mut a_rows = Vec::with_capacity(n_a);
@@ -287,12 +329,9 @@ where
         }
         a_rows.push(RelationQuotientOutput::row_from_ring(
             CyclotomicRing::<F, D>::from_slice(&quotient),
-        ));
+        )?);
     }
-    Ok((
-        RelationQuotientOutput::row_from_ring(consistency_quotient),
-        a_rows,
-    ))
+    Ok((consistency_quotient, a_rows))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -302,8 +341,8 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B>(
     lp: &CommittedGroupParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
     groups: &[PreparedRingSwitchGroup<'_, F>],
-    group_ring_multiplier_points: &[&RingMultiplierOpeningPoint<F>],
-    group_challenges: &[Challenges],
+    group_openings: &[RingRelationGroupOpening<F>],
+    extension_degree: usize,
     d_quotients: &RingVec<F>,
     y: &RingVec<F>,
     compression: Option<&CompressionWitnessMaterialization<F>>,
@@ -314,15 +353,14 @@ where
 {
     lp.validate_opening_batch(opening_batch)?;
     if groups.len() != opening_batch.num_groups()
-        || group_ring_multiplier_points.len() != opening_batch.num_groups()
-        || group_challenges.len() != opening_batch.num_groups()
+        || group_openings.len() != opening_batch.num_groups()
     {
         return Err(AkitaError::InvalidProof);
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, extension_degree)?;
     let rhs_layout = relation_geometry.rhs_layout();
     let row_families = rhs_layout.row_families()?;
     let num_rows = row_families.len();
@@ -379,14 +417,12 @@ where
         }
         let consistency_row = lp.consistency_row_index(opening_batch, group_index)?;
         y_offset = y_offset
-            .checked_add(group_dims.d_a())
+            .checked_add(group_rows.opening_geometry.physical_coefficient_width())
             .ok_or(AkitaError::InvalidProof)?;
-        let ring_multiplier_point = group_ring_multiplier_points
+        let group_opening = group_openings
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let challenges = group_challenges
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let challenges = group_opening.ambient_a_challenges();
         let group_layout = opening_batch.group_layout(group_index)?;
         let log_basis_outer = group.params.log_basis_outer();
         let log_basis_open = group.params.log_basis_open();
@@ -406,8 +442,8 @@ where
             .num_polynomials()
             .checked_mul(num_live_blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
-        let opening_ratio = group_dims
-            .d_a()
+        let opening_width = group_rows.opening_geometry.physical_coefficient_width();
+        let opening_ratio = opening_width
             .checked_div(group_dims.d_d())
             .filter(|ratio| *ratio != 0 && ratio.is_power_of_two())
             .ok_or_else(|| {
@@ -420,7 +456,7 @@ where
             .and_then(|n| n.checked_mul(opening_ratio))
             .ok_or(AkitaError::InvalidProof)?;
         let expected_e_coeffs = expected_blocks
-            .checked_mul(group_dims.d_a())
+            .checked_mul(opening_width)
             .ok_or(AkitaError::InvalidProof)?;
         let expected_z_coeffs = inner_width
             .checked_mul(group_dims.d_a())
@@ -428,15 +464,31 @@ where
         let expected_recomposed_coeffs = n_a
             .checked_mul(group_dims.d_a())
             .ok_or(AkitaError::InvalidProof)?;
+        let folded_opening_is_valid = match &group.folded_opening {
+            GroupFoldedOpening::EvaluationTrace(e_folded)
+                if group_opening.coefficient_packing_geometry().is_none() =>
+            {
+                e_folded.coeff_len() == expected_e_coeffs
+            }
+            GroupFoldedOpening::SubringCoefficientPacking {
+                geometry,
+                reduced_coordinates,
+                quotient_high_half_coordinates,
+            } => {
+                Some(*geometry) == group_opening.coefficient_packing_geometry()
+                    && reduced_coordinates.len() == opening_width
+                    && quotient_high_half_coordinates.len() == opening_width
+            }
+            _ => false,
+        };
         if challenges.len() != expected_blocks
-            || group.e_folded.coeff_len() != expected_e_coeffs
+            || !folded_opening_is_valid
             || group.e_hat.total_planes() != expected_e_planes
             || group.e_hat.digit_stride() != group_dims.d_d()
         {
             return Err(AkitaError::InvalidInput(format!(
-                "relation quotient group shape mismatch: challenges={} e_folded={} recomposed={} e_planes={} e_stride={} expected_blocks={} expected_e_planes={} expected_d_d={}",
+                "relation quotient group shape mismatch: challenges={} recomposed={} e_planes={} e_stride={} expected_blocks={} expected_e_planes={} expected_d_d={}",
                 challenges.len(),
-                group.e_folded.coeff_len() / group_dims.d_a(),
                 group.recomposed_inner_rows.coeff_len() / expected_recomposed_coeffs,
                 group.e_hat.total_planes(),
                 group.e_hat.digit_stride(),
@@ -494,8 +546,7 @@ where
                 compute_group_a_relation_quotients::<F, B, D_A>(
                     ring_switch_ctx,
                     group,
-                    ring_multiplier_point,
-                    challenges,
+                    group_opening,
                 )
             }
         )?;
@@ -607,7 +658,7 @@ where
                             b_cyclic.get(commit_idx).ok_or(AkitaError::InvalidProof)?,
                             &reduced,
                         ),
-                    ));
+                    )?);
                 }
                 Ok::<(), AkitaError>(())
             }
@@ -633,7 +684,7 @@ where
                 }
                 for (d_idx, quotient) in d_rows.iter().enumerate() {
                     let row_idx = d_start.checked_add(d_idx).ok_or(AkitaError::InvalidProof)?;
-                    result[row_idx] = Some(RelationQuotientOutput::row_from_ring(*quotient));
+                    result[row_idx] = Some(RelationQuotientOutput::row_from_ring(*quotient)?);
                 }
                 Ok::<(), AkitaError>(())
             }
@@ -676,7 +727,7 @@ where
             });
         }
         result[row_index] = Some(RelationQuotientRow {
-            ring_dim,
+            geometry,
             coeffs: quotient.coeffs().to_vec(),
         });
         let rhs_end = y_offset
@@ -773,5 +824,21 @@ mod tests {
         }
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn physical_quotient_row_preserves_packing_planes_and_rejects_bad_width() {
+        let geometry = RelationRowGeometry::new(64, 2).unwrap();
+        let coordinates = (0..128)
+            .map(|index| F::from_u64(index as u64 + 1))
+            .collect::<Vec<_>>();
+        let row = RelationQuotientOutput::from_physical_coordinates(geometry, coordinates.clone())
+            .unwrap();
+        assert_eq!(row.geometry(), geometry);
+        assert_eq!(row.coeffs(), coordinates);
+        assert!(
+            RelationQuotientOutput::from_physical_coordinates(geometry, vec![F::zero(); 64],)
+                .is_err()
+        );
     }
 }

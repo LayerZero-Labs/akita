@@ -77,8 +77,8 @@ pub use relation_range_image::{
     RelationRangeImagePlan,
 };
 pub use ring_relation::{
-    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths,
+    ring_relation_segment_lengths, RingRelationGroupOpening, RingRelationInstance,
+    RingRelationOpeningCounts, RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{

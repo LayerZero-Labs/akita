@@ -7,7 +7,7 @@ use crate::witness::WitnessLayout;
 use crate::FpExtEncoding;
 use crate::{
     embed_ring_subfield_scalar, r_decomp_levels, CommittedGroupParams, RingMultiplierOpeningPoint,
-    RingVec,
+    RingVec, SubringCoefficientPackingGeometry,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
@@ -27,6 +27,130 @@ pub struct RingRelationSegmentLengths {
 pub struct RingRelationOpeningCounts {
     pub num_claims: usize,
     pub num_t_vectors: usize,
+}
+
+/// Method-typed fold challenge and opening-point material for one relation group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingRelationGroupOpening<F: FieldCore> {
+    kind: RingRelationGroupOpeningKind<F>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RingRelationGroupOpeningKind<F: FieldCore> {
+    EvaluationTrace {
+        challenges: Challenges,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
+    },
+    SubringCoefficientPacking {
+        geometry: SubringCoefficientPackingGeometry,
+        subring_challenges: Challenges,
+        embedded_a_challenges: Challenges,
+    },
+}
+
+impl<F: FieldCore> RingRelationGroupOpening<F> {
+    /// Construct the current full-A evaluation-trace carrier.
+    pub fn evaluation_trace(
+        challenges: Challenges,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
+    ) -> Self {
+        Self {
+            kind: RingRelationGroupOpeningKind::EvaluationTrace {
+                challenges,
+                ring_multiplier_point,
+            },
+        }
+    }
+
+    /// Construct the checked coefficient-packing challenge carrier.
+    pub fn subring_coefficient_packing(
+        geometry: SubringCoefficientPackingGeometry,
+        subring_challenges: Challenges,
+    ) -> Result<Self, AkitaError> {
+        let config = geometry.fold_challenge_config();
+        for challenge in subring_challenges.as_slice() {
+            challenge.validate_dyn(geometry.challenge_subring_dimension())?;
+            let mut count_pm1 = 0usize;
+            let mut count_pm2 = 0usize;
+            for &coefficient in challenge.coeffs.iter() {
+                match coefficient.unsigned_abs() {
+                    1 => count_pm1 += 1,
+                    2 => count_pm2 += 1,
+                    _ => {
+                        return Err(AkitaError::InvalidInput(
+                            "coefficient-packing challenge is outside its audited family".into(),
+                        ));
+                    }
+                }
+            }
+            if count_pm1 != config.count_pm1 || count_pm2 != config.count_pm2 {
+                return Err(AkitaError::InvalidInput(
+                    "coefficient-packing challenge weight disagrees with its audited family".into(),
+                ));
+            }
+        }
+        let embedded_a_challenges = subring_challenges.embed_subring_positions(
+            geometry.challenge_subring_dimension(),
+            geometry.subring_embedding_stride(),
+            geometry.a_ring_dimension(),
+        )?;
+        Ok(Self {
+            kind: RingRelationGroupOpeningKind::SubringCoefficientPacking {
+                geometry,
+                subring_challenges,
+                embedded_a_challenges,
+            },
+        })
+    }
+
+    /// Canonical challenges for this opening relation.
+    pub fn canonical_challenges(&self) -> &Challenges {
+        match &self.kind {
+            RingRelationGroupOpeningKind::EvaluationTrace { challenges, .. } => challenges,
+            RingRelationGroupOpeningKind::SubringCoefficientPacking {
+                subring_challenges, ..
+            } => subring_challenges,
+        }
+    }
+
+    /// Challenges embedded in the ambient A ring.
+    pub fn ambient_a_challenges(&self) -> &Challenges {
+        match &self.kind {
+            RingRelationGroupOpeningKind::EvaluationTrace { challenges, .. } => challenges,
+            RingRelationGroupOpeningKind::SubringCoefficientPacking {
+                embedded_a_challenges,
+                ..
+            } => embedded_a_challenges,
+        }
+    }
+
+    /// Evaluation-trace multiplier point, rejecting coefficient packing.
+    pub fn evaluation_trace_multiplier_point(
+        &self,
+    ) -> Result<&RingMultiplierOpeningPoint<F>, AkitaError> {
+        match &self.kind {
+            RingRelationGroupOpeningKind::EvaluationTrace {
+                ring_multiplier_point,
+                ..
+            } => Ok(ring_multiplier_point),
+            RingRelationGroupOpeningKind::SubringCoefficientPacking { .. } => {
+                Err(AkitaError::InvalidSetup(
+                    "coefficient packing has no evaluation-trace multiplier point".into(),
+                ))
+            }
+        }
+    }
+
+    /// Checked coefficient-packing geometry, when this group uses packing.
+    #[must_use]
+    pub fn coefficient_packing_geometry(&self) -> Option<SubringCoefficientPackingGeometry> {
+        match self.kind {
+            RingRelationGroupOpeningKind::SubringCoefficientPacking { geometry, .. } => {
+                Some(geometry)
+            }
+            RingRelationGroupOpeningKind::EvaluationTrace { .. } => None,
+        }
+    }
 }
 
 /// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
@@ -86,8 +210,8 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 /// and [`Self::row_coefficient_rings_trusted`].
 #[derive(Debug, Clone)]
 pub struct RingRelationInstance<F: FieldCore> {
-    group_challenges: Vec<Challenges>,
-    group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
+    group_openings: Vec<RingRelationGroupOpening<F>>,
+    extension_degree: usize,
     opening_batch: OpeningClaimsLayout,
     gamma: Vec<F>,
     row_coefficient_rings: RingVec<F>,
@@ -102,8 +226,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     /// Does not sample from the transcript; callers must absorb/sample before calling.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        group_challenges: Vec<Challenges>,
-        group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
+        group_openings: Vec<RingRelationGroupOpening<F>>,
+        extension_degree: usize,
         opening_batch: OpeningClaimsLayout,
         gamma: Vec<F>,
         row_coefficient_rings: RingVec<F>,
@@ -112,17 +236,21 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         role_dims: CommitmentRingDims,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
+        if extension_degree == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring relation extension degree must be nonzero".into(),
+            ));
+        }
         let num_groups = opening_batch.num_groups();
-        if group_challenges.len() != num_groups || group_ring_multiplier_points.len() != num_groups
-        {
+        if group_openings.len() != num_groups {
             return Err(AkitaError::InvalidInput(
                 "ring relation group carrier count does not match opening batch".to_string(),
             ));
         }
-        for g in 0..num_groups {
+        for (g, group_opening) in group_openings.iter().enumerate() {
             let group_layout = opening_batch.group_layout(g)?;
             let k_g = group_layout.num_polynomials();
-            let challenges = &group_challenges[g];
+            let challenges = group_opening.canonical_challenges();
             if challenges.num_claims() != k_g {
                 return Err(AkitaError::InvalidInput(format!(
                     "ring relation group {g} challenges claim count {} does not match K_g={k_g}",
@@ -130,10 +258,16 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 )));
             }
             let num_live_blocks_g = challenges.num_live_blocks_per_claim();
-            if group_ring_multiplier_points[g].fold_len() != num_live_blocks_g {
-                return Err(AkitaError::InvalidInput(format!(
-                    "ring relation group {g} ring multiplier block count does not match challenges"
-                )));
+            if let RingRelationGroupOpeningKind::EvaluationTrace {
+                ring_multiplier_point,
+                ..
+            } = &group_opening.kind
+            {
+                if ring_multiplier_point.fold_len() != num_live_blocks_g {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "ring relation group {g} ring multiplier block count does not match challenges"
+                    )));
+                }
             }
         }
         if gamma.len() != opening_batch.num_total_polynomials()
@@ -178,8 +312,8 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             }
         }
         Ok(Self {
-            group_challenges,
-            group_ring_multiplier_points,
+            group_openings,
+            extension_degree,
             opening_batch,
             gamma,
             row_coefficient_rings,
@@ -203,20 +337,36 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         &self.opening_batch
     }
 
-    pub fn group_challenges(&self) -> &[Challenges] {
-        &self.group_challenges
+    pub fn group_openings(&self) -> &[RingRelationGroupOpening<F>] {
+        &self.group_openings
+    }
+
+    /// Protocol field extension degree used to resolve packing coordinate planes.
+    #[must_use]
+    pub fn extension_degree(&self) -> usize {
+        self.extension_degree
+    }
+
+    pub fn group_ambient_a_challenges(&self, group: usize) -> Result<&Challenges, AkitaError> {
+        self.group_openings
+            .get(group)
+            .map(RingRelationGroupOpening::ambient_a_challenges)
+            .ok_or(AkitaError::InvalidProof)
     }
 
     pub fn group_ring_multiplier_point(
         &self,
         g: usize,
     ) -> Result<&RingMultiplierOpeningPoint<F>, AkitaError> {
-        self.group_ring_multiplier_points.get(g).ok_or_else(|| {
-            AkitaError::InvalidInput(format!(
-                "ring relation ring multiplier group index {g} out of range ({} groups)",
-                self.group_ring_multiplier_points.len()
-            ))
-        })
+        self.group_openings
+            .get(g)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(format!(
+                    "ring relation ring multiplier group index {g} out of range ({} groups)",
+                    self.group_openings.len()
+                ))
+            })?
+            .evaluation_trace_multiplier_point()
     }
 
     pub fn gamma(&self) -> &[F] {
@@ -256,8 +406,10 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
                 actual: self.v.coeff_len(),
             });
         }
-        for point in &self.group_ring_multiplier_points {
-            point.ensure_ring_dim::<D>()?;
+        for opening in &self.group_openings {
+            opening
+                .evaluation_trace_multiplier_point()?
+                .ensure_ring_dim::<D>()?;
         }
         Ok(())
     }
@@ -346,10 +498,46 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     ) -> Result<WitnessLayout, AkitaError> {
         lp.witness_chunk.validate()?;
         let num_chunks = lp.witness_chunk.num_chunks;
-        let relation_geometry = crate::RelationWitnessGeometry::for_evaluation_trace_execution(
+        let relation_geometry = crate::RelationWitnessGeometry::for_level(
             lp,
             &self.opening_batch,
+            self.extension_degree,
         )?;
+        for (group_index, opening) in self.group_openings.iter().enumerate() {
+            let expected_method = relation_geometry.group_opening_method(group_index)?;
+            let group_params = lp.group_params_geometry(&self.opening_batch, group_index)?;
+            let expected_blocks = group_params.num_live_blocks();
+            if opening.canonical_challenges().num_live_blocks_per_claim() != expected_blocks {
+                return Err(AkitaError::InvalidSetup(
+                    "relation opening block count disagrees with the schedule".into(),
+                ));
+            }
+            match (expected_method, opening.coefficient_packing_geometry()) {
+                (crate::OpeningMethod::EvaluationTrace, None) => {}
+                (
+                    crate::OpeningMethod::SubringCoefficientPacking {
+                        challenge_subring_dimension,
+                    },
+                    Some(actual),
+                ) => {
+                    let expected = SubringCoefficientPackingGeometry::try_new(
+                        self.extension_degree,
+                        group_params.inner_commit_matrix_params().ring_dimension(),
+                        challenge_subring_dimension,
+                    )?;
+                    if actual != expected {
+                        return Err(AkitaError::InvalidSetup(
+                            "relation opening geometry disagrees with the schedule".into(),
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(AkitaError::InvalidSetup(
+                        "relation opening method disagrees with the schedule".into(),
+                    ));
+                }
+            }
+        }
         let relation_rhs_layout = relation_geometry.rhs_layout();
         let expected_rhs_coeff_len =
             crate::proof::relation::relation_rhs_coeff_len(relation_rhs_layout)?;
@@ -388,8 +576,8 @@ mod tests {
     use crate::DigitBlocks;
     use crate::{
         emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
-        relation_rhs_coeff_len, InnerCommitMatrixParams, OuterCommitMatrixParams,
-        PolynomialGroupLayout, RingOpeningPoint,
+        relation_rhs_coeff_len, InnerCommitMatrixParams, OpenCommitMatrixParams,
+        OuterCommitMatrixParams, PolynomialGroupLayout, RingOpeningPoint,
     };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
@@ -490,6 +678,35 @@ mod tests {
         .expect("challenges")
     }
 
+    fn packing_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
+        let config = lp.fold_challenge_config;
+        let sparse = (0..lp.num_live_blocks * num_claims)
+            .map(|_| SparseChallenge {
+                positions: (0..config.weight())
+                    .map(|position| position as u32)
+                    .collect(),
+                coeffs: (0..config.count_pm1)
+                    .map(|_| 1)
+                    .chain((0..config.count_pm2).map(|_| 2))
+                    .collect(),
+            })
+            .collect();
+        Challenges::from_sparse(sparse, lp.num_live_blocks, num_claims).expect("packing challenges")
+    }
+
+    fn evaluation_trace_openings(
+        challenges: Vec<Challenges>,
+        points: Vec<RingMultiplierOpeningPoint<F>>,
+    ) -> Vec<RingRelationGroupOpening<F>> {
+        challenges
+            .into_iter()
+            .zip(points)
+            .map(|(challenges, ring_multiplier_point)| {
+                RingRelationGroupOpening::evaluation_trace(challenges, ring_multiplier_point)
+            })
+            .collect()
+    }
+
     #[test]
     fn relation_instance_rejects_empty_y() {
         let lp = test_level_params(1);
@@ -497,8 +714,11 @@ mod tests {
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F>::new(
-            vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
-            vec![ring_multiplier_point],
+            evaluation_trace_openings(
+                vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
+                vec![ring_multiplier_point],
+            ),
+            1,
             opening_batch,
             vec![F::one()],
             RingVec::from_ring_elems::<D>(&[CyclotomicRing::one()]),
@@ -549,8 +769,11 @@ mod tests {
         let opening_point = opening_point(lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         RingRelationInstance::<F>::new(
-            vec![test_challenges(lp, num_claims)],
-            vec![ring_multiplier_point],
+            evaluation_trace_openings(
+                vec![test_challenges(lp, num_claims)],
+                vec![ring_multiplier_point],
+            ),
+            1,
             opening_batch,
             vec![F::one(); num_claims],
             RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); num_claims]),
@@ -708,8 +931,11 @@ mod tests {
         let relation_rhs_layout = relation_layout(&lp, &opening_batch);
         let rhs_coeff_len = relation_rhs_coeff_len(&relation_rhs_layout).expect("rhs length");
         let instance = RingRelationInstance::<F>::new(
-            vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
-            vec![ring_multiplier_point],
+            evaluation_trace_openings(
+                vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
+                vec![ring_multiplier_point],
+            ),
+            1,
             opening_batch,
             vec![F::one(); 3],
             RingVec::from_ring_elems::<D>(&[CyclotomicRing::one(); 3]),
@@ -790,8 +1016,11 @@ mod tests {
         let ring_multiplier_pre = RingMultiplierOpeningPoint::from_base(&opening_point_pre);
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
         let instance = RingRelationInstance::<F>::new(
-            vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
-            vec![ring_multiplier_pre, ring_multiplier_final],
+            evaluation_trace_openings(
+                vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
+                vec![ring_multiplier_pre, ring_multiplier_final],
+            ),
+            1,
             opening_batch.clone(),
             vec![F::one(); opening_batch.num_total_polynomials()],
             RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
@@ -857,8 +1086,11 @@ mod tests {
         let ring_multiplier_final = RingMultiplierOpeningPoint::from_base(&opening_point_final);
         let gamma_len = opening_batch.num_total_polynomials();
         let instance = RingRelationInstance::<F>::new(
-            vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
-            vec![ring_multiplier_pre, ring_multiplier_final],
+            evaluation_trace_openings(
+                vec![test_challenges(&lp, 1), test_challenges(&lp, 1)],
+                vec![ring_multiplier_pre, ring_multiplier_final],
+            ),
+            1,
             opening_batch,
             vec![F::one(); gamma_len],
             RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![CyclotomicRing::one(); gamma_len]),
@@ -931,10 +1163,11 @@ mod tests {
                 MULTI_GROUP_D,
             )
             .expect("T digits");
-            emit_witness_e_planes::<MULTI_GROUP_D, MULTI_GROUP_D>(
+            emit_witness_e_planes::<MULTI_GROUP_D>(
                 &mut emitted,
                 &layout,
                 group_index,
+                MULTI_GROUP_D,
                 num_claims,
                 depth_open,
                 &e_digits,
@@ -1019,5 +1252,189 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn packing_instance_emits_all_physical_e_coordinate_planes() {
+        const PACK_D_A: usize = 256;
+        const PACK_D_D: usize = 64;
+        let mut lp = CommittedGroupParams::params_only(
+            crate::SisModulusProfileId::Q32Offset99,
+            PACK_D_A,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(PACK_D_A).expect("ambient config"),
+        )
+        .with_decomp(4, 8, 1, 2, 2)
+        .expect("packing params");
+        lp.num_digits_fold = 3;
+        lp.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+        lp.fold_challenge_config =
+            SparseChallengeConfig::production_for_ring_dim(64).expect("packing config");
+        certify_test_sis_bounds(&mut lp);
+        lp.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+            lp.open_commit_matrix.security_policy(),
+            lp.open_commit_matrix.sis_table_key().table_digest,
+            lp.open_commit_matrix.sis_modulus_profile(),
+            lp.open_commit_matrix.output_rank(),
+            8,
+            lp.open_commit_matrix.coeff_linf_bound(),
+            PACK_D_D,
+        );
+        let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
+        let packing_geometry =
+            SubringCoefficientPackingGeometry::try_new(2, PACK_D_A, 64).expect("packing geometry");
+        let zero_shell = Challenges::from_sparse(
+            vec![
+                SparseChallenge {
+                    positions: Vec::new().into(),
+                    coeffs: Vec::new().into(),
+                };
+                lp.num_live_blocks
+            ],
+            lp.num_live_blocks,
+            1,
+        )
+        .expect("structurally valid zero shell");
+        assert!(RingRelationGroupOpening::<F>::subring_coefficient_packing(
+            packing_geometry,
+            zero_shell,
+        )
+        .is_err());
+        let config = lp.fold_challenge_config;
+        let wrong_magnitude = Challenges::from_sparse(
+            vec![
+                SparseChallenge {
+                    positions: (0..config.weight())
+                        .map(|position| position as u32)
+                        .collect(),
+                    coeffs: std::iter::once(3)
+                        .chain((1..config.weight()).map(|_| 1))
+                        .collect(),
+                };
+                lp.num_live_blocks
+            ],
+            lp.num_live_blocks,
+            1,
+        )
+        .expect("structurally valid wrong shell");
+        assert!(RingRelationGroupOpening::<F>::subring_coefficient_packing(
+            packing_geometry,
+            wrong_magnitude,
+        )
+        .is_err());
+        let subring_challenges = packing_challenges(&lp, 1);
+        let group_opening = RingRelationGroupOpening::subring_coefficient_packing(
+            packing_geometry,
+            subring_challenges,
+        )
+        .expect("packing opening");
+        assert_eq!(
+            group_opening.coefficient_packing_geometry(),
+            Some(packing_geometry)
+        );
+        assert!(group_opening.evaluation_trace_multiplier_point().is_err());
+
+        let relation_geometry = crate::RelationWitnessGeometry::for_level(&lp, &opening_batch, 2)
+            .expect("relation geometry");
+        let rhs_len = relation_rhs_coeff_len(relation_geometry.rhs_layout()).expect("rhs len");
+        let instance = RingRelationInstance::<F>::new(
+            vec![group_opening],
+            2,
+            opening_batch.clone(),
+            vec![F::one()],
+            RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
+            RingVec::from_coeffs(vec![F::zero(); rhs_len]),
+            RingVec::from_ring_elems::<PACK_D_D>(&[]),
+            lp.role_dims(),
+        )
+        .expect("packing instance");
+        let layout = instance.segment_layout(&lp, None).expect("packing layout");
+        let unit = layout.units().first().expect("packing witness unit");
+        assert_eq!(unit.e_geometry().polynomial_modulus_dimension(), 64);
+        assert_eq!(unit.e_geometry().coordinate_plane_count(), 2);
+        assert_eq!(unit.e_geometry().physical_coefficient_width(), 128);
+
+        let depth_open = lp.num_digits_open;
+        let blocks = lp.num_live_blocks;
+        let role_subcolumns = packing_geometry.partial_base_field_width() / PACK_D_D;
+        let source = (0..blocks * role_subcolumns * depth_open)
+            .map(|index| marker::<PACK_D_D>(700 + index))
+            .collect::<Vec<_>>();
+        let digits = DigitBlocks::new(
+            source.as_flattened().to_vec(),
+            vec![role_subcolumns * depth_open; blocks],
+            PACK_D_D,
+        )
+        .expect("packing digits");
+        let mut emitted = vec![0i8; layout.live_coeff_len()];
+        emit_witness_e_planes::<PACK_D_D>(
+            &mut emitted,
+            &layout,
+            0,
+            packing_geometry.partial_base_field_width(),
+            1,
+            depth_open,
+            &digits,
+            blocks,
+        )
+        .expect("emit packing E");
+        assert_eq!(&emitted[unit.e_range()], digits.digits());
+
+        let packing_r_row = layout
+            .r_rows()
+            .iter()
+            .position(|row| row.geometry() == unit.e_geometry())
+            .expect("packing consistency quotient row");
+        let plane_zero = layout
+            .r_coefficient_index(packing_r_row, 0, 0, 0)
+            .expect("packing Q plane zero");
+        let plane_one = layout
+            .r_coefficient_index(packing_r_row, 0, 1, 0)
+            .expect("packing Q plane one");
+        assert_eq!(plane_one - plane_zero, 64);
+        assert!(layout.r_coefficient_index(packing_r_row, 0, 2, 0).is_err());
+
+        let aliased_width_geometry =
+            SubringCoefficientPackingGeometry::try_new(2, 128, 64).expect("aliased geometry");
+        let wrong_opening = RingRelationGroupOpening::subring_coefficient_packing(
+            aliased_width_geometry,
+            packing_challenges(&lp, 1),
+        )
+        .expect("individually valid opening");
+        let wrong_instance = RingRelationInstance::<F>::new(
+            vec![wrong_opening],
+            2,
+            opening_batch.clone(),
+            vec![F::one()],
+            RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
+            RingVec::from_coeffs(vec![F::zero(); rhs_len]),
+            RingVec::from_ring_elems::<PACK_D_D>(&[]),
+            lp.role_dims(),
+        )
+        .expect("carrier construction is schedule-independent");
+        assert!(wrong_instance.segment_layout(&lp, None).is_err());
+
+        let wrong_k_opening = RingRelationGroupOpening::subring_coefficient_packing(
+            SubringCoefficientPackingGeometry::try_new(1, PACK_D_A, 64).expect("wrong-k geometry"),
+            packing_challenges(&lp, 1),
+        )
+        .expect("individually valid wrong-k opening");
+        let wrong_k_instance = RingRelationInstance::<F>::new(
+            vec![wrong_k_opening],
+            2,
+            opening_batch,
+            vec![F::one()],
+            RingVec::from_ring_elems::<PACK_D_A>(&[CyclotomicRing::one()]),
+            RingVec::from_coeffs(vec![F::zero(); rhs_len]),
+            RingVec::from_ring_elems::<PACK_D_D>(&[]),
+            lp.role_dims(),
+        )
+        .expect("wrong-k carrier construction is schedule-independent");
+        assert!(wrong_k_instance.segment_layout(&lp, None).is_err());
     }
 }

@@ -5,7 +5,9 @@ mod single_field;
 
 use super::*;
 use akita_algebra::offset_eq::EqPairTensorFamily;
-use akita_types::{dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan};
+use akita_types::{
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, RingRelationGroupOpening,
+};
 
 pub(in crate::protocol::core) use extension_claim::{
     verify_extension_claim_root_prefix, verify_extension_claim_suffix_prefix,
@@ -396,25 +398,32 @@ where
                 .map(|payload| payload.coeffs())
                 .collect::<Vec<_>>();
             assemble_compressed_relation_rhs::<F>(
-                &relation_rhs_layout,
+                relation_rhs_layout,
                 &group_payloads,
                 prepared.opening_payload.coeffs(),
             )?
         } else {
             assemble_relation_rhs::<F>(
-                &relation_rhs_layout,
+                relation_rhs_layout,
                 &prepared.opening_payload,
                 &commitment_rows,
             )?
         };
-        let group_ring_multiplier_points = prefix
-            .prepared_points
-            .iter()
-            .map(|prepared| prepared.ring_multiplier_point.clone())
+        let group_openings = group_challenges
+            .into_iter()
+            .zip(
+                prefix
+                    .prepared_points
+                    .iter()
+                    .map(|prepared| prepared.ring_multiplier_point.clone()),
+            )
+            .map(|(challenges, ring_multiplier_point)| {
+                RingRelationGroupOpening::evaluation_trace(challenges, ring_multiplier_point)
+            })
             .collect::<Vec<_>>();
         let relation_instance = RingRelationInstance::new(
-            group_challenges,
-            group_ring_multiplier_points,
+            group_openings,
+            E::EXT_DEGREE,
             opening_shape.clone(),
             gamma,
             row_coefficient_rings,
@@ -483,7 +492,7 @@ where
             AkitaError::InvalidInput(format!("compressed ring-switch replay failed: {error:?}"))
         })?;
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
-        &relation_rhs_layout,
+        relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
         relation_instance.rhs(),

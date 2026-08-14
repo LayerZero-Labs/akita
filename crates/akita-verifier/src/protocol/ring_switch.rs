@@ -303,10 +303,7 @@ where
             relation_address_geometry,
         );
     }
-    let challenges = relation
-        .group_challenges()
-        .first()
-        .ok_or(AkitaError::InvalidProof)?;
+    let challenges = relation.group_ambient_a_challenges(0)?;
     let ring_multiplier_point = relation.group_ring_multiplier_point(0)?;
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -402,10 +399,7 @@ where
         let total_blocks = k_g.checked_mul(num_live_blocks).ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group block count overflow".to_string())
         })?;
-        let challenges = relation
-            .group_challenges()
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let challenges = relation.group_ambient_a_challenges(group_index)?;
         if challenges.len() != total_blocks {
             return Err(AkitaError::InvalidSize {
                 expected: total_blocks,
