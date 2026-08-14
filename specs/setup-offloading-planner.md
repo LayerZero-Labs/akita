@@ -343,12 +343,12 @@ The base config's `schedule_catalog()` remains the direct table.
 `RecursiveCommitmentConfig<Cfg>` exposes the separate recursive companion
 catalog for both selected scalar and grouped keys.
 
-Its `select_schedule_for_key` routing is:
+Its `resolve_catalog_row_for_key` routing is:
 
 ```text
 validate the SIS modulus profile
 validate recursive D64/non-chunked policy
-select_generated_schedule_row(
+resolve_generated_catalog_row_for_key(
     key,
     recursion-enabled policy_of<RecursiveCommitmentConfig<Cfg>>,
     recursive_multi_group_schedule_catalog,

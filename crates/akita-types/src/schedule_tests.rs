@@ -110,7 +110,7 @@ fn precommitted_group_params(
     group: PolynomialGroupLayout,
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params(group, params),
+        layout: CommittedGroupProfile::from_params_unchecked_for_test(group, params),
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
@@ -1160,6 +1160,19 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
 }
 
 #[test]
+fn checked_committed_profile_construction_rejects_invalid_params() {
+    let schedule = recursive_schedule(64, 64, false);
+    let mut params = schedule.root.params.final_group.commitment;
+    params.num_live_ring_elements_per_claim = 1;
+    params.num_live_blocks = 1;
+
+    assert!(matches!(
+        CommittedGroupProfile::try_from_params(PolynomialGroupLayout::singleton(8), &params),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
 fn validate_frozen_precommit_rejects_unsupported_inner_decomposition() {
     let mut unsupported_basis = precommitted_descriptor(20);
     unsupported_basis.log_basis_inner = crate::MAX_I16_LOG_BASIS + 1;
@@ -1181,7 +1194,7 @@ fn validate_frozen_precommit_rejects_unsupported_inner_decomposition() {
 fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
     let schedule = recursive_schedule(64, 64, false);
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params(
+        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),

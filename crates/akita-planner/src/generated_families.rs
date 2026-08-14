@@ -212,7 +212,7 @@ pub struct GeneratedFamily {
     /// Grouped-root keys enumerated for this generated family.
     pub group_batch_keys: GroupBatchKeyGenerator,
     /// Strict table-backed runtime resolution. A missing row is unsupported.
-    pub select_schedule_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    pub resolve_catalog_row_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
     /// The generated catalog linked for this family, when its feature is active.
     pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
@@ -281,10 +281,7 @@ fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     group: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
     let schedule = preplans.scalar::<Cfg>(group)?;
-    Ok(CommittedGroupProfile::from_params(
-        group,
-        &schedule.root.params.final_group.commitment,
-    ))
+    CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -295,10 +292,10 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     plan_regen::<Cfg>(&key, &precommitted_honest_fold_policies)
 }
 
-fn select_schedule_for_key<Cfg: CommitmentConfig>(
+fn resolve_catalog_row_for_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
-    Cfg::select_schedule_for_key(&key).map(akita_schedules::ResolvedScheduleRow::into_schedule)
+    Cfg::resolve_catalog_row_for_key(&key).map(akita_schedules::ResolvedScheduleRow::into_schedule)
 }
 
 fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
@@ -534,7 +531,7 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            select_schedule_for_key: select_schedule_for_key::<$cfg>,
+            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -553,7 +550,7 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            select_schedule_for_key: select_schedule_for_key::<$cfg>,
+            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,

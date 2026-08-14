@@ -200,28 +200,6 @@ fn generated_entry(
         .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
             descriptor,
             num_digits_fold: group.commitment.num_digits_fold as u32,
-            commitment: GeneratedCommittedGroup {
-                geometry: GeneratedBlockGeometry {
-                    live_ring_elements_per_claim: group
-                        .commitment
-                        .layout
-                        .num_live_ring_elements_per_claim
-                        as u64,
-                    positions_per_block: group.commitment.layout.num_positions_per_block as u64,
-                    live_blocks: group.commitment.layout.num_live_blocks as u64,
-                },
-                inner_commit_matrix: GeneratedInnerCommitMatrix {
-                    ring_dimension: group.commitment.layout.inner_commit_matrix.ring_dimension()
-                        as u32,
-                    log_basis: group.commitment.layout.log_basis_inner,
-                },
-                outer_commit_matrix: GeneratedOuterCommitMatrix {
-                    ring_dimension: group.commitment.layout.outer_commit_matrix.ring_dimension()
-                        as u32,
-                    log_basis: group.commitment.layout.log_basis_outer,
-                },
-                outer_slice_count: group.commitment.layout.outer_slice_count.get() as u32,
-            },
         })
         .collect::<Vec<_>>();
     let recursive_folds = schedule
@@ -466,10 +444,9 @@ fn emit_schedule_entry(
         for group in entry.root.precommitted_groups {
             writeln!(
                 out,
-                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, commitment: {} }},",
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {} }},",
                 emit_precommitted_group_key(&group.descriptor),
                 group.num_digits_fold,
-                emit_committed_group(group.commitment),
             )
             .map_err(|e| e.to_string())?;
         }

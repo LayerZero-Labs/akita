@@ -439,7 +439,10 @@ fn address_oracle_precommit(
         outer.coeff_linf_bound(),
         d_b,
     );
-    let layout = CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, claims), &lp);
+    let layout = CommittedGroupProfile::from_params_unchecked_for_test(
+        PolynomialGroupLayout::new(4, claims),
+        &lp,
+    );
     PrecommittedLevelParams {
         layout,
         log_basis_open: lp.log_basis_open,

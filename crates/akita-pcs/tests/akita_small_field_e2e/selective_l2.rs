@@ -58,7 +58,7 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("L2 opening layout");
-        let schedule = Cfg::select_schedule_for_opening(&opening_layout)
+        let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
             .expect("shipped L2 schedule")
             .into_schedule();
         let l2_step = schedule
@@ -224,7 +224,7 @@ fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("terminal L2 layout");
-        let schedule = Cfg::select_schedule_for_opening(&opening_layout)
+        let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
             .expect("shipped fp32 schedule")
             .into_schedule();
         let terminal_params = &schedule.terminal.params.witness;

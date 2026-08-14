@@ -17,7 +17,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     let mut covered = 0usize;
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
-        let schedule = match Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        let schedule = match Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(nv, 1),
         )) {
             Ok(row) => row.into_schedule(),

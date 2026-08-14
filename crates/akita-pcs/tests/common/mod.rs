@@ -41,7 +41,7 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 // Bare presets: test-only non-singleton batched opening shapes
 // fall through to the offline DP planner on table miss via the default
-// `select_schedule_for_key` fallback.
+// `resolve_catalog_row_for_key` fallback.
 pub(super) type OneHotCfg = fp128::OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
@@ -231,7 +231,7 @@ where
             .map(|group| *group.commitment().profile())
             .collect(),
     };
-    let selection = Cfg::select_schedule_for_profiles(&profiles)
+    let selection = Cfg::resolve_catalog_row_for_profiles(&profiles)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid selected verifier statement")
@@ -256,7 +256,7 @@ where
         final_group: *commitment.profile(),
         precommitteds: Vec::new(),
     };
-    let selection = Cfg::select_schedule_for_profiles(&profiles)
+    let selection = Cfg::resolve_catalog_row_for_profiles(&profiles)
         .expect("select verifier statement schedule")
         .selection();
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
@@ -519,9 +519,10 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             precommitteds: vec![pre_frozen, pre_frozen],
         };
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule = RecursiveCommitmentConfig::<BaseCfg>::select_schedule_for_key(&schedule_key)
-            .expect("recursive profile schedule resolves")
-            .into_schedule();
+        let schedule =
+            RecursiveCommitmentConfig::<BaseCfg>::resolve_catalog_row_for_key(&schedule_key)
+                .expect("recursive profile schedule resolves")
+                .into_schedule();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive profile must carry setup-prefix metadata"

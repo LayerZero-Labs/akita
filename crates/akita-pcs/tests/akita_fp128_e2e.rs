@@ -197,7 +197,7 @@ matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 fn fp128_dense_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let schedule = fp128::DenseMultiChunk::select_schedule_for_key(
+        let schedule = fp128::DenseMultiChunk::resolve_catalog_row_for_key(
             &akita_types::AkitaScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::singleton(16),
             ),
@@ -290,7 +290,7 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
-    fp128::OneHotMultiChunk::select_schedule_for_opening(&opening_batch)
+    fp128::OneHotMultiChunk::resolve_catalog_row_for_opening(&opening_batch)
         .expect("W8R2 multi-chunk catalog row");
 }
 
@@ -474,7 +474,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
         const NV: usize = 17;
         const BATCH: usize = 4;
         let opening_batch = OpeningClaimsLayout::new(NV, BATCH).expect("opening batch");
-        let layout = DenseCfg::select_schedule_for_opening(&opening_batch)
+        let layout = DenseCfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("layout")
             .into_schedule()
             .root
@@ -544,7 +544,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
 fn fp128_onehot_oversized_setup() {
     fn run(setup_nv: usize, poly_nv: usize) {
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
-        let layout = OneHotCfg::select_schedule_for_opening(&opening_batch)
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("layout")
             .into_schedule()
             .root

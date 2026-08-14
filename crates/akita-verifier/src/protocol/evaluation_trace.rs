@@ -758,7 +758,7 @@ mod tests {
 
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
-        let level_params = Cfg::select_schedule_for_opening(&opening_batch)
+        let level_params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("level parameters")
             .schedule()
             .root

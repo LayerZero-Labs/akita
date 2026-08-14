@@ -110,8 +110,10 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         precommit_lp.outer_commit_matrix.coeff_linf_bound(),
         precommit_lp.d_a(),
     );
-    let mut layout =
-        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
+    let mut layout = CommittedGroupProfile::from_params_unchecked_for_test(
+        PolynomialGroupLayout::new(4, 1),
+        &precommit_lp,
+    );
     layout.outer_commit_matrix = outer_commit_matrix;
     let precommit = PrecommittedLevelParams {
         layout,

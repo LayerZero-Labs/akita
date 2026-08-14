@@ -46,7 +46,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
 ) {
     let group = PolynomialGroupLayout::singleton(nv);
     let layout = resolve_layout::<F, Cfg>(group);
-    let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+    let plan = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
         .expect("schedule plan")
         .into_schedule();
     tracing::info!("{}", title);
@@ -83,7 +83,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     // `new_from_opening_batch`.
     let group = PolynomialGroupLayout::singleton(nv);
     let layout = resolve_layout::<FF, Cfg>(group);
-    let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+    let plan = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
         .expect("schedule plan")
         .into_schedule();
     tracing::info!("{}", title);
@@ -134,20 +134,21 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
                 "[{label}] fixed onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
             );
         }
-        let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+        let plan = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
             .expect("schedule plan")
             .into_schedule();
         print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
     } else {
         let lookup_key = AkitaScheduleLookupKey::single(group);
-        let plan = Cfg::select_schedule_for_key(&lookup_key)
+        let plan = Cfg::resolve_catalog_row_for_key(&lookup_key)
             .expect("schedule plan")
             .into_schedule();
-        let layout =
-            Cfg::select_schedule_for_opening(&lookup_key.opening_layout().expect("opening layout"))
-                .map(|row| row.schedule().root.params.final_group.commitment.clone())
-                .expect("layout");
+        let layout = Cfg::resolve_catalog_row_for_opening(
+            &lookup_key.opening_layout().expect("opening layout"),
+        )
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
         let required_vars = layout.position_index_bits()
             + layout.block_index_bits()
             + layout.d_a().trailing_zeros() as usize;
@@ -426,7 +427,7 @@ fn run_profile_onehot_fp128_with_cfg<
     assert_singleton_mode(label, num_polys);
 
     let group = PolynomialGroupLayout::new(nv, 1);
-    let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+    let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
         .into_schedule();
     let selected_dims = std::iter::once(schedule.root.params.final_group.commitment.role_dims())
@@ -621,7 +622,7 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
 fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupParams {
-    Cfg::select_schedule_for_opening(
+    Cfg::resolve_catalog_row_for_opening(
         &akita_types::OpeningClaimsLayout::from_root_groups(&[], group)
             .expect("singleton opening batch"),
     )

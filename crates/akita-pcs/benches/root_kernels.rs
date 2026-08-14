@@ -38,7 +38,7 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
 fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F>::from_field_evals(NV, D, &evals).expect("dense poly");
-    let layout = Cfg::select_schedule_for_opening(
+    let layout = Cfg::resolve_catalog_row_for_opening(
         &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
     )
     .expect("layout")

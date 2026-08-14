@@ -200,7 +200,7 @@ where
                 .iter()
                 .map(PolynomialGroupClaims::commitment),
         )?;
-        let selection = Cfg::select_schedule_for_profiles(&batch_profile)?.selection();
+        let selection = Cfg::resolve_catalog_row_for_profiles(&batch_profile)?.selection();
         let opening_data = ProverOpeningData::new(opening_claims, hints, polynomial_groups)?;
         Ok(Self {
             selection,
@@ -492,6 +492,26 @@ mod tests {
         Commitment::new(RingVec::from_coeffs(vec![F::zero(); 64]))
     }
 
+    fn synthetic_profile(
+        group: PolynomialGroupLayout,
+        params: &CommittedGroupParams,
+    ) -> CommittedGroupProfile {
+        CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group,
+            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+            num_positions_per_block: params.num_positions_per_block,
+            num_live_blocks: params.num_live_blocks,
+            outer_slice_count: params.outer_slice_count,
+            log_basis_inner: params.log_basis_inner,
+            num_digits_inner: params.num_digits_inner,
+            inner_commit_matrix: params.inner_commit_matrix,
+            log_basis_outer: params.log_basis_outer,
+            num_digits_outer: params.num_digits_outer,
+            outer_commit_matrix: params.outer_commit_matrix,
+        }
+    }
+
     fn multi_group_params() -> CommittedGroupParams {
         let pre_layout = PolynomialGroupLayout::new(2, 1);
         let mut pre = CommittedGroupParams::params_only(
@@ -542,7 +562,7 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
-            layout: CommittedGroupProfile::from_params(pre_layout, &pre),
+            layout: synthetic_profile(pre_layout, &pre),
             log_basis_open: pre.log_basis_open,
             fold_challenge_config: pre.fold_challenge_config,
             num_digits_open: pre.num_digits_open,

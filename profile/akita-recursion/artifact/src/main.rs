@@ -245,10 +245,10 @@ fn run() -> Result<(), String> {
 
     let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout: CommittedGroupParams =
-        <Cfg as CommitmentConfig>::select_schedule_for_opening(&opening_layout)
+        <Cfg as CommitmentConfig>::resolve_catalog_row_for_opening(&opening_layout)
             .map(|row| row.schedule().root.params.final_group.commitment.clone())
             .expect("layout");
-    let schedule = Cfg::select_schedule_for_opening(&opening_layout).expect("proof schedule");
+    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout).expect("proof schedule");
     let alpha_bits = D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and

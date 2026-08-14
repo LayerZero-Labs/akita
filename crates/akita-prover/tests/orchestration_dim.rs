@@ -16,17 +16,18 @@ fn batched_selection_preserves_typed_schedule_topology() {
     type Cfg = fp64::Dense;
     let nv = 14;
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv));
-    let expected = Cfg::select_schedule_for_key(&key).expect("runtime schedule");
+    let expected = Cfg::resolve_catalog_row_for_key(&key).expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params(
+        final_group: CommittedGroupProfile::try_from_params(
             key.final_group,
             &expected.schedule().root.params.final_group.commitment,
-        ),
+        )
+        .expect("valid profile"),
         precommitteds: Vec::new(),
     };
-    let selected = Cfg::select_schedule_for_profiles(&profiles).expect("selected schedule");
+    let selected = Cfg::resolve_catalog_row_for_profiles(&profiles).expect("selected schedule");
     let actual = effective_batched_schedule::<Cfg>(selected, &batch, &final_group_point)
         .expect("effective schedule");
     assert_eq!(
@@ -41,7 +42,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
 
 #[test]
 fn role_dispatch_rejects_wrong_inner_dimension() {
-    let schedule = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+    let schedule = fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(16),
     ))
     .expect("runtime schedule");
@@ -57,15 +58,15 @@ fn role_dispatch_rejects_wrong_inner_dimension() {
 
 #[test]
 fn real_presets_validate_against_setup_ring_dimension() {
-    let fp64_schedule = fp64::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+    let fp64_schedule = fp64::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp64 schedule");
     validate_schedule_ring_dims(fp64_schedule.schedule()).expect("adaptive fp64 schedule envelope");
 
-    let fp128_schedule = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(14),
-    ))
+    let fp128_schedule = fp128::Dense::resolve_catalog_row_for_key(
+        &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14)),
+    )
     .expect("fp128 schedule");
     validate_schedule_ring_dims(fp128_schedule.schedule()).expect("adaptive schedule envelope");
 }

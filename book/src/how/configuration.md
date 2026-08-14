@@ -53,7 +53,7 @@ owns shipped table data. The verifier-reachable proof-size formula.
 - Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-schedules/src/generated/`, and
-  `crates/akita-schedules/src/resolve.rs` (`select_generated_schedule_row`).
+  `crates/akita-schedules/src/resolve.rs` (`resolve_generated_catalog_row_for_key`).
 - `book/src/usage/profiling.md` and `.github/workflows/profile-bench.yml`.
 
 ### Selective L2 candidates

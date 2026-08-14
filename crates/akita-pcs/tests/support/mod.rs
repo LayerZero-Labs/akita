@@ -37,7 +37,7 @@ fn select_synthetic_schedule_row<C>(
 where
     C: CommitmentConfig + 'static,
 {
-    let row = C::select_schedule_for_key(&key)?;
+    let row = C::resolve_catalog_row_for_key(&key)?;
     if row.profiles() != profiles {
         return Err(AkitaError::InvalidSetup(
             "synthetic selected row does not match exact committed profiles".into(),
@@ -163,7 +163,7 @@ where
                 ) else {
                     continue;
                 };
-                let Ok(schedule) = Self::select_schedule_for_key(&AkitaScheduleLookupKey {
+                let Ok(schedule) = Self::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
                     final_group: PolynomialGroupLayout::new(max_num_vars, final_polys),
                     precommitteds: vec![precommitted],
                 }) else {
@@ -194,7 +194,7 @@ where
         Envelope::schedule_catalog()
     }
 
-    fn select_schedule_for_key(
+    fn resolve_catalog_row_for_key(
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         let (policy, ring_challenge_config) = if key.precommitteds.is_empty() {
@@ -221,10 +221,10 @@ where
         )?
         .schedule;
         let profiles = CommittedGroupBatchProfile {
-            final_group: CommittedGroupProfile::from_params(
+            final_group: CommittedGroupProfile::try_from_params(
                 key.final_group,
                 &schedule.root.params.final_group.commitment,
-            ),
+            )?,
             precommitteds: key.precommitteds.clone(),
         };
         let selection = OpeningScheduleSelection {
@@ -238,7 +238,7 @@ where
         )
     }
 
-    fn select_schedule_for_profiles(
+    fn resolve_catalog_row_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))

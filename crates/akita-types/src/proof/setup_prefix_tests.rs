@@ -275,7 +275,7 @@ fn precommitted_group(
     group: PolynomialGroupLayout,
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params(group, params),
+        layout: CommittedGroupProfile::from_params_unchecked_for_test(group, params),
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,

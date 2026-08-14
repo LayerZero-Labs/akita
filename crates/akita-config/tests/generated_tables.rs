@@ -110,14 +110,15 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
                 .into_iter()
                 .map(|group| {
                     let schedule =
-                        (family.select_schedule_for_key)(AkitaScheduleLookupKey::single(group))
+                        (family.resolve_catalog_row_for_key)(AkitaScheduleLookupKey::single(group))
                             .unwrap_or_else(|error| {
                                 panic!("{} S-row lookup failed: {error}", family.module_name)
                             });
-                    CommittedGroupProfile::from_params(
+                    CommittedGroupProfile::try_from_params(
                         group,
                         &schedule.root.params.final_group.commitment,
                     )
+                    .expect("valid generated profile")
                 })
         })
         .collect::<Vec<_>>();
@@ -436,7 +437,7 @@ fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     request: &GroupBatchCandidate,
 ) -> Result<FoldSchedule, AkitaError> {
-    (family.select_schedule_for_key)(request.0.clone())
+    (family.resolve_catalog_row_for_key)(request.0.clone())
 }
 
 #[cfg(feature = "all-schedules")]
@@ -549,7 +550,7 @@ fn compare_scalar_key(
     compare_schedule_results(
         family,
         key,
-        (family.select_schedule_for_key)(AkitaScheduleLookupKey::single(key)),
+        (family.resolve_catalog_row_for_key)(AkitaScheduleLookupKey::single(key)),
         regenerated,
     )
 }

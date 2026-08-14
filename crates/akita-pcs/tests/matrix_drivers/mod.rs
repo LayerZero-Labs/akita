@@ -43,9 +43,10 @@ where
         let schedule_key =
             AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule = RecursiveCommitmentConfig::<BaseCfg>::select_schedule_for_key(&schedule_key)
-            .expect("recursive direct schedule")
-            .into_schedule();
+        let schedule =
+            RecursiveCommitmentConfig::<BaseCfg>::resolve_catalog_row_for_key(&schedule_key)
+                .expect("recursive direct schedule")
+                .into_schedule();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive schedule must carry setup-prefix metadata"
@@ -217,7 +218,7 @@ where
 {
     for &nv in nv_values {
         let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-        let layout = Cfg::select_schedule_for_opening(&opening_batch)
+        let layout = Cfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("layout")
             .into_schedule()
             .root
@@ -343,7 +344,7 @@ where
         // The openings come from independent oracles, so the schedule is not
         // needed to project them. Keep the lookup as a structural check that
         // the combined key resolves to a real catalog row.
-        let schedule = Cfg::select_schedule_for_key(&schedule_key)
+        let schedule = Cfg::resolve_catalog_row_for_key(&schedule_key)
             .expect("schedule")
             .into_schedule();
         assert_eq!(
@@ -472,7 +473,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             final_group: PolynomialGroupLayout::new(final_nv, 1),
             precommitteds: vec![pre_commitment.profile],
         };
-        let schedule = Cfg::select_schedule_for_key(&schedule_key)
+        let schedule = Cfg::resolve_catalog_row_for_key(&schedule_key)
             .expect("schedule")
             .into_schedule();
         let final_group_params = multi_group_root_params(&schedule);

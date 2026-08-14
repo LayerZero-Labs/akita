@@ -2,7 +2,7 @@
 //! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
 //! Production selectors resolve a schedule row for a cataloged lookup key via
-//! [`CommitmentConfig::select_schedule_for_key`]. Runtime
+//! [`CommitmentConfig::resolve_catalog_row_for_key`]. Runtime
 //! resolution is strict: missing generated catalog rows reject instead of
 //! invoking planner search.
 
@@ -308,13 +308,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         None
     }
 
-    /// Select the exact generated row for `key`.
+    /// Resolve the exact generated catalog row for `key`.
     ///
     /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
     /// empty `precommitteds` vector. Grouped roots supply frozen precommit
     /// layouts in `precommitteds`.
     ///
-    /// Delegates to [`akita_schedules::select_generated_schedule_row`] with this
+    /// Delegates to [`akita_schedules::resolve_generated_catalog_row_for_key`] with this
     /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
     /// and expands the compact entry. A missing catalog row is unsupported.
     ///
@@ -322,11 +322,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Propagates expansion / SIS-bucket failures or unsupported catalog
     /// requests. Never panics — this is verifier-reachable.
-    fn select_schedule_for_key(
+    fn resolve_catalog_row_for_key(
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
         Self::validate_sis_modulus_profile()?;
-        akita_schedules::select_generated_schedule_row(
+        akita_schedules::resolve_generated_catalog_row_for_key(
             key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
@@ -334,20 +334,20 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Select the exact row without precommitted groups for an opening layout.
+    /// Resolve the exact row without precommitted groups for an opening layout.
     ///
     /// A layout carrying precommitted groups has no single row: grouped selection
     /// needs the exact committed descriptors, so it goes through
-    /// [`Self::select_schedule_for_key`] instead.
+    /// [`Self::resolve_catalog_row_for_key`] instead.
     ///
     /// # Errors
     ///
     /// Returns an error for a malformed or grouped layout, and propagates
     /// unsupported catalog requests.
-    fn select_schedule_for_opening(
+    fn resolve_catalog_row_for_opening(
         layout: &OpeningClaimsLayout,
     ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-        Self::select_schedule_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
+        Self::resolve_catalog_row_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
     }
 
     /// Frozen profile this config commits a group with when it has no precommitted groups.
@@ -365,21 +365,21 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         group: akita_types::PolynomialGroupLayout,
     ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
         let layout = OpeningClaimsLayout::from_groups(vec![group])?;
-        Ok(Self::select_schedule_for_opening(&layout)?
+        Ok(Self::resolve_catalog_row_for_opening(&layout)?
             .profiles()
             .final_group)
     }
 
-    /// Select the generated row accepted for exact committed profiles.
+    /// Resolve the generated row accepted for exact committed profiles.
     ///
     /// This is an honest-prover operation. Verification must instead resolve
     /// the explicit public selection through [`Self::resolve_schedule_selection`].
-    fn select_schedule_for_profiles(
+    fn resolve_catalog_row_for_profiles(
         profiles: &akita_types::CommittedGroupBatchProfile,
     ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
         Self::validate_sis_modulus_profile()?;
         profiles.validate(Self::decomposition().field_bits())?;
-        akita_schedules::select_generated_schedule_row_for_profiles(
+        akita_schedules::resolve_generated_catalog_row_for_profiles(
             &AkitaScheduleLookupKey {
                 final_group: profiles.final_group.group,
                 precommitteds: profiles.precommitteds.clone(),
@@ -616,7 +616,7 @@ mod fp128_policy_tests {
                     PolynomialGroupLayout::new(num_vars, 1)
                 }
             };
-            let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+            let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
                 .unwrap()
                 .into_schedule();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
@@ -682,11 +682,11 @@ mod fp128_policy_tests {
         let onehot_key = PolynomialGroupLayout::new(32, 1);
 
         let dense =
-            fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(dense_key))
+            fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(dense_key))
                 .expect("adaptive dense schedule")
                 .into_schedule();
         let onehot =
-            fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(onehot_key))
+            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(onehot_key))
                 .expect("adaptive onehot schedule")
                 .into_schedule();
 
@@ -698,9 +698,10 @@ mod fp128_policy_tests {
     fn fp128_adaptive_onehot_supports_batched_keys() {
         let key = PolynomialGroupLayout::new(30, 4);
 
-        let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
-            .expect("adaptive batched onehot schedule")
-            .into_schedule();
+        let schedule =
+            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key))
+                .expect("adaptive batched onehot schedule")
+                .into_schedule();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }

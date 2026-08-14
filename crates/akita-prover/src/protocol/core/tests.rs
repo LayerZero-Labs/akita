@@ -107,7 +107,7 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     let precommitted =
         OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
             .expect("independent profile");
-    let schedule = OneHot::select_schedule_for_key(&AkitaScheduleLookupKey {
+    let schedule = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     })

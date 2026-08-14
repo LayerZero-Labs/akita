@@ -82,7 +82,7 @@ where
             .map(|group| *group.commitment().profile())
             .collect(),
     };
-    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
+    let selection = C::resolve_catalog_row_for_profiles(&profiles)?.selection();
     GroupBatchStatement::new(selection, claims)
 }
 
@@ -137,7 +137,7 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
     let opening_batch = OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    C::select_schedule_for_opening(&opening_batch)
+    C::resolve_catalog_row_for_opening(&opening_batch)
         .expect("singleton commitment layout")
         .schedule()
         .root
@@ -246,7 +246,7 @@ fn expected_same_point_batched_shape(
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let schedule = OneHotCfg::select_schedule_for_opening(&opening_batch)
+    let schedule = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
         .expect("batched root runtime plan")
         .into_schedule();
     let root_step = &schedule.root;

@@ -53,10 +53,10 @@ The `ring_challenge_config` closure supplies the sparse challenge configuration 
 
 ## Resolution Flow
 
-Most runtime callers use `select_generated_schedule_row`, not the DP directly. Resolution is the strict table entry point:
+Most runtime callers use `resolve_generated_catalog_row_for_key`, not the DP directly. Resolution is the strict table entry point:
 
 1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
-2. If a catalog is supplied, `select_generated_schedule_row` validates its embedded identity against the runtime policy and hook closures.
+2. If a catalog is supplied, `resolve_generated_catalog_row_for_key` validates its embedded identity against the runtime policy and hook closures.
 3. If the validated table contains the lookup key, it expands the compact
    `GeneratedFoldScheduleEntry` with `schedule_from_entry`.
 4. If there is no catalog or no matching entry, the request is unsupported.
@@ -305,7 +305,7 @@ akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::select_schedule_for_key` to strict generated-row resolution. Runtime resolution never invokes planner search.
+`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::resolve_catalog_row_for_key` to strict generated-row resolution. Runtime resolution never invokes planner search.
 
 This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.
 

@@ -108,7 +108,7 @@ fn run_prove<
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let commitments = [commitment];
-        let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+        let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
             precommitteds: Vec::new(),
         })
@@ -158,7 +158,7 @@ fn run_prove<
     } else {
         let opening_batch = OpeningClaimsLayout::from_root_groups(&[], group_layout)
             .expect("same-point opening batch");
-        let schedule = Cfg::select_schedule_for_opening(&opening_batch)
+        let schedule = Cfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("runtime schedule")
             .into_schedule();
         if validate_against_planner {
@@ -208,7 +208,7 @@ fn run_prove<
     );
     let prepare = || {
         verifier_claims(
-            Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+            Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
                 final_group: *commitments[0].profile(),
                 precommitteds: Vec::new(),
             })

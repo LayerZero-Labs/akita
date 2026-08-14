@@ -120,7 +120,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )
         .unwrap();
         let commitments = [commitment];
-        let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+        let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
             precommitteds: Vec::new(),
         })
@@ -162,7 +162,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
-    let schedule = Cfg::select_schedule_for_opening(&opening_batch)
+    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .expect("batched schedule")
         .into_schedule();
     if let Some(plan) = plan {
@@ -231,7 +231,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     );
     let prepare = || {
         verifier_claims(
-            Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+            Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
                 final_group: *commitments[0].profile(),
                 precommitteds: Vec::new(),
             })

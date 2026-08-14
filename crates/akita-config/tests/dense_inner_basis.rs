@@ -25,7 +25,7 @@ struct Snapshot {
 }
 
 fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
-    let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+    let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(26),
     ))
     .expect("generated dense nv=26 schedule");

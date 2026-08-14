@@ -482,8 +482,11 @@ pub(crate) fn audit_resolved_schedule(
             "root cannot use an L2 A security route",
         ));
     }
-    if profiles.final_group
-        != akita_types::CommittedGroupProfile::from_params(profiles.final_group.group, final_params)
+    let expected_final_profile = akita_types::CommittedGroupProfile::try_from_params(
+        profiles.final_group.group,
+        final_params,
+    )?;
+    if profiles.final_group != expected_final_profile
         || profiles.precommitteds.len() != root.precommitted_groups.len()
         || root.open_commit_matrix != final_params.open_commit_matrix
         || final_params.precommitted_groups.len() != root.precommitted_groups.len()

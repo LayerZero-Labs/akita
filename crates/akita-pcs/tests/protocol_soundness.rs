@@ -43,7 +43,7 @@ const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
 fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    Cfg::select_schedule_for_opening(&opening_batch)
+    Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .map(|row| row.schedule().root.params.final_group.commitment.clone())
         .expect("singleton commitment layout")
 }
@@ -157,7 +157,7 @@ fn verify_input<'a, Cfg: CommitmentConfig>(
 fn selection_for<Cfg: CommitmentConfig>(
     commitment: &CommittedGroup<Cfg::Field>,
 ) -> OpeningScheduleSelection {
-    Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+    Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
         final_group: *commitment.profile(),
         precommitteds: Vec::new(),
     })
@@ -374,7 +374,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         const NV: usize = 20;
 
         let opening_batch = akita_types::OpeningClaimsLayout::new(NV, 2).expect("opening_batch");
-        let layout = Cfg::select_schedule_for_opening(&opening_batch)
+        let layout = Cfg::resolve_catalog_row_for_opening(&opening_batch)
             .map(|row| row.schedule().root.params.final_group.commitment.clone())
             .expect("layout");
         let root_d = layout.d_a();
@@ -491,10 +491,10 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 #[test]
 fn small_field_dense_uncataloged_roots_fail_fast() {
     for result in [
-        fp32::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
         )),
-        fp64::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        fp64::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),
         )),
     ] {
@@ -512,7 +512,7 @@ fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
         let nv = 4;
-        let err = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        let err = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
         ))
         .expect_err("tiny roots must not produce a degenerate proof schedule");
@@ -908,7 +908,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
 
         let layout = akita_batched_root_layout::<Cfg>(NV, 2).expect("layout");
         let root_d = layout.d_a();
-        let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        let plan = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(NV, 2),
         ))
         .expect("runtime schedule")

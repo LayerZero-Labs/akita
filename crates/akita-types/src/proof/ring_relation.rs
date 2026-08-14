@@ -742,7 +742,7 @@ mod tests {
         .expect("multi-group precommit params");
         certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
-            layout: CommittedGroupProfile::from_params(
+            layout: CommittedGroupProfile::from_params_unchecked_for_test(
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),

@@ -382,7 +382,14 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             entry.root.open_commit_matrix.ring_dimension as usize,
         );
         for group in entry.root.precommitted_groups {
-            collect_group_ring_dimensions(group.commitment, &mut dims);
+            push_unique(
+                &mut dims,
+                group.descriptor.inner_commit_matrix.ring_dimension(),
+            );
+            push_unique(
+                &mut dims,
+                group.descriptor.outer_commit_matrix.ring_dimension(),
+            );
         }
         for fold in entry.recursive_folds {
             collect_group_ring_dimensions(fold.witness, &mut dims);
@@ -558,7 +565,6 @@ fn entries_key_digest_with_setup_prefix_content_mode(
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
-            write_generated_group(&mut h, group.commitment);
             h.write_u64(u64::from(group.num_digits_fold));
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);

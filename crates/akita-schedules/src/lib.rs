@@ -18,8 +18,9 @@ pub use catalog_identity::{
 };
 pub use generated::*;
 pub use resolve::{
-    estimate_proof_bytes, resolve_generated_schedule_selection, schedule_from_entry,
-    select_generated_schedule_row, select_generated_schedule_row_for_profiles, ResolvedScheduleRow,
+    estimate_proof_bytes, resolve_generated_catalog_row_for_key,
+    resolve_generated_catalog_row_for_profiles, resolve_generated_schedule_selection,
+    schedule_from_entry, ResolvedScheduleRow,
 };
 pub use runtime::{
     default_sis_security_policy, validate_policy, PlannerCostModelId, PlannerPolicy,

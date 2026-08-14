@@ -179,7 +179,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     let layouts = setup_capacity_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
     let mut scan = SetupCapacityScan::new();
     for layout in &layouts {
-        let Ok(schedule) = Cfg::select_schedule_for_opening(layout) else {
+        let Ok(schedule) = Cfg::resolve_catalog_row_for_opening(layout) else {
             continue;
         };
         scan.observe_schedule(schedule.schedule())?;
@@ -218,7 +218,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 continue;
             }
-            scan.observe_schedule(Cfg::select_schedule_for_key(&key)?.schedule())?;
+            scan.observe_schedule(Cfg::resolve_catalog_row_for_key(&key)?.schedule())?;
         }
     }
 
@@ -230,7 +230,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
         max_num_vars,
         max_num_batched_polys,
     )? {
-        scan.observe_schedule(Cfg::select_schedule_for_key(&key)?.schedule())?;
+        scan.observe_schedule(Cfg::resolve_catalog_row_for_key(&key)?.schedule())?;
     }
 
     scan.finish(max_num_vars)

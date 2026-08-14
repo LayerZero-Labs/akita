@@ -45,7 +45,6 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
-    pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -591,7 +591,7 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn generated_schedule_excludes_prior_root_commitment() {
-        let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(32, 1),
         ))
         .expect("generated schedule")
@@ -641,7 +641,7 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn complete_execution_includes_the_root_commitment() {
-        let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(32, 1),
         ))
         .expect("generated schedule")
@@ -660,7 +660,7 @@ mod tests {
     #[test]
     #[cfg(feature = "schedules-default")]
     fn fp128_dense_prewarms_centered_quotient_tail() {
-        let schedule = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+        let schedule = fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(26),
         ))
         .expect("generated dense schedule")
@@ -693,7 +693,7 @@ mod tests {
             expects_i16_tail,
         ) in [
             (
-                fp32::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+                fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
                 ))
                 .expect("generated fp32 dense schedule")
@@ -704,7 +704,7 @@ mod tests {
                 false,
             ),
             (
-                fp64::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+                fp64::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
                     PolynomialGroupLayout::singleton(26),
                 ))
                 .expect("generated fp64 dense schedule")

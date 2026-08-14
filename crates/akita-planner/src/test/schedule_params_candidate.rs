@@ -3,6 +3,26 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
+fn synthetic_profile(
+    group: PolynomialGroupLayout,
+    params: &CommittedGroupParams,
+) -> CommittedGroupProfile {
+    CommittedGroupProfile {
+        version: CommittedGroupProfile::VERSION,
+        group,
+        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+        num_positions_per_block: params.num_positions_per_block,
+        num_live_blocks: params.num_live_blocks,
+        outer_slice_count: params.outer_slice_count,
+        log_basis_inner: params.log_basis_inner,
+        num_digits_inner: params.num_digits_inner,
+        inner_commit_matrix: params.inner_commit_matrix,
+        log_basis_outer: params.log_basis_outer,
+        num_digits_outer: params.num_digits_outer,
+        outer_commit_matrix: params.outer_commit_matrix,
+    }
+}
+
 fn grouped_level_params() -> CommittedGroupParams {
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let mut params = CommittedGroupParams::params_only(
@@ -28,7 +48,7 @@ fn grouped_level_params() -> CommittedGroupParams {
     .with_decomp(2, 2, 2, 2, 2)
     .expect("precommitted params");
     params.precommitted_groups = vec![PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params(PolynomialGroupLayout::new(6, 1), &precommitted),
+        layout: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
         log_basis_open: precommitted.log_basis_open,
         fold_challenge_config: precommitted.fold_challenge_config,
         num_digits_open: precommitted.num_digits_open,

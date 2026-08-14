@@ -18,7 +18,7 @@ fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
             PolynomialGroupLayout::new(num_vars, 1)
         }
     };
-    Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+    Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
         .expect("runtime schedule")
         .into_schedule()
 }
