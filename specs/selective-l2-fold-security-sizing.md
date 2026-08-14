@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao |
 | Created | 2026-08-06 |
-| Revised | 2026-08-12 |
+| Revised | 2026-08-14 |
 | Status | active |
 | PR | [#369](https://github.com/LayerZero-Labs/akita/pull/369) |
 | Supersedes | The physical A role embedding factor in `archive/2026-Q3/weak-binding-norm-fix.md` |
@@ -24,6 +24,12 @@ only the existing digit range statement. A selected L2 route also proves, or
 directly checks at the terminal boundary, a public squared norm cap. The
 verifier derives the selected route from the schedule. The prover cannot choose
 the route after seeing the witness.
+
+The planner runs only while Akita generates a catalog. Runtime code resolves a
+frozen row from that catalog. A committed group stores one checked
+`CommittedGroupProfile`, and that profile is the only source for its matrix
+geometry, decomposition, and slice count. The verifier resolves the public row
+digest and never runs planner search.
 
 The specification also explains the planner model that predicts honest
 responses. That model affects completeness, proof size, and prover work. It is
@@ -123,6 +129,7 @@ This specification covers the following changes.
 * A direct terminal check of the clear physical response norm.
 * Typed recursive response models for L2 caps and Linf digit depth.
 * Complete-suffix planner selection and generated schedule audit.
+* Checked committed profiles and strict runtime catalog resolution.
 * Exact proof-size and response-bound reporting.
 
 ### Supported families
@@ -983,6 +990,38 @@ The planner keeps Linf when any L2 prerequisite is absent. Common reasons are:
 The generated schedule freezes the result. Runtime proving and verification do
 not rerun the response model or lattice estimator.
 
+## Committed profiles and runtime catalog resolution
+
+The offline planner and the runtime resolver have separate jobs.
+
+The planner searches candidate folds and writes compact generated rows. Runtime
+code accepts only those rows. `CommitmentConfig::resolve_catalog_row_for_key`
+and `resolve_catalog_row_for_profiles` perform a strict catalog lookup and
+expand the selected row. They do not call the planner. The verifier uses
+`resolve_schedule_selection` with the public `OpeningScheduleSelection` digest.
+It performs a bounded digest lookup and does not reconstruct a planner key.
+
+`CommittedGroupProfile::try_from_params` is the checked construction boundary
+for frozen commitment metadata. It validates the root geometry, digit bases,
+digit depths, slice count, A and B widths, modulus profiles, matrix identities,
+and audited SIS bounds. Prover, verifier, planner emission, schedule expansion,
+and schedule audit use this checked constructor when they assemble a profile.
+
+`GeneratedRootPrecommittedGroup` stores only two values:
+
+* the checked `CommittedGroupProfile` descriptor;
+* the fold digit depth used when the grouped root opens that commitment.
+
+The generated row does not store a second copy of the commitment geometry.
+Catalog dimension collection and identity hashing read the descriptor directly.
+`PrecommittedLevelParams::admit` may derive the shared opening parameters for
+the current grouped root, but it cannot replace the descriptor's frozen A or B
+matrix, decomposition, or slice count. Precommitted A matrices remain Linf.
+
+This boundary gives runtime one source of truth. The catalog row selects the
+fold protocol, the committed profile fixes prior commitment geometry, and the
+public row digest selects the exact expanded schedule for verification.
+
 ## Euclidean SIS table
 
 The L2 route uses a separate 128-bit quantum ADPS16 table. It does not reuse the
@@ -1234,6 +1273,10 @@ ratio. It also does not show duplicate verifier-core wrapper timings.
 9. Headerless deserialization validates shape and allocation bounds before
    use.
 10. Verifier-reachable malformed input returns a typed error and never panics.
+11. A frozen committed profile is checked before it enters catalog, prover, or
+    verifier state.
+12. Runtime schedule resolution performs catalog lookup and expansion only. It
+    never invokes planner search.
 
 ### Completed acceptance criteria
 
@@ -1254,6 +1297,9 @@ ratio. It also does not show duplicate verifier-core wrapper timings.
       profile families.
 * [x] The planner prices complete suffixes and keeps Linf fallback behavior.
 * [x] Generated schedules replay against the current planner and table digests.
+* [x] Generated precommitted rows store one checked commitment descriptor and
+      do not duplicate its geometry.
+* [x] Runtime catalog APIs state their resolver role and reject missing rows.
 * [x] Proof-size accounting matches actual schedule-driven serialization.
 * [x] Transcript, cap, nonce, shape, and Stage 2 mutation tests reject.
 * [x] Production proofs cover direct, recursive, multi-group, multi-chunk,
@@ -1271,7 +1317,8 @@ ratio. It also does not show duplicate verifier-core wrapper timings.
 | Physical norm construction and Stage 1 and Stage 2 proving | `akita-prover` |
 | Challenge replay, integer reconstruction, and cap checks | `akita-verifier` |
 | Typed response moments and complete-suffix selection | `akita-planner` |
-| Frozen routes, table lookup, and schedule audit | `akita-schedules` |
+| Checked committed profiles and lookup keys | `akita-types::schedule` |
+| Frozen routes, catalog resolution, and schedule audit | `akita-schedules` |
 | Quantum ADPS16 Euclidean table generation | `akita-sis-estimator` |
 | Exact bytes, geometry, norms, and timing presentation | profile tooling |
 
@@ -1289,6 +1336,12 @@ source WitnessLayout
                                       +--> Stage 2 binds physical Z digits
 
 selected A rank --> T width --> next WitnessLayout --> next (M, P) --> suffix
+
+offline planner --> generated catalog row --> strict runtime resolver
+                                            |
+checked committed profiles -----------------+
+                                            |
+public row digest --> verifier lookup -------+
 ```
 
 ## Alternatives and deferred work
@@ -1386,11 +1439,13 @@ in the book.
 * Hachi, Lemma 7, for denominator clearing in weak binding.
 * `crates/akita-types/src/sis/norm_bound.rs`.
 * `crates/akita-types/src/sis/physical_l2.rs`.
+* `crates/akita-types/src/schedule/profiles.rs`.
 * `crates/akita-challenges/src/config.rs`.
 * `crates/akita-challenges/src/sampler/mod.rs`.
 * `crates/akita-planner/src/response_model.rs`.
 * `crates/akita-planner/src/schedule_params/candidate/recursive.rs`.
 * `crates/akita-planner/src/schedule_params/suffix_dp/terminal.rs`.
+* `crates/akita-schedules/src/resolve.rs`.
 * `crates/akita-sis-estimator/src/euclidean.rs`.
 * `crates/akita-sis-estimator/src/euclidean_width_table.rs`.
 * `scripts/operator_norm/`.
