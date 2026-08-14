@@ -109,6 +109,26 @@ AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   --features profile-onehot-fp128 --example profile
 ```
 
+## Response model calibration
+
+Normal profile builds do not scan complete witnesses to measure source and
+response energies. Broad tracing filters such as `trace` do not enable those
+scans.
+
+Enable the extra measurements only when collecting response model data:
+
+```bash
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
+  cargo run --release --no-default-features \
+  --features parallel,profile-onehot-fp128,response-model-diagnostics \
+  --example profile
+```
+
+This feature adds `fold_response_model` events to the trace. It also measures
+the exact energy of recursive source witnesses and response components. These
+operations can scan complete witness buffers, so traces from this mode do not
+measure normal prover performance.
+
 ## CI benchmark matrix
 
 Workflow: `.github/workflows/profile-bench.yml`.

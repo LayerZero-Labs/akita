@@ -44,12 +44,8 @@ where
         None
     }
 
-    /// Exact squared L2 norm when this source is already represented by
-    /// centered integer coefficients.
-    ///
-    /// This is diagnostic metadata for honest-response modeling. Root field
-    /// polynomials generally return `None`; recursive digit witnesses can
-    /// expose the exact quantity without converting field elements.
+    /// Exact squared L2 norm for response-model calibration builds.
+    #[cfg(feature = "response-model-diagnostics")]
     fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
         None
     }
@@ -582,6 +578,7 @@ where
         RootPolyMeta::onehot_chunk_size(*self)
     }
 
+    #[cfg(feature = "response-model-diagnostics")]
     fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
         RootPolyMeta::exact_integer_coeff_l2_sq(*self)
     }

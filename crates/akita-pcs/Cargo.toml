@@ -114,6 +114,7 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
 ]
+response-model-diagnostics = ["akita-prover/response-model-diagnostics"]
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }

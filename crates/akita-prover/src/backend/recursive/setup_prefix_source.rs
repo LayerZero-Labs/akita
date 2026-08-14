@@ -77,6 +77,7 @@ impl<F: FieldCore> RootPolyMeta<F> for RecursiveFoldSource<F> {
         }
     }
 
+    #[cfg(feature = "response-model-diagnostics")]
     fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
         match self {
             Self::SetupPrefix { .. } => None,

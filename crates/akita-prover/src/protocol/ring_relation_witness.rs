@@ -72,6 +72,7 @@ impl FoldChunkCoefficients {
         }
     }
 
+    #[cfg(feature = "response-model-diagnostics")]
     pub(crate) fn coefficient_count(&self, global: &[i32]) -> usize {
         match &self.storage {
             FoldChunkStorage::Single => global.len(),

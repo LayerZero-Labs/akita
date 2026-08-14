@@ -52,6 +52,21 @@ struct FoldGrindAcceptanceCtx {
     response_l2_sq_cap: Option<u128>,
 }
 
+#[inline]
+fn response_model_diagnostics_enabled() -> bool {
+    #[cfg(feature = "response-model-diagnostics")]
+    {
+        tracing::enabled!(
+            target: "akita_prover::protocol::fold_response_model",
+            tracing::Level::INFO
+        )
+    }
+    #[cfg(not(feature = "response-model-diagnostics"))]
+    {
+        false
+    }
+}
+
 fn fold_grind_acceptance_ctx(
     digit_negative_abs_bound: u128,
     digit_positive_bound: u128,
@@ -82,11 +97,7 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
     }) {
         return None;
     }
-    let measure_l2 = ctx.response_l2_sq_cap.is_some()
-        || tracing::enabled!(
-            target: "akita_prover::protocol::fold_response_model",
-            tracing::Level::INFO
-        );
+    let measure_l2 = ctx.response_l2_sq_cap.is_some() || response_model_diagnostics_enabled();
     if !measure_l2 {
         return Some(None);
     }
@@ -261,10 +272,8 @@ where
             "terminal grind preview did not match live transcript replay".into(),
         ));
     }
-    if tracing::enabled!(
-        target: "akita_prover::protocol::fold_response_model",
-        tracing::Level::INFO
-    ) {
+    #[cfg(feature = "response-model-diagnostics")]
+    if response_model_diagnostics_enabled() {
         let source_l2_sq = crate::compute::RootPolyMeta::exact_integer_coeff_l2_sq(poly);
         let conditional_mean_l2_sq =
             source_l2_sq.and_then(|energy| energy.checked_mul(sparse.challenge_l2_sq_max()));
@@ -495,37 +504,41 @@ where
                 response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
                 "selected physical fold response"
             );
-            if let Some(response_l2_sq) = *observed_l2_sq {
-                let source_l2_sq = group.group.exact_integer_coeff_l2_sq();
-                let conditional_mean_l2_sq = source_l2_sq
-                    .and_then(|energy| energy.checked_mul(challenge_config.challenge_l2_sq_max()));
-                tracing::info!(
-                    target: "akita_prover::protocol::fold_response_model",
-                    group_index = group.group_index,
-                    nonce,
-                    attempts = nonce + 1,
-                    ring_dimension = ring_d,
-                    num_polynomials = group.group.num_polynomials(),
-                    num_live_blocks = group.params.num_live_blocks(),
-                    num_positions_per_block = group.params.num_positions_per_block(),
-                    num_chunks = output.coefficients.num_chunks(),
-                    response_coeffs = output.coefficients.coefficient_count(
-                        output.witness.centered_coeffs_flat()
-                    ),
-                    log_basis_inner = group.params.log_basis_inner(),
-                    num_digits_inner = group.params.num_digits_inner(),
-                    log_basis_response = group.params.log_basis_open(),
-                    num_digits_response = group.params.num_digits_fold(),
-                    challenge_weight = challenge_config.weight(),
-                    challenge_l1 = challenge_config.l1_norm(),
-                    challenge_l2_sq = challenge_config.challenge_l2_sq_max(),
-                    challenge_linf = challenge_config.infinity_norm(),
-                    source_l2_sq = ?source_l2_sq,
-                    conditional_mean_l2_sq = ?conditional_mean_l2_sq,
-                    response_l2_sq,
-                    response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
-                    "fold response model sample"
-                );
+            #[cfg(feature = "response-model-diagnostics")]
+            if response_model_diagnostics_enabled() {
+                if let Some(response_l2_sq) = *observed_l2_sq {
+                    let source_l2_sq = group.group.exact_integer_coeff_l2_sq();
+                    let conditional_mean_l2_sq = source_l2_sq.and_then(|energy| {
+                        energy.checked_mul(challenge_config.challenge_l2_sq_max())
+                    });
+                    tracing::info!(
+                        target: "akita_prover::protocol::fold_response_model",
+                        group_index = group.group_index,
+                        nonce,
+                        attempts = nonce + 1,
+                        ring_dimension = ring_d,
+                        num_polynomials = group.group.num_polynomials(),
+                        num_live_blocks = group.params.num_live_blocks(),
+                        num_positions_per_block = group.params.num_positions_per_block(),
+                        num_chunks = output.coefficients.num_chunks(),
+                        response_coeffs = output.coefficients.coefficient_count(
+                            output.witness.centered_coeffs_flat()
+                        ),
+                        log_basis_inner = group.params.log_basis_inner(),
+                        num_digits_inner = group.params.num_digits_inner(),
+                        log_basis_response = group.params.log_basis_open(),
+                        num_digits_response = group.params.num_digits_fold(),
+                        challenge_weight = challenge_config.weight(),
+                        challenge_l1 = challenge_config.l1_norm(),
+                        challenge_l2_sq = challenge_config.challenge_l2_sq_max(),
+                        challenge_linf = challenge_config.infinity_norm(),
+                        source_l2_sq = ?source_l2_sq,
+                        conditional_mean_l2_sq = ?conditional_mean_l2_sq,
+                        response_l2_sq,
+                        response_l2_sq_cap = ?prepared_group.acceptance.response_l2_sq_cap,
+                        "fold response model sample"
+                    );
+                }
             }
         }
     }

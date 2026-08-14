@@ -83,6 +83,7 @@ fn emit_compression_witness<F: FieldCore>(
     Ok(())
 }
 
+#[cfg(feature = "response-model-diagnostics")]
 fn integer_slice_l2_sq(values: &[i8]) -> u128 {
     values.iter().fold(0u128, |sum, &value| {
         let magnitude = u128::from(value.unsigned_abs());
@@ -93,6 +94,7 @@ fn integer_slice_l2_sq(values: &[i8]) -> u128 {
     })
 }
 
+#[cfg(feature = "response-model-diagnostics")]
 fn trace_witness_source_moments(witness: &[i8], layout: &WitnessLayout, lp: &CommittedGroupParams) {
     if !tracing::enabled!(
         target: "akita_prover::protocol::fold_response_model",
@@ -520,6 +522,7 @@ where
             actual: out.len(),
         });
     }
+    #[cfg(feature = "response-model-diagnostics")]
     trace_witness_source_moments(&out, &witness_layout, lp);
 
     // Every segment of the generated witness is balanced, but grouped
