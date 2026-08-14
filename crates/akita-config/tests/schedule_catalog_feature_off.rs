@@ -17,7 +17,7 @@ fn schedule_catalog_none_without_feature_rejects() {
         "schedule feature disabled: schedule_catalog must be None"
     );
 
-    let key = PolynomialGroupLayout::new(32, 1);
+    let key = PolynomialGroupLayout::unit_one_hot(32, 1, 256);
 
     let err = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
         .expect_err("runtime schedule must reject without an enabled catalog");

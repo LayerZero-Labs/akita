@@ -260,6 +260,19 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
+        .group
+        .source()
+        .tag()
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .layout
+        .group
+        .source()
+        .onehot_chunk_size()
+        .unwrap_or(0)
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .layout
         .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
@@ -323,6 +336,19 @@ fn deserialize_precommitted_level_params<R: Read>(
     }
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let source_tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let source_chunk_size = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let group = match (source_tag, source_chunk_size) {
+        (0, 0) => PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
+        (1, chunk_size) if chunk_size != 0 => {
+            PolynomialGroupLayout::unit_one_hot(group_num_vars, group_num_polynomials, chunk_size)
+        }
+        _ => {
+            return Err(SerializationError::InvalidData(
+                "invalid setup-prefix root-source profile".into(),
+            ));
+        }
+    };
     let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_positions_per_block =
@@ -347,7 +373,7 @@ fn deserialize_precommitted_level_params<R: Read>(
     Ok(PrecommittedLevelParams {
         layout: CommittedGroupProfile {
             version,
-            group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
+            group,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -380,6 +406,14 @@ fn precommitted_level_params_serialized_size(
             .layout
             .group
             .num_polynomials()
+            .serialized_size(compress)
+        + params.layout.group.source().tag().serialized_size(compress)
+        + params
+            .layout
+            .group
+            .source()
+            .onehot_chunk_size()
+            .unwrap_or(0)
             .serialized_size(compress)
         + params
             .layout

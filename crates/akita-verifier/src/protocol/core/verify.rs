@@ -135,6 +135,7 @@ pub(crate) fn verify<F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: OpeningClaims<'_, E, &Commitment<F>>,
+    opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
@@ -165,6 +166,7 @@ where
         setup,
         transcript,
         &claims,
+        opening_batch,
         basis,
         &root_step.params.final_group.commitment,
         first_recursive_params.map(|step| &step.params),
@@ -240,7 +242,9 @@ where
     claims
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
-    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
+    let opening_batch = claims
+        .committed_layout()
+        .map_err(|_| AkitaError::InvalidProof)?;
     let (final_group, precommitteds) = claims
         .groups()
         .split_last()
@@ -363,10 +367,16 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
-    verify::<Cfg::Field, Cfg::ExtField, T>(proof, setup, transcript, raw_claims, basis, schedule)
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}"))
-        })
+    verify::<Cfg::Field, Cfg::ExtField, T>(
+        proof,
+        setup,
+        transcript,
+        raw_claims,
+        &opening_batch,
+        basis,
+        schedule,
+    )
+    .map_err(|error| AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}")))
 }
 
 #[cfg(test)]

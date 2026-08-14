@@ -245,7 +245,8 @@ fn expected_same_point_batched_shape(
     _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
-        akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
+        akita_types::OpeningClaimsLayout::unit_one_hot(max_num_vars, num_claims, BENCH_ONEHOT_K)
+            .expect("opening_batch");
     let schedule = OneHotCfg::select_schedule_for_opening(&opening_batch)
         .expect("batched root runtime plan")
         .into_schedule();

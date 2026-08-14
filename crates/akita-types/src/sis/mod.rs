@@ -32,6 +32,7 @@ mod generated_sis_table;
 pub mod honest_fold_policy;
 mod l2_table;
 pub mod norm_bound;
+mod onehot_source;
 mod physical_l2;
 
 pub use ajtai_key::{

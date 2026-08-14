@@ -44,9 +44,9 @@ const fn proof_optimized_inner_basis_range(
 }
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
-/// Smaller/nonstandard chunking is represented by a separately named preset
-/// or application polynomial representation; it is never inferred as a
-/// fallback.
+/// This is the convenience-constructor default, not a planner assumption.
+/// Every commitment group carries its exact K. Akita's built-in generated
+/// catalogs ship K=256 rows; downstream users may generate other exact K rows.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
     akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
 
@@ -274,9 +274,26 @@ fn setup_capacity_scan_layouts<Cfg: CommitmentConfig>(
 
     for main_num_vars in 1..=max_num_vars {
         for main_num_polys in 1..=max_num_batched_polys {
-            let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
-            push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
-            if supports_multi_group_root {
+            let main_groups = match Cfg::root_honest_fold_policy() {
+                akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+                    vec![PolynomialGroupLayout::new(main_num_vars, main_num_polys)]
+                }
+                akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
+                    vec![PolynomialGroupLayout::unit_one_hot(
+                        main_num_vars,
+                        main_num_polys,
+                        256,
+                    )]
+                }
+            };
+            for main_group in main_groups {
+                if main_group.validate().is_err() {
+                    continue;
+                }
+                push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
+                if !supports_multi_group_root {
+                    continue;
+                }
                 for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
                     for precommitted_num_polynomials in 1..=max_num_batched_polys {
                         let Some(precommitted_polynomials) =
@@ -292,8 +309,22 @@ fn setup_capacity_scan_layouts<Cfg: CommitmentConfig>(
                         if total_polynomials > max_num_batched_polys {
                             break;
                         }
-                        let precommitted_group =
-                            PolynomialGroupLayout::new(max_num_vars, precommitted_num_polynomials);
+                        let precommitted_group = match main_group.source() {
+                            akita_types::RootSourceProfile::Dense => PolynomialGroupLayout::new(
+                                max_num_vars,
+                                precommitted_num_polynomials,
+                            ),
+                            akita_types::RootSourceProfile::UnitOneHot { chunk_size } => {
+                                PolynomialGroupLayout::unit_one_hot(
+                                    max_num_vars,
+                                    precommitted_num_polynomials,
+                                    chunk_size,
+                                )
+                            }
+                        };
+                        if precommitted_group.validate().is_err() {
+                            continue;
+                        }
                         let precommitted_groups = vec![precommitted_group; num_precommitted];
                         push_layout(OpeningClaimsLayout::from_root_groups(
                             &precommitted_groups,
@@ -510,7 +541,7 @@ macro_rules! impl_proof_optimized_preset {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
                         akita_types::sis::UnitOneHotFoldPolicy::new(
                             $field_bits,
-                            legacy_witness,
+                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
                         ),
                     )
                 } else {
@@ -584,7 +615,7 @@ macro_rules! impl_proof_optimized_preset {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
                         akita_types::sis::UnitOneHotFoldPolicy::new(
                             $field_bits,
-                            legacy_witness,
+                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
                         ),
                     )
                 } else {

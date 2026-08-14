@@ -256,6 +256,15 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
             .serialize_with_mode(&mut writer, Compress::No)?;
         write_usize(&mut writer, profile.group.num_vars())?;
         write_usize(&mut writer, profile.group.num_polynomials())?;
+        profile
+            .group
+            .source()
+            .tag()
+            .serialize_with_mode(&mut writer, Compress::No)?;
+        write_usize(
+            &mut writer,
+            profile.group.source().onehot_chunk_size().unwrap_or(0),
+        )?;
         for value in [
             profile.num_live_ring_elements_per_claim,
             profile.num_positions_per_block,
@@ -319,6 +328,7 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
     fn serialized_size(&self, compress: Compress) -> usize {
         const MATRIX_SIZE: usize = 1 + 1 + 1 + 32 + 4 + 8 + 8 + 16;
         1 + 16
+            + 9
             + 32
             + 4
             + 8
@@ -403,6 +413,19 @@ where
         }
         let num_vars = read_usize(&mut reader)?;
         let num_polynomials = read_usize(&mut reader)?;
+        let source_tag = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let source_chunk_size = read_usize(&mut reader)?;
+        let group = match (source_tag, source_chunk_size) {
+            (0, 0) => PolynomialGroupLayout::new(num_vars, num_polynomials),
+            (1, chunk_size) if chunk_size != 0 => {
+                PolynomialGroupLayout::unit_one_hot(num_vars, num_polynomials, chunk_size)
+            }
+            _ => {
+                return Err(SerializationError::InvalidData(
+                    "invalid committed-group root-source profile".into(),
+                ));
+            }
+        };
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
@@ -441,7 +464,7 @@ where
 
         let descriptor = CommittedGroupProfile {
             version,
-            group: PolynomialGroupLayout::new(num_vars, num_polynomials),
+            group,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,

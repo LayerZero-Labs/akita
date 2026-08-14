@@ -71,10 +71,44 @@ fn bind_group_inputs<G, CommitF: FieldCore>(
         .collect())
 }
 
+fn opening_layout_for_groups<PointF: Clone, G, CommitF: FieldCore>(
+    opening_claims: &OpeningClaims<'_, PointF, Commitment<CommitF>>,
+    groups: &[G],
+) -> Result<OpeningClaimsLayout, AkitaError>
+where
+    G: RootProverGroupMeta<CommitF>,
+{
+    if opening_claims.num_groups() != groups.len() {
+        return Err(AkitaError::InvalidInput(
+            "opening claims and prover source groups are misaligned".into(),
+        ));
+    }
+    let layouts = groups
+        .iter()
+        .map(|group| {
+            let num_vars = group.num_vars()?;
+            Ok(match group.source_profile()? {
+                akita_types::RootSourceProfile::Dense => {
+                    PolynomialGroupLayout::new(num_vars, group.num_polynomials())
+                }
+                akita_types::RootSourceProfile::UnitOneHot { chunk_size } => {
+                    PolynomialGroupLayout::unit_one_hot(
+                        num_vars,
+                        group.num_polynomials(),
+                        chunk_size,
+                    )
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    OpeningClaimsLayout::from_groups(layouts)
+}
+
 /// Prover opening input: public claims plus ordered group-local prover material.
 #[derive(Debug, Clone)]
 pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: FieldCore> {
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
+    opening_layout: OpeningClaimsLayout,
     group_inputs: Vec<ProverGroupInput<G, CommitF>>,
 }
 
@@ -92,9 +126,11 @@ where
             .into_iter()
             .map(PreparedProverGroup::from_refs)
             .collect::<Result<Vec<_>, _>>()?;
+        let opening_layout = opening_layout_for_groups(&opening_claims, &groups)?;
         let group_inputs = bind_group_inputs(hints, groups)?;
         let data = Self {
             opening_claims,
+            opening_layout,
             group_inputs,
         };
         data.check_alignment()?;
@@ -107,10 +143,37 @@ where
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
+        let opening_layout = opening_claims.committed_layout()?;
         let groups = polynomials
             .into_iter()
             .map(PreparedProverGroup::from_refs)
             .collect::<Result<Vec<_>, _>>()?;
+        if opening_claims.num_groups() != groups.len() {
+            return Err(AkitaError::InvalidInput(
+                "committed claims and prover source groups are misaligned".into(),
+            ));
+        }
+        for (claims_group, source_group) in opening_claims.groups().iter().zip(&groups) {
+            let num_vars = source_group.num_vars()?;
+            let actual = match source_group.source_profile()? {
+                akita_types::RootSourceProfile::Dense => {
+                    PolynomialGroupLayout::new(num_vars, source_group.num_polynomials())
+                }
+                akita_types::RootSourceProfile::UnitOneHot { chunk_size } => {
+                    PolynomialGroupLayout::unit_one_hot(
+                        num_vars,
+                        source_group.num_polynomials(),
+                        chunk_size,
+                    )
+                }
+            };
+            if claims_group.commitment().profile().group != actual {
+                return Err(AkitaError::InvalidInput(
+                    "committed group root-source profile does not match the prover polynomials"
+                        .into(),
+                ));
+            }
+        }
         let raw_groups = opening_claims
             .groups()
             .iter()
@@ -125,6 +188,7 @@ where
         let group_inputs = bind_group_inputs(hints, groups)?;
         let data = Self {
             opening_claims: OpeningClaims::from_groups(raw_groups)?,
+            opening_layout,
             group_inputs,
         };
         data.check_alignment()?;
@@ -213,7 +277,6 @@ where
 
     /// Layout-only opening geometry derived from prover polynomials.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
-        let mut groups = Vec::with_capacity(self.group_inputs.len());
         for (group_index, input) in self.group_inputs.iter().enumerate() {
             let group = &input.group;
             let group_num_vars = group.num_vars()?;
@@ -224,12 +287,16 @@ where
                     actual: group_point.len(),
                 });
             }
-            groups.push(PolynomialGroupLayout::new(
-                group_num_vars,
-                group.num_polynomials(),
-            ));
+            let declared = self.opening_layout.group_layout(group_index)?;
+            if declared.num_vars() != group_num_vars
+                || declared.num_polynomials() != group.num_polynomials()
+            {
+                return Err(AkitaError::InvalidInput(
+                    "prover polynomial shape does not match the declared opening layout".into(),
+                ));
+            }
         }
-        OpeningClaimsLayout::from_groups(groups)
+        Ok(self.opening_layout.clone())
     }
 
     /// Borrow one prover hint.
@@ -336,6 +403,7 @@ where
         }
         let data = ProverOpeningData {
             opening_claims: self.opening_claims,
+            opening_layout: self.opening_layout,
             group_inputs: regrouped,
         };
         data.check_alignment()?;
@@ -564,6 +632,37 @@ mod tests {
                 actual: 2
             }
         ));
+    }
+
+    #[test]
+    fn regrouping_preserves_declared_onehot_source_identity() {
+        let pre_poly = MockPoly { num_vars: 2 };
+        let final_a = MockPoly { num_vars: 4 };
+        let final_b = MockPoly { num_vars: 4 };
+        let pre_refs = [&pre_poly];
+        let final_refs = [&final_a, &final_b];
+        let mut data = multi_group_data(&pre_refs, &final_refs);
+        data.opening_layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::unit_one_hot(2, 1, 4),
+            PolynomialGroupLayout::unit_one_hot(4, 2, 16),
+        ])
+        .expect("one-hot layout");
+
+        let replacements = [&pre_poly, &final_a, &final_b];
+        let regrouped = data
+            .regroup_polynomial_refs(&replacements)
+            .expect("regrouped prover data");
+
+        assert_eq!(
+            regrouped
+                .opening_layout()
+                .expect("preserved layout")
+                .groups(),
+            &[
+                PolynomialGroupLayout::unit_one_hot(2, 1, 4),
+                PolynomialGroupLayout::unit_one_hot(4, 2, 16),
+            ]
+        );
     }
 
     #[test]

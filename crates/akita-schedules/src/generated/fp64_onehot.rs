@@ -16,7 +16,7 @@ use super::{
 pub(crate) static FP64_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
-            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(28, 1), num_digits_inner: 1, num_digits_fold: 3,
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::unit_one_hot(28, 1, 256), num_digits_inner: 1, num_digits_fold: 3,
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1048576, positions_per_block: 4096, live_blocks: 256 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 256, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 256, log_basis: 3 }, outer_slice_count: 2 } },
             precommitted_groups: &[],
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 256, log_basis: 3 },
@@ -33,7 +33,7 @@ pub(crate) static FP64_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
-            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(30, 1), num_digits_inner: 1, num_digits_fold: 3,
+            final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::unit_one_hot(30, 1, 256), num_digits_inner: 1, num_digits_fold: 3,
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 4194304, positions_per_block: 8192, live_blocks: 512 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 256, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 256, log_basis: 3 }, outer_slice_count: 2 } },
             precommitted_groups: &[],
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 256, log_basis: 3 },
@@ -87,5 +87,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 16577217186669637934,
     key_count: 2,
-    key_digest: 2280862179012480038,
+    key_digest: 12463309318967605154,
 };

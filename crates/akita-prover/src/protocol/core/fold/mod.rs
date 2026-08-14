@@ -141,10 +141,7 @@ where
     // fold-evaluate its claim polynomials, and derive scalar openings before
     // leaving the typed dispatch arm. Typed fold outputs cross the boundary
     // only through D-free `PreparedOpeningPoint` / `RingVec` carriers.
-    let opening_batch = block_claims
-        .opening_claims()
-        .layout()
-        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
+    let opening_batch = trace_opening_batch.clone();
     let final_group_index = opening_batch.root_final_group_index()?;
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());

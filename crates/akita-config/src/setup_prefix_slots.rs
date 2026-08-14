@@ -157,11 +157,11 @@ mod tests {
     type SetupCfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
-        let pre = PolynomialGroupLayout::new(16, 1);
+        let pre = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
         let precommitted =
             fp128::OneHot::profile_without_precommitted_groups(pre).expect("independent profile");
         AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(32, 2),
+            final_group: PolynomialGroupLayout::unit_one_hot(32, 2, 256),
             precommitteds: vec![precommitted, precommitted],
         }
     }
@@ -193,10 +193,11 @@ mod tests {
 
     #[test]
     fn capacity_candidates_include_scalar_recursive_key() {
-        let scalar = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(36));
+        let scalar_k256 =
+            AkitaScheduleLookupKey::single(PolynomialGroupLayout::unit_one_hot(36, 1, 256));
         let candidates =
             recursive_group_batch_candidates_for_capacity::<SetupCfg>(36, 1).expect("candidates");
-        assert_eq!(candidates, vec![scalar]);
+        assert_eq!(candidates, vec![scalar_k256]);
 
         let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(36, 1).expect("slots");
         assert!(

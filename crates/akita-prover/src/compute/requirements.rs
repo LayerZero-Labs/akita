@@ -592,7 +592,7 @@ mod tests {
     #[cfg(feature = "schedules-default")]
     fn generated_schedule_excludes_prior_root_commitment() {
         let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(32),
+            PolynomialGroupLayout::unit_one_hot(32, 1, 256),
         ))
         .expect("generated schedule")
         .into_schedule();
@@ -642,7 +642,7 @@ mod tests {
     #[cfg(feature = "schedules-default")]
     fn complete_execution_includes_the_root_commitment() {
         let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(32),
+            PolynomialGroupLayout::unit_one_hot(32, 1, 256),
         ))
         .expect("generated schedule")
         .into_schedule();

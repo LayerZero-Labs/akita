@@ -364,7 +364,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn profile_without_precommitted_groups(
         group: akita_types::PolynomialGroupLayout,
     ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
-        let layout = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+        let layout = OpeningClaimsLayout::from_groups(vec![group])?;
         Ok(Self::select_schedule_for_opening(&layout)?
             .profiles()
             .final_group)
@@ -608,11 +608,17 @@ mod fp128_policy_tests {
         num_vars_values: &[usize],
     ) {
         for &num_vars in num_vars_values {
-            let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::singleton(num_vars),
-            ))
-            .unwrap()
-            .into_schedule();
+            let group = match Cfg::root_honest_fold_policy() {
+                akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+                    PolynomialGroupLayout::singleton(num_vars)
+                }
+                akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
+                    PolynomialGroupLayout::unit_one_hot(num_vars, 1, 256)
+                }
+            };
+            let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+                .unwrap()
+                .into_schedule();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }
@@ -672,14 +678,17 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_generated_singleton_plans_resolve() {
-        let key = PolynomialGroupLayout::singleton(32);
+        let dense_key = PolynomialGroupLayout::singleton(32);
+        let onehot_key = PolynomialGroupLayout::unit_one_hot(32, 1, 256);
 
-        let dense = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
-            .expect("adaptive dense schedule")
-            .into_schedule();
-        let onehot = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
-            .expect("adaptive onehot schedule")
-            .into_schedule();
+        let dense =
+            fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(dense_key))
+                .expect("adaptive dense schedule")
+                .into_schedule();
+        let onehot =
+            fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(onehot_key))
+                .expect("adaptive onehot schedule")
+                .into_schedule();
 
         assert_eq!(dense.initial_witness_len(), 1usize << 32);
         assert_eq!(onehot.initial_witness_len(), 1usize << 32);
@@ -687,7 +696,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_adaptive_onehot_supports_batched_keys() {
-        let key = PolynomialGroupLayout::new(30, 4);
+        let key = PolynomialGroupLayout::unit_one_hot(30, 4, 256);
 
         let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
             .expect("adaptive batched onehot schedule")
@@ -704,7 +713,7 @@ mod independent_commitment_tests {
 
     #[test]
     fn independent_profile_comes_from_the_scalar_row() {
-        let group = PolynomialGroupLayout::new(16, 1);
+        let group = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
         group.validate().expect("group layout");
         let profile =
             fp128::OneHot::profile_without_precommitted_groups(group).expect("independent profile");

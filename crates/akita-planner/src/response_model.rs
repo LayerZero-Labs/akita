@@ -568,24 +568,60 @@ pub(crate) fn root_group_source_moments(
         };
         let moment = match policy {
             HonestFoldPolicySpec::UnitOneHot(onehot) => {
-                let chunk = onehot.source_chunk_size();
-                if chunk == 0 || !logical_len.is_multiple_of(chunk) {
+                let chunk = group_layout.source().onehot_chunk_size().ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "unit one-hot response policy requires one-hot group metadata".into(),
+                    )
+                })?;
+                if !logical_len.is_multiple_of(chunk) {
                     return Err(AkitaError::InvalidSetup(
                         "unit one-hot root length must be a multiple of its source chunk size"
                             .into(),
                     ));
                 }
-                SourceMomentEstimate::from_moments((logical_len / chunk) as u128, MOMENT_PPM)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("unit one-hot root source is empty".into())
-                    })?
+                let (energy, full_peak, local_peak) = tensor_packed_moments(
+                    (logical_len / chunk) as u128,
+                    MOMENT_PPM,
+                    if akita_types::root_tensor_projection_enabled_for_width(
+                        onehot.extension_degree(),
+                        group_params.inner_commit_matrix_params().ring_dimension(),
+                        group_layout.num_vars(),
+                    ) {
+                        onehot.extension_degree()
+                    } else {
+                        1
+                    },
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unit one-hot root source is empty".into())
+                })?;
+                let mut components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
+                components[Z_COMPONENT] = SourceMomentComponent {
+                    mean_l2_sq: energy,
+                    full_ring_peak_second_moment_ppm: full_peak,
+                    local_peak_second_moment_ppm: local_peak,
+                };
+                SourceMomentEstimate::from_components(
+                    components,
+                    group_params.inner_commit_matrix_params().ring_dimension(),
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unit one-hot source moments overflow".into())
+                })?
             }
-            HonestFoldPolicySpec::BalancedSignedDigit(_) => bounded_field_source_moment(
-                logical_len,
-                field_bits,
-                group_params.log_basis_inner(),
-                group_params.num_digits_inner(),
-            )?,
+            HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+                if group_layout.source() != akita_types::RootSourceProfile::Dense {
+                    return Err(AkitaError::InvalidSetup(
+                        "balanced response policy requires dense group metadata".into(),
+                    ));
+                }
+                bounded_field_source_moment(
+                    logical_len,
+                    field_bits,
+                    group_params.log_basis_inner(),
+                    group_params.num_digits_inner(),
+                )?
+            }
         };
         moments.push(moment);
     }

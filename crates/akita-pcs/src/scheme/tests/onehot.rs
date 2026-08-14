@@ -5,7 +5,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
+    let key = akita_types::PolynomialGroupLayout::unit_one_hot(NV, GROUP_SIZE, BENCH_ONEHOT_K);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
     let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
@@ -93,8 +93,10 @@ fn profile_native_commit_group_allows_independent_groups() {
     // cover the largest standalone group rather than the sum of all groups.
     const SETUP_CAPACITY_SIZE: usize = PRE_B_SIZE;
 
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
+    let pre_a_key =
+        akita_types::PolynomialGroupLayout::unit_one_hot(NV, PRE_A_SIZE, BENCH_ONEHOT_K);
+    let pre_b_key =
+        akita_types::PolynomialGroupLayout::unit_one_hot(NV, PRE_B_SIZE, BENCH_ONEHOT_K);
     let pre_a_profile =
         OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
     let pre_b_profile =
@@ -154,9 +156,12 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const PRE_C_SIZE: usize = 1;
     const MAIN_SIZE: usize = 4;
 
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
-    let pre_c_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
+    let pre_a_key =
+        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, PRE_A_SIZE, BENCH_ONEHOT_K);
+    let pre_b_key =
+        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, PRE_B_SIZE, BENCH_ONEHOT_K);
+    let pre_c_key =
+        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, PRE_C_SIZE, BENCH_ONEHOT_K);
     let pre_a_frozen =
         OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
     let pre_b_frozen =
@@ -164,7 +169,11 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_c_frozen =
         OneHotCfg::profile_without_precommitted_groups(pre_c_key).expect("independent profile");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
+        final_group: akita_types::PolynomialGroupLayout::unit_one_hot(
+            FINAL_NV,
+            MAIN_SIZE,
+            BENCH_ONEHOT_K,
+        ),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
 
@@ -205,8 +214,10 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     const FINAL_SIZE: usize = 4;
     const SETUP_CAPACITY_SIZE: usize = FINAL_SIZE + 2 * GROUP_SIZE;
 
-    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
-    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
+    let pre_a_key =
+        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, GROUP_SIZE, BENCH_ONEHOT_K);
+    let pre_b_key =
+        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, GROUP_SIZE, BENCH_ONEHOT_K);
     let pre_a_frozen =
         OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
     let pre_b_frozen =
@@ -253,7 +264,11 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     )
     .expect("precommit B");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
+        final_group: akita_types::PolynomialGroupLayout::unit_one_hot(
+            FINAL_NV,
+            FINAL_SIZE,
+            BENCH_ONEHOT_K,
+        ),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
     assert!(multi_group_key
@@ -348,7 +363,7 @@ fn commit_group_returns_frozen_exact_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
+    let key = akita_types::PolynomialGroupLayout::unit_one_hot(NV, GROUP_SIZE, BENCH_ONEHOT_K);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
     let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
@@ -444,7 +459,11 @@ where
     let mut pre_layouts = Vec::new();
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
     for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
-        let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
+        let key = akita_types::PolynomialGroupLayout::unit_one_hot(
+            pre_num_vars,
+            num_polynomials,
+            BENCH_ONEHOT_K,
+        );
         let profile =
             ProtocolCfg::profile_without_precommitted_groups(key).expect("independent profile");
         let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..num_polynomials)
@@ -475,7 +494,11 @@ where
     }
 
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
+        final_group: akita_types::PolynomialGroupLayout::unit_one_hot(
+            final_num_vars,
+            final_size,
+            BENCH_ONEHOT_K,
+        ),
         precommitteds: pre_frozen,
     };
     let opening_layout = multi_group_key

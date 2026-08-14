@@ -140,6 +140,68 @@ fn set_outer_width(params: &mut CommittedGroupParams, input_width: usize) {
     );
 }
 
+#[derive(Clone)]
+struct SourceMeta {
+    num_vars: usize,
+    onehot_chunk_size: Option<usize>,
+}
+
+impl crate::compute::RootPolyMeta<F> for SourceMeta {
+    fn num_ring_elems(&self) -> usize {
+        1usize << self.num_vars
+    }
+
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        self.onehot_chunk_size
+    }
+}
+
+#[test]
+fn commit_input_layout_carries_exact_onehot_k_and_rejects_mixed_sources() {
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        12,
+        2,
+        SetupMatrixCapacity {
+            num_field_elements: D,
+        },
+    )
+    .unwrap()
+    .expanded;
+    let k16 = SourceMeta {
+        num_vars: 12,
+        onehot_chunk_size: Some(16),
+    };
+    let layout = prepare_commit_inputs(&[k16.clone(), k16.clone()], &setup).unwrap();
+    assert_eq!(
+        layout.root_final_group_layout().unwrap().source(),
+        akita_types::RootSourceProfile::UnitOneHot { chunk_size: 16 }
+    );
+
+    let k256 = SourceMeta {
+        onehot_chunk_size: Some(256),
+        ..k16
+    };
+    assert!(prepare_commit_inputs(&[k256.clone(), k256], &setup).is_ok());
+    assert!(prepare_commit_inputs(
+        &[
+            SourceMeta {
+                num_vars: 12,
+                onehot_chunk_size: Some(16),
+            },
+            SourceMeta {
+                num_vars: 12,
+                onehot_chunk_size: Some(256),
+            }
+        ],
+        &setup
+    )
+    .is_err());
+}
+
 #[test]
 fn commitment_request_binds_slice_count_and_exact_b_width() {
     let params = sliced_commit_params();

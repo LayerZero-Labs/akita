@@ -2,6 +2,12 @@ use super::*;
 #[cfg(feature = "catalog-gen")]
 use akita_types::extension_opening_reduction_level_bytes;
 
+const TEST_ONEHOT_K: usize = 256;
+
+fn onehot_group(num_vars: usize, num_polynomials: usize) -> PolynomialGroupLayout {
+    PolynomialGroupLayout::unit_one_hot(num_vars, num_polynomials, TEST_ONEHOT_K)
+}
+
 #[cfg(test)]
 fn find_schedule(
     key: PolynomialGroupLayout,
@@ -82,7 +88,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     ];
     let domain = RingDimensionSearchDomain::new(dimensions).unwrap();
     let policy = policy_for_domain(base_policy, &domain);
-    let key = PolynomialGroupLayout::singleton(16);
+    let key = onehot_group(16, 1);
     let selected = find_schedule(
         key,
         &policy,
@@ -160,7 +166,7 @@ fn terminal_candidates_compete_across_opening_bases() {
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
-        PolynomialGroupLayout::singleton(14),
+        onehot_group(14, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
         &dimensions,
@@ -197,7 +203,7 @@ fn adaptive_dimension_search_is_canonical() {
     let reversed_with_duplicate = RingDimensionSearchDomain::new([a128, d64, a128]).unwrap();
     let canonical = RingDimensionSearchDomain::new([d64, a128]).unwrap();
     let policy = policy_for_domain(base_policy, &canonical);
-    let key = PolynomialGroupLayout::singleton(16);
+    let key = onehot_group(16, 1);
 
     let selected = find_schedule(
         key,
@@ -232,7 +238,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
     let domain = RingDimensionSearchDomain::uniform(64).expect("test domain");
     let fp128_policy = policy_of::<fp128::OneHot>();
     let selected = find_schedule(
-        PolynomialGroupLayout::singleton(40),
+        onehot_group(40, 1),
         &fp128_policy,
         fp128::OneHot::root_honest_fold_policy(),
         &domain,
@@ -255,7 +261,7 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
     let mut base_policy = policy_of::<OneHot>();
     base_policy.uniform_ring_dimension = 64;
     let policy = policy_for_domain(base_policy, &domain);
-    let key = PolynomialGroupLayout::singleton(16);
+    let key = onehot_group(16, 1);
     let selected = find_schedule(
         key,
         &policy,
@@ -342,7 +348,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         let mut base_policy = policy_of::<OneHot>();
         base_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
         let policy = policy_for_domain(base_policy, &domain);
-        let key = PolynomialGroupLayout::singleton(14);
+        let key = onehot_group(14, 1);
         let selected = find_schedule(
             key,
             &policy,
@@ -409,7 +415,7 @@ fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
                 .expect("mixed dimension domain");
                 let policy = policy_for_domain(base_policy, &domain);
                 find_schedule(
-                    PolynomialGroupLayout::singleton(16),
+                    onehot_group(16, 1),
                     &policy,
                     OneHot::root_honest_fold_policy(),
                     &domain,
@@ -440,7 +446,7 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
     let domain =
         RingDimensionSearchDomain::new([candidate_dimensions]).expect("mixed dimension domain");
     policy = policy_for_domain(policy, &domain);
-    let key = PolynomialGroupLayout::singleton(16);
+    let key = onehot_group(16, 1);
     let selected = find_schedule(
         key,
         &policy,
@@ -512,7 +518,7 @@ fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
         RingDimensionSearchDomain::new([d64, unsupported_uniform_d512]).expect("mixed domain");
     let policy = policy_for_domain(base_policy, &domain);
     let error = find_schedule(
-        PolynomialGroupLayout::singleton(16),
+        onehot_group(16, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
         &domain,
@@ -544,7 +550,7 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
         .expect("benchmark dimension domain");
     let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(
-        PolynomialGroupLayout::singleton(36),
+        onehot_group(36, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
         &domain,
@@ -556,7 +562,7 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
     let mut comparison_policy = policy_for_domain(policy_of::<OneHot>(), &rank_one_capped_domain);
     comparison_policy.setup_field_budget = None;
     let rank_one_capped = find_schedule(
-        PolynomialGroupLayout::singleton(36),
+        onehot_group(36, 1),
         &comparison_policy,
         OneHot::root_honest_fold_policy(),
         &rank_one_capped_domain,
@@ -607,7 +613,7 @@ fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
     let missing_d64 = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(128)]).unwrap();
     let missing_policy = policy_for_domain(base_policy, &missing_d64);
     let error = find_schedule(
-        PolynomialGroupLayout::singleton(16),
+        onehot_group(16, 1),
         &missing_policy,
         OneHot::root_honest_fold_policy(),
         &missing_d64,
@@ -627,7 +633,7 @@ fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
     .unwrap();
     let below_policy = policy_for_domain(base_policy, &below_d64);
     let error = find_schedule(
-        PolynomialGroupLayout::singleton(16),
+        onehot_group(16, 1),
         &below_policy,
         OneHot::root_honest_fold_policy(),
         &below_d64,
@@ -652,7 +658,7 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
     .unwrap();
     policy = policy_for_domain(policy, &domain);
     let schedule = find_schedule(
-        PolynomialGroupLayout::singleton(16),
+        onehot_group(16, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
         &domain,
@@ -701,7 +707,7 @@ fn adaptive_search_validates_key_and_policy_at_entry() {
     let policy = policy_for_domain(base_policy, &domain);
 
     let error = find_schedule(
-        PolynomialGroupLayout::new(16, 0),
+        onehot_group(16, 0),
         &policy,
         OneHot::root_honest_fold_policy(),
         &domain,
@@ -715,7 +721,7 @@ fn adaptive_search_validates_key_and_policy_at_entry() {
     let mut invalid_policy = policy;
     invalid_policy.setup_field_budget = Some(0);
     let error = find_schedule(
-        PolynomialGroupLayout::singleton(16),
+        onehot_group(16, 1),
         &invalid_policy,
         OneHot::root_honest_fold_policy(),
         &domain,
@@ -761,7 +767,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     .unwrap();
     policy = policy_for_domain(policy, &domain);
     let selected = find_schedule(
-        PolynomialGroupLayout::singleton(16),
+        onehot_group(16, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
         &domain,
@@ -773,7 +779,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     policy.setup_field_budget = Some(exact_fields - 1);
 
     let error = find_schedule(
-        PolynomialGroupLayout::singleton(16),
+        onehot_group(16, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
         &domain,
@@ -795,7 +801,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     base_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(
-        PolynomialGroupLayout::singleton(32),
+        onehot_group(32, 1),
         &policy,
         OneHotMultiChunkW4R2::root_honest_fold_policy(),
         &domain,
@@ -805,10 +811,10 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
 
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
-        10_485_760
+        8_388_608
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        112_728
+        112_616
     );
 }

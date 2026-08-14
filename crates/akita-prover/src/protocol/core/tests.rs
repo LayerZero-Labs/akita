@@ -98,17 +98,18 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
 #[test]
 fn proof_schedule_from_layout_includes_entire_batch() {
     let batch = OpeningClaimsLayout::from_groups(vec![
-        PolynomialGroupLayout::new(16, 1),
-        PolynomialGroupLayout::new(16, 1),
-        PolynomialGroupLayout::new(32, 2),
+        PolynomialGroupLayout::unit_one_hot(16, 1, 256),
+        PolynomialGroupLayout::unit_one_hot(16, 1, 256),
+        PolynomialGroupLayout::unit_one_hot(32, 2, 256),
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let precommitted =
-        OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
-            .expect("independent profile");
+    let precommitted = OneHot::profile_without_precommitted_groups(
+        PolynomialGroupLayout::unit_one_hot(16, 1, 256),
+    )
+    .expect("independent profile");
     let schedule = OneHot::select_schedule_for_key(&AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(32, 2),
+        final_group: PolynomialGroupLayout::unit_one_hot(32, 2, 256),
         precommitteds: vec![precommitted, precommitted],
     })
     .expect("multi-group schedule")
@@ -116,6 +117,9 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     let root_params = schedule.root.params.final_group.commitment.clone();
     assert_eq!(root_params.precommitted_groups.len(), 2);
     for precommitted in &root_params.precommitted_groups {
-        assert_eq!(precommitted.layout.group, PolynomialGroupLayout::new(16, 1));
+        assert_eq!(
+            precommitted.layout.group,
+            PolynomialGroupLayout::unit_one_hot(16, 1, 256)
+        );
     }
 }

@@ -298,8 +298,23 @@ where
             num_vars, setup.seed.max_num_vars
         )));
     }
-
-    OpeningClaimsLayout::new(num_vars, polys.len())
+    let onehot_chunk_size = polys[0].onehot_chunk_size();
+    if polys
+        .iter()
+        .any(|poly| poly.onehot_chunk_size() != onehot_chunk_size)
+    {
+        return Err(AkitaError::InvalidInput(
+            "all polynomials in a commitment group must use the same root-source representation and one-hot chunk size"
+                .into(),
+        ));
+    }
+    let group = match onehot_chunk_size {
+        Some(chunk_size) => {
+            akita_types::PolynomialGroupLayout::unit_one_hot(num_vars, polys.len(), chunk_size)
+        }
+        None => akita_types::PolynomialGroupLayout::new(num_vars, polys.len()),
+    };
+    OpeningClaimsLayout::from_groups(vec![group])
 }
 
 #[cfg(test)]

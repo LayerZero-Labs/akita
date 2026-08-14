@@ -38,15 +38,14 @@ pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
     derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout, RootSourceProfile,
 };
-pub(crate) use batch::root_tensor_projection_enabled_for_width;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    SubfieldMultiplierOpeningPoint,
+    root_tensor_projection_enabled_for_width, validate_batched_inputs, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,

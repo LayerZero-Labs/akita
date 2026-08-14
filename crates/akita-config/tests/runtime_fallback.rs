@@ -464,19 +464,16 @@ fn committed_descriptor<Cfg: CommitmentConfig>(
 #[test]
 fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
     type Cfg = fp128::OneHot;
-    let onehot_16 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
+    let onehot_256 = committed_descriptor::<Cfg>(PolynomialGroupLayout::unit_one_hot(14, 1, 256));
     let dense = committed_descriptor::<fp128::Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(16, 1),
-        precommitteds: vec![onehot_16, dense],
+        final_group: PolynomialGroupLayout::unit_one_hot(16, 1, 256),
+        precommitteds: vec![onehot_256, dense],
     };
 
     let precommitted_honest_fold_policies = vec![
         akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::new(
-                Cfg::decomposition().field_bits(),
-                akita_types::sis::FoldWitnessNorms::new(1, 4),
-            ),
+            akita_types::sis::UnitOneHotFoldPolicy::new(Cfg::decomposition().field_bits(), 1),
         ),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
             akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
@@ -500,7 +497,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
 
     let reordered = AkitaScheduleLookupKey {
-        precommitteds: vec![dense, onehot_16],
+        precommitteds: vec![dense, onehot_256],
         ..key
     };
     assert_ne!(

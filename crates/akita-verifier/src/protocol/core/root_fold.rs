@@ -19,6 +19,7 @@ pub(super) fn verify_root<F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     next_fold_params: Option<&RecursiveFoldParams>,
@@ -59,7 +60,6 @@ where
         _ => return Err(AkitaError::InvalidProof),
     };
     let openings = claims.flat_evaluations();
-    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);

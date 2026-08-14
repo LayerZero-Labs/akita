@@ -20,6 +20,7 @@ pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
 pub(crate) trait RootProverGroupMeta<F: FieldCore> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
+    fn source_profile(&self) -> Result<akita_types::RootSourceProfile, AkitaError>;
     #[cfg(feature = "response-model-diagnostics")]
     fn exact_integer_coeff_l2_sq(&self) -> Option<u128>;
 }
@@ -109,6 +110,27 @@ where
             ));
         }
         Ok(num_vars)
+    }
+
+    fn source_profile(&self) -> Result<akita_types::RootSourceProfile, AkitaError> {
+        let first = self.polynomial_refs().first().ok_or_else(|| {
+            AkitaError::InvalidInput("prepared prover group must be nonempty".to_string())
+        })?;
+        let chunk_size = crate::compute::RootPolyMeta::onehot_chunk_size(*first);
+        if self
+            .polynomial_refs()
+            .iter()
+            .any(|poly| crate::compute::RootPolyMeta::onehot_chunk_size(*poly) != chunk_size)
+        {
+            return Err(AkitaError::InvalidInput(
+                "opening polynomial groups must have a uniform root-source representation and one-hot chunk size"
+                    .into(),
+            ));
+        }
+        Ok(match chunk_size {
+            Some(chunk_size) => akita_types::RootSourceProfile::UnitOneHot { chunk_size },
+            None => akita_types::RootSourceProfile::Dense,
+        })
     }
 
     #[cfg(feature = "response-model-diagnostics")]

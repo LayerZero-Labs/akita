@@ -39,7 +39,7 @@ pub struct CommittedGroupProfile {
 
 impl CommittedGroupProfile {
     /// Current committed-profile format.
-    pub const VERSION: u8 = 2;
+    pub const VERSION: u8 = 3;
 
     /// Build frozen group metadata from the concrete commit params.
     pub fn from_params(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
@@ -70,6 +70,8 @@ impl CommittedGroupProfile {
         bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
+        bytes.push(self.group.source().tag());
+        push_usize(bytes, self.group.source().onehot_chunk_size().unwrap_or(0));
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
@@ -278,6 +280,11 @@ impl AkitaScheduleLookupKey {
         let mut bytes = Vec::new();
         push_usize(&mut bytes, self.final_group.num_vars());
         push_usize(&mut bytes, self.final_group.num_polynomials());
+        bytes.push(self.final_group.source().tag());
+        push_usize(
+            &mut bytes,
+            self.final_group.source().onehot_chunk_size().unwrap_or(0),
+        );
         push_usize(&mut bytes, self.precommitteds.len());
         for descriptor in &self.precommitteds {
             descriptor.append_descriptor_bytes(&mut bytes);
