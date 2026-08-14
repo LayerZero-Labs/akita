@@ -1,8 +1,8 @@
 use super::*;
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeTensorBackendFor,
+    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
 };
 use crate::{RecursiveWitnessFlat, RootTensorProjectionPoly};
 use akita_field::unreduced::ReduceTo;
@@ -65,17 +65,22 @@ where
     T: Transcript<F> + ProverTranscriptGrind<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
     TS: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+    O: DigitRowsComputeBackend<F>
+        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+        + RuntimeCoefficientPackingBackendFor<F, RootTensorProjectionPoly<F>, E>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = claims.opening_layout()?;
     let opening_num_vars = opening_batch.max_num_vars();
+    let opening_method = super::fold::uniform_opening_method(root_params, &opening_batch)?;
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.role_dims().d_a();
     let alpha_bits = root_ring_d.trailing_zeros() as usize;
-    let needs_extension_reduction =
-        root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
+    let needs_extension_reduction = super::fold::extension_opening_reduction_enabled(
+        opening_method,
+        root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars),
+    );
 
     if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
@@ -154,6 +159,7 @@ where
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
     C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+        + RuntimeCoefficientPackingBackendFor<F, RootTensorProjectionPoly<F>, E>
         + DigitRowsComputeBackend<F>
         + ComputeBackendSetup<F>
         + 'stack,

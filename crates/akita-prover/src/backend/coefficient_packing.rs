@@ -130,6 +130,7 @@ mod tests {
         CpuBackend, RootTensorSource, SubringCoefficientPackingBatchKernel,
         SubringCoefficientPackingPlan,
     };
+    use crate::{RootTensorProjectionPoly, SparseRingPoly};
     use akita_algebra::CyclotomicRing;
     use akita_field::{
         CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt, Prime128OffsetA7F7,
@@ -327,6 +328,40 @@ mod tests {
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
         assert_eq!(dense_partials, onehot_partials);
+    }
+
+    #[test]
+    fn tensor_projection_dense_and_sparse_sources_pack_identically() {
+        let point = prepared_point();
+        let entries = vec![(0usize, 17usize, 1i8), (1, 255, -1)];
+        let sparse = SparseRingPoly::from_signed_coeffs(9, D, 2, entries.clone()).unwrap();
+        let dense = DensePoly::from_ring_coeffs(
+            (0..2)
+                .map(|position| {
+                    CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
+                        entries
+                            .iter()
+                            .filter(|(ring, index, _)| *ring == position && *index == coefficient)
+                            .map(|(_, _, value)| F::from_i8(*value))
+                            .fold(F::zero(), |sum, value| sum + value)
+                    }))
+                })
+                .collect(),
+        );
+        let dense_projection = RootTensorProjectionPoly::Dense(dense);
+        let sparse_projection = RootTensorProjectionPoly::Sparse(std::sync::Arc::new(sparse));
+        let refs = [&dense_projection, &sparse_projection];
+        let batch =
+            <RootTensorProjectionPoly<F> as RootTensorSource<F, D>>::tensor_batch(&refs).unwrap();
+        let packed = CpuBackend::DEFAULT
+            .coefficient_packing_partials_batch(
+                None,
+                batch,
+                SubringCoefficientPackingPlan { point: &point },
+            )
+            .unwrap();
+        assert_eq!(packed.len(), 2);
+        assert_eq!(packed[0], packed[1]);
     }
 
     #[test]

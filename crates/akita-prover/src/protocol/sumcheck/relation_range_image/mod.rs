@@ -268,6 +268,7 @@ mod lifecycle;
 mod round_flow;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
+pub(crate) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
 pub(crate) use evaluation_trace::{
     build_evaluation_trace_weights, PreparedProverLinearTerms, StructuredLinearSegment,
     StructuredLinearTerm, StructuredLinearWeights,

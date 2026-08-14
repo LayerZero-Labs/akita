@@ -2,9 +2,9 @@ use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
     prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    NttExecutionRequirements, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
-    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend,
+    NttExecutionRequirements, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use crate::SelectedProverOpeningData;
@@ -67,7 +67,15 @@ where
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
-        + SuffixOpeningProveBackend<Cfg::Field>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RootTensorProjectionPoly<Cfg::Field>,
+            Cfg::ExtField,
+        > + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
@@ -173,7 +181,15 @@ where
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
-        + SuffixOpeningProveBackend<Cfg::Field>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RootTensorProjectionPoly<Cfg::Field>,
+            Cfg::ExtField,
+        > + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>

@@ -13,8 +13,10 @@ use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, RootCommitSource, RootOpeningSource, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootCommitKernel, RootCommitSource, RootOpeningSource, RootTensorSource,
+    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -25,6 +27,72 @@ use crate::{
 use super::poly::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
 };
+
+impl<F, E, const D: usize, I>
+    SubringCoefficientPackingBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F>,
+    I: OneHotIndex,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: MultilinearPolynomialBatchView<'_, F, D, I>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        if let Some(dense_polys) = source.homogeneous_dense_polys() {
+            let view = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_polys)?;
+            return SubringCoefficientPackingBatchKernel::<
+                DenseBatchView<'_, F, D>,
+                F,
+                E,
+                D,
+            >::coefficient_packing_partials_batch(self, prepared, view, plan);
+        }
+        if let Some(onehot_polys) = source.homogeneous_onehot_polys() {
+            let view = <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_batch(&onehot_polys)?;
+            return SubringCoefficientPackingBatchKernel::<
+                OneHotBatchView<'_, F, D, I>,
+                F,
+                E,
+                D,
+            >::coefficient_packing_partials_batch(self, prepared, view, plan);
+        }
+        let mut outputs = Vec::with_capacity(source.polys().len());
+        for poly in source.polys() {
+            match poly {
+                MultilinearPolynomial::Dense(poly) => {
+                    let polys = [poly];
+                    let view = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&polys)?;
+                    outputs.extend(SubringCoefficientPackingBatchKernel::<
+                        DenseBatchView<'_, F, D>,
+                        F,
+                        E,
+                        D,
+                    >::coefficient_packing_partials_batch(
+                        self, prepared, view, plan
+                    )?);
+                }
+                MultilinearPolynomial::OneHot(poly) => {
+                    let polys = [poly];
+                    let view =
+                        <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_batch(&polys)?;
+                    outputs.extend(SubringCoefficientPackingBatchKernel::<
+                        OneHotBatchView<'_, F, D, I>,
+                        F,
+                        E,
+                        D,
+                    >::coefficient_packing_partials_batch(
+                        self, prepared, view, plan
+                    )?);
+                }
+            }
+        }
+        Ok(outputs)
+    }
+}
 
 impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend

@@ -2,7 +2,8 @@ use super::super::*;
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -47,7 +48,9 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
     TS: ComputeBackendSetup<F>,
     C: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+    O: DigitRowsComputeBackend<F>
+        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+        + RuntimeCoefficientPackingBackendFor<F, RootTensorProjectionPoly<F>, E>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = block_claims

@@ -440,3 +440,119 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         .is_err()
     );
 }
+
+#[test]
+fn recursive_packing_phases_share_one_relation_authority() {
+    use crate::compute::{
+        CpuBackend, RootOpeningSource, SubringCoefficientPackingBatchKernel,
+        SubringCoefficientPackingPlan,
+    };
+    use crate::protocol::coefficient_packing::{
+        fold_coefficient_packing_group, materialize_coefficient_packing_d_input,
+    };
+    use crate::protocol::ring_relation::{
+        validate_prepared_relation_groups, PreparedRelationGroup,
+    };
+    use crate::RecursiveWitnessFlat;
+    use akita_types::{coefficient_packing_scalar_opening, RingRelationGroupOpeningView};
+
+    let fixture = fixture();
+    let point = &fixture.prepared_point;
+    let sources = (0..2)
+        .map(|claim| {
+            RecursiveWitnessFlat::from_i8_digits(
+                (0..point.num_live_positions() * point.geometry().a_ring_dimension())
+                    .map(|index| ((claim * 7 + index) % 5) as i8 - 2)
+                    .collect(),
+            )
+            .align_for_commitment_ring_dim(point.geometry().a_ring_dimension())
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let source_refs = sources.iter().collect::<Vec<_>>();
+    let batch =
+        <RecursiveWitnessFlat as RootOpeningSource<F, 256>>::opening_batch(&source_refs).unwrap();
+    let partials = CpuBackend::DEFAULT
+        .coefficient_packing_partials_batch(None, batch, SubringCoefficientPackingPlan { point })
+        .unwrap();
+    let d_input = materialize_coefficient_packing_d_input::<F, 128>(
+        &fixture.params,
+        &fixture.opening_batch,
+        fixture.relation_plan.relation_witness_geometry(),
+        0,
+        &partials,
+    )
+    .unwrap();
+    assert_eq!(
+        d_input.block_count(),
+        2 * point.num_live_blocks() * (point.geometry().partial_base_field_width() / 128),
+    );
+    assert!(d_input
+        .block_sizes()
+        .iter()
+        .all(|&planes| planes == fixture.params.num_digits_open));
+
+    let RingRelationGroupOpeningView::SubringCoefficientPacking {
+        geometry,
+        canonical_subring_challenges,
+        ..
+    } = fixture.relation.group_opening_view(0).unwrap()
+    else {
+        panic!("packing fixture changed method");
+    };
+    let product =
+        fold_coefficient_packing_group(geometry, &partials, canonical_subring_challenges).unwrap();
+    assert_eq!(product.geometry(), geometry);
+    assert_eq!(
+        product.reduced_base_field_coordinates().len(),
+        geometry.partial_base_field_width(),
+    );
+    assert_eq!(
+        product.quotient_high_half_base_field_coordinates().len(),
+        product.reduced_base_field_coordinates().len(),
+    );
+
+    let scalar_openings = partials
+        .iter()
+        .map(|partial| {
+            coefficient_packing_scalar_opening::<F, E>(
+                geometry,
+                point.num_live_blocks(),
+                std::slice::from_ref(partial),
+                &[E::one()],
+                point.live_block_weights(),
+                point.tail_weights(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let relation_groups = vec![PreparedRelationGroup::coefficient_packing_for_test(
+        point.clone(),
+        scalar_openings.clone(),
+    )];
+    validate_prepared_relation_groups(
+        &relation_groups,
+        &fixture.params,
+        &fixture.opening_batch,
+        &fixture.relation,
+    )
+    .unwrap();
+
+    let semantics = &fixture.batch.groups()[0];
+    let authenticated_opening = scalar_openings
+        .iter()
+        .zip(&fixture.claim_coefficients)
+        .fold(E::zero(), |sum, (&opening, &coefficient)| {
+            sum + opening * coefficient
+        });
+    let prepared =
+        prepare_coefficient_packing_linear_terms(semantics, authenticated_opening).unwrap();
+    assert_eq!(
+        prepared.linear_terms.materialize_dense(),
+        materialize_shared(semantics),
+    );
+    assert_eq!(
+        prepared.weighted_scalar_opening_claim,
+        semantics.stage2_terms().scalar_claim_weight() * authenticated_opening,
+    );
+}

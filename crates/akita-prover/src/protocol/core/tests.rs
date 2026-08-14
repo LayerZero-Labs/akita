@@ -9,6 +9,24 @@ type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
 
 #[test]
+fn coefficient_packing_bypasses_root_and_recursive_eor() {
+    let packing = akita_types::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    assert!(!super::fold::extension_opening_reduction_enabled(
+        packing, true
+    ));
+    assert!(!super::fold::extension_opening_reduction_enabled(
+        packing,
+        <E as ExtField<F>>::EXT_DEGREE > 1,
+    ));
+    assert!(super::fold::extension_opening_reduction_enabled(
+        akita_types::OpeningMethod::EvaluationTrace,
+        true,
+    ));
+}
+
+#[test]
 fn recursive_extension_opening_reduction_pads_to_opening_cube() {
     let mut digits = vec![0; 3 * 64];
     digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);

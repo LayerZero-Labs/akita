@@ -24,7 +24,11 @@ use akita_types::{assemble_compressed_relation_rhs, assemble_relation_rhs, RingV
 use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{CommittedGroupParams, RingRelationGroupOpening, RingRelationInstance};
 
-use super::coefficient_packing::concatenate_group_d_inputs;
+use super::coefficient_packing::{
+    concatenate_group_d_inputs, fold_coefficient_packing_group,
+    materialize_coefficient_packing_d_input,
+};
+use super::core::PreparedGroupOpening;
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::backend::RingSwitchRelationView;
@@ -38,9 +42,143 @@ pub(crate) use compression_witness::{
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 
-struct GroupOpeningMaterial<F: FieldCore> {
-    e_hat: DigitBlocks,
-    e_folded: RingVec<F>,
+enum GroupOpeningMaterial<F: FieldCore> {
+    EvaluationTrace {
+        e_hat: DigitBlocks,
+        e_folded: RingVec<F>,
+        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
+    },
+    SubringCoefficientPacking {
+        e_hat: DigitBlocks,
+        partials_by_claim: Vec<crate::compute::SubringCoefficientPackingPartials<F>>,
+    },
+}
+
+enum PreparedRelationGroupKind<F: FieldCore, E: FieldCore> {
+    EvaluationTrace(akita_types::PreparedOpeningPoint<F, E>),
+    SubringCoefficientPacking(akita_types::PreparedSubringCoefficientPackingPoint<E>),
+}
+
+/// Method-typed Stage 2 authority retained from the exact source preparation
+/// that also produced this group's relation witness.
+pub(crate) struct PreparedRelationGroup<F: FieldCore, E: FieldCore> {
+    kind: PreparedRelationGroupKind<F, E>,
+    scalar_openings: Vec<E>,
+}
+
+pub(crate) struct PreparedRingRelation<F: FieldCore, E: FieldCore> {
+    pub(crate) instance: RingRelationInstance<F>,
+    pub(crate) witness: RingRelationWitness<F>,
+    pub(crate) groups: Vec<PreparedRelationGroup<F, E>>,
+}
+
+impl<F: FieldCore, E: FieldCore> PreparedRelationGroup<F, E> {
+    #[cfg(test)]
+    pub(crate) fn coefficient_packing_for_test(
+        point: akita_types::PreparedSubringCoefficientPackingPoint<E>,
+        scalar_openings: Vec<E>,
+    ) -> Self {
+        Self {
+            kind: PreparedRelationGroupKind::SubringCoefficientPacking(point),
+            scalar_openings,
+        }
+    }
+
+    pub(crate) fn evaluation_trace_point(
+        &self,
+    ) -> Option<&akita_types::PreparedOpeningPoint<F, E>> {
+        match &self.kind {
+            PreparedRelationGroupKind::EvaluationTrace(point) => Some(point),
+            PreparedRelationGroupKind::SubringCoefficientPacking(_) => None,
+        }
+    }
+
+    pub(crate) fn coefficient_packing_point(
+        &self,
+    ) -> Option<&akita_types::PreparedSubringCoefficientPackingPoint<E>> {
+        match &self.kind {
+            PreparedRelationGroupKind::EvaluationTrace(_) => None,
+            PreparedRelationGroupKind::SubringCoefficientPacking(point) => Some(point),
+        }
+    }
+
+    pub(crate) fn scalar_openings(&self) -> &[E] {
+        &self.scalar_openings
+    }
+}
+
+pub(crate) fn validate_prepared_relation_groups<F, E>(
+    groups: &[PreparedRelationGroup<F, E>],
+    level_params: &CommittedGroupParams,
+    opening_batch: &akita_types::OpeningClaimsLayout,
+    relation: &RingRelationInstance<F>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: akita_types::FpExtEncoding<F>,
+{
+    if groups.len() != opening_batch.num_groups()
+        || relation.opening_batch() != opening_batch
+        || relation.group_openings().len() != groups.len()
+        || relation.extension_degree() != E::EXT_DEGREE
+    {
+        return Err(AkitaError::InvalidSetup(
+            "prepared Stage 2 groups disagree with the relation batch".into(),
+        ));
+    }
+    let geometry = akita_types::RelationWitnessGeometry::for_level(
+        level_params,
+        opening_batch,
+        E::EXT_DEGREE,
+    )?;
+    for (group_index, group) in groups.iter().enumerate() {
+        let layout = opening_batch.group_layout(group_index)?;
+        let group_params = level_params.group_params_geometry(opening_batch, group_index)?;
+        if group.scalar_openings.len() != layout.num_polynomials() {
+            return Err(AkitaError::InvalidSize {
+                expected: layout.num_polynomials(),
+                actual: group.scalar_openings.len(),
+            });
+        }
+        match (
+            geometry.group_opening_method(group_index)?,
+            &group.kind,
+            relation.group_openings()[group_index].coefficient_packing_geometry(),
+        ) {
+            (
+                akita_types::OpeningMethod::EvaluationTrace,
+                PreparedRelationGroupKind::EvaluationTrace(point),
+                None,
+            ) if relation.group_ring_multiplier_point(group_index)?
+                == &point.ring_multiplier_point => {}
+            (
+                akita_types::OpeningMethod::SubringCoefficientPacking { .. },
+                PreparedRelationGroupKind::SubringCoefficientPacking(point),
+                Some(relation_geometry),
+            ) if relation_geometry == point.geometry()
+                && point.source_num_vars() == layout.num_vars()
+                && point.num_live_positions()
+                    == group_params.num_live_ring_elements_per_claim()
+                && point.num_positions_per_block() == group_params.num_positions_per_block()
+                && point.num_live_blocks() == group_params.num_live_blocks() => {}
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "prepared Stage 2 group method or point disagrees with its relation".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+impl<F: FieldCore> GroupOpeningMaterial<F> {
+    fn e_hat(&self) -> &DigitBlocks {
+        match self {
+            Self::EvaluationTrace { e_hat, .. } | Self::SubringCoefficientPacking { e_hat, .. } => {
+                e_hat
+            }
+        }
+    }
 }
 
 fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
@@ -328,16 +466,15 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
-    pub fn new<'a, F, PointF, T, P, OB, RB>(
+    pub(crate) fn new<'a, F, PointF, T, P, OB, RB>(
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
-        group_ring_multiplier_points: impl IntoRingMultiplierOpeningPointVec<F>,
+        prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
         block_claims: ProverOpeningData<'a, PointF, P, F>,
-        pre_folded_e_by_poly: Vec<RingVec<F>>,
         lp: CommittedGroupParams,
         transcript: &mut T,
         row_coefficient_rings: RingVec<F>,
-    ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
+    ) -> Result<PreparedRingRelation<F, PointF>, AkitaError>
     where
         F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + HasWide + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -356,21 +493,20 @@ impl RingRelationProver {
         let dims = lp.role_dims();
         let opening_batch = block_claims.opening_layout()?;
         let num_groups = block_claims.opening_claims().num_groups();
-        let group_ring_multiplier_points = group_ring_multiplier_points.into_vec();
-        if group_ring_multiplier_points.len() != num_groups {
+        if prepared_group_openings.len() != num_groups {
             return Err(AkitaError::InvalidInput(
-                "ring relation prover group point count mismatch".to_string(),
+                "ring relation prover prepared group count mismatch".to_string(),
             ));
         }
         let mut hints = Vec::with_capacity(num_groups);
         for group_index in 0..num_groups {
             hints.push(block_claims.group_hint(group_index)?.clone());
         }
-        let relation_geometry =
-            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
-                &lp,
-                &opening_batch,
-            )?;
+        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+            &lp,
+            &opening_batch,
+            PointF::EXT_DEGREE,
+        )?;
         let relation_rhs_layout = relation_geometry.rhs_layout();
         // Compressed commitments contain terminal F payloads, whose complete
         // B images are recovered from the retained first-map digits. Raw
@@ -405,10 +541,11 @@ impl RingRelationProver {
                 commitment_row_coeffs.extend(source);
                 group_payloads.push(group_commitment.rows().coeffs().to_vec());
             } else {
-                let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
+                let group_dims = lp.group_role_dims_geometry(&opening_batch, group_index)?;
+                let group_lp = lp.group_params_geometry(&opening_batch, group_index)?;
                 if !group_commitment.rows().can_decode_vec(group_dims.d_b())
                     || group_commitment.rows().coeff_len() / group_dims.d_b()
-                        != lp.group_commitment_rows(&opening_batch, group_index)?
+                        != group_lp.logical_b_rows_len()?
                 {
                     return Err(AkitaError::InvalidInput(
                         "batched prover received a malformed raw commitment".to_string(),
@@ -418,26 +555,37 @@ impl RingRelationProver {
             }
         }
         let commitment_rows = RingVec::from_coeffs(commitment_row_coeffs);
-        for (group_index, ring_multiplier_point) in group_ring_multiplier_points.iter().enumerate()
-        {
-            let group_lp = lp.group_params(&opening_batch, group_index)?;
-            if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
-                || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover ring-multiplier opening-point layout mismatch".to_string(),
-                ));
+        for (group_index, prepared) in prepared_group_openings.iter().enumerate() {
+            let group_lp = lp.group_params_geometry(&opening_batch, group_index)?;
+            match prepared {
+                PreparedGroupOpening::EvaluationTrace { point, .. } => {
+                    if group_lp.opening_method() != akita_types::OpeningMethod::EvaluationTrace
+                        || point.ring_multiplier_point.position_len()
+                            != group_lp.num_positions_per_block()
+                        || point.ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
+                    {
+                        return Err(AkitaError::InvalidInput(
+                            "batched prover EvaluationTrace point layout mismatch".to_string(),
+                        ));
+                    }
+                }
+                PreparedGroupOpening::SubringCoefficientPacking { point, .. } => {
+                    if point.num_positions_per_block() != group_lp.num_positions_per_block()
+                        || point.num_live_blocks() != group_lp.num_live_blocks()
+                        || relation_geometry.group_opening_method(group_index)?
+                            != group_lp.opening_method()
+                    {
+                        return Err(AkitaError::InvalidInput(
+                            "batched prover coefficient-packing point layout mismatch".into(),
+                        ));
+                    }
+                }
             }
         }
         let num_claims = opening_batch.num_total_polynomials();
         if num_claims == 0 {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
-            ));
-        }
-        if pre_folded_e_by_poly.len() != num_claims {
-            return Err(AkitaError::InvalidInput(
-                "batched prover input lengths do not match".to_string(),
             ));
         }
         // Row-coefficient rings are A-role data (fold coefficients).
@@ -480,52 +628,88 @@ impl RingRelationProver {
         )
         .entered();
         let mut group_openings = Vec::with_capacity(num_groups);
+        let mut prepared_relation_groups = Vec::with_capacity(num_groups);
         let mut offset = 0usize;
-        for group_index in 0..num_groups {
+        for (group_index, prepared) in prepared_group_openings.into_iter().enumerate() {
             let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
             let end = offset.checked_add(k_g).ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group e-folded offset overflow".to_string())
             })?;
-            let group_lp = lp.group_params(&opening_batch, group_index)?;
-            let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
-            let (e_hat_g, e_folded_g) = dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Opening),
-                F,
-                group_dims.d_d(),
-                |D_D| {
-                    let pre_folded_typed = pre_folded_e_by_poly[offset..end]
-                        .iter()
-                        .map(RingVec::as_ring_slice::<D_D>)
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let e_hat_typed = {
-                        let _span =
-                            tracing::info_span!("decompose_group_e_hat", group_index, claims = k_g)
-                                .entered();
-                        decompose_e_hat::<F, D_D>(
-                            &pre_folded_typed,
-                            group_dims.d_a() / group_dims.d_d(),
-                            group_lp.num_digits_open(),
-                            group_lp.log_basis_open(),
-                        )?
-                    };
-                    Ok::<_, AkitaError>((
-                        e_hat_typed,
-                        RingVec::from_coeffs(
-                            pre_folded_e_by_poly[offset..end]
+            let group_lp = lp.group_params_geometry(&opening_batch, group_index)?;
+            let group_dims = lp.group_role_dims_geometry(&opening_batch, group_index)?;
+            let opening = match prepared {
+                PreparedGroupOpening::EvaluationTrace {
+                    point,
+                    folded_by_claim,
+                    scalar_openings,
+                } => {
+                    if folded_by_claim.len() != k_g {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    let (e_hat, e_folded) = dispatch_for_field!(
+                        ProtocolDispatchSlot::Role(RingRole::Opening),
+                        F,
+                        group_dims.d_d(),
+                        |D_D| {
+                            let pre_folded_typed = folded_by_claim
                                 .iter()
-                                .flat_map(|block| block.coeffs().iter().copied())
-                                .collect(),
-                        ),
-                    ))
+                                .map(RingVec::as_ring_slice::<D_D>)
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let e_hat = decompose_e_hat::<F, D_D>(
+                                &pre_folded_typed,
+                                group_dims.d_a() / group_dims.d_d(),
+                                group_lp.num_digits_open(),
+                                group_lp.log_basis_open(),
+                            )?;
+                            Ok::<_, AkitaError>((
+                                e_hat,
+                                RingVec::from_coeffs(
+                                    folded_by_claim
+                                        .iter()
+                                        .flat_map(|block| block.coeffs().iter().copied())
+                                        .collect(),
+                                ),
+                            ))
+                        }
+                    )?;
+                    prepared_relation_groups.push(PreparedRelationGroup {
+                        kind: PreparedRelationGroupKind::EvaluationTrace(point.clone()),
+                        scalar_openings,
+                    });
+                    GroupOpeningMaterial::EvaluationTrace {
+                        e_hat,
+                        e_folded,
+                        ring_multiplier_point: point.ring_multiplier_point,
+                    }
                 }
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("D-role opening decomposition failed: {err:?}"))
-            })?;
-            group_openings.push(GroupOpeningMaterial {
-                e_hat: e_hat_g,
-                e_folded: e_folded_g,
-            });
+                PreparedGroupOpening::SubringCoefficientPacking {
+                    point,
+                    partials_by_claim,
+                    scalar_openings,
+                } => {
+                    let e_hat = dispatch_for_field!(
+                        ProtocolDispatchSlot::Role(RingRole::Opening),
+                        F,
+                        group_dims.d_d(),
+                        |D_D| materialize_coefficient_packing_d_input::<F, D_D>(
+                            &lp,
+                            &opening_batch,
+                            &relation_geometry,
+                            group_index,
+                            &partials_by_claim,
+                        )
+                    )?;
+                    prepared_relation_groups.push(PreparedRelationGroup {
+                        kind: PreparedRelationGroupKind::SubringCoefficientPacking(point),
+                        scalar_openings,
+                    });
+                    GroupOpeningMaterial::SubringCoefficientPacking {
+                        e_hat,
+                        partials_by_claim,
+                    }
+                }
+            };
+            group_openings.push(opening);
             offset = end;
         }
         let e_hat_concat = if lp.has_precommitted_groups() {
@@ -533,7 +717,7 @@ impl RingRelationProver {
                 &opening_batch,
                 &group_openings
                     .iter()
-                    .map(|group| &group.e_hat)
+                    .map(GroupOpeningMaterial::e_hat)
                     .collect::<Vec<_>>(),
             )?)
         } else {
@@ -541,7 +725,7 @@ impl RingRelationProver {
         };
         let e_hat = e_hat_concat
             .as_ref()
-            .or_else(|| group_openings.first().map(|group| &group.e_hat))
+            .or_else(|| group_openings.first().map(GroupOpeningMaterial::e_hat))
             .ok_or(AkitaError::InvalidProof)?;
         let (v, d_quotients) = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
@@ -647,7 +831,7 @@ impl RingRelationProver {
                 Ok(fold_grind::FoldGrindGroup {
                     group_index,
                     group: block_claims.group(group_index)?,
-                    params: lp.group_params(&opening_batch, group_index)?,
+                    params: lp.group_params_geometry(&opening_batch, group_index)?,
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -663,11 +847,66 @@ impl RingRelationProver {
             )
             .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
         drop(_grind_span);
-        let mut group_challenges = Vec::with_capacity(num_groups);
-        let mut group_z = Vec::with_capacity(num_groups);
-        for output in grind_outputs {
-            group_challenges.push(output.challenges.into_evaluation_trace()?);
-            group_z.push((output.witness, output.coefficients));
+        if grind_outputs.len() != num_groups || hints.len() != num_groups {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut relation_group_openings = Vec::with_capacity(num_groups);
+        let mut group_witnesses = Vec::with_capacity(num_groups);
+        for (group_index, ((output, opening), hint)) in grind_outputs
+            .into_iter()
+            .zip(group_openings)
+            .zip(hints)
+            .enumerate()
+        {
+            let group_dims = lp.group_role_dims_geometry(&opening_batch, group_index)?;
+            let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
+            if hint.ring_dim() != group_dims.d_a() || hint.inner_rows().len() != k_g {
+                return Err(AkitaError::InvalidInput(
+                    "prover hint shape does not match its commitment group".into(),
+                ));
+            }
+            match opening {
+                GroupOpeningMaterial::EvaluationTrace {
+                    e_hat,
+                    e_folded,
+                    ring_multiplier_point,
+                } => {
+                    let challenges = output.challenges.into_evaluation_trace()?;
+                    relation_group_openings.push(RingRelationGroupOpening::evaluation_trace(
+                        challenges,
+                        ring_multiplier_point,
+                    ));
+                    group_witnesses.push(RingRelationGroupWitness::from_parts(
+                        output.witness,
+                        output.coefficients,
+                        e_hat,
+                        e_folded,
+                        hint,
+                        group_dims,
+                    ));
+                }
+                GroupOpeningMaterial::SubringCoefficientPacking {
+                    e_hat,
+                    partials_by_claim,
+                } => {
+                    let (geometry, challenges) = output.challenges.into_coefficient_packing()?;
+                    let product =
+                        fold_coefficient_packing_group(geometry, &partials_by_claim, &challenges)?;
+                    relation_group_openings.push(
+                        RingRelationGroupOpening::subring_coefficient_packing(
+                            geometry, challenges,
+                        )?,
+                    );
+                    group_witnesses.push(RingRelationGroupWitness::from_coefficient_packing_parts(
+                        output.witness,
+                        output.coefficients,
+                        e_hat,
+                        product,
+                        hint,
+                        group_dims,
+                    )?);
+                }
+            }
         }
         drop(fold_grind_span);
 
@@ -701,13 +940,6 @@ impl RingRelationProver {
         }
         .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
-        let relation_group_openings = group_challenges
-            .into_iter()
-            .zip(group_ring_multiplier_points)
-            .map(|(challenges, ring_multiplier_point)| {
-                RingRelationGroupOpening::evaluation_trace(challenges, ring_multiplier_point)
-            })
-            .collect();
         let instance = RingRelationInstance::new(
             relation_group_openings,
             PointF::EXT_DEGREE,
@@ -725,60 +957,202 @@ impl RingRelationProver {
         drop(instance_span);
 
         let witness_span = tracing::info_span!("ring_relation_build_witness").entered();
-        let witness = if lp.has_precommitted_groups() {
-            let mut groups = Vec::with_capacity(num_groups);
-            if hints.len() != num_groups {
-                return Err(AkitaError::InvalidProof);
-            }
-            for (group_index, ((z_material, hint), opening)) in group_z
-                .into_iter()
-                .zip(hints)
-                .zip(group_openings)
-                .enumerate()
-            {
-                let (z_folded_rings, z_folded_coefficients) = z_material;
-                let GroupOpeningMaterial { e_hat, e_folded } = opening;
-                let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-                let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
-                if hint.ring_dim() != group_dims.d_a() || hint.inner_rows().len() != k_g {
-                    return Err(AkitaError::InvalidInput(
-                        "prover hint shape does not match its commitment group".into(),
-                    ));
-                }
-                groups.push(RingRelationGroupWitness::from_parts(
-                    z_folded_rings,
-                    z_folded_coefficients,
-                    e_hat,
-                    e_folded,
-                    hint,
-                    group_dims,
-                ));
-            }
-            RingRelationWitness::from_groups(fold_grind_nonce, groups, d_quotients, compression)
-        } else {
-            if hints.len() != 1 {
-                return Err(AkitaError::InvalidProof);
-            }
-            let hint = hints.into_iter().next().ok_or(AkitaError::InvalidProof)?;
-            let (z_folded_rings, z_folded_coefficients) =
-                group_z.into_iter().next().ok_or(AkitaError::InvalidProof)?;
-            let GroupOpeningMaterial { e_hat, e_folded } = group_openings
-                .into_iter()
-                .next()
-                .ok_or(AkitaError::InvalidProof)?;
-            RingRelationWitness::from_flat_parts(
-                z_folded_rings,
-                z_folded_coefficients,
-                fold_grind_nonce,
-                e_hat,
-                e_folded,
-                hint,
-                dims,
-                d_quotients,
-                compression,
-            )
-        };
+        let witness = RingRelationWitness::from_groups(
+            fold_grind_nonce,
+            group_witnesses,
+            d_quotients,
+            compression,
+        );
+        validate_prepared_relation_groups(
+            &prepared_relation_groups,
+            &lp,
+            &opening_batch,
+            &instance,
+        )?;
         drop(witness_span);
-        Ok((instance, witness))
+        Ok(PreparedRingRelation {
+            instance,
+            witness,
+            groups: prepared_relation_groups,
+        })
+    }
+}
+
+#[cfg(test)]
+mod prepared_group_tests {
+    use super::*;
+    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+    use akita_field::{Ext2, ExtField, Prime64Offset59};
+    use akita_types::{
+        relation_rhs_coeff_len, CommitmentPayloadMode, OpenCommitMatrixParams, OpeningClaimsLayout,
+        OpeningMethod, PreparedSubringCoefficientPackingPoint, RelationWitnessGeometry,
+        SisModulusProfileId, SubringCoefficientPackingGeometry,
+    };
+
+    type F = Prime64Offset59;
+    type E = Ext2<F>;
+
+    fn fixture() -> (
+        CommittedGroupParams,
+        OpeningClaimsLayout,
+        RingRelationInstance<F>,
+        PreparedSubringCoefficientPackingPoint<E>,
+    ) {
+        let s = 64;
+        let d_a = 256;
+        let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q64Offset59,
+            d_a,
+            2,
+            2,
+            2,
+            2,
+            config,
+        )
+        .with_decomp(4, 6, 2, 2, 2)
+        .unwrap();
+        params.payload_mode = CommitmentPayloadMode::Raw;
+        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: s,
+        };
+        let opening = params.open_commit_matrix;
+        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+            opening.security_policy(),
+            opening.sis_table_key().table_digest,
+            opening.sis_modulus_profile(),
+            opening.output_rank(),
+            opening.input_width(),
+            opening.coeff_linf_bound(),
+            128,
+        );
+        let opening_batch = OpeningClaimsLayout::new(11, 2).unwrap();
+        let relation_geometry = RelationWitnessGeometry::for_level(
+            &params,
+            &opening_batch,
+            <E as ExtField<F>>::EXT_DEGREE,
+        )
+        .unwrap();
+        let geometry = SubringCoefficientPackingGeometry::try_new(2, d_a, s).unwrap();
+        let public_point = (0..11)
+            .map(|index| E::from_u64(2 + index as u64))
+            .collect::<Vec<_>>();
+        let prepared_point =
+            PreparedSubringCoefficientPackingPoint::new(geometry, 6, 4, 11, &public_point).unwrap();
+        let challenges = Challenges::from_sparse(
+            (0..4)
+                .map(|challenge| SparseChallenge {
+                    positions: (0..config.weight())
+                        .map(|term| ((term + challenge) % s) as u32)
+                        .collect(),
+                    coeffs: (0..config.count_pm1)
+                        .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
+                        .chain((0..config.count_pm2).map(|_| 2))
+                        .collect(),
+                })
+                .collect(),
+            2,
+            2,
+        )
+        .unwrap();
+        let relation = RingRelationInstance::new(
+            vec![
+                RingRelationGroupOpening::subring_coefficient_packing(geometry, challenges)
+                    .unwrap(),
+            ],
+            <E as ExtField<F>>::EXT_DEGREE,
+            opening_batch.clone(),
+            vec![F::from_u64(3), F::from_u64(5)],
+            RingVec::from_coeffs_with_ring_dim(
+                [F::from_u64(3), F::from_u64(5)]
+                    .into_iter()
+                    .flat_map(|coefficient| {
+                        let mut ring = vec![F::zero(); d_a];
+                        ring[0] = coefficient;
+                        ring
+                    })
+                    .collect(),
+                d_a,
+            )
+            .unwrap(),
+            RingVec::from_coeffs(vec![
+                F::zero();
+                relation_rhs_coeff_len(relation_geometry.rhs_layout())
+                    .unwrap()
+            ]),
+            RingVec::from_coeffs(Vec::new()),
+            params.role_dims(),
+        )
+        .unwrap();
+        (params, opening_batch, relation, prepared_point)
+    }
+
+    #[test]
+    fn prepared_relation_group_rejects_stale_shape_and_claims() {
+        let (params, opening_batch, relation, point) = fixture();
+        let valid = vec![PreparedRelationGroup {
+            kind: PreparedRelationGroupKind::SubringCoefficientPacking(point),
+            scalar_openings: vec![E::from_u64(7), E::from_u64(11)],
+        }];
+        validate_prepared_relation_groups(&valid, &params, &opening_batch, &relation).unwrap();
+
+        let public_point = (0..11)
+            .map(|index| E::from_u64(23 + index as u64))
+            .collect::<Vec<_>>();
+        for stale_point in [
+            PreparedSubringCoefficientPackingPoint::new(
+                valid[0].coefficient_packing_point().unwrap().geometry(),
+                7,
+                4,
+                11,
+                &public_point,
+            )
+            .unwrap(),
+            PreparedSubringCoefficientPackingPoint::new(
+                valid[0].coefficient_packing_point().unwrap().geometry(),
+                6,
+                8,
+                11,
+                &public_point,
+            )
+            .unwrap(),
+        ] {
+            let stale = vec![PreparedRelationGroup {
+                kind: PreparedRelationGroupKind::SubringCoefficientPacking(stale_point),
+                scalar_openings: vec![E::from_u64(7), E::from_u64(11)],
+            }];
+            assert!(
+                validate_prepared_relation_groups(&stale, &params, &opening_batch, &relation,)
+                    .is_err()
+            );
+        }
+
+        let wrong_geometry = SubringCoefficientPackingGeometry::try_new(2, 128, 64).unwrap();
+        let point = (0..11)
+            .map(|index| E::from_u64(13 + index as u64))
+            .collect::<Vec<_>>();
+        let wrong_point =
+            PreparedSubringCoefficientPackingPoint::new(wrong_geometry, 16, 4, 11, &point).unwrap();
+        let stale = vec![PreparedRelationGroup {
+            kind: PreparedRelationGroupKind::SubringCoefficientPacking(wrong_point),
+            scalar_openings: vec![E::from_u64(7), E::from_u64(11)],
+        }];
+        assert!(
+            validate_prepared_relation_groups(&stale, &params, &opening_batch, &relation).is_err()
+        );
+
+        let missing_claim = vec![PreparedRelationGroup {
+            kind: PreparedRelationGroupKind::SubringCoefficientPacking(
+                valid[0].coefficient_packing_point().unwrap().clone(),
+            ),
+            scalar_openings: vec![E::from_u64(7)],
+        }];
+        assert!(validate_prepared_relation_groups(
+            &missing_claim,
+            &params,
+            &opening_batch,
+            &relation,
+        )
+        .is_err());
     }
 }

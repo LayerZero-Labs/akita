@@ -14,7 +14,8 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
     DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
@@ -122,6 +123,103 @@ where
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
         Ok(SparseRingBatchView { polys })
+    }
+}
+
+impl<F, E, const D: usize>
+    SubringCoefficientPackingBatchKernel<SparseRingBatchView<'_, F, D>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F>,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: SparseRingBatchView<'_, F, D>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        let point = plan.point;
+        let geometry = point.geometry();
+        if E::EXT_DEGREE != geometry.extension_degree() {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing field extension degree mismatch".into(),
+            ));
+        }
+        let output_len = point
+            .num_live_blocks()
+            .checked_mul(geometry.partial_base_field_width())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing output length overflow".into())
+            })?;
+        let stride = geometry.subring_embedding_stride();
+        let s = geometry.challenge_subring_dimension();
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
+                if RootPolyShape::<F, D>::num_ring_elems(*poly) != point.num_live_positions() {
+                    return Err(AkitaError::InvalidSize {
+                        expected: point.num_live_positions(),
+                        actual: RootPolyShape::<F, D>::num_ring_elems(*poly),
+                    });
+                }
+                let blocks = poly.blocks_for(D, point.num_positions_per_block())?;
+                if blocks.num_live_blocks() != point.num_live_blocks() {
+                    return Err(AkitaError::InvalidSize {
+                        expected: point.num_live_blocks(),
+                        actual: blocks.num_live_blocks(),
+                    });
+                }
+                let mut coordinates = Vec::new();
+                coordinates.try_reserve_exact(output_len).map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "coefficient-packing sparse output allocation failed".into(),
+                    )
+                })?;
+                coordinates.resize(output_len, F::zero());
+                for block_index in 0..blocks.num_live_blocks() {
+                    let block_offset = block_index
+                        .checked_mul(geometry.partial_base_field_width())
+                        .ok_or(AkitaError::InvalidProof)?;
+                    for entry in blocks.block(block_index) {
+                        let coefficient_index = entry.coeff_idx();
+                        let low_index = coefficient_index % stride;
+                        let subring_index = coefficient_index / stride;
+                        let mut value = point.position_weights()[entry.pos_in_block()]
+                            * point.packing_weights()[low_index];
+                        if entry.value() < 0 {
+                            value = -value;
+                        }
+                        let extension_coordinates = value.ext_coords();
+                        if extension_coordinates.len() != geometry.extension_degree() {
+                            return Err(AkitaError::InvalidSetup(
+                                "coefficient-packing extension encoding width mismatch".into(),
+                            ));
+                        }
+                        for (extension_coordinate, &coordinate) in
+                            extension_coordinates.iter().enumerate()
+                        {
+                            let local_index = extension_coordinate
+                                .checked_mul(s)
+                                .and_then(|base| base.checked_add(subring_index))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let output_index = block_offset
+                                .checked_add(local_index)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            *coordinates
+                                .get_mut(output_index)
+                                .ok_or(AkitaError::InvalidProof)? += coordinate;
+                        }
+                    }
+                }
+                SubringCoefficientPackingPartials::new(
+                    geometry,
+                    point.num_live_blocks(),
+                    coordinates,
+                )
+            })
+            .collect()
     }
 }
 

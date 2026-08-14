@@ -63,11 +63,11 @@ pub use poly::{
     TensorBackendFor,
 };
 pub use runtime_capabilities::{
-    RootProveFlowBackend, RuntimeCommitBackendFor, RuntimeCommitSource,
-    RuntimeOpeningProveBackendFor, RuntimeOpeningSource, RuntimeProveBackendFor,
-    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor, RuntimeTensorSource,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RootProveFlowBackend, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
+    RuntimeCommitSource, RuntimeOpeningProveBackendFor, RuntimeOpeningSource,
+    RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
+    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    RuntimeTensorSource, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 pub use stack::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,

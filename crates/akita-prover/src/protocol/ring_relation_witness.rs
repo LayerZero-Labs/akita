@@ -314,34 +314,6 @@ pub struct RingRelationWitness<F: FieldCore> {
 }
 
 impl<F: FieldCore> RingRelationWitness<F> {
-    /// Construct from D-free fold outputs under schedule-derived role dimensions.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_flat_parts(
-        z_folded_rings: DecomposeFoldWitness<F>,
-        z_folded_coefficients: FoldChunkCoefficients,
-        fold_grind_nonce: u32,
-        e_hat: DigitBlocks,
-        e_folded: RingVec<F>,
-        hint: AkitaCommitmentHint<F>,
-        role_dims: CommitmentRingDims,
-        d_quotients: RingVec<F>,
-        compression: Option<CompressionWitnessMaterialization<F>>,
-    ) -> Self {
-        Self {
-            fold_grind_nonce,
-            groups: vec![RingRelationGroupWitness::from_parts(
-                z_folded_rings,
-                z_folded_coefficients,
-                e_hat,
-                e_folded,
-                hint,
-                role_dims,
-            )],
-            d_quotients,
-            compression,
-        }
-    }
-
     /// Construct from already-grouped witnesses.
     pub(crate) fn from_groups(
         fold_grind_nonce: u32,

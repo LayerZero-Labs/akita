@@ -2,8 +2,9 @@ use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -92,7 +93,15 @@ where
         + 'stack,
     O: SuffixOpeningProveBackend<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-        + DigitRowsComputeBackend<Cfg::Field>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RootTensorProjectionPoly<Cfg::Field>,
+            Cfg::ExtField,
+        > + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     TS: SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
@@ -441,7 +450,9 @@ where
     O: DigitRowsComputeBackend<F>
         + RuntimeOpeningProveBackendFor<F, RecursiveWitnessFlat>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+        + RuntimeCoefficientPackingBackendFor<F, RecursiveFoldSource<F>, E>
+        + RuntimeCoefficientPackingBackendFor<F, RootTensorProjectionPoly<F>, E>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
@@ -482,7 +493,6 @@ where
     let opening_point = &sumcheck_challenges;
 
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let needs_extension_reduction = E::EXT_DEGREE > 1;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
@@ -511,6 +521,10 @@ where
         &witness_polys[..],
         (Commitment::new(witness_commitment), suffix_hint),
     )?;
+    let opening_batch = block_claims.opening_layout()?;
+    let opening_method = super::fold::uniform_opening_method(level_params, &opening_batch)?;
+    let needs_extension_reduction =
+        super::fold::extension_opening_reduction_enabled(opening_method, E::EXT_DEGREE > 1);
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()

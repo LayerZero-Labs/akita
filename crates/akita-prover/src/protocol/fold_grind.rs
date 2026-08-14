@@ -179,6 +179,19 @@ impl GroupFoldChallenges {
             }
         }
     }
+
+    pub(crate) fn into_coefficient_packing(
+        self,
+    ) -> Result<(SubringCoefficientPackingGeometry, Challenges), AkitaError> {
+        match self.0 {
+            GroupFoldChallengeViews::SubringCoefficientPacking {
+                geometry, subring, ..
+            } => Ok((geometry, subring)),
+            GroupFoldChallengeViews::EvaluationTrace(_) => Err(AkitaError::InvalidSetup(
+                "EvaluationTrace challenge cannot drive coefficient packing".into(),
+            )),
+        }
+    }
 }
 
 pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {

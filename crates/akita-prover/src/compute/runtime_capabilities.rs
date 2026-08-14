@@ -1,7 +1,7 @@
 //! D-free prover capability bundles generated from the runtime ring-dimension ladder.
 
-use super::backend::DigitRowsComputeBackend;
-use super::kernels::RootCommitKernel;
+use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
+use super::kernels::{RootCommitKernel, SubringCoefficientPackingBatchKernel};
 use super::poly::{
     OpeningProveBackendFor, ProveBackendFor, ProveFlowBackendFor, RingSwitchProveBackend,
     RootCommitBackend, RootCommitPoly, RootCommitSource, RootOpeningSource, RootPolyMeta,
@@ -175,6 +175,37 @@ macro_rules! runtime_capabilities {
             <F as HasWide>::Wide: From<F> + ReduceTo<F>,
             P: RuntimeOpeningSource<F>,
             B: OpeningProveBackendFor<F, P, $first> $(+ OpeningProveBackendFor<F, P, $rest>)*,
+        {
+        }
+
+        /// Coefficient-packing projection backend for `P` at every runtime dimension.
+        pub trait RuntimeCoefficientPackingBackendFor<F, P, E>:
+            ComputeBackendSetup<F>
+            + for<'a> SubringCoefficientPackingBatchKernel<
+                <P as RootOpeningSource<F, $first>>::OpeningBatchView<'a>, F, E, $first
+            >
+            $(+ for<'a> SubringCoefficientPackingBatchKernel<
+                <P as RootOpeningSource<F, $rest>>::OpeningBatchView<'a>, F, E, $rest
+            >)*
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            P: RuntimeOpeningSource<F>,
+        {
+        }
+
+        impl<F, P, E, B> RuntimeCoefficientPackingBackendFor<F, P, E> for B
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            P: RuntimeOpeningSource<F>,
+            B: ComputeBackendSetup<F>
+                + for<'a> SubringCoefficientPackingBatchKernel<
+                    <P as RootOpeningSource<F, $first>>::OpeningBatchView<'a>, F, E, $first
+                >
+                $(+ for<'a> SubringCoefficientPackingBatchKernel<
+                    <P as RootOpeningSource<F, $rest>>::OpeningBatchView<'a>, F, E, $rest
+                >)*,
         {
         }
 

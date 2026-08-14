@@ -3,17 +3,42 @@
 use super::*;
 use crate::compute::{
     tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
-    RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor, RuntimeRootProvePoly,
+    RuntimeTensorBackendFor, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::{PreparedProverGroup, RootTensorProjectionPoly};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::LevelParamsLike;
+use akita_types::{
+    coefficient_packing_scalar_opening, LevelParamsLike, OpeningMethod,
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+};
 
-pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol) point: PreparedOpeningPoint<F, E>,
-    pub(in crate::protocol) folded_by_claim: Vec<RingVec<F>>,
-    pub(in crate::protocol) scalar_openings: Vec<E>,
+pub(crate) enum PreparedGroupOpening<F: FieldCore, E: FieldCore> {
+    EvaluationTrace {
+        point: PreparedOpeningPoint<F, E>,
+        folded_by_claim: Vec<RingVec<F>>,
+        scalar_openings: Vec<E>,
+    },
+    SubringCoefficientPacking {
+        point: PreparedSubringCoefficientPackingPoint<E>,
+        partials_by_claim: Vec<SubringCoefficientPackingPartials<F>>,
+        scalar_openings: Vec<E>,
+    },
+}
+
+impl<F: FieldCore, E: FieldCore> PreparedGroupOpening<F, E> {
+    pub(in crate::protocol) fn scalar_openings(&self) -> &[E] {
+        match self {
+            Self::EvaluationTrace {
+                scalar_openings, ..
+            }
+            | Self::SubringCoefficientPacking {
+                scalar_openings, ..
+            } => scalar_openings,
+        }
+    }
 }
 
 pub(crate) trait RootProverGroupMeta<F: FieldCore> {
@@ -40,6 +65,7 @@ where
         num_positions_per_block: usize,
         num_live_blocks: usize,
         alpha_bits: usize,
+        opening_method: OpeningMethod,
     ) -> Result<PreparedGroupOpening<F, E>, AkitaError>;
 
     fn probe_fold(
@@ -125,7 +151,10 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
     P: RuntimeRootProvePoly<F>,
-    B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
+    B: ComputeBackendSetup<F>
+        + DigitRowsComputeBackend<F>
+        + RuntimeOpeningProveBackendFor<F, P>
+        + RuntimeCoefficientPackingBackendFor<F, P, E>,
 {
     fn prepare_opening(
         &self,
@@ -136,12 +165,86 @@ where
         num_positions_per_block: usize,
         num_live_blocks: usize,
         alpha_bits: usize,
+        opening_method: OpeningMethod,
     ) -> Result<PreparedGroupOpening<F, E>, AkitaError> {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             ring_dimension,
             |D| {
+                if let OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension,
+                } = opening_method
+                {
+                    if basis != BasisMode::Lagrange {
+                        return Err(AkitaError::InvalidSetup(
+                            "coefficient packing requires Lagrange opening points".into(),
+                        ));
+                    }
+                    let geometry = SubringCoefficientPackingGeometry::try_new(
+                        E::EXT_DEGREE,
+                        D,
+                        challenge_subring_dimension,
+                    )?;
+                    let source_num_vars = self.num_vars()?;
+                    let polys = self.polynomial_refs();
+                    let first = polys.first().ok_or_else(|| {
+                        AkitaError::InvalidInput("opening group must be nonempty".into())
+                    })?;
+                    let num_live_positions =
+                        <P as crate::compute::RootPolyShape<F, D>>::num_ring_elems(*first);
+                    if polys.iter().any(|poly| {
+                        <P as crate::compute::RootPolyShape<F, D>>::num_ring_elems(*poly)
+                            != num_live_positions
+                            || <P as crate::compute::RootPolyShape<F, D>>::num_vars(*poly)
+                                != source_num_vars
+                    }) || num_live_positions.div_ceil(num_positions_per_block) != num_live_blocks
+                    {
+                        return Err(AkitaError::InvalidInput(
+                            "coefficient-packing source shape disagrees within its group".into(),
+                        ));
+                    }
+                    let point = PreparedSubringCoefficientPackingPoint::new(
+                        geometry,
+                        num_live_positions,
+                        num_positions_per_block,
+                        source_num_vars,
+                        protocol_point,
+                    )?;
+                    let batch =
+                        <P as crate::compute::RootOpeningSource<F, D>>::opening_batch(polys)?;
+                    let partials_by_claim =
+                        SubringCoefficientPackingBatchKernel::coefficient_packing_partials_batch(
+                            ctx.backend(),
+                            Some(ctx.prepared()),
+                            batch,
+                            SubringCoefficientPackingPlan { point: &point },
+                        )?;
+                    if partials_by_claim.len() != polys.len() {
+                        return Err(AkitaError::InvalidSize {
+                            expected: polys.len(),
+                            actual: partials_by_claim.len(),
+                        });
+                    }
+                    let scalar_openings = partials_by_claim
+                        .iter()
+                        .map(|partials| {
+                            coefficient_packing_scalar_opening::<F, E>(
+                                geometry,
+                                point.num_live_blocks(),
+                                std::slice::from_ref(partials),
+                                &[E::one()],
+                                point.live_block_weights(),
+                                point.tail_weights(),
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return Ok(PreparedGroupOpening::SubringCoefficientPacking {
+                        point,
+                        partials_by_claim,
+                        scalar_openings,
+                    });
+                }
                 let (point, (folded_rings, folded_by_claim)) =
                     prepare_and_evaluate_opening_group::<F, E, P, B, D>(
                         ctx.backend(),
@@ -165,7 +268,7 @@ where
                         )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok::<_, AkitaError>(PreparedGroupOpening {
+                Ok::<_, AkitaError>(PreparedGroupOpening::EvaluationTrace {
                     point,
                     folded_by_claim: folded_by_claim
                         .iter()

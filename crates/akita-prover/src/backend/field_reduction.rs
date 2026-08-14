@@ -13,7 +13,9 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
     RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootTensorSource, SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -31,6 +33,52 @@ pub enum RootTensorProjectionPoly<F: FieldCore> {
     Dense(DensePoly<F>),
     /// Sparse signed-ring transformed root polynomial.
     Sparse(Arc<SparseRingPoly<F>>),
+}
+
+impl<F, E, const D: usize>
+    SubringCoefficientPackingBatchKernel<RootTensorProjectionBatchView<'_, F, D>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F>,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: RootTensorProjectionBatchView<'_, F, D>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        let mut output = Vec::with_capacity(source.polys.len());
+        for poly in source.polys {
+            match *poly {
+                RootTensorProjectionPoly::Dense(inner) => {
+                    let polys = [inner];
+                    let batch = RootOpeningSource::<F, D>::opening_batch(&polys)?;
+                    output.extend(SubringCoefficientPackingBatchKernel::<
+                        DenseBatchView<'_, F, D>,
+                        F,
+                        E,
+                        D,
+                    >::coefficient_packing_partials_batch(
+                        self, prepared, batch, plan
+                    )?);
+                }
+                RootTensorProjectionPoly::Sparse(inner) => {
+                    let polys = [inner.as_ref()];
+                    let batch = RootOpeningSource::<F, D>::opening_batch(&polys)?;
+                    output.extend(SubringCoefficientPackingBatchKernel::<
+                        SparseRingBatchView<'_, F, D>,
+                        F,
+                        E,
+                        D,
+                    >::coefficient_packing_partials_batch(
+                        self, prepared, batch, plan
+                    )?);
+                }
+            }
+        }
+        Ok(output)
+    }
 }
 
 impl<F: FieldCore> From<DensePoly<F>> for RootTensorProjectionPoly<F> {
