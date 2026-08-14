@@ -42,8 +42,6 @@ pub struct PrecommittedGroupAdmissionPolicy {
     pub sis_table_digest: SisTableDigest,
     /// Modulus family required for both frozen matrices.
     pub sis_modulus_profile: SisModulusProfileId,
-    /// Subfield norm factor used in the A-role bound.
-    pub ring_subfield_norm_bound: u32,
 }
 
 impl PartialEq for PrecommittedLevelParams {
@@ -126,10 +124,15 @@ impl PrecommittedLevelParams {
             log_basis_open,
             &fold_challenge_config,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".into()))?;
-        if required_a_bound > layout.inner_commit_matrix.coeff_linf_bound() {
+        let declared_a_bound = layout
+            .inner_commit_matrix
+            .coeff_linf_bound()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".into())
+            })?;
+        if required_a_bound > declared_a_bound {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A bound does not cover the certified opening basis".into(),
             ));

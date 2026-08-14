@@ -5,6 +5,8 @@ witness:
 
 1. **Stage 1 — digit range check.** Proves that every witness entry is a valid
    balanced digit and outputs one evaluation of the virtual range-image table.
+   A fold on the `L2` route also proves the complete physical response norm in
+   the final Stage 1 substage.
 2. **Stage 2 — fused relation sumcheck.** Proves the ring-switched fold
    relation and binds both Stage 1's virtual range-image value and the opening
    claim carried into the fold to the committed witness; the resulting witness
@@ -12,10 +14,10 @@ witness:
 3. **Stage 3 — setup product sumcheck.** Optionally carries a recursive setup
    contribution together with the next opening.
 
-This chapter explains the Stage-1 range protocol and the Stage-2 fused
-relation protocol in detail. Stage 3 is summarized at the end. The terminal
-fold, which runs none of these sumchecks, is covered in
-[The proving protocol](./proving.md).
+This chapter explains the Stage 1 range protocol and the Stage 2 fused relation
+protocol in detail. Stage 3 is summarized at the end. The terminal fold runs
+none of these sumchecks. When it uses an L2 route, the verifier computes the
+clear response norm directly. See [The proving protocol](./proving.md).
 
 ## Stage 1: digit range check
 
@@ -317,6 +319,34 @@ vertices. The proof therefore carries the independent
 `range_image_evaluation` field
 ([`AkitaStage1Proof`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/levels.rs)).
 
+### Optional physical norm term
+
+An `L2` selected fold proves the squared norm of the complete physical folded
+response. The physical response domain contains every live Z coefficient once
+and assigns zero to padding addresses. `WitnessLayout` defines this domain for
+the prover, verifier, and proof size code.
+
+For a large field, the final Stage 1 substage batches the range leaf with
+
+$$
+S = \sum_x z(x)^2.
+$$
+
+The proof carries the public integer value $S$, one additional coefficient in
+each final sumcheck round, and the final virtual evaluation of $z$. The verifier
+checks $S$ against the cap stored in the schedule.
+
+For a small field, the allowed digit range may make the full square sum wrap
+the base field. The schedule then divides the physical domain into fixed
+blocks and proves bounded limb inner products. Each subclaim has a unique
+centered integer lift because its public bound is below half the modulus. The
+verifier reconstructs $S$ with checked integer arithmetic and rejects a wrong
+subclaim count, an overflow, or a value above the cap.
+
+The proof stream has no route header. The schedule determines whether the norm
+proof exists and gives its exact shape. An `L∞` fold uses the ordinary Stage 1
+shape and carries no norm values.
+
 ### Domain and challenge order
 
 Stage 1 views the digits as one flat Boolean table. The live witness occupies a
@@ -343,7 +373,7 @@ tie that virtual value to the committed witness.
 
 ## Stage 2: fused relation sumcheck
 
-Stage 2 proves three statements about the same committed digit witness $w$:
+Stage 2 always proves three statements about the same committed digit witness $w$:
 
 1. $w$ satisfies the ring-switched fold relation;
 2. Stage 1's virtual range-image value is correctly derived from $w(w+1)$; and
@@ -352,6 +382,14 @@ Stage 2 proves three statements about the same committed digit witness $w$:
 The protocol fuses all three statements into one sumcheck. We first isolate
 the fold-relation term to make its matrix-row dimension explicit, then
 incorporate the range-image and opening-consistency terms.
+
+When Stage 1 also proves a physical norm, Stage 2 adds the Z virtualization
+relation derived from the schedule. It proves that each final physical response
+or limb evaluation is the balanced basis recomposition of the committed Z digit
+plane evaluations at the same point. The transcript samples the batching
+challenge after it has absorbed all Stage 1 claims, including the ordinary
+range image. This order prevents one false virtual relation from canceling
+another.
 
 ### Start with the ring relation
 

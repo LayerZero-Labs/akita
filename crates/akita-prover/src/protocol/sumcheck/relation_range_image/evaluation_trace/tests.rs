@@ -79,7 +79,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
-    let level_params = Cfg::select_schedule_for_opening(&opening_batch)
+    let level_params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .unwrap()
         .schedule()
         .root

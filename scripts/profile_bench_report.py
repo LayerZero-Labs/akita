@@ -15,6 +15,71 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+if __package__:
+    from .profile_bench_fold_details import (
+        PROOF_LEVEL_BYTE_FIELDS,
+        challenge_line,
+        detail_block,
+        digit_count_phrase,
+        exact_choice,
+        format_witness_groups_inline,
+        matrix_line,
+        planned_group_key,
+        planned_group_label,
+        planned_group_planner_value,
+        planned_group_work_value,
+        planned_groups_for_render,
+        planned_terminal_planner_value,
+        planned_terminal_work_value,
+        proof_component_group,
+        proof_cost_summary,
+        proof_field_present,
+        proof_level_component_bytes,
+        proof_step_label,
+        render_fold_details,
+        render_group_choices,
+        response_bound_lines,
+        sample_range,
+    )
+    from .profile_bench_format import (
+        fmt_bytes,
+        fmt_count,
+        numeric_delta,
+        value_with_baseline_delta,
+    )
+else:
+    from profile_bench_fold_details import (
+        PROOF_LEVEL_BYTE_FIELDS,
+        challenge_line,
+        detail_block,
+        digit_count_phrase,
+        exact_choice,
+        format_witness_groups_inline,
+        matrix_line,
+        planned_group_key,
+        planned_group_label,
+        planned_group_planner_value,
+        planned_group_work_value,
+        planned_groups_for_render,
+        planned_terminal_planner_value,
+        planned_terminal_work_value,
+        proof_component_group,
+        proof_cost_summary,
+        proof_field_present,
+        proof_level_component_bytes,
+        proof_step_label,
+        render_fold_details,
+        render_group_choices,
+        response_bound_lines,
+        sample_range,
+    )
+    from profile_bench_format import (
+        fmt_bytes,
+        fmt_count,
+        numeric_delta,
+        value_with_baseline_delta,
+    )
+
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 KV_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)=(".*?"|\S+)')
@@ -43,24 +108,6 @@ REQUIRED_RUN_METRICS = (
     "akita_levels",
 )
 REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
-
-# Byte columns emitted by `crates/akita-pcs/examples/profile/report.rs` for each
-# fold level. Their sum must match `total_bytes`. The parser separately retains
-# field presence so structurally absent proof components render as an em dash,
-# rather than a misleading zero-byte component.
-PROOF_LEVEL_BYTE_FIELDS = (
-    "extension_opening_partials_bytes",
-    "extension_opening_sumcheck_bytes",
-    "fold_grind_nonce_bytes",
-    "opening_payload_bytes",
-    "stage1_sumcheck_bytes",
-    "stage1_interstage_claims_bytes",
-    "stage1_range_image_evaluation_bytes",
-    "stage2_sumcheck_bytes",
-    "stage3_sumcheck_bytes",
-    "next_w_payload_bytes",
-    "next_w_eval_bytes",
-)
 
 
 @dataclass(frozen=True)
@@ -141,6 +188,11 @@ def case_metadata(mode: str) -> CaseMetadata:
     config_match = re.search(r"_d(\d+)$", mode)
     config = f"D{config_match.group(1)}" if config_match else "custom"
     return CaseMetadata(field_family, workload, workload_label, config)
+
+
+def quotient_digit_count(metadata: CaseMetadata, log_basis: int) -> int:
+    field_bits = int(metadata.field_family.removeprefix("fp"))
+    return (field_bits + log_basis - 1) // log_basis
 
 
 def workload_slug(metadata: CaseMetadata, num_polys: int) -> str:
@@ -312,6 +364,15 @@ def parse_kvs(line: str) -> dict[str, str]:
     return out
 
 
+def parse_tracing_optional_int(value: str | None) -> int | None:
+    if value is None or value == "None":
+        return None
+    match = re.fullmatch(r"(?:Some\((\d+)\)|(\d+))", value)
+    if match is None:
+        raise ValueError(f"invalid tracing optional integer: {value}")
+    return int(match.group(1) or match.group(2))
+
+
 def is_info_event(line: str, event: str) -> bool:
     """Match an INFO event with or without tracing span prefixes."""
     return (
@@ -362,7 +423,6 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_e_bytes",
     "tail_t_bytes",
     "z_rice_low_bits_wire",
-    "z_rice_low_bits_cap",
     "z_coords",
     "z_packed_hypothetical_bytes",
     "z_golomb_savings_bytes",
@@ -372,15 +432,6 @@ TAIL_SUMMARY_FLOAT_FIELDS = (
     "z_bits_per_coord_golomb",
     "z_bits_per_coord_packed",
 )
-
-TAIL_ENCODING_POLICIES = {
-    "segment_typed": "non-zk folded terminal (default in profile bench)",
-    "terminal_response": "non-zk quotient-free terminal response (default in profile bench)",
-    "packed_digits": "zk-feature folded terminal fallback",
-    "field_elements": "root-direct cleartext witness",
-    "none": "root-direct zero-fold (no cleartext tail)",
-}
-
 
 def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) -> None:
     if "final_w_encoding" in kvs:
@@ -403,10 +454,16 @@ def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) 
     for key in TAIL_SUMMARY_FLOAT_FIELDS:
         if key in kvs:
             summary[key] = float(kvs[key])
-    if "z_witness_linf_cap" in kvs:
-        summary["z_witness_linf_cap"] = kvs["z_witness_linf_cap"]
+    if "z_linf_cap" in kvs:
+        summary["z_linf_cap"] = parse_tracing_optional_int(kvs["z_linf_cap"])
+    elif "z_witness_linf_cap" in kvs:
+        summary["z_linf_cap"] = int(kvs["z_witness_linf_cap"])
     elif "z_beta_inf" in kvs:
-        summary["z_witness_linf_cap"] = kvs["z_beta_inf"]
+        summary["z_linf_cap"] = int(kvs["z_beta_inf"])
+    if "z_rice_low_bits_cap" in kvs:
+        summary["z_rice_low_bits_cap"] = parse_tracing_optional_int(
+            kvs["z_rice_low_bits_cap"]
+        )
     terminal_log_basis = summary.get(
         "tail_log_basis_inner",
         summary.get("tail_log_basis_open", summary.get("tail_log_basis")),
@@ -428,12 +485,13 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     if encoding is None:
         return
 
-    policy = current.get("tail_policy")
-    policy_hint = TAIL_ENCODING_POLICIES.get(str(encoding), str(policy or encoding))
-    print(f"- Tail encoding: `{encoding}` ({policy_hint})")
+    print(f"- Tail encoding: `{encoding}`")
 
     if encoding == "packed_digits":
-        if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
+        if (
+            current.get("tail_num_elems") is not None
+            and current.get("tail_bits_per_elem") is not None
+        ):
             print(
                 f"  - Wire: `{fmt_count(float(current['tail_num_elems']))}` logical elements at "
                 f"`{current['tail_bits_per_elem']}` bits for each element (uniform `PackedDigits`)"
@@ -454,152 +512,106 @@ def render_tail_encoding(current: dict[str, object]) -> None:
         "tail_log_basis_inner", current.get("tail_log_basis_open")
     )
     if current.get("tail_num_elems") is not None and terminal_log_basis is not None:
-        basis_role = "inner" if encoding == "terminal_response" else "D/open"
         print(
-            f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elements, "
-            f"{basis_role} gadget basis width `{terminal_log_basis}` bits, "
-            "folded-witness (`z`) segment first on the wire"
+            "  - Clear response: "
+            f"`{fmt_count(float(current['tail_num_elems']))}` coefficients across `z`, `e`, "
+            f"and `t`. The incoming witness uses a basis width of `{terminal_log_basis}` bits."
         )
 
     z_prefix = current.get("tail_z_prefix_bytes")
     z_golomb = current.get("tail_z_golomb_bytes")
-    z_wire = current.get("tail_z_bytes")
-    z_field = current.get("tail_z_field_elems")
-    z_ring = current.get("tail_z_ring_elems")
-    if z_wire is not None and z_field is not None and z_ring is not None:
-        prefix_golomb = ""
-        if z_prefix is not None and z_golomb is not None:
-            prefix_golomb = (
-                f" (length prefix `{fmt_bytes(float(z_prefix))} bytes` + Golomb "
-                f"`{fmt_bytes(float(z_golomb))} bytes`)"
-            )
-        print(
-            f"  - Folded-witness (`z`) segment: `{fmt_bytes(float(z_wire))} bytes`{prefix_golomb}, "
-            f"`{fmt_count(float(z_field))}` field coefficients, "
-            f"`{fmt_count(float(z_ring))}` ring elements"
-        )
-
-    for segment_label, bytes_key, field_key, ring_key in (
-        ("Opening-digit (`e`)", "tail_e_bytes", "tail_e_field_elems", "tail_e_ring_elems"),
+    segment_rows = []
+    for label, bytes_key, field_key, ring_key, segment_encoding in (
         (
-            "Inner-commitment (`t`)",
+            "Folded response (`z`)",
+            "tail_z_bytes",
+            "tail_z_field_elems",
+            "tail_z_ring_elems",
+            "Golomb",
+        ),
+        (
+            "Opening values (`e`)",
+            "tail_e_bytes",
+            "tail_e_field_elems",
+            "tail_e_ring_elems",
+            "raw field elements",
+        ),
+        (
+            "Inner-commitment values (`t`)",
             "tail_t_bytes",
             "tail_t_field_elems",
             "tail_t_ring_elems",
+            "raw field elements",
         ),
     ):
-        seg_bytes = current.get(bytes_key)
-        field_coeffs = current.get(field_key)
-        ring_elems = current.get(ring_key)
-        if seg_bytes is None:
+        if current.get(bytes_key) is None:
             continue
-        detail = f"`{fmt_bytes(float(seg_bytes))} bytes`"
-        if field_coeffs is not None:
-            detail += f", `{fmt_count(float(field_coeffs))}` field coefficients"
-        if ring_elems is not None:
-            detail += f", `{fmt_count(float(ring_elems))}` ring elements"
-        print(f"  - {segment_label} segment: {detail}")
-
-    if all(
-        current.get(key) is not None
-        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
-    ):
-        wire_total = (
-            int(current["tail_z_bytes"])
-            + int(current["tail_e_bytes"])
-            + int(current["tail_t_bytes"])
+        if (
+            bytes_key == "tail_z_bytes"
+            and z_prefix is not None
+            and z_golomb is not None
+        ):
+            segment_encoding = (
+                f"{fmt_bytes(float(z_prefix))}-byte length prefix + "
+                f"{fmt_bytes(float(z_golomb))}-byte Golomb payload"
+            )
+        field_coefficients = current.get(field_key)
+        ring_elements = current.get(ring_key)
+        segment_rows.append(
+            (
+                label,
+                f"{fmt_bytes(float(current[bytes_key]))} bytes",
+                (
+                    fmt_count(float(field_coefficients))
+                    if field_coefficients is not None
+                    else "—"
+                ),
+                fmt_count(float(ring_elements)) if ring_elements is not None else "—",
+                segment_encoding,
+            )
         )
-        print(f"  - Wire total (z+e+t): `{fmt_bytes(float(wire_total))} bytes`")
+    if segment_rows:
+        print()
+        print("| Segment | Bytes | Field coefficients | Ring elements | Encoding |")
+        print("| --- | ---: | ---: | ---: | --- |")
+        for row in segment_rows:
+            print("| " + " | ".join(row) + " |")
 
     z_budget = current.get("tail_z_budget_bytes")
-    z_slack = current.get("tail_z_slack_bytes")
     if z_budget is not None and z_golomb is not None:
-        slack_note = (
-            f", slack `{fmt_bytes(float(z_slack))} bytes` under planner upper bound"
-            if z_slack is not None
-            else ""
-        )
+        parameter = current.get("z_rice_low_bits_wire")
+        scheduled_parameter = current.get("z_rice_low_bits_cap")
+        cap = current.get("z_linf_cap", current.get("z_witness_linf_cap"))
+        details = []
+        if parameter is not None:
+            details.append(f"Golomb parameter `{parameter}`")
+        if (
+            scheduled_parameter is not None
+            and scheduled_parameter != parameter
+        ):
+            details.append(f"scheduled Golomb parameter `{scheduled_parameter}`")
+        if cap is not None:
+            details.append(f"coefficient limit `{cap}`")
+        suffix = f" ({', '.join(details)})" if details else ""
         print(
-            f"  - Folded-witness Golomb budget: realized `{fmt_bytes(float(z_golomb))} bytes` out of "
-            f"a scheduled upper bound of `{fmt_bytes(float(z_budget))} bytes`{slack_note}"
+            f"- Golomb payload: `{fmt_bytes(float(z_golomb))} bytes` out of the scheduled "
+            f"`{fmt_bytes(float(z_budget))}-byte` budget{suffix}."
         )
 
-    z_witness_linf_cap = current.get("z_witness_linf_cap")
-    z_rice_low_bits_wire = current.get("z_rice_low_bits_wire")
-    z_rice_low_bits_cap = current.get("z_rice_low_bits_cap")
-    z_field_coeffs = current.get("tail_z_field_elems") or current.get("z_coords")
-    z_ring_elems = current.get("tail_z_ring_elems")
     z_bits_golomb = current.get("z_bits_per_coord_golomb")
     z_bits_packed = current.get("z_bits_per_coord_packed")
     z_packed_hyp = current.get("z_packed_hypothetical_bytes")
-    z_savings = current.get("z_golomb_savings_bytes")
-    if z_witness_linf_cap is not None and z_rice_low_bits_wire is not None and z_field_coeffs is not None:
-        comparison = ""
-        if z_bits_golomb is not None and z_bits_packed is not None:
-            k_note = f"wire Golomb parameter=`{z_rice_low_bits_wire}`"
-            if z_rice_low_bits_cap is not None:
-                k_note += f", planner-cap Golomb parameter=`{z_rice_low_bits_cap}`"
-            comparison = (
-                f", `{z_bits_golomb:.2f}` bits for each field coefficient "
-                f"({k_note}, derived from folded-witness infinity-norm cap "
-                f"`{z_witness_linf_cap}`) vs "
-                f"`{z_bits_packed:.2f}` bits for each field coefficient "
-                "(legacy uniform `PackedDigits` z planes)"
-            )
-        savings_note = ""
-        if z_packed_hyp is not None and z_golomb is not None and z_savings is not None:
-            savings_note = (
-                f"; hypothetical packed z `{fmt_bytes(float(z_packed_hyp))} bytes`, "
-                f"savings `{fmt_bytes(float(z_savings))} bytes`"
-            )
-        ring_note = (
-            f"`{fmt_count(float(z_ring_elems))}` ring elements, "
-            if z_ring_elems is not None
+    if z_bits_golomb is not None and z_bits_packed is not None:
+        packed_size = (
+            f" and `{fmt_bytes(float(z_packed_hyp))} bytes` total"
+            if z_packed_hyp is not None
             else ""
         )
         print(
-            f"  - Folded-witness Golomb model: {ring_note}"
-            f"`{fmt_count(float(z_field_coeffs))}` field coefficients{comparison}{savings_note}"
+            f"- Folded response encoding: `{z_bits_golomb:.2f}` bits per coefficient with "
+            f"Golomb coding, compared with `{z_bits_packed:.2f}` bits per coefficient"
+            f"{packed_size} for uniform packed digits."
         )
-
-
-def render_terminal_response_components(
-    cases: list[dict[str, object]], include_heading: bool = True
-) -> None:
-    rows = [
-        case
-        for case in cases
-        if case_status(case) == "ok"
-        and case.get("tail_encoding") in ("segment_typed", "terminal_response")
-        and all(
-            case.get(key) is not None
-            for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_bytes")
-        )
-    ]
-    if not rows:
-        return
-
-    if include_heading:
-        print("### Terminal response component breakdown")
-        print()
-    print(
-        "| Workload | Folded response (`z`) | Opening values (`e`) | "
-        "Inner-commitment values (`t`) | Total terminal response |"
-    )
-    print("| --- | ---: | ---: | ---: | ---: |")
-    for case in rows:
-        print(
-            f"| {md_text(human_case_label(case))} | "
-            f"{fmt_bytes(float(case['tail_z_bytes']))} bytes | "
-            f"{fmt_bytes(float(case['tail_e_bytes']))} bytes | "
-            f"{fmt_bytes(float(case['tail_t_bytes']))} bytes | "
-            f"{fmt_bytes(float(case['tail_bytes']))} bytes |"
-        )
-    print()
-    print(
-        "The `z` column includes its per-segment length prefixes and Golomb payload; `e` and `t` "
-        "are raw field bytes. These three columns sum exactly to the serialized terminal response."
-    )
 
 
 def write_text(path: pathlib.Path, text: str) -> None:
@@ -805,6 +817,7 @@ def extract_summary(
     }
     planned_levels: dict[int, dict[str, object]] = {}
     planned_groups: dict[int, list[dict[str, object]]] = {}
+    terminal_plan: dict[str, object] | None = None
     proof_levels: dict[int, dict[str, object]] = {}
     onehot_commit_schedules: list[dict[str, object]] = []
     active_verify_mode = "multi threaded"
@@ -912,6 +925,9 @@ def extract_summary(
             summary["extension_root_direct_fallback"] = True
         elif "planned fold group" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
+            challenge_operator_norm_threshold = parse_tracing_optional_int(
+                kvs.get("challenge_operator_norm_threshold")
+            )
             planned_groups.setdefault(level, []).append(
                 {
                     "group": kvs["group"],
@@ -925,22 +941,32 @@ def extract_summary(
                     "d_a": int(kvs["d_a"]),
                     "d_b": int(kvs["d_b"]),
                     "d_d": int(kvs["d_d"]),
+                    "a_width": int(kvs.get("a_width", "0")),
+                    "b_width": int(kvs.get("b_width", "0")),
+                    "d_width": int(kvs.get("d_width", "0")),
                     "n_a": int(kvs["n_a"]),
                     "n_b": int(kvs["n_b"]),
                     "n_d": int(kvs["n_d"]),
+                    "security_route": (
+                        "L2"
+                        if parse_tracing_optional_int(kvs.get("response_l2_sq_cap"))
+                        is not None
+                        else "L-infinity"
+                    ),
+                    "response_l2_sq_cap": parse_tracing_optional_int(
+                        kvs.get("response_l2_sq_cap")
+                    ),
                     "b_slice_count": int(kvs.get("b_slice_count", "1")),
                     "physical_b_input_width": (
                         int(kvs["physical_b_input_width"])
                         if "physical_b_input_width" in kvs
                         else None
                     ),
-                    "logical_b_rows": int(
-                        kvs.get("logical_b_rows", kvs["n_b"])
+                    "logical_b_rows": (
+                        int(kvs["logical_b_rows"]) if "logical_b_rows" in kvs else None
                     ),
-                    "complete_b_compression_bytes": (
-                        int(kvs["complete_b_compression_bytes"])
-                        if "complete_b_compression_bytes" in kvs
-                        else None
+                    "complete_b_compression_bytes": parse_tracing_optional_int(
+                        kvs.get("complete_b_compression_bytes")
                     ),
                     "log_basis_inner": int(kvs["log_basis_inner"]),
                     "log_basis_outer": int(kvs["log_basis_outer"]),
@@ -949,7 +975,29 @@ def extract_summary(
                     "num_digits_outer": int(kvs["num_digits_outer"]),
                     "num_digits_open": int(kvs["num_digits_open"]),
                     "num_digits_fold": int(kvs["num_digits_fold"]),
+                    "num_digits_quotient": int(
+                        kvs.get(
+                            "num_digits_quotient",
+                            str(
+                                quotient_digit_count(
+                                    metadata, int(kvs["log_basis_open"])
+                                )
+                            ),
+                        )
+                    ),
                     "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
+                    **{
+                        key: int(kvs[key])
+                        for key in ("challenge_count_pm1", "challenge_count_pm2")
+                        if key in kvs
+                    },
+                    **(
+                        {
+                            "challenge_operator_norm_threshold": challenge_operator_norm_threshold
+                        }
+                        if challenge_operator_norm_threshold is not None
+                        else {}
+                    ),
                     "num_live_ring_elements_per_claim": int(
                         kvs["num_live_ring_elements_per_claim"]
                     ),
@@ -1015,27 +1063,53 @@ def extract_summary(
             block_index_domain_size = int(
                 kvs.get("block_index_domain_size", 1 << block_index_bits)
             )
+            challenge_operator_norm_threshold = parse_tracing_optional_int(
+                kvs.get("challenge_operator_norm_threshold")
+            )
             planned_levels[level] = {
                 "level": level,
                 "d_a": int(kvs.get("d_a", legacy_d)),
                 "d_b": int(kvs.get("d_b", legacy_d)),
                 "d_d": int(kvs.get("d_d", legacy_d)),
+                "a_width": int(kvs.get("a_width", "0")),
+                "b_width": int(kvs.get("b_width", "0")),
+                "d_width": int(kvs.get("d_width", "0")),
                 "n_a": int(kvs["n_a"]),
                 "n_b": int(kvs["n_b"]),
                 "n_d": int(kvs["n_d"]),
+                "security_route": (
+                    "L2"
+                    if parse_tracing_optional_int(kvs.get("response_l2_sq_cap")) is not None
+                    else "L-infinity"
+                ),
+                "response_l2_sq_cap": parse_tracing_optional_int(
+                    kvs.get("response_l2_sq_cap")
+                ),
                 "b_slice_count": int(kvs.get("b_slice_count", "1")),
                 "physical_b_input_width": (
                     int(kvs["physical_b_input_width"])
                     if "physical_b_input_width" in kvs
                     else None
                 ),
-                "logical_b_rows": int(kvs.get("logical_b_rows", kvs["n_b"])),
-                "complete_b_compression_bytes": (
-                    int(kvs["complete_b_compression_bytes"])
-                    if "complete_b_compression_bytes" in kvs
-                    else None
+                "logical_b_rows": (
+                    int(kvs["logical_b_rows"]) if "logical_b_rows" in kvs else None
+                ),
+                "complete_b_compression_bytes": parse_tracing_optional_int(
+                    kvs.get("complete_b_compression_bytes")
                 ),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
+                **{
+                    key: int(kvs[key])
+                    for key in ("challenge_count_pm1", "challenge_count_pm2")
+                    if key in kvs
+                },
+                **(
+                    {
+                        "challenge_operator_norm_threshold": challenge_operator_norm_threshold
+                    }
+                    if challenge_operator_norm_threshold is not None
+                    else {}
+                ),
                 "log_basis_inner": int(kvs.get("log_basis_inner") or kvs["log_basis"]),
                 "log_basis_outer": int(kvs.get("log_basis_outer") or kvs["log_basis"]),
                 "log_basis_open": int(kvs.get("log_basis_open") or kvs["log_basis"]),
@@ -1049,6 +1123,17 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
+                "num_digits_quotient": int(
+                    kvs.get(
+                        "num_digits_quotient",
+                        str(
+                            quotient_digit_count(
+                                metadata,
+                                int(kvs.get("log_basis_open") or kvs["log_basis"]),
+                            )
+                        ),
+                    )
+                ),
                 "input_witness_len": input_witness_len,
                 "current_w_len": planned_current_w_len(kvs),
                 "next_w_len": output_witness_len,
@@ -1063,6 +1148,62 @@ def extract_summary(
             # and is display-only (no correctness comparison), so keep it optional.
             if "level_bytes" in kvs:
                 planned_levels[level]["level_bytes"] = int(kvs["level_bytes"])
+        elif "planned terminal state" in line and kvs.get("label") == mode:
+            terminal_plan = {
+                "level": int(kvs["level"]) if "level" in kvs else None,
+                "input_witness_len": int(
+                    kvs.get("input_witness_len") or kvs["terminal_response_len"]
+                ),
+                "d_a": int(kvs.get("d_a") or kvs["final_inner_ring_dimension"]),
+                "n_a": int(kvs.get("n_a") or kvs["final_inner_module_rank"]),
+                "inner_width": int(kvs.get("inner_width", "0")),
+                "log_basis_inner": int(
+                    kvs.get("log_basis_inner") or kvs["final_inner_log_basis"]
+                ),
+                "num_digits_inner": int(kvs.get("num_digits_inner", "0")),
+                "fold_log_basis": int(kvs.get("fold_log_basis", "0")),
+                "fold_digit_count": int(kvs.get("fold_digit_count", "0")),
+                "security_route": (
+                    "L2"
+                    if parse_tracing_optional_int(kvs.get("response_l2_sq_cap"))
+                    is not None
+                    else "L-infinity"
+                ),
+                "response_l2_sq_cap": parse_tracing_optional_int(
+                    kvs.get("response_l2_sq_cap")
+                ),
+                "z_linf_cap": parse_tracing_optional_int(
+                    kvs.get("z_linf_cap")
+                ),
+                **{
+                    key: int(kvs[key])
+                    for key in (
+                        "challenge_l1_mass",
+                        "challenge_count_pm1",
+                        "challenge_count_pm2",
+                        "num_live_ring_elements_per_claim",
+                        "num_positions_per_block",
+                        "num_live_blocks",
+                        "block_index_domain_size",
+                    )
+                    if key in kvs
+                },
+                **(
+                    {
+                        "challenge_operator_norm_threshold": (
+                            parse_tracing_optional_int(
+                                kvs.get("challenge_operator_norm_threshold")
+                            )
+                        )
+                    }
+                    if parse_tracing_optional_int(
+                        kvs.get("challenge_operator_norm_threshold")
+                    )
+                    is not None
+                    else {}
+                ),
+                "complete": "fold_log_basis" in kvs,
+            }
         elif "planned recursive setup edge" in line and kvs.get("label") == mode:
             producer_level = int(kvs["successor_level"]) - 1
             if producer_level in planned_levels:
@@ -1086,17 +1227,20 @@ def extract_summary(
                 },
             }
             if "grind_nonce" in kvs:
-                proof_levels[level]["grind_nonce_val"] = int(kvs["grind_nonce"])
-            if "grind_attempts" in kvs:
-                proof_levels[level]["grind_attempts"] = int(kvs["grind_attempts"])
+                grind_nonce = int(kvs["grind_nonce"])
+                grind_attempts = int(kvs.get("grind_attempts", grind_nonce + 1))
+                if grind_attempts != grind_nonce + 1:
+                    raise ValueError(
+                        "fold grinding attempts must equal accepted nonce plus one: "
+                        f"level={level}, nonce={grind_nonce}, attempts={grind_attempts}"
+                    )
+                proof_levels[level]["grind_nonce_val"] = grind_nonce
+                proof_levels[level]["grind_attempts"] = grind_attempts
+            response_l2_sq = parse_tracing_optional_int(kvs.get("response_l2_sq"))
+            if response_l2_sq is not None:
+                proof_levels[level]["response_l2_sq"] = response_l2_sq
             if "root_variant" in kvs:
                 proof_levels[level]["root_variant"] = kvs["root_variant"]
-        elif "fold grind summary" in line and kvs.get("label") == mode:
-            summary["grind_levels"] = int(kvs["grind_levels"])
-            if int(kvs["grind_levels"]) > 0:
-                summary["grind_nonce_max"] = int(kvs["grind_nonce_max"])
-                summary["grind_attempts_sum"] = int(kvs["grind_attempts_sum"])
-                summary["grind_nonces"] = kvs["grind_nonces"]
         elif "proof tail summary" in line and kvs.get("label") == mode:
             ingest_tail_summary_fields(summary, kvs)
         elif "z fold encoding stats" in line and kvs.get("label") == mode:
@@ -1137,8 +1281,32 @@ def extract_summary(
         warning = public_opening_groups_warning(summary)
         if warning is not None:
             summary.setdefault("warnings", []).append(warning)
+    if terminal_plan is not None:
+        if terminal_plan["level"] is None:
+            terminal_plan["level"] = (
+                max(proof_levels)
+                if proof_levels
+                else max(planned_levels, default=-1) + 1
+            )
+        summary["terminal_plan"] = terminal_plan
     if proof_levels:
         summary["proof_levels"] = [proof_levels[level] for level in sorted(proof_levels)]
+        grind_rows = [
+            proof_levels[level]
+            for level in sorted(proof_levels)
+            if proof_levels[level].get("grind_nonce_val") is not None
+        ]
+        if grind_rows:
+            summary["grind_levels"] = len(grind_rows)
+            summary["grind_nonce_max"] = max(
+                int(level["grind_nonce_val"]) for level in grind_rows
+            )
+            summary["grind_attempts_sum"] = sum(
+                int(level["grind_attempts"]) for level in grind_rows
+            )
+            summary["grind_nonces"] = ",".join(
+                str(level["grind_nonce_val"]) for level in grind_rows
+            )
     if onehot_commit_schedules:
         summary["onehot_commit_schedules"] = onehot_commit_schedules
 
@@ -1252,7 +1420,123 @@ def compact_sample_summary(summary: dict[str, object]) -> dict[str, object]:
     for key in SAMPLE_METRICS:
         if key in summary:
             sample[key] = summary[key]
+    l2_observations = l2_grind_observations_for_run(summary)
+    if l2_observations:
+        sample["l2_grind_observations"] = l2_observations
     return sample
+
+
+def l2_grind_observations_for_run(
+    summary: dict[str, object],
+) -> list[dict[str, object]]:
+    planned_levels = summary.get("planned_levels")
+    proof_levels = summary.get("proof_levels")
+    if not isinstance(planned_levels, list):
+        planned_levels = []
+    l2_planned_levels = [
+        planned
+        for planned in planned_levels
+        if isinstance(planned, dict) and planned.get("security_route") == "L2"
+    ]
+    terminal_plan = summary.get("terminal_plan")
+    if isinstance(terminal_plan, dict) and terminal_plan.get("security_route") == "L2":
+        l2_planned_levels.append(terminal_plan)
+    run_failed = int(summary.get("exit_code", 0)) != 0
+    if not isinstance(proof_levels, list):
+        if l2_planned_levels and not run_failed:
+            raise ValueError("successful L2 run is missing proof-level grinding diagnostics")
+        return []
+    proofs_by_level = {
+        int(level["level"]): level
+        for level in proof_levels
+        if isinstance(level, dict) and level.get("level") is not None
+    }
+    observations = []
+    for planned in l2_planned_levels:
+        level = int(planned["level"])
+        proof = proofs_by_level.get(level)
+        if proof is None or proof.get("grind_attempts") is None:
+            if run_failed:
+                continue
+            raise ValueError(f"L2 fold level {level} is missing grinding diagnostics")
+        nonce = int(proof["grind_nonce_val"])
+        attempts = int(proof["grind_attempts"])
+        if attempts != nonce + 1:
+            raise ValueError(f"L2 fold level {level} has inconsistent grinding attempts")
+        response_l2_sq = proof.get("response_l2_sq")
+        if response_l2_sq is None:
+            if run_failed:
+                continue
+            raise ValueError(f"L2 fold level {level} is missing its measured response energy")
+        response_l2_sq = int(response_l2_sq)
+        response_l2_sq_cap = int(planned["response_l2_sq_cap"])
+        if response_l2_sq > response_l2_sq_cap:
+            raise ValueError(
+                f"L2 fold level {level} exceeded its scheduled response cap: "
+                f"{response_l2_sq} > {response_l2_sq_cap}"
+            )
+        observations.append(
+            {
+                "level": level,
+                "response_l2_sq_cap": response_l2_sq_cap,
+                "response_l2_sq": response_l2_sq,
+                "cap_utilization": response_l2_sq / response_l2_sq_cap,
+                "accepted_nonce": nonce,
+                "attempts": attempts,
+                "rejected_attempts": nonce,
+            }
+        )
+    return observations
+
+
+def combine_l2_grind_observations(
+    summaries: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    combined: dict[tuple[int, int], dict[str, object]] = {}
+    for summary in summaries:
+        for observation in l2_grind_observations_for_run(summary):
+            key = (int(observation["level"]), int(observation["response_l2_sq_cap"]))
+            aggregate = combined.setdefault(
+                key,
+                {
+                    "level": key[0],
+                    "response_l2_sq_cap": key[1],
+                    "samples": 0,
+                    "attempts": 0,
+                    "rejected_attempts": 0,
+                    "accepted_nonces": [],
+                    "response_l2_sq_values": [],
+                },
+            )
+            aggregate["samples"] = int(aggregate["samples"]) + 1
+            aggregate["attempts"] = int(aggregate["attempts"]) + int(
+                observation["attempts"]
+            )
+            aggregate["rejected_attempts"] = int(aggregate["rejected_attempts"]) + int(
+                observation["rejected_attempts"]
+            )
+            accepted_nonces = aggregate["accepted_nonces"]
+            if not isinstance(accepted_nonces, list):
+                raise TypeError("internal L2 grind nonce aggregate must be a list")
+            accepted_nonces.append(int(observation["accepted_nonce"]))
+            response_values = aggregate["response_l2_sq_values"]
+            if not isinstance(response_values, list):
+                raise TypeError("internal L2 response-energy aggregate must be a list")
+            response_values.append(int(observation["response_l2_sq"]))
+    result = []
+    for key in sorted(combined):
+        aggregate = combined[key]
+        aggregate["observed_failure_rate"] = int(aggregate["rejected_attempts"]) / int(
+            aggregate["attempts"]
+        )
+        response_values = aggregate["response_l2_sq_values"]
+        if not isinstance(response_values, list) or not response_values:
+            raise TypeError("internal L2 response-energy aggregate must be nonempty")
+        aggregate["maximum_cap_utilization"] = max(response_values) / int(
+            aggregate["response_l2_sq_cap"]
+        )
+        result.append(aggregate)
+    return result
 
 
 SUMMARY_CSV_COLUMNS = (
@@ -1318,10 +1602,39 @@ def write_summary_csv(path: pathlib.Path, cases: list[dict[str, object]]) -> Non
             writer.writerow(row)
 
 
+def combine_grind_retry_observations(
+    summaries: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    successful = [summary for summary in summaries if int(summary.get("exit_code", 0)) == 0]
+    if not successful:
+        return []
+    retries_by_level: dict[int, list[int]] = {}
+    for summary in successful:
+        levels = grind_retries_by_level(summary)
+        if levels is None:
+            return []
+        for level, retries in levels.items():
+            if len(retries) != 1:
+                raise ValueError("one benchmark run must emit one grinding nonce per fold")
+            retries_by_level.setdefault(level, []).append(retries[0])
+    if any(len(retries) != len(successful) for retries in retries_by_level.values()):
+        raise ValueError("successful benchmark runs emitted different grinding fold levels")
+    return [
+        {"level": level, "retries": retries_by_level[level]}
+        for level in sorted(retries_by_level)
+    ]
+
+
 def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, object]:
     combined = dict(summaries[0])
     combined["runs"] = len(summaries)
     combined["samples"] = [compact_sample_summary(summary) for summary in summaries]
+    l2_grind_observations = combine_l2_grind_observations(summaries)
+    if l2_grind_observations:
+        combined["l2_grind_observations"] = l2_grind_observations
+    grind_retry_observations = combine_grind_retry_observations(summaries)
+    if grind_retry_observations:
+        combined["grind_retry_observations"] = grind_retry_observations
 
     for key in TIMING_SAMPLE_METRICS:
         values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
@@ -1717,19 +2030,11 @@ def fmt_mib_from_bytes(value_bytes: float) -> str:
     return f"{value_bytes / (1024.0 * 1024.0):.1f}"
 
 
-def fmt_bytes(value: float) -> str:
-    return f"{int(round(value)):,}"
-
-
 def fmt_mib_with_exact_bytes(value_bytes: float) -> str:
     return (
         f"{fmt_mib_from_bytes(value_bytes)}<br>"
         f"<sub>{fmt_bytes(value_bytes)} bytes</sub>"
     )
-
-
-def fmt_count(value: float) -> str:
-    return f"{int(round(value)):,}"
 
 
 def case_status(summary: dict[str, object]) -> str:
@@ -1750,19 +2055,12 @@ class Metric:
 
 MEASURED_METRICS = [
     Metric("setup_s", "Setup", "s", fmt_seconds),
-    Metric("setup_expand_s", "Setup expansion", "s", fmt_seconds),
-    Metric("backend_prepare_s", "Backend preparation", "s", fmt_seconds),
+    Metric("setup_expand_s", "↳ Setup expansion", "s", fmt_seconds),
+    Metric("backend_prepare_s", "↳ Backend preparation", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
     Metric("prove_total_s", "Prove", "s", fmt_seconds),
     Metric("verify_total_s", "Verify, multi-threaded", "ms", fmt_milliseconds),
     Metric("verify_single_total_s", "Verify, single-threaded", "ms", fmt_milliseconds),
-    Metric("verify_akita_s", "Verifier core, multi-threaded", "ms", fmt_milliseconds),
-    Metric(
-        "verify_single_akita_s",
-        "Verifier core, single-threaded",
-        "ms",
-        fmt_milliseconds,
-    ),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric(
         "num_setup_field_elements",
@@ -1876,49 +2174,6 @@ def render_execution_parameters(
     print()
     for label, value in rows:
         print(f"- {label}: {value}")
-
-
-def numeric_delta(
-    current: dict[str, object],
-    baseline: dict[str, object] | None,
-    key: str,
-) -> str:
-    """Format a percentage delta of `current[key]` against `baseline[key]`.
-
-    Returns `"n/a"` when either side is missing. A zero baseline is reported as
-    unchanged when both values are zero, or explicitly as a new nonzero value;
-    other comparisons render as e.g. `"+5.2%"` or `"-1.2%"`. All report
-    comparisons use this formatter so proof size, prover wall-time, and other
-    numeric metrics have consistent deltas.
-    """
-    if baseline is None:
-        return "n/a"
-    current_value = current.get(key)
-    baseline_value = baseline.get(key)
-    if current_value is None or baseline_value is None:
-        return "n/a"
-    if float(baseline_value) == 0.0:
-        return "unchanged" if float(current_value) == 0.0 else "new; merge base is zero"
-    delta = (float(current_value) / float(baseline_value) - 1.0) * 100.0
-    sign = "+" if delta >= 0.0 else ""
-    return f"{sign}{delta:.1f}%"
-
-
-def value_with_baseline_delta(
-    current_value: object,
-    baseline_value: object | None,
-    formatter: callable,
-    unit: str = "",
-    compare_to_baseline: bool = False,
-    comparison_label: str = " vs merge base",
-) -> str:
-    value = f"{formatter(float(current_value))}{unit}"
-    if baseline_value is None:
-        if compare_to_baseline:
-            return f"{value}<br><sub>n/a{comparison_label}</sub>"
-        return value
-    delta = numeric_delta({"value": current_value}, {"value": baseline_value}, "value")
-    return f"{value}<br><sub>{delta}{comparison_label}</sub>"
 
 
 def optional_value_with_baseline_delta(
@@ -2190,6 +2445,91 @@ def fold_dimension_schedule(summary: dict[str, object]) -> str:
     return " → ".join(f"{d_a}/{d_b}/{d_d}" for d_a, d_b, d_d in tuples)
 
 
+def terminal_response_metric_value(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+    show_delta: bool,
+) -> str:
+    total = optional_value_with_baseline_delta(
+        current,
+        baseline,
+        "tail_bytes",
+        fmt_bytes,
+        " bytes",
+        show_delta,
+        "",
+    )
+    if all(
+        current.get(key) is not None
+        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
+    ):
+        total += (
+            "<br><sub>"
+            f"z {fmt_bytes(float(current['tail_z_bytes']))} · "
+            f"e {fmt_bytes(float(current['tail_e_bytes']))} · "
+            f"t {fmt_bytes(float(current['tail_t_bytes']))}"
+            "</sub>"
+        )
+    return total
+
+
+def grind_retries_by_level(summary: dict[str, object]) -> dict[int, list[int]] | None:
+    observations = summary.get("grind_retry_observations")
+    if isinstance(observations, list):
+        result: dict[int, list[int]] = {}
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            retries = observation.get("retries")
+            if not isinstance(retries, list):
+                continue
+            result[int(observation["level"])] = [int(value) for value in retries]
+        return result
+
+    proof_levels = summary.get("proof_levels")
+    if not isinstance(proof_levels, list):
+        return None
+    result = {}
+    for level in proof_levels:
+        if not isinstance(level, dict) or level.get("grind_nonce_val") is None:
+            continue
+        result[int(level["level"])] = [int(level["grind_nonce_val"])]
+    return result or None
+
+
+def grinding_retries_metric_value(
+    current: dict[str, object],
+    baseline: dict[str, object] | None,
+) -> str:
+    current_levels = grind_retries_by_level(current)
+    if current_levels is None:
+        return "n/a"
+    baseline_levels = grind_retries_by_level(baseline) if baseline is not None else None
+    visible_levels = sorted(
+        level
+        for level in set(current_levels) | set(baseline_levels or {})
+        if any(current_levels.get(level, []))
+        or any((baseline_levels or {}).get(level, []))
+    )
+
+    def render(levels: dict[int, list[int]] | None) -> str:
+        if levels is None:
+            return "n/a"
+        if not visible_levels:
+            return "None"
+        rows = []
+        for level in visible_levels:
+            retries = levels.get(level, [])
+            values = " / ".join(fmt_count(float(value)) for value in retries) or "n/a"
+            rows.append(f"L{level}: {values}")
+        return "<br>".join(rows)
+
+    current_value = render(current_levels)
+    if baseline is None:
+        return f"{current_value}<br><sub>no matching merge-base case</sub>"
+    return exact_choice(current_value, render(baseline_levels))
+
+
 def render_matrix_summary(
     current_cases: list[dict[str, object]],
     main_baseline: dict[str, dict[str, object]] | None,
@@ -2217,6 +2557,16 @@ def render_matrix_summary(
             False,
         ),
         (
+            "Proof size and protocol shape",
+            [
+                Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
+                Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
+                Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
+                Metric("akita_levels", "Fold levels", "", fmt_count),
+            ],
+            True,
+        ),
+        (
             "Memory and setup size",
             [
                 Metric("setup_vector_bytes", "Setup vector", " MiB", fmt_mib_from_bytes),
@@ -2236,16 +2586,6 @@ def render_matrix_summary(
             ],
             False,
         ),
-        (
-            "Proof size and protocol shape",
-            [
-                Metric("proof_size_bytes", "Total proof", " bytes", fmt_bytes),
-                Metric("akita_fold_bytes", "Fold payload", " bytes", fmt_bytes),
-                Metric("tail_bytes", "Terminal response", " bytes", fmt_bytes),
-                Metric("akita_levels", "Fold levels", "", fmt_count),
-            ],
-            True,
-        ),
     ]
 
     for table_index, (title, metrics, include_fold_schedule) in enumerate(tables):
@@ -2254,12 +2594,23 @@ def render_matrix_summary(
         print(f"### {title}")
         print()
         shape_headers = ["Fold A/B/D schedule"] if include_fold_schedule else []
-        headers = ["Profile", *shape_headers, *(metric.name for metric in metrics)]
+        grind_headers = ["Grinding retries"] if include_fold_schedule else []
+        headers = [
+            "Profile",
+            *shape_headers,
+            *(metric.name for metric in metrics),
+            *grind_headers,
+        ]
         print("| " + " | ".join(headers) + " |")
         print(
             "| "
             + " | ".join(
-                ["---", *("---" for _ in shape_headers), *("---:" for _ in metrics)]
+                [
+                    "---",
+                    *("---" for _ in shape_headers),
+                    *("---:" for _ in metrics),
+                    *("---" for _ in grind_headers),
+                ]
             )
             + " |"
         )
@@ -2270,18 +2621,35 @@ def render_matrix_summary(
             if include_fold_schedule:
                 row.append(fold_dimension_schedule(current))
             for metric in metrics:
-                row.append(
-                    optional_value_with_baseline_delta(
-                        current,
-                        baseline,
-                        metric.key,
-                        metric.value_formatter,
-                        metric.unit,
-                        main_baseline is not None,
-                        "",
+                if metric.key == "tail_bytes":
+                    row.append(
+                        terminal_response_metric_value(
+                            current,
+                            baseline,
+                            main_baseline is not None,
+                        )
                     )
-                )
+                else:
+                    row.append(
+                        optional_value_with_baseline_delta(
+                            current,
+                            baseline,
+                            metric.key,
+                            metric.value_formatter,
+                            metric.unit,
+                            main_baseline is not None,
+                            "",
+                        )
+                    )
+            if include_fold_schedule:
+                row.append(grinding_retries_metric_value(current, baseline))
             print("| " + " | ".join(row) + " |")
+        if include_fold_schedule:
+            print()
+            print(
+                "Grinding retries are rejected attempts at each fold, listed in "
+                "measured-run order. Zero means the first sampled nonce was accepted."
+            )
 
     if main_baseline is not None:
         print()
@@ -2314,431 +2682,6 @@ def render_matrix_summary(
             print(f"- {code_text(case['case_id'])}: {md_text(warning)}.")
 
 
-def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | None:
-    samples = summary.get("samples")
-    if not isinstance(samples, list):
-        return None
-    values = [float(sample[key]) for sample in samples if isinstance(sample, dict) and key in sample]
-    if len(values) <= 1:
-        return None
-    return min(values), max(values)
-
-
-def proof_level_component_bytes(level: dict[str, object]) -> int:
-    return sum(int(level.get(field, 0)) for field in PROOF_LEVEL_BYTE_FIELDS)
-
-
-def proof_field_present(level: dict[str, object], field: str) -> bool:
-    present = level.get("present_byte_fields")
-    if isinstance(present, list):
-        return field in present
-    return level.get("root_variant") != "direct"
-
-
-def proof_step_label(level: dict[str, object]) -> str:
-    variant = level.get("root_variant")
-    level_index = int(level["level"])
-    if variant == "direct":
-        return "direct root"
-    if variant == "terminal":
-        return "terminal root"
-    if variant == "fold":
-        return "fold root" if level_index == 0 else "terminal fold"
-    return "intermediate fold"
-
-
-def exact_choice(current: str, baseline: str | None) -> str:
-    if baseline is None or current == baseline:
-        return current
-    return f"{current}<br><sub>Merge base</sub><br>{baseline}"
-
-
-def detail_block(title: str, rows: list[str]) -> str:
-    return f"<strong>{title}</strong><br>" + "<br>".join(rows)
-
-
-def format_witness_groups_inline(groups: object) -> str:
-    if not isinstance(groups, list) or not groups:
-        return "n/a"
-    values = []
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        name = group.get("group")
-        field_elements = group.get("field_elements")
-        if name is None or field_elements is None:
-            continue
-        values.append(f"{name} {fmt_count(float(field_elements))}")
-    return "; ".join(values) if values else "n/a"
-
-
-def planned_group_label(group: dict[str, object]) -> str:
-    role = str(group["group_role"])
-    name = str(group["group"])
-    if role == "final":
-        return "Final group"
-    if role == "folded":
-        return "Folded witness"
-    if role == "precommitted" and name.startswith("pre"):
-        index = name.removeprefix("pre")
-        return f"Precommit {int(index) + 1}" if index.isdigit() else name
-    if role == "setup_offload":
-        return f"Setup offload → L{int(group['consumer_level'])}"
-    return name
-
-
-def planned_groups_for_render(level: dict[str, object]) -> list[dict[str, object]]:
-    groups = level.get("groups")
-    typed_groups = (
-        [group for group in groups if isinstance(group, dict)]
-        if isinstance(groups, list)
-        else []
-    )
-    if typed_groups:
-        return typed_groups
-
-    level_index = int(level["level"])
-    role = "final" if level_index == 0 else "folded"
-    witness_groups = level.get("current_w_len")
-    witness_field_elements = (
-        sum(
-            int(group.get("field_elements", 0))
-            for group in witness_groups
-            if isinstance(group, dict)
-        )
-        if isinstance(witness_groups, list)
-        else 0
-    )
-    return [
-        {
-            **level,
-            "group": role,
-            "group_role": role,
-            "consumer_level": level_index,
-            "witness_field_elements": witness_field_elements
-            or int(level.get("input_witness_len", 0)),
-            "num_digits_fold": int(level["delta_fold"]),
-            "legacy_level": True,
-        }
-    ]
-
-
-def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
-    return (
-        str(group["group_role"]),
-        str(group["group"]),
-        int(group["consumer_level"]),
-    )
-
-
-def planned_group_planner_value(group: dict[str, object]) -> str:
-    def optional_count(field: str) -> str:
-        value = group.get(field)
-        return "not reported" if value is None else fmt_count(float(value))
-
-    def optional_bytes(field: str) -> str:
-        value = group.get(field)
-        return "not reported" if value is None else fmt_bytes(int(value))
-
-    matrix = (
-        f"Rings A/B/D: {fmt_count(float(group['d_a']))} / "
-        f"{fmt_count(float(group['d_b']))} / {fmt_count(float(group['d_d']))}<br>"
-        f"Rows A/B/D: {fmt_count(float(group['n_a']))} / "
-        f"{fmt_count(float(group['n_b']))} / {fmt_count(float(group['n_d']))}"
-    )
-    slicing = (
-        f"B slices: {fmt_count(float(group.get('b_slice_count', 1)))}<br>"
-        f"Physical B cols: {optional_count('physical_b_input_width')}<br>"
-        f"Logical B rows: {fmt_count(float(group.get('logical_b_rows', group['n_b'])))}<br>"
-        f"Complete B compression: {optional_bytes('complete_b_compression_bytes')}"
-    )
-    decomposition = (
-        f"Basis bits A/B/D: {fmt_count(float(group['log_basis_inner']))} / "
-        f"{fmt_count(float(group['log_basis_outer']))} / "
-        f"{fmt_count(float(group['log_basis_open']))}<br>"
-        f"Digits A/B/D/W: {fmt_count(float(group['num_digits_inner']))} / "
-        f"{fmt_count(float(group['num_digits_outer']))} / "
-        f"{fmt_count(float(group['num_digits_open']))} / "
-        f"{fmt_count(float(group['num_digits_fold']))}"
-    )
-    return detail_block(
-        planned_group_label(group),
-        [
-            f"<em>Matrix geometry</em><br>{matrix}",
-            f"<br><em>B slicing</em><br>{slicing}",
-            f"<br><em>Decomposition</em><br>{decomposition}",
-            f"<br><em>Challenge</em><br>L1 mass: {fmt_count(float(group['challenge_l1_mass']))}",
-        ],
-    )
-
-
-def planned_group_work_value(group: dict[str, object]) -> str:
-    role = str(group["group_role"])
-    label = planned_group_label(group)
-    relation = (
-        f"Live per claim: {fmt_count(float(group['num_live_ring_elements_per_claim']))}<br>"
-        f"Blocks × positions: {fmt_count(float(group['num_live_blocks']))} × "
-        f"{fmt_count(float(group['num_positions_per_block']))}<br>"
-        f"Domain slots: {fmt_count(float(group['block_index_domain_size']))}"
-    )
-    if group.get("legacy_level"):
-        source = (
-            f"Input → output: {format_witness_groups_inline(group.get('current_w_len'))} → "
-            f"{fmt_count(float(group['next_w_len']))}"
-        )
-    elif role == "setup_offload":
-        source = (
-            f"Natural → padded: "
-            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
-            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
-        )
-    else:
-        source = f"Field elements: {fmt_count(float(group['witness_field_elements']))}"
-    parts = [
-        f"<em>{'Setup prefix' if role == 'setup_offload' else 'Witness'}</em><br>{source}",
-        f"<br><em>Relation geometry</em><br>{relation}",
-    ]
-    if group.get("legacy_level") and (
-        int(group.get("setup_prefix_natural_field_elements", 0)) != 0
-        or int(group.get("setup_prefix_padded_field_elements", 0)) != 0
-    ):
-        parts.append(
-            "<br><em>Setup prefix</em><br>Natural → padded: "
-            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
-            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
-        )
-    return detail_block(
-        label,
-        parts,
-    )
-
-
-def render_group_choices(
-    groups: list[dict[str, object]],
-    baseline_groups: list[dict[str, object]],
-    value: callable,
-) -> str:
-    current = {planned_group_key(group): group for group in groups}
-    baseline = {planned_group_key(group): group for group in baseline_groups}
-    keys = [*current, *(key for key in baseline if key not in current)]
-    rows = []
-    for key in keys:
-        current_group = current.get(key)
-        baseline_group = baseline.get(key)
-        label_source = current_group or baseline_group
-        if label_source is None:
-            continue
-        current_text = (
-            value(current_group)
-            if current_group is not None
-            else detail_block(planned_group_label(label_source), ["absent"])
-        )
-        baseline_text = (
-            value(baseline_group)
-            if baseline_group is not None
-            else (
-                detail_block(planned_group_label(label_source), ["absent"])
-                if baseline_groups
-                else None
-            )
-        )
-        rows.append(exact_choice(current_text, baseline_text))
-    return "<br><br>".join(rows)
-
-
-def proof_component_group(
-    level: dict[str, object],
-    baseline: dict[str, object] | None,
-    group_label: str,
-    components: tuple[tuple[str, str], ...],
-) -> str | None:
-    def group_value(source: dict[str, object] | None) -> tuple[int, list[str]]:
-        if source is None:
-            return 0, []
-        values = []
-        total = 0
-        for field, label in components:
-            if not proof_field_present(source, field):
-                continue
-            value = int(source.get(field, 0))
-            total += value
-            if value != 0:
-                values.append(f"{label} {fmt_bytes(float(value))}")
-        return total, values
-
-    def render_value(total: int, values: list[str]) -> str:
-        detail = (
-            f"<br><sub>{' · '.join(values)}</sub>"
-            if len(components) > 1 and values
-            else ""
-        )
-        return f"<strong>{group_label}</strong><br>{fmt_bytes(float(total))} bytes{detail}"
-
-    current_total, current_values = group_value(level)
-    baseline_total, baseline_values = group_value(baseline)
-    if current_total == 0 and (baseline is None or baseline_total == 0):
-        return None
-    baseline_text = (
-        render_value(baseline_total, baseline_values) if baseline is not None else None
-    )
-    return exact_choice(render_value(current_total, current_values), baseline_text)
-
-
-def proof_cost_summary(
-    level: dict[str, object], baseline: dict[str, object] | None
-) -> str:
-    total = value_with_baseline_delta(
-        level["total_bytes"],
-        baseline.get("total_bytes") if baseline else None,
-        fmt_bytes,
-        " bytes",
-        baseline is not None,
-    )
-    rows = [f"<strong>Total</strong><br>{total}"]
-    groups = (
-        (
-            "Opening",
-            (
-                ("extension_opening_partials_bytes", "partials"),
-                ("extension_opening_sumcheck_bytes", "sumcheck"),
-                ("opening_payload_bytes", "p_H"),
-            ),
-        ),
-        (
-            "Stage 1",
-            (
-                ("stage1_sumcheck_bytes", "sumcheck"),
-                ("stage1_interstage_claims_bytes", "claims"),
-                ("stage1_range_image_evaluation_bytes", "range image"),
-            ),
-        ),
-        ("Stage 2", (("stage2_sumcheck_bytes", "sumcheck"),)),
-        ("Stage 3", (("stage3_sumcheck_bytes", "sumcheck"),)),
-        (
-            "Next witness",
-            (
-                ("next_w_payload_bytes", "payload"),
-                ("next_w_eval_bytes", "evaluation"),
-            ),
-        ),
-        ("Grinding nonce", (("fold_grind_nonce_bytes", "nonce"),)),
-    )
-    for group_label, components in groups:
-        rendered = proof_component_group(
-            level, baseline, group_label, components
-        )
-        if rendered is not None:
-            rows.append(rendered)
-    return "<br><br>".join(rows)
-
-
-def render_fold_details(
-    planned_levels: list[dict[str, object]],
-    proof_levels: list[dict[str, object]],
-    baseline_planned_levels: list[dict[str, object]] | None,
-    baseline_proof_levels: list[dict[str, object]] | None,
-) -> None:
-    planned = {int(level["level"]): level for level in planned_levels}
-    proof = {int(level["level"]): level for level in proof_levels}
-    baseline_planned = {
-        int(level["level"]): level for level in (baseline_planned_levels or [])
-    }
-    baseline_proof = {
-        int(level["level"]): level for level in (baseline_proof_levels or [])
-    }
-    level_indices = sorted(set(planned) | set(proof))
-    print("<details>")
-    print("<summary>Fold schedule and proof cost</summary>")
-    print()
-    print("#### Fold by fold")
-    print()
-    headers = ["Fold", "Step", "Planner choice", "Work at this fold", "Proof bytes"]
-    print("| " + " | ".join(headers) + " |")
-    print("| --- | --- | --- | --- | --- |")
-
-    for level_index in level_indices:
-        schedule = planned.get(level_index)
-        proof_level = proof.get(level_index)
-        baseline_schedule = baseline_planned.get(level_index)
-        baseline_proof_level = baseline_proof.get(level_index)
-        step = proof_step_label(proof_level) if proof_level is not None else "scheduled fold"
-        if schedule is None:
-            schedule_choice = "—"
-            work = "—"
-        else:
-            current_groups = planned_groups_for_render(schedule)
-            baseline_groups = (
-                planned_groups_for_render(baseline_schedule)
-                if baseline_schedule is not None
-                else []
-            )
-            schedule_choice = render_group_choices(
-                current_groups, baseline_groups, planned_group_planner_value
-            )
-            work = render_group_choices(
-                current_groups, baseline_groups, planned_group_work_value
-            )
-            next_w = f"Field elements: {fmt_count(float(schedule['next_w_len']))}"
-            baseline_next_w = None
-            if (
-                baseline_schedule is not None
-                and baseline_schedule.get("next_w_len") is not None
-            ):
-                baseline_next_w = (
-                    f"Field elements: "
-                    f"{fmt_count(float(baseline_schedule['next_w_len']))}"
-                )
-            work = (
-                f"{work}<br><br>"
-                f"{detail_block('Folded output', [exact_choice(next_w, baseline_next_w)])}"
-            )
-
-        proof_bytes = "n/a"
-        if proof_level is not None:
-            proof_bytes = proof_cost_summary(proof_level, baseline_proof_level)
-        row = [f"L{level_index}", step, schedule_choice, work, proof_bytes]
-        print("| " + " | ".join(row) + " |")
-
-    print()
-    print(
-        "Role tuples use A / B / D order. The digit tuple adds folded witness W as "
-        "its fourth value. Proof groups with zero bytes are omitted. Component details "
-        "appear below the group total when a group contains multiple fields. "
-        "Unchanged choices omit merge base text. Exact proof component comparisons "
-        "show merge base bytes without a percentage. The terminal response is "
-        "reported separately and is not part of the terminal fold byte total."
-    )
-    grind_rows = [
-        level
-        for level in proof_levels
-        if int(level.get("grind_nonce_val", 0)) != 0
-        or int(level.get("grind_attempts", 0)) != 0
-    ]
-    if grind_rows:
-        print()
-        print("#### Grinding retries")
-        print()
-        print("| Fold | Accepted nonce | Attempts |")
-        print("| --- | ---: | ---: |")
-        for level in grind_rows:
-            baseline = baseline_proof.get(int(level["level"]))
-            nonce = exact_choice(
-                fmt_count(float(level.get("grind_nonce_val", 0))),
-                fmt_count(float(baseline.get("grind_nonce_val", 0))) if baseline else None,
-            )
-            attempts = exact_choice(
-                fmt_count(float(level.get("grind_attempts", 0))),
-                fmt_count(float(baseline.get("grind_attempts", 0))) if baseline else None,
-            )
-            print(f"| L{level['level']} | {nonce} | {attempts} |")
-    elif proof_levels:
-        print()
-        print("No fold needed a grinding retry.")
-    else:
-        print()
-        print("Grinding was not measured because no proof fold data was emitted.")
-    print()
-    print("</details>")
 
 
 def validate_case_consistency(summary: dict[str, object]) -> None:
@@ -2765,6 +2708,37 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
     proof_levels = summary.get("proof_levels")
     if not isinstance(planned_levels, list) or not isinstance(proof_levels, list):
         return
+    terminal_plan = summary.get("terminal_plan")
+    if isinstance(terminal_plan, dict) and planned_levels:
+        terminal_level = int(terminal_plan["level"])
+        expected_terminal_level = int(planned_levels[-1]["level"]) + 1
+        if terminal_level != expected_terminal_level:
+            raise ValueError(
+                "planned terminal level mismatch: "
+                f"planned={terminal_level}, expected={expected_terminal_level}"
+            )
+        predecessor_output = int(planned_levels[-1]["next_w_len"])
+        terminal_input = int(terminal_plan["input_witness_len"])
+        if terminal_input != predecessor_output:
+            raise ValueError(
+                "planned terminal input mismatch: "
+                f"terminal={terminal_input}, predecessor_output={predecessor_output}"
+            )
+        matching_proof = next(
+            (
+                proof
+                for proof in proof_levels
+                if int(proof["level"]) == terminal_level
+            ),
+            None,
+        )
+        if matching_proof is not None and int(matching_proof["d"]) != int(
+            terminal_plan["d_a"]
+        ):
+            raise ValueError(
+                f"planned/proof terminal A ring dimension mismatch at L{terminal_level}: "
+                f"planned={terminal_plan['d_a']}, proof={matching_proof['d']}"
+            )
     # The prover emits the direct terminal as an extra "proof fold level"
     # (`print_terminal_level_breakdown`), whereas the planner reports the
     # terminal separately as "planned terminal state" rather than a "planned
@@ -2925,16 +2899,9 @@ def render_report(args: argparse.Namespace) -> int:
     render_matrix_summary(current_cases, baselines[0][1])
     if args.compact:
         print()
-        print("<details>")
-        print("<summary>Terminal response components</summary>")
-        print()
-        render_terminal_response_components(current_cases, include_heading=False)
-        print()
-        print("</details>")
-        print()
         print(
-            "Detailed schedule and proof-size breakdowns by fold level are available in "
-            "the uploaded `report.md` benchmark artifact."
+            "The uploaded `report.md` benchmark artifact contains the detailed fold schedule, "
+            "proof-size breakdown, terminal response segments, and Golomb diagnostics."
         )
         return 0
 
@@ -3092,8 +3059,10 @@ def render_report(args: argparse.Namespace) -> int:
             render_fold_details(
                 planned_levels,
                 proof_levels,
+                current.get("terminal_plan"),
                 baseline_planned_levels,
                 baseline_proof_levels,
+                main_case.get("terminal_plan") if main_case is not None else None,
             )
         if len(current_cases) > 1:
             print()

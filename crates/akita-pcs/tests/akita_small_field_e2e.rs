@@ -108,7 +108,7 @@ macro_rules! small_field_test {
                     let n = 1usize << nv;
                     let opening_batch =
                         OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-                    let layout = <$cfg as CommitmentConfig>::select_schedule_for_opening(
+                    let layout = <$cfg as CommitmentConfig>::resolve_catalog_row_for_opening(
                         &opening_batch,
                     )
                     .expect("layout")
@@ -208,7 +208,7 @@ macro_rules! small_field_test {
                     )
                     .expect("precommit");
 
-                    let multi_schedule = <$cfg as CommitmentConfig>::select_schedule_for_key(
+                    let multi_schedule = <$cfg as CommitmentConfig>::resolve_catalog_row_for_key(
                         &AkitaScheduleLookupKey {
                             final_group: PolynomialGroupLayout::new(final_nv, 1),
                             precommitteds: vec![pre_commitment.profile],
@@ -318,9 +318,9 @@ macro_rules! small_field_test {
                 let label = concat!("completeness/", stringify!($name)).as_bytes();
                 let onehot_k: usize = $k;
                 for &nv in &[$($nv),+] {
-                    let opening_batch =
-                        OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-                    let layout = <$cfg as CommitmentConfig>::select_schedule_for_opening(
+                    let opening_batch = OpeningClaimsLayout::new(nv, 1)
+                        .expect("opening batch");
+                    let layout = <$cfg as CommitmentConfig>::resolve_catalog_row_for_opening(
                         &opening_batch,
                     )
                     .expect("layout")
@@ -420,7 +420,7 @@ macro_rules! small_field_test {
                     )
                     .expect("precommit");
 
-                    let multi_schedule = <$cfg as CommitmentConfig>::select_schedule_for_key(
+                    let multi_schedule = <$cfg as CommitmentConfig>::resolve_catalog_row_for_key(
                         &AkitaScheduleLookupKey {
                             final_group: PolynomialGroupLayout::new(final_nv, 1),
                             precommitteds: vec![pre_commitment.profile],
@@ -609,7 +609,7 @@ fn fp32_onehot_multi_group() {
                 .expect("grouped fp32 poly")
         };
 
-        let pre_group_schedule = SmallCfg::select_schedule_for_key(
+        let pre_group_schedule = SmallCfg::resolve_catalog_row_for_key(
             &AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(PRE_NV, 1)),
         )
         .expect("pre schedule")
@@ -638,7 +638,7 @@ fn fp32_onehot_multi_group() {
         )
         .expect("precommit");
 
-        let multi_schedule = SmallCfg::select_schedule_for_key(&AkitaScheduleLookupKey {
+        let multi_schedule = SmallCfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
             precommitteds: vec![pre_commitment.profile],
         })
@@ -737,3 +737,6 @@ fn fp32_onehot_multi_group() {
         .expect("fp32 multi-group verify");
     });
 }
+
+#[path = "akita_small_field_e2e/selective_l2.rs"]
+mod selective_l2;

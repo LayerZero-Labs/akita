@@ -44,10 +44,11 @@ const fn proof_optimized_inner_basis_range(
 }
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
-/// Smaller/nonstandard chunking is represented by a separately named preset
-/// or application polynomial representation; it is never inferred as a
-/// fallback.
-pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
+/// This is an offline sizing-policy input, not runtime group geometry. Akita's
+/// built-in generated catalogs use K=256; downstream configurations may
+/// generate catalogs from another policy-owned chunk size.
+pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
+    akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
 
 /// Bound setup preprocessing work before schedule resolution.
 ///
@@ -178,7 +179,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     let layouts = setup_capacity_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
     let mut scan = SetupCapacityScan::new();
     for layout in &layouts {
-        let Ok(schedule) = Cfg::select_schedule_for_opening(layout) else {
+        let Ok(schedule) = Cfg::resolve_catalog_row_for_opening(layout) else {
             continue;
         };
         scan.observe_schedule(schedule.schedule())?;
@@ -217,7 +218,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 continue;
             }
-            scan.observe_schedule(Cfg::select_schedule_for_key(&key)?.schedule())?;
+            scan.observe_schedule(Cfg::resolve_catalog_row_for_key(&key)?.schedule())?;
         }
     }
 
@@ -229,7 +230,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
         max_num_vars,
         max_num_batched_polys,
     )? {
-        scan.observe_schedule(Cfg::select_schedule_for_key(&key)?.schedule())?;
+        scan.observe_schedule(Cfg::resolve_catalog_row_for_key(&key)?.schedule())?;
     }
 
     scan.finish(max_num_vars)
@@ -273,9 +274,15 @@ fn setup_capacity_scan_layouts<Cfg: CommitmentConfig>(
 
     for main_num_vars in 1..=max_num_vars {
         for main_num_polys in 1..=max_num_batched_polys {
-            let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
-            push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
-            if supports_multi_group_root {
+            let main_groups = vec![PolynomialGroupLayout::new(main_num_vars, main_num_polys)];
+            for main_group in main_groups {
+                if main_group.validate().is_err() {
+                    continue;
+                }
+                push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
+                if !supports_multi_group_root {
+                    continue;
+                }
                 for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
                     for precommitted_num_polynomials in 1..=max_num_batched_polys {
                         let Some(precommitted_polynomials) =
@@ -293,6 +300,9 @@ fn setup_capacity_scan_layouts<Cfg: CommitmentConfig>(
                         }
                         let precommitted_group =
                             PolynomialGroupLayout::new(max_num_vars, precommitted_num_polynomials);
+                        if precommitted_group.validate().is_err() {
+                            continue;
+                        }
                         let precommitted_groups = vec![precommitted_group; num_precommitted];
                         push_layout(OpeningClaimsLayout::from_root_groups(
                             &precommitted_groups,
@@ -456,7 +466,6 @@ macro_rules! impl_proof_optimized_preset {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
-
             impl_proof_optimized_preset!(@options $($options)*);
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -508,14 +517,15 @@ macro_rules! impl_proof_optimized_preset {
                 let legacy_witness = $fold_norms;
                 if $log_commit_bound == 1 {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::UnitOneHotFoldPolicy::new(
                             $field_bits,
-                            legacy_witness,
+                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
+                            STANDARD_ONEHOT_CHUNK_SIZE,
                         ),
                     )
                 } else {
                     akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                        akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                             $field_bits,
                             legacy_witness,
                         ),
@@ -531,7 +541,6 @@ macro_rules! impl_proof_optimized_preset {
             type Field = $field;
             type ExtField = $ext_field;
             const D: usize = $d;
-
             impl_proof_optimized_preset!(@options $($options)*);
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -583,14 +592,15 @@ macro_rules! impl_proof_optimized_preset {
                 let legacy_witness = $fold_norms;
                 if $log_commit_bound == 1 {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::UnitOneHotFoldPolicy::new(
                             $field_bits,
-                            legacy_witness,
+                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
+                            STANDARD_ONEHOT_CHUNK_SIZE,
                         ),
                     )
                 } else {
                     akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                        akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                             $field_bits,
                             legacy_witness,
                         ),

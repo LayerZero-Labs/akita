@@ -96,6 +96,7 @@ fn make_case_with_shape(
         level_params
             .inner_commit_matrix
             .sis_table_key()
+            .expect("benchmark setup matrix is L infinity")
             .table_digest,
         level_params.inner_commit_matrix.sis_modulus_profile(),
         n_a,

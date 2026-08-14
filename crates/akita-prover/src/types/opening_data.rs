@@ -71,10 +71,36 @@ fn bind_group_inputs<G, CommitF: FieldCore>(
         .collect())
 }
 
+fn opening_layout_for_groups<PointF: Clone, G, CommitF: FieldCore>(
+    opening_claims: &OpeningClaims<'_, PointF, Commitment<CommitF>>,
+    groups: &[G],
+) -> Result<OpeningClaimsLayout, AkitaError>
+where
+    G: RootProverGroupMeta<CommitF>,
+{
+    if opening_claims.num_groups() != groups.len() {
+        return Err(AkitaError::InvalidInput(
+            "opening claims and prover source groups are misaligned".into(),
+        ));
+    }
+    let layouts = groups
+        .iter()
+        .map(|group| {
+            let num_vars = group.num_vars()?;
+            Ok(PolynomialGroupLayout::new(
+                num_vars,
+                group.num_polynomials(),
+            ))
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    OpeningClaimsLayout::from_groups(layouts)
+}
+
 /// Prover opening input: public claims plus ordered group-local prover material.
 #[derive(Debug, Clone)]
 pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: FieldCore> {
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
+    opening_layout: OpeningClaimsLayout,
     group_inputs: Vec<ProverGroupInput<G, CommitF>>,
 }
 
@@ -92,9 +118,11 @@ where
             .into_iter()
             .map(PreparedProverGroup::from_refs)
             .collect::<Result<Vec<_>, _>>()?;
+        let opening_layout = opening_layout_for_groups(&opening_claims, &groups)?;
         let group_inputs = bind_group_inputs(hints, groups)?;
         let data = Self {
             opening_claims,
+            opening_layout,
             group_inputs,
         };
         data.check_alignment()?;
@@ -107,10 +135,27 @@ where
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
+        let opening_layout = opening_claims.committed_layout()?;
         let groups = polynomials
             .into_iter()
             .map(PreparedProverGroup::from_refs)
             .collect::<Result<Vec<_>, _>>()?;
+        if opening_claims.num_groups() != groups.len() {
+            return Err(AkitaError::InvalidInput(
+                "committed claims and prover source groups are misaligned".into(),
+            ));
+        }
+        for (claims_group, source_group) in opening_claims.groups().iter().zip(&groups) {
+            let actual = PolynomialGroupLayout::new(
+                source_group.num_vars()?,
+                source_group.num_polynomials(),
+            );
+            if claims_group.commitment().profile().group != actual {
+                return Err(AkitaError::InvalidInput(
+                    "committed group geometry does not match the prover polynomials".into(),
+                ));
+            }
+        }
         let raw_groups = opening_claims
             .groups()
             .iter()
@@ -125,6 +170,7 @@ where
         let group_inputs = bind_group_inputs(hints, groups)?;
         let data = Self {
             opening_claims: OpeningClaims::from_groups(raw_groups)?,
+            opening_layout,
             group_inputs,
         };
         data.check_alignment()?;
@@ -154,7 +200,7 @@ where
                 .iter()
                 .map(PolynomialGroupClaims::commitment),
         )?;
-        let selection = Cfg::select_schedule_for_profiles(&batch_profile)?.selection();
+        let selection = Cfg::resolve_catalog_row_for_profiles(&batch_profile)?.selection();
         let opening_data = ProverOpeningData::new(opening_claims, hints, polynomial_groups)?;
         Ok(Self {
             selection,
@@ -213,7 +259,6 @@ where
 
     /// Layout-only opening geometry derived from prover polynomials.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
-        let mut groups = Vec::with_capacity(self.group_inputs.len());
         for (group_index, input) in self.group_inputs.iter().enumerate() {
             let group = &input.group;
             let group_num_vars = group.num_vars()?;
@@ -224,12 +269,16 @@ where
                     actual: group_point.len(),
                 });
             }
-            groups.push(PolynomialGroupLayout::new(
-                group_num_vars,
-                group.num_polynomials(),
-            ));
+            let declared = self.opening_layout.group_layout(group_index)?;
+            if declared.num_vars() != group_num_vars
+                || declared.num_polynomials() != group.num_polynomials()
+            {
+                return Err(AkitaError::InvalidInput(
+                    "prover polynomial shape does not match the declared opening layout".into(),
+                ));
+            }
         }
-        OpeningClaimsLayout::from_groups(groups)
+        Ok(self.opening_layout.clone())
     }
 
     /// Borrow one prover hint.
@@ -336,6 +385,7 @@ where
         }
         let data = ProverOpeningData {
             opening_claims: self.opening_claims,
+            opening_layout: self.opening_layout,
             group_inputs: regrouped,
         };
         data.check_alignment()?;
@@ -442,6 +492,26 @@ mod tests {
         Commitment::new(RingVec::from_coeffs(vec![F::zero(); 64]))
     }
 
+    fn synthetic_profile(
+        group: PolynomialGroupLayout,
+        params: &CommittedGroupParams,
+    ) -> CommittedGroupProfile {
+        CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
+            group,
+            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+            num_positions_per_block: params.num_positions_per_block,
+            num_live_blocks: params.num_live_blocks,
+            outer_slice_count: params.outer_slice_count,
+            log_basis_inner: params.log_basis_inner,
+            num_digits_inner: params.num_digits_inner,
+            inner_commit_matrix: params.inner_commit_matrix,
+            log_basis_outer: params.log_basis_outer,
+            num_digits_outer: params.num_digits_outer,
+            outer_commit_matrix: params.outer_commit_matrix,
+        }
+    }
+
     fn multi_group_params() -> CommittedGroupParams {
         let pre_layout = PolynomialGroupLayout::new(2, 1);
         let mut pre = CommittedGroupParams::params_only(
@@ -459,7 +529,10 @@ mod tests {
         let inner = &pre.inner_commit_matrix;
         pre.inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
-            inner.sis_table_key().table_digest,
+            inner
+                .sis_table_key()
+                .expect("test matrix is L infinity")
+                .table_digest,
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
@@ -489,7 +562,7 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
-            layout: CommittedGroupProfile::from_params(pre_layout, &pre),
+            layout: synthetic_profile(pre_layout, &pre),
             log_basis_open: pre.log_basis_open,
             fold_challenge_config: pre.fold_challenge_config,
             num_digits_open: pre.num_digits_open,
@@ -561,6 +634,37 @@ mod tests {
                 actual: 2
             }
         ));
+    }
+
+    #[test]
+    fn regrouping_preserves_declared_onehot_source_identity() {
+        let pre_poly = MockPoly { num_vars: 2 };
+        let final_a = MockPoly { num_vars: 4 };
+        let final_b = MockPoly { num_vars: 4 };
+        let pre_refs = [&pre_poly];
+        let final_refs = [&final_a, &final_b];
+        let mut data = multi_group_data(&pre_refs, &final_refs);
+        data.opening_layout = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(4, 2),
+        ])
+        .expect("one-hot layout");
+
+        let replacements = [&pre_poly, &final_a, &final_b];
+        let regrouped = data
+            .regroup_polynomial_refs(&replacements)
+            .expect("regrouped prover data");
+
+        assert_eq!(
+            regrouped
+                .opening_layout()
+                .expect("preserved layout")
+                .groups(),
+            &[
+                PolynomialGroupLayout::new(2, 1),
+                PolynomialGroupLayout::new(4, 2),
+            ]
+        );
     }
 
     #[test]

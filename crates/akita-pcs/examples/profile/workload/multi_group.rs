@@ -186,7 +186,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let opening_layout = multi_group_key
         .opening_layout()
         .expect("multi-group layout");
-    let schedule = ProofCfg::select_schedule_for_key(&multi_group_key)
+    let schedule = ProofCfg::resolve_catalog_row_for_key(&multi_group_key)
         .expect("multi-group runtime schedule")
         .into_schedule();
     let pre_points = (0..PRE_GROUPS)

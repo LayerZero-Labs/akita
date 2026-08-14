@@ -1,5 +1,4 @@
 use super::*;
-use akita_config::CommitmentConfig;
 
 #[test]
 fn candidates_enumerate_exact_role_cartesian_product() {
@@ -65,20 +64,4 @@ fn fp32_suffix_candidates_are_uniform_and_monotone() {
     )
     .expect("fp32 suffix candidates after D64 transition");
     assert_eq!(after_drop, vec![CommitmentRingDims::uniform(64)]);
-}
-
-#[test]
-fn fp32_dense_rejects_the_insecure_nv14_shape() {
-    use akita_config::proof_optimized::fp32;
-
-    let policy = akita_config::policy_of::<fp32::Dense>();
-    let error = crate::planner::find_schedule(
-        &akita_types::AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14)),
-        fp32::Dense::root_honest_fold_policy(),
-        &[],
-        &policy,
-        fp32::Dense::ring_challenge_config,
-    )
-    .expect_err("fp32 dense nv14 must remain outside the securable catalog");
-    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
 }

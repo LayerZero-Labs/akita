@@ -49,6 +49,33 @@ pub fn fold_witness_representable_linf_bounds(
     )
 }
 
+/// Minimum balanced-digit depth whose exact signed range contains
+/// `[-cap, cap]`.
+///
+/// Unlike [`num_digits_for_bound`], this function accepts an exact integer
+/// magnitude instead of a power-of-two bit width. The positive reach is the
+/// binding side because balanced digits extend farther in the negative
+/// direction.
+#[inline]
+#[must_use]
+pub fn num_digits_for_linf_cap(cap: u128, field_bits: u32, log_basis: u32) -> usize {
+    assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+    if cap == 0 {
+        return 1;
+    }
+    let signed_bits = (u128::BITS - cap.leading_zeros()).saturating_add(1);
+    if signed_bits >= field_bits {
+        return compute_num_digits_field_width(field_bits, log_basis);
+    }
+    let fallback = num_digits_for_bound(signed_bits, field_bits, log_basis);
+    for digits in 1..fallback {
+        if balanced_digit_max(log_basis, digits) >= cap {
+            return digits;
+        }
+    }
+    fallback
+}
+
 /// Maximum positive value representable by `num_digits` balanced base-`b`
 /// digits, where `b = 2^log_basis`. Each balanced digit lies in
 /// `[-b/2, b/2 - 1]`; the max positive value is the geometric series
@@ -288,6 +315,15 @@ mod tests {
         // b = 8, δ = 2 digits represent [-36, 27].
         assert_eq!(balanced_digit_max(3, 2), 27);
         assert_eq!(balanced_digit_abs_max(3, 2), 36);
+    }
+
+    #[test]
+    fn exact_linf_cap_does_not_round_through_a_power_of_two_range() {
+        assert_eq!(num_digits_for_linf_cap(20, 64, 3), 2);
+        assert_eq!(num_digits_for_linf_cap(27, 64, 3), 2);
+        assert_eq!(num_digits_for_linf_cap(28, 64, 3), 3);
+        assert_eq!(num_digits_for_linf_cap(1_755, 128, 3), 4);
+        assert_eq!(num_digits_for_linf_cap(1_756, 128, 3), 5);
     }
 
     #[test]

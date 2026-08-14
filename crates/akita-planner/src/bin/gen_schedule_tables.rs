@@ -5,7 +5,9 @@ use akita_planner::generated_families::{
     emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
     ALL_GENERATED_FAMILIES,
 };
-use akita_planner::{publish_generated_outputs, render_generated_outputs, EmitSpec};
+use akita_planner::{
+    publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
+};
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 use std::env;
 use std::fs;
@@ -20,6 +22,7 @@ struct ExplicitRows {
 struct ParsedArgs {
     base_dir: PathBuf,
     wiring_only: bool,
+    check_catalog: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
 }
@@ -43,7 +46,8 @@ fn generator_command() -> &'static str {
 
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
-     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [family_module_name ...] \
+     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
+     [family_module_name ...] \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
      [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
@@ -117,6 +121,7 @@ fn parse_args() -> Result<ParsedArgs, String> {
     }
     let base_dir = PathBuf::from(&raw_args[0]);
     let mut wiring_only = false;
+    let mut check_catalog = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
     let mut i = 1;
@@ -124,6 +129,10 @@ fn parse_args() -> Result<ParsedArgs, String> {
         match raw_args[i].as_str() {
             "--wiring-only" => {
                 wiring_only = true;
+                i += 1;
+            }
+            "--check-catalog" => {
+                check_catalog = true;
                 i += 1;
             }
             "--final-group" => {
@@ -197,12 +206,44 @@ fn parse_args() -> Result<ParsedArgs, String> {
     if wiring_only && family_filter.is_some() {
         return Err("--wiring-only does not accept family filters or explicit rows".to_string());
     }
+    if check_catalog && (wiring_only || explicit_rows.final_group.is_some()) {
+        return Err("--check-catalog requires ordinary generated rows".to_string());
+    }
+    if check_catalog && !cfg!(feature = "catalog-check") {
+        return Err("--check-catalog requires the `catalog-check` feature".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
+        check_catalog,
         family_filter,
         explicit_rows,
     })
+}
+
+fn validate_materialized_catalog(
+    spec: &EmitSpec,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<(), String> {
+    let family = family_by_name(spec.module_name)
+        .ok_or_else(|| format!("unknown generated family: {}", spec.module_name))?;
+    if (family.schedule_catalog)().is_none() {
+        return Err(format!(
+            "{}: compiled catalog is unavailable; build with all schedule features",
+            spec.module_name
+        ));
+    }
+    for (key, expected) in entries {
+        let actual = (family.resolve_catalog_row_for_key)(key.clone())
+            .map_err(|error| format!("{}: resolve {key:?}: {error}", spec.module_name))?;
+        if actual != *expected {
+            return Err(format!(
+                "{}: compiled catalog row {key:?} disagrees with the planner",
+                spec.module_name
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn resolved_output_path(path: &Path) -> Result<PathBuf, String> {
@@ -516,10 +557,18 @@ fn main() -> Result<(), String> {
         println!("skipped missing {}", mod_path.display());
         None
     };
-    let outputs = render_generated_outputs(
+    let check_catalog = args.check_catalog;
+    let outputs = render_generated_outputs_with_validation(
         &specs,
         &sorted_unique_specs(&wiring_specs),
         mod_path.as_deref(),
+        |spec, entries| {
+            if check_catalog {
+                validate_materialized_catalog(spec, entries)
+            } else {
+                Ok(())
+            }
+        },
     )?;
     for destination in publish_generated_outputs(outputs)? {
         println!("wrote {}", destination.display());
@@ -548,9 +597,14 @@ mod tests {
         )
         .expect("explicit emit spec");
 
-        assert_eq!(spec.keys, vec![PolynomialGroupLayout::singleton(14)]);
+        assert_eq!(spec.keys, vec![PolynomialGroupLayout::new(14, 1)]);
         assert!(spec.group_batch_keys.is_empty());
         assert_eq!(spec.generator_command, "generator command");
+    }
+
+    #[test]
+    fn explicit_group_rejects_source_metadata() {
+        assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
     }
 
     #[test]

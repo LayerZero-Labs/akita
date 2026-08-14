@@ -11,11 +11,16 @@ fn compression_quotient_rows_are_included_before_evaluation_trace() {
     let mut lp = laid_out_sample_lp();
     lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner_commit_matrix.security_policy(),
-        lp.inner_commit_matrix.sis_table_key().table_digest,
+        lp.inner_commit_matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         lp.inner_commit_matrix.sis_modulus_profile(),
         2,
         lp.inner_commit_matrix.input_width(),
-        lp.inner_commit_matrix.coeff_linf_bound(),
+        lp.inner_commit_matrix
+            .coeff_linf_bound()
+            .expect("L infinity test matrix"),
         lp.d_a(),
     );
     lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(

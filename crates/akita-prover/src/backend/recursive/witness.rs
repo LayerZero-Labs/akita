@@ -569,6 +569,16 @@ where
         let coeff_count = self.live_coeff_len.next_power_of_two().max(1);
         coeff_count.trailing_zeros() as usize
     }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
+        self.digits.iter().try_fold(0u128, |sum, &digit| {
+            let magnitude = u128::from(digit.unsigned_abs());
+            magnitude
+                .checked_mul(magnitude)
+                .and_then(|square| sum.checked_add(square))
+        })
+    }
 }
 
 impl<F, const D: usize> RootCommitSource<F, D> for RecursiveWitnessFlat

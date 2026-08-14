@@ -63,6 +63,8 @@ jobs:
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
       - name: Clippy (no default features)
         run: cargo clippy --all --all-targets --release --no-default-features -- -D warnings
+      - name: Clippy (response model diagnostics)
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -186,7 +188,7 @@ jobs:
         run: |
           cargo test --release -p akita-config --features all-schedules --test generated_tables
       - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
+        run: scripts/generate-schedule-tables.sh --check-catalog
       - name: Committed schedule tables match the generator
         run: git diff --exit-code -- crates/akita-schedules/src/generated
       - name: Recursive setup-prefix slots

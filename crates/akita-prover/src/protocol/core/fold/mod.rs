@@ -9,13 +9,29 @@ use crate::compute::{
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
 use crate::RecursiveWitnessFlat;
+use akita_algebra::offset_eq::{materialize_eq_tensor_left, OffsetEqWindow};
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
 use akita_types::{
-    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
-    RelationRangeImagePlan,
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, InnerCommitSecurityRoute,
+    OpeningClaimsLayout, PhysicalResponsePlan, RelationRangeImagePlan,
 };
+
+pub(in crate::protocol::core) struct PhysicalL2ProverReplay<E: FieldCore> {
+    plan: PhysicalResponsePlan,
+    point: Vec<E>,
+    virtual_evaluations: Vec<E>,
+    batching: Vec<E>,
+    claim: E,
+}
+
+type Stage1ProveOutput<E> = (
+    AkitaStage1Proof<E>,
+    Vec<E>,
+    E,
+    Option<PhysicalL2ProverReplay<E>>,
+);
 
 pub(in crate::protocol::core) use extension_claim::{
     prepare_extension_claim_fold, ExtensionOpeningSource,
@@ -125,10 +141,7 @@ where
     // fold-evaluate its claim polynomials, and derive scalar openings before
     // leaving the typed dispatch arm. Typed fold outputs cross the boundary
     // only through D-free `PreparedOpeningPoint` / `RingVec` carriers.
-    let opening_batch = block_claims
-        .opening_claims()
-        .layout()
-        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
+    let opening_batch = trace_opening_batch.clone();
     let final_group_index = opening_batch.root_final_group_index()?;
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());
@@ -441,12 +454,27 @@ where
         rs.alpha,
         prepared_fold.instance.rhs(),
     )?;
-    let (stage1_proof, stage1_point, range_image_evaluation) =
-        prove_stage1::<F, E, T>(transcript, &mut rs, &relation_range_image_plan)?;
+    let (stage1_proof, stage1_point, range_image_evaluation, physical_l2) =
+        prove_stage1::<F, E, T>(transcript, &mut rs, lp, &relation_range_image_plan)?;
     transcript.append_serde(
         ABSORB_RANGE_IMAGE_EVALUATION,
         &stage1_proof.range_image_evaluation,
     );
+    let physical_l2 = physical_l2.map(|mut replay| {
+        let eta = sample_ext_challenge::<F, E, T>(
+            transcript,
+            akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
+        );
+        let mut power = E::one();
+        replay.batching = Vec::with_capacity(replay.virtual_evaluations.len());
+        replay.claim = E::zero();
+        for &evaluation in &replay.virtual_evaluations {
+            replay.batching.push(power);
+            replay.claim += evaluation * power;
+            power *= eta;
+        }
+        replay
+    });
     let stage1_proof = Some(stage1_proof);
     let binary_batching = lp
         .payload_mode
@@ -501,6 +529,7 @@ where
         range_image_evaluation,
         relation_claim,
         binary_batching,
+        physical_l2,
         evaluation_trace,
         trace_opening_claim,
         relation_range_image_plan,
@@ -594,8 +623,9 @@ where
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
     rs: &mut RingSwitchOutput<E>,
+    lp: &CommittedGroupParams,
     plan: &RelationRangeImagePlan,
-) -> Result<(AkitaStage1Proof<E>, Vec<E>, E), AkitaError>
+) -> Result<Stage1ProveOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
@@ -627,9 +657,52 @@ where
         domain,
         equality_point,
     )?;
-    let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
+    let physical_plan = PhysicalResponsePlan::new(lp, plan)?;
+    let (stage1_proof, stage1_point) =
+        stage1_prover.prove::<F, T>(transcript, physical_plan.as_ref())?;
     let range_image_evaluation = stage1_proof.range_image_evaluation;
-    Ok((stage1_proof, stage1_point, range_image_evaluation))
+    let physical_l2 = match physical_plan {
+        Some(physical_plan) => {
+            let norm_proof = stage1_proof
+                .norm_proof
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?;
+            let InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap, ..
+            } = lp.inner_commit_matrix.security_route()
+            else {
+                return Err(AkitaError::InvalidSetup(
+                    "physical L2 plan disagrees with the A security route".into(),
+                ));
+            };
+            if norm_proof.response_l2_sq > response_l2_sq_cap {
+                return Err(AkitaError::InvalidInput(
+                    "folded response exceeds the scheduled L2 cap".into(),
+                ));
+            }
+            Some(PhysicalL2ProverReplay {
+                plan: physical_plan,
+                point: stage1_point.clone(),
+                virtual_evaluations: norm_proof.virtual_evaluations.clone(),
+                batching: Vec::new(),
+                claim: E::zero(),
+            })
+        }
+        None => {
+            if stage1_proof.norm_proof.is_some() {
+                return Err(AkitaError::InvalidInput(
+                    "L-infinity route produced an L2 norm proof".into(),
+                ));
+            }
+            None
+        }
+    };
+    Ok((
+        stage1_proof,
+        stage1_point,
+        range_image_evaluation,
+        physical_l2,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -642,6 +715,7 @@ fn prove_stage2<F, E, T>(
     range_image_evaluation: E,
     relation_claim: E,
     binary_batching: Option<E>,
+    physical_l2: Option<PhysicalL2ProverReplay<E>>,
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
@@ -675,23 +749,45 @@ where
             common_alpha_factor.len(),
         )));
     }
-    let additional_relation_terms = rs
-        .compression_relation_weights
-        .map(|weights| {
-            let compression_domain_len = weights.physical_field_len();
-            let binary_support =
-                NegativeBinarySupport::new(plan.witness_layout(), compression_domain_len)?;
+    let domain_len = domain.domain_len();
+    let mut linear_weights = Vec::new();
+    let mut binary_intervals = Vec::new();
+    if let Some(weights) = rs.compression_relation_weights {
+        if weights.physical_field_len() != domain_len {
+            return Err(AkitaError::InvalidSetup(
+                "compression relation domain disagrees with Stage 2".into(),
+            ));
+        }
+        linear_weights = weights.into_sparse_entries()?;
+        binary_intervals = NegativeBinarySupport::new(plan.witness_layout(), domain_len)?
+            .intervals()
+            .to_vec();
+    }
+    let physical_l2_claim = physical_l2.as_ref().map_or_else(E::zero, |norm| norm.claim);
+    if let Some(norm) = &physical_l2 {
+        let families = norm.plan.virtualization_families(&norm.batching)?;
+        let equality = OffsetEqWindow::new(&norm.point)?;
+        linear_weights.extend(
+            materialize_eq_tensor_left(&equality, &families, domain.live_len())?
+                .into_iter()
+                .enumerate()
+                .filter(|(_, weight)| !weight.is_zero()),
+        );
+        linear_weights.sort_unstable_by_key(|(index, _)| *index);
+    }
+    let additional_relation_terms = (!linear_weights.is_empty() || !binary_intervals.is_empty())
+        .then(|| {
             AdditionalRelationTerms::new(
                 rs.w_evals_compact.as_ref(),
-                compression_domain_len,
-                weights.into_sparse_entries()?,
-                binary_support.intervals(),
+                domain_len,
+                linear_weights,
+                &binary_intervals,
                 stage1_point,
-                binary_batching.ok_or(AkitaError::InvalidProof)?,
+                binary_batching.unwrap_or_else(E::zero),
             )
         })
         .transpose()?;
-    let ordinary_relation_claim = relation_claim
+    let ordinary_relation_claim = relation_claim + physical_l2_claim
         - additional_relation_terms
             .as_ref()
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);

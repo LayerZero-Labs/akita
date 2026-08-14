@@ -32,7 +32,7 @@ fn heterogeneous_group_types() {
         .expect("onehot pre profile without precommitted groups")
         .inner_commit_matrix
         .ring_dimension();
-        let onehot_k_pre = 16usize;
+        let onehot_k_pre = 256usize;
         let pre_chunks = (1usize << ONEHOT_PRE_NV) / onehot_k_pre;
         let onehot_pre = akita_prover::OneHotPoly::<F, u8>::new(
             onehot_k_pre,
@@ -41,7 +41,7 @@ fn heterogeneous_group_types() {
                 .map(|i| (i % 3 == 0).then_some((i % onehot_k_pre) as u8))
                 .collect(),
         )
-        .expect("K=16 precommitted poly");
+        .expect("K=256 precommitted poly");
 
         let dense_evals_a = (0..(1usize << DENSE_PRE_NV))
             .map(|i| F::from_u64((i % 257) as u64))
@@ -71,7 +71,7 @@ fn heterogeneous_group_types() {
             &stack,
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
-        .expect("K=16 precommit");
+        .expect("K=256 precommit");
 
         // Dense pre-group committed with DenseCfg so its profile matches the
         // Dense descriptor in catalog entry {final_nv=16, pre=[onehot(14,1), dense(15,2)]}.
@@ -143,7 +143,7 @@ fn heterogeneous_group_types() {
                     vec![onehot_pre_opening],
                     onehot_pre_commitment.clone(),
                 )
-                .expect("K=16 prover group"),
+                .expect("K=256 prover group"),
                 PolynomialGroupClaims::new(
                     dense_point.clone(),
                     vec![dense_opening_a, dense_opening_b],
@@ -205,7 +205,7 @@ fn heterogeneous_group_types() {
                 vec![onehot_pre_opening],
                 &onehot_pre_commitment,
             )
-            .expect("K=16 verifier group"),
+            .expect("K=256 verifier group"),
             PolynomialGroupClaims::new(
                 dense_point,
                 vec![dense_opening_a, dense_opening_b],

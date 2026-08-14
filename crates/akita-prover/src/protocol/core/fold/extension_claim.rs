@@ -51,8 +51,7 @@ where
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = block_claims
-        .opening_claims()
-        .layout()
+        .opening_layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let tensor = stack.tensor();
     let (protocol_points, row_coefficients, reduction) = if run_eor {

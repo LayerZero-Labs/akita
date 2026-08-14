@@ -18,6 +18,34 @@ pub enum PlannerCostModelId {
     ExactPayloadAndSetupEnvelope,
 }
 
+/// Offline response-energy model used to admit selective L2 candidates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectiveL2ResponseModelId {
+    /// Do not derive modeled L2 caps.
+    Disabled,
+    /// Typed Z/E/T/R/compression moment propagation with extension tensor
+    /// packing and a Markov-backed grinding cap.
+    TypedProtocolMomentsV1,
+}
+
+impl SelectiveL2ResponseModelId {
+    /// Stable identity tag.
+    pub const fn tag(self) -> u32 {
+        match self {
+            Self::Disabled => 0,
+            Self::TypedProtocolMomentsV1 => 1,
+        }
+    }
+
+    /// Stable identity name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Disabled => "Disabled",
+            Self::TypedProtocolMomentsV1 => "TypedProtocolMomentsV1",
+        }
+    }
+}
+
 impl PlannerCostModelId {
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
@@ -160,6 +188,7 @@ impl RingDimensionScheduleMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
+    pub selective_l2_response_model: SelectiveL2ResponseModelId,
     pub selection_policy: SelectionPolicyId,
     pub recursive_split_search_policy: RecursiveSplitSearchPolicy,
     /// Optional host admission budget for materialized setup field elements.
@@ -178,7 +207,7 @@ pub struct PlannerPolicy {
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
-    pub ring_subfield_norm_bound: u32,
+    pub sis_l2_table_digest: akita_types::SisL2TableDigest,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     /// Inclusive A/source decomposition basis domain at every level.
@@ -193,6 +222,22 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
+    /// Number of physical witness chunks active at one fold level.
+    pub const fn chunks_at_level(&self, fold_level: usize) -> usize {
+        if self.witness_chunk.uses_multi_chunk()
+            && fold_level < self.witness_chunk.num_activated_levels
+        {
+            self.witness_chunk.num_chunks
+        } else {
+            1
+        }
+    }
+
+    /// Whether this family opts into the typed suffix response model.
+    pub fn selective_l2_response_model_enabled(&self) -> bool {
+        self.selective_l2_response_model == SelectiveL2ResponseModelId::TypedProtocolMomentsV1
+    }
+
     /// Whether a candidate fits the optional host setup budget.
     pub fn admits_setup_field_elements(&self, num_field_elements: usize) -> bool {
         self.setup_field_budget
@@ -231,7 +276,6 @@ impl PlannerPolicy {
 
 /// Suffix-DP depth cap shared by planner search and runtime policy validation.
 pub const MAX_RECURSION_DEPTH: usize = 12;
-
 /// Validate runtime policy values used by schedule expansion and validation.
 pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
@@ -264,6 +308,13 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     if policy.min_offloaded_witness_contraction == 0 {
         return Err(AkitaError::InvalidSetup(
             "minimum offloaded witness contraction must be positive".to_string(),
+        ));
+    }
+    if policy.selective_l2_response_model_enabled()
+        && policy.sis_l2_table_digest != akita_types::SisL2TableDigest::CURRENT
+    {
+        return Err(AkitaError::InvalidSetup(
+            "selective L2 planning requires the current audited Euclidean table".into(),
         ));
     }
     for (label, (min, max), supported_max) in [
@@ -656,6 +707,7 @@ mod tests {
     fn adaptive_policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
             selection_policy: SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -679,7 +731,7 @@ mod tests {
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: DEFAULT_SIS_SECURITY_POLICY,
             sis_table_digest: akita_types::SisTableDigest::CURRENT,
-            ring_subfield_norm_bound: 1,
+            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (3, 16),
@@ -695,6 +747,16 @@ mod tests {
         policy.uniform_ring_dimension = 3;
         validate_policy(&policy)
             .expect("individually supported D512 A must not depend on the uniform-only field");
+    }
+
+    #[test]
+    fn typed_response_model_requires_current_l2_table_identity() {
+        let mut policy = adaptive_policy();
+        policy.sis_l2_table_digest = akita_types::SisL2TableDigest([0; 32]);
+        let error = validate_policy(&policy).expect_err("stale L2 table identity");
+        assert!(error
+            .to_string()
+            .contains("selective L2 planning requires the current audited Euclidean table"));
     }
 
     #[test]

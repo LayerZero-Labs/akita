@@ -109,6 +109,39 @@ AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   --features profile-onehot-fp128 --example profile
 ```
 
+## Response model calibration
+
+Normal profile builds do not scan complete witnesses to measure source and
+response energies. Broad tracing filters such as `trace` do not enable those
+scans.
+
+Enable the extra measurements only when collecting response model data:
+
+```bash
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
+  cargo run --release --no-default-features \
+  --features parallel,profile-onehot-fp128,response-model-diagnostics \
+  --example profile
+```
+
+This feature adds `fold_response_model` events to the trace. It also measures
+the exact energy of recursive source witnesses and response components. These
+operations can scan complete witness buffers, so traces from this mode do not
+measure normal prover performance.
+
+For each successful L2 fold, the report parser joins the measured response
+energy to that run's planned cap and fold level. It rejects missing
+measurements and cap violations. The machine-readable summary retains the
+measured energy, frozen cap, cap utilization, accepted nonce, and attempt
+count. This keeps empirical calibration tied to the exact schedule that
+produced the proof. It replaces detached literal fixtures in planner unit
+tests.
+
+The optional diagnostic events also carry exact incoming source energy and the
+challenge-scaled conditional mean. The standard report does not merge those
+multi-group source samples into the cap table. Analyze them as a separate
+calibration data set when evaluating the three percent source-model envelope.
+
 ## CI benchmark matrix
 
 Workflow: `.github/workflows/profile-bench.yml`.

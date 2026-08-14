@@ -353,6 +353,53 @@ fn embed_subfield_matches_psi_embed_first_slot() {
     assert_psi_embed_slot_zero_matches_embed_subfield::<128, 16>();
 }
 
+#[test]
+fn pre_psi_digit_conversion_is_charged_once_before_physical_a_sizing() {
+    use crate::sis::{
+        role_a_collision_inf_norm_for_response_bound, role_a_collision_l2_sq_for_response_bound,
+    };
+    use crate::SisModulusProfileId;
+
+    // Two logical degree-four values with unit coordinates overlap under psi.
+    // The logical infinity norm is one, while the actual packed coefficient
+    // vector already carries the conversion cost with infinity norm two.
+    let logical = vec![1i8; 8];
+    let physical = pack_tensor_base_lift_i8_digits::<8>(&logical, 4, 4).unwrap();
+    assert_eq!(physical, vec![1, 2, 2, 2, 1, 0, 0, 0]);
+    let physical_linf = physical
+        .iter()
+        .map(|value| value.unsigned_abs() as u128)
+        .max()
+        .unwrap();
+    let physical_l2_sq = physical.iter().fold(0u128, |sum, value| {
+        let magnitude = value.unsigned_abs() as u128;
+        sum + magnitude * magnitude
+    });
+    assert_eq!((physical_linf, physical_l2_sq), (2, 14));
+
+    let challenge_l1 = 7u128;
+    let expected_linf = 8 * challenge_l1 * physical_linf;
+    let expected_l2_sq = 64 * challenge_l1 * challenge_l1 * physical_l2_sq;
+    for profile in [
+        SisModulusProfileId::Q128OffsetA7F7,
+        SisModulusProfileId::Q64Offset59,
+        SisModulusProfileId::Q32Offset99,
+    ] {
+        // The physical A formulas are profile independent. In particular,
+        // fp32/fp64 do not multiply the already packed norms by another psi
+        // factor.
+        let _physical_profile = profile;
+        assert_eq!(
+            role_a_collision_inf_norm_for_response_bound(challenge_l1, physical_linf),
+            Some(expected_linf)
+        );
+        assert_eq!(
+            role_a_collision_l2_sq_for_response_bound(challenge_l1, physical_l2_sq),
+            Some(expected_l2_sq)
+        );
+    }
+}
+
 fn assert_embed_subfield_scales_packed_slots<const D: usize, const K: usize>() {
     let params = SubfieldParams::<D, K>::new().unwrap();
     let packed_len = D / K;

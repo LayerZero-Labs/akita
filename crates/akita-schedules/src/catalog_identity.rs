@@ -48,11 +48,12 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(sis_modulus_profile_tag(policy.sis_modulus_profile));
     h.write_u64(u64::from(policy.sis_security_policy.tag()));
     h.write_bytes(&policy.sis_table_digest.0);
+    h.write_bytes(&policy.sis_l2_table_digest.0);
+    h.write_u64(u64::from(policy.selective_l2_response_model.tag()));
     h.write_u64(policy.uniform_ring_dimension as u64);
     h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
     write_ring_dimension_schedule_mode(&mut h, policy.ring_dimension_schedule_mode);
     write_decomposition(&mut h, policy.decomposition);
-    h.write_u64(u64::from(policy.ring_subfield_norm_bound));
     h.write_u64(policy.claim_ext_degree as u64);
     h.write_u64(policy.chal_ext_degree as u64);
     h.write_u64(u64::from(policy.inner_basis_range.0));
@@ -81,10 +82,11 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(sis_modulus_profile_tag(identity.sis_modulus_profile));
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
     h.write_bytes(&identity.sis_table_digest.0);
+    h.write_bytes(&identity.sis_l2_table_digest.0);
+    h.write_u64(u64::from(identity.selective_l2_response_model.tag()));
     h.write_u64(identity.uniform_ring_dimension as u64);
     h.write_u64(identity.setup_prefix_inner_ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
-    h.write_u64(u64::from(identity.ring_subfield_norm_bound));
     h.write_u64(identity.claim_ext_degree as u64);
     h.write_u64(identity.chal_ext_degree as u64);
     h.write_u64(u64::from(identity.inner_basis_range.0));
@@ -132,6 +134,7 @@ struct CatalogIdentityExpectation {
     family_name: &'static str,
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
+    selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     selection_policy: crate::SelectionPolicyId,
     recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     setup_field_budget: Option<usize>,
@@ -139,10 +142,10 @@ struct CatalogIdentityExpectation {
     sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
+    sis_l2_table_digest: akita_types::SisL2TableDigest,
     uniform_ring_dimension: usize,
     setup_prefix_inner_ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
-    ring_subfield_norm_bound: u32,
     claim_ext_degree: usize,
     chal_ext_degree: usize,
     inner_basis_range: (u32, u32),
@@ -164,6 +167,7 @@ impl CatalogIdentityExpectation {
             family_name: identity.family_name,
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
+            selective_l2_response_model: identity.selective_l2_response_model,
             selection_policy: identity.selection_policy,
             recursive_split_search_policy: identity.recursive_split_search_policy,
             setup_field_budget: identity.setup_field_budget,
@@ -171,10 +175,10 @@ impl CatalogIdentityExpectation {
             sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
+            sis_l2_table_digest: identity.sis_l2_table_digest,
             uniform_ring_dimension: identity.uniform_ring_dimension,
             setup_prefix_inner_ring_dimension: identity.setup_prefix_inner_ring_dimension,
             decomposition: identity.decomposition,
-            ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
             inner_basis_range: identity.inner_basis_range,
@@ -210,6 +214,7 @@ fn catalog_identity_expectation(
         family_name,
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
+        selective_l2_response_model: policy.selective_l2_response_model,
         selection_policy: policy.selection_policy,
         recursive_split_search_policy: policy.recursive_split_search_policy,
         setup_field_budget: policy.setup_field_budget,
@@ -217,10 +222,10 @@ fn catalog_identity_expectation(
         sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
+        sis_l2_table_digest: policy.sis_l2_table_digest,
         uniform_ring_dimension: policy.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension: policy.setup_prefix_inner_ring_dimension,
         decomposition: policy.decomposition,
-        ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
         inner_basis_range: policy.inner_basis_range,
@@ -250,6 +255,7 @@ pub fn expected_catalog_identity(
         family_name: expected.family_name,
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
+        selective_l2_response_model: expected.selective_l2_response_model,
         selection_policy: expected.selection_policy,
         recursive_split_search_policy: expected.recursive_split_search_policy,
         setup_field_budget: expected.setup_field_budget,
@@ -257,10 +263,10 @@ pub fn expected_catalog_identity(
         sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,
+        sis_l2_table_digest: expected.sis_l2_table_digest,
         uniform_ring_dimension: expected.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension: expected.setup_prefix_inner_ring_dimension,
         decomposition: expected.decomposition,
-        ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
         inner_basis_range: expected.inner_basis_range,
@@ -376,7 +382,14 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             entry.root.open_commit_matrix.ring_dimension as usize,
         );
         for group in entry.root.precommitted_groups {
-            collect_group_ring_dimensions(group.commitment, &mut dims);
+            push_unique(
+                &mut dims,
+                group.descriptor.inner_commit_matrix.ring_dimension(),
+            );
+            push_unique(
+                &mut dims,
+                group.descriptor.outer_commit_matrix.ring_dimension(),
+            );
         }
         for fold in entry.recursive_folds {
             collect_group_ring_dimensions(fold.witness, &mut dims);
@@ -552,7 +565,6 @@ fn entries_key_digest_with_setup_prefix_content_mode(
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
-            write_generated_group(&mut h, group.commitment);
             h.write_u64(u64::from(group.num_digits_fold));
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
@@ -574,6 +586,8 @@ fn entries_key_digest_with_setup_prefix_content_mode(
         write_generated_geometry(&mut h, entry.terminal.geometry);
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.log_basis));
+        h.write_u64(u64::from(entry.terminal.fold_log_basis));
+        h.write_u64(u64::from(entry.terminal.fold_digit_count));
     }
     h.finish()
 }
@@ -742,6 +756,7 @@ mod tests {
         };
         let policy = PlannerPolicy {
             cost_model: stale.identity.cost_model,
+            selective_l2_response_model: stale.identity.selective_l2_response_model,
             selection_policy: stale.identity.selection_policy,
             recursive_split_search_policy: stale.identity.recursive_split_search_policy,
             setup_field_budget: stale.identity.setup_field_budget,
@@ -749,10 +764,10 @@ mod tests {
             sis_modulus_profile: stale.identity.sis_modulus_profile,
             sis_security_policy: stale.identity.sis_security_policy,
             sis_table_digest: stale.identity.sis_table_digest,
+            sis_l2_table_digest: stale.identity.sis_l2_table_digest,
             uniform_ring_dimension: stale.identity.uniform_ring_dimension,
             setup_prefix_inner_ring_dimension: stale.identity.setup_prefix_inner_ring_dimension,
             decomposition: stale.identity.decomposition,
-            ring_subfield_norm_bound: stale.identity.ring_subfield_norm_bound,
             claim_ext_degree: stale.identity.claim_ext_degree,
             chal_ext_degree: stale.identity.chal_ext_degree,
             inner_basis_range: stale.identity.inner_basis_range,

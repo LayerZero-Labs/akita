@@ -40,13 +40,12 @@ pub use crate::opening_claims::{
     derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
-pub(crate) use batch::root_tensor_projection_enabled_for_width;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    SubfieldMultiplierOpeningPoint,
+    root_tensor_projection_enabled_for_width, validate_batched_inputs, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
@@ -60,8 +59,8 @@ pub use containers::{
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, SetupSumcheckProof,
-    TerminalLevelProof,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, PhysicalL2NormProof,
+    SetupSumcheckProof, TerminalLevelProof,
 };
 pub use relation::{
     assemble_compressed_relation_rhs, assemble_relation_rhs,
@@ -72,7 +71,10 @@ pub use relation::{
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
-pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
+pub use relation_range_image::{
+    reconstruct_l2_sq_from_gram, PhysicalResponsePlan, RelationRangeImageGroupPlan,
+    RelationRangeImagePlan,
+};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
@@ -97,8 +99,8 @@ pub use setup_prefix::{
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
-    NextWitnessBindingShape, SetupProductSumcheckShape, TerminalLevelProofShape,
-    SETUP_SUMCHECK_DEGREE,
+    NextWitnessBindingShape, PhysicalL2NormProofWireShape, SetupProductSumcheckShape,
+    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,

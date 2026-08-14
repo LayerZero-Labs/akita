@@ -154,26 +154,27 @@ fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
     // `digest_effective_schedule`. Akita is still in development, so the cache
     // flat-v2 namespace; the digest prevents incompatible schedules from
     // aliasing within that namespace.
-    let raw_schedule =
-        match Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(schedule_lookup_key)) {
-            Ok(schedule) => {
-                let digest = digest_effective_schedule(schedule.schedule());
-                let mut hex = String::with_capacity(digest.len() * 2);
-                for byte in digest {
-                    let _ = write!(hex, "{byte:02x}");
-                }
-                format!(
-                    "planner_flat_v2_nv{}_batch{}_{hex}",
-                    schedule_lookup_key.num_vars(),
-                    schedule_lookup_key.num_polynomials(),
-                )
+    let raw_schedule = match Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+        schedule_lookup_key,
+    )) {
+        Ok(schedule) => {
+            let digest = digest_effective_schedule(schedule.schedule());
+            let mut hex = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                let _ = write!(hex, "{byte:02x}");
             }
-            Err(_) => format!(
-                "miss_nv{}_batch{}",
+            format!(
+                "planner_flat_v2_nv{}_batch{}_{hex}",
                 schedule_lookup_key.num_vars(),
                 schedule_lookup_key.num_polynomials(),
-            ),
-        };
+            )
+        }
+        Err(_) => format!(
+            "miss_nv{}_batch{}",
+            schedule_lookup_key.num_vars(),
+            schedule_lookup_key.num_polynomials(),
+        ),
+    };
     let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -1025,7 +1026,7 @@ mod tests {
 
                 let disk_setup = load_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
 
-                let lp = Cfg::select_schedule_for_opening(
+                let lp = Cfg::resolve_catalog_row_for_opening(
                     &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )

@@ -3,11 +3,25 @@ import contextlib
 import io
 import json
 import pathlib
+import subprocess
 import tempfile
 import unittest
 
 
 class ProfileBenchReportTests(unittest.TestCase):
+    def test_report_direct_entrypoint_loads_split_modules(self) -> None:
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        completed = subprocess.run(
+            ["python3", "scripts/profile_bench_report.py", "--help"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout)
+
     def test_profile_bench_does_not_persist_setup_cache(self) -> None:
         repo = pathlib.Path(__file__).resolve().parents[2]
         workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
@@ -142,6 +156,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "tail_t_bytes": 64,
             "tail_t_field_elems": 32,
             "tail_t_ring_elems": 1,
+            "tail_z_budget_bytes": 16,
+            "z_witness_linf_cap": "4096",
+            "z_rice_low_bits_wire": 10,
+            "z_bits_per_coord_golomb": 3.0,
+            "z_bits_per_coord_packed": 13.0,
+            "z_packed_hypothetical_bytes": 52,
         }
 
         output = io.StringIO()
@@ -149,38 +169,44 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             render_tail_encoding(summary)
         report = output.getvalue()
 
-        self.assertIn("quotient-free terminal response", report)
-        self.assertIn("inner gadget basis width `6` bits", report)
-        self.assertIn("Folded-witness (`z`) segment", report)
-        self.assertIn("Opening-digit (`e`) segment", report)
-        self.assertIn("Inner-commitment (`t`) segment", report)
+        self.assertIn(
+            "Clear response: `96` coefficients across `z`, `e`, and `t`", report
+        )
+        self.assertIn("incoming witness uses a basis width of `6` bits", report)
+        self.assertIn("| Folded response (`z`) | 20 bytes | 32 | 1 |", report)
+        self.assertIn("| Opening values (`e`) | 64 bytes | 32 | 1 |", report)
+        self.assertIn("| Inner-commitment values (`t`) | 64 bytes | 32 | 1 |", report)
+        self.assertIn("Golomb parameter `10`", report)
+        self.assertIn("coefficient limit `4096`", report)
+        self.assertIn("`3.00` bits per coefficient", report)
+        self.assertNotIn("Wire total", report)
+        self.assertNotIn("savings", report)
 
-    def test_compact_report_renders_terminal_response_component_table(self) -> None:
-        from scripts.profile_bench_report import render_terminal_response_components
+    def test_proof_table_embeds_terminal_response_components(self) -> None:
+        from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
 
-        case = {
-            "mode": "onehot_fp128",
-            "num_vars": 32,
-            "num_polys": 1,
-            "exit_code": 0,
-            "tail_encoding": "terminal_response",
-            "tail_z_bytes": 20,
-            "tail_e_bytes": 64,
-            "tail_t_bytes": 96,
-            "tail_bytes": 180,
-        }
+        case = normalize_case_summary(
+            {
+                "mode": "onehot_fp128",
+                "num_vars": 32,
+                "num_polys": 1,
+                "exit_code": 0,
+                "tail_encoding": "terminal_response",
+                "tail_z_bytes": 20,
+                "tail_e_bytes": 64,
+                "tail_t_bytes": 96,
+                "tail_bytes": 180,
+            }
+        )
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            render_terminal_response_components([case])
+            render_matrix_summary([case], None)
         report = output.getvalue()
 
-        self.assertIn("Terminal response component breakdown", report)
-        self.assertIn("20 bytes", report)
-        self.assertIn("64 bytes", report)
-        self.assertIn("96 bytes", report)
         self.assertIn("180 bytes", report)
-        self.assertIn("sum exactly", report)
+        self.assertIn("<sub>z 20 · e 64 · t 96</sub>", report)
+        self.assertNotIn("Terminal response component breakdown", report)
 
     def test_z_fold_encoding_stats_prefers_wire_low_bits(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -325,16 +351,20 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
+    def test_tracing_optional_integer_accepts_debug_and_structured_values(self) -> None:
+        from scripts.profile_bench_report import parse_tracing_optional_int
+
+        self.assertIsNone(parse_tracing_optional_int(None))
+        self.assertIsNone(parse_tracing_optional_int("None"))
+        self.assertEqual(parse_tracing_optional_int("Some(4096)"), 4096)
+        self.assertEqual(parse_tracing_optional_int("4096"), 4096)
+
     def test_planned_fold_level_parses_physical_geometry(self) -> None:
-        from scripts.profile_bench_report import (
-            extract_summary,
-            planned_group_planner_value,
-        )
+        from scripts.profile_bench_report import extract_summary
 
         log = (
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
-            'n_a=2 n_b=3 n_d=4 b_slice_count=4 physical_b_input_width=192 '
-            'logical_b_rows=12 complete_b_compression_bytes=3072 '
+            'n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
             'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
             'num_positions_per_block=128 delta_commit=4 delta_open=5 '
@@ -350,13 +380,18 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "d_a": 64,
                 "d_b": 32,
                 "d_d": 16,
+                "a_width": 0,
+                "b_width": 0,
+                "d_width": 0,
                 "n_a": 2,
                 "n_b": 3,
                 "n_d": 4,
-                "b_slice_count": 4,
-                "physical_b_input_width": 192,
-                "logical_b_rows": 12,
-                "complete_b_compression_bytes": 3072,
+                "security_route": "L-infinity",
+                "response_l2_sq_cap": None,
+                "b_slice_count": 1,
+                "physical_b_input_width": None,
+                "logical_b_rows": None,
+                "complete_b_compression_bytes": None,
                 "challenge_l1_mass": 8,
                 "log_basis_inner": 5,
                 "log_basis_outer": 5,
@@ -371,6 +406,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "num_digits_outer": 5,
                 "num_digits_open": 5,
                 "delta_fold": 6,
+                "num_digits_quotient": 26,
                 "input_witness_len": 1024,
                 # Legacy scalar `current_w_len` is not a group breakdown.
                 "current_w_len": [],
@@ -380,48 +416,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "level_bytes": 4096,
             },
         )
-        rendered = planned_group_planner_value(
-            {
-                **summary["planned_levels"][0],
-                "group": "final",
-                "group_role": "final",
-                "consumer_level": 0,
-                "witness_field_elements": 1024,
-                "num_digits_fold": 6,
-            }
-        )
-        self.assertIn("B slices: 4", rendered)
-        self.assertIn("Physical B cols: 192", rendered)
-        self.assertIn("Logical B rows: 12", rendered)
-        self.assertIn("Complete B compression: 3,072", rendered)
-
-        legacy_log = (
-            'INFO planned fold level label=onehot_fp128 level=0 d=64 '
-            'n_a=2 n_b=3 n_d=4 challenge_l1_mass=8 log_basis=5 '
-            'position_index_bits=7 block_index_bits=3 '
-            'num_live_ring_elements_per_claim=768 num_live_blocks=6 '
-            'block_index_domain_size=8 num_positions_per_block=128 '
-            'delta_commit=4 delta_open=5 delta_fold=6 '
-            'current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
-        )
-        legacy = extract_summary(
-            legacy_log, mode="onehot_fp128", num_vars=24, num_polys=1
-        )["planned_levels"][0]
-        self.assertIsNone(legacy["physical_b_input_width"])
-        self.assertIsNone(legacy["complete_b_compression_bytes"])
-        legacy_rendered = planned_group_planner_value(
-            {
-                **legacy,
-                "group": "final",
-                "group_role": "final",
-                "consumer_level": 0,
-                "witness_field_elements": 1024,
-                "num_digits_fold": 6,
-            }
-        )
-        self.assertIn("Physical B cols: not reported", legacy_rendered)
-        self.assertIn("Complete B compression: not reported", legacy_rendered)
-        self.assertNotIn("Physical B cols: 0", legacy_rendered)
 
     def test_planned_fold_level_parses_typed_schedule_field_names(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -523,7 +517,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         current_log = (
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
-            'n_a=4 n_b=6 n_d=8 challenge_l1_mass=16 log_basis=6 position_index_bits=7 '
+            'n_a=4 n_b=6 n_d=8 response_l2_sq_cap=Some(100) challenge_l1_mass=53 '
+            'challenge_count_pm1=31 challenge_count_pm2=11 '
+            'challenge_operator_norm_threshold=Some(18) log_basis=6 position_index_bits=7 '
             'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
@@ -542,17 +538,28 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            render_fold_details(current, proof, baseline, proof)
+            render_fold_details(current, proof, None, baseline, proof, None)
         report = output.getvalue()
 
         self.assertIn("Fold schedule and proof cost", report)
-        self.assertIn("Rings A/B/D: 64 / 32 / 16", report)
-        self.assertIn("Rows A/B/D: 4 / 6 / 8", report)
-        self.assertIn("<em>Matrix geometry</em>", report)
+        self.assertIn("A commitment: ring D64 · module rank 4", report)
+        self.assertIn("B commitment: ring D32 · module rank 6", report)
+        self.assertIn("D opening: ring D16 · module rank 8", report)
+        self.assertIn("Sum of squared coefficients (L2)", report)
+        self.assertIn("Sum of squared coefficients (L2): ≤ 100", report)
+        self.assertIn(
+            "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 18",
+            report,
+        )
+        self.assertIn("<em>Commitment matrices used at this fold</em>", report)
+        self.assertIn("z response: 4 input digits", report)
+        self.assertIn("e opening: 5 digits", report)
+        self.assertIn("t matrix image: 5 digits", report)
+        self.assertIn("r shared quotient: 22 digits", report)
         self.assertIn(
             "<sub>Merge base</sub><br><strong>Final group</strong><br>"
-            "<em>Matrix geometry</em><br>Rings A/B/D: 64 / 32 / 16<br>"
-            "Rows A/B/D: 2 / 6 / 8",
+            "<em>Commitment matrices used at this fold</em><br>"
+            "A commitment: ring D64 · module rank 2",
             report,
         )
         self.assertNotIn("+100.0% vs base", report)
@@ -560,6 +567,118 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertNotIn("Planned fold-level proof bytes", report)
         self.assertNotIn("| M |", report)
         self.assertNotIn("r_pos", report)
+
+    def test_new_display_fields_do_not_create_false_plan_deltas(self) -> None:
+        from scripts.profile_bench_report import extract_summary, render_fold_details
+
+        common = (
+            "INFO planned fold level label=onehot_fp128 level=0 d=64 "
+            "d_a=64 d_b=64 d_d=64 n_a=3 n_b=2 n_d=2 "
+            "challenge_l1_mass=53 log_basis_inner=5 log_basis_outer=6 "
+            "log_basis_open=6 position_index_bits=7 block_index_bits=3 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "block_index_domain_size=8 num_positions_per_block=128 "
+            "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
+            "delta_fold=2 input_witness_len=4096 output_witness_len=2048 "
+            "current_w_len=final=4096 next_w_len=2048"
+        )
+        current_log = common + " a_width=128 b_width=264 d_width=132 num_digits_quotient=22\n"
+        baseline_log = common + "\n"
+        proof_log = (
+            "INFO proof fold level label=onehot_fp128 level=0 d=64 "
+            "total_bytes=4 fold_grind_nonce_bytes=4\n"
+        )
+        current = extract_summary(current_log, "onehot_fp128", 24, 1)["planned_levels"]
+        baseline = extract_summary(baseline_log, "onehot_fp128", 24, 1)["planned_levels"]
+        proof = extract_summary(proof_log, "onehot_fp128", 24, 1)["proof_levels"]
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(current, proof, None, baseline, proof, None)
+        report = output.getvalue()
+
+        self.assertIn("input width 128", report)
+        self.assertIn("r shared quotient: 22 digits", report)
+        self.assertNotIn("<sub>Merge base</sub>", report)
+
+    def test_terminal_fold_reports_its_full_geometry(self) -> None:
+        from scripts.profile_bench_report import (
+            extract_summary,
+            planned_terminal_planner_value,
+            render_fold_details,
+        )
+
+        log = "\n".join(
+            [
+                "INFO planned fold level label=onehot_fp128 level=0 d=64 "
+                "d_a=64 d_b=64 d_d=64 a_width=128 b_width=64 d_width=64 "
+                "n_a=4 n_b=2 n_d=2 challenge_l1_mass=53 "
+                "challenge_count_pm1=31 challenge_count_pm2=11 "
+                "log_basis_inner=5 log_basis_outer=6 log_basis_open=6 "
+                "position_index_bits=7 block_index_bits=3 "
+                "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+                "block_index_domain_size=8 num_positions_per_block=128 "
+                "num_digits_inner=1 num_digits_outer=22 num_digits_open=22 "
+                "delta_fold=2 num_digits_quotient=22 input_witness_len=4096 "
+                "output_witness_len=2048 current_w_len=final=4096 next_w_len=2048",
+                "INFO planned terminal state label=onehot_fp128 level=1 "
+                "input_witness_len=2048 d_a=64 n_a=3 inner_width=128 "
+                "log_basis_inner=5 num_digits_inner=1 fold_log_basis=6 "
+                "fold_digit_count=2 challenge_l1_mass=53 "
+                "challenge_count_pm1=31 challenge_count_pm2=11 "
+                "challenge_operator_norm_threshold=Some(18) "
+                "response_l2_sq_cap=Some(633237013) "
+                "z_linf_cap=None "
+                "num_live_ring_elements_per_claim=1908 "
+                "num_positions_per_block=256 num_live_blocks=8 "
+                "block_index_domain_size=8",
+                "INFO proof fold level label=onehot_fp128 level=0 d=64 "
+                "total_bytes=4 fold_grind_nonce_bytes=4",
+                "INFO proof fold level label=onehot_fp128 level=1 d=64 "
+                "total_bytes=548 extension_opening_partials_bytes=64 "
+                "extension_opening_sumcheck_bytes=480 fold_grind_nonce_bytes=4 "
+                "root_variant=terminal",
+            ]
+        )
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+        terminal = summary["terminal_plan"]
+        self.assertEqual(terminal["level"], 1)
+        self.assertEqual(terminal["d_a"], 64)
+        self.assertEqual(terminal["n_a"], 3)
+        self.assertEqual(terminal["inner_width"], 128)
+        terminal_block = planned_terminal_planner_value(terminal)
+        self.assertNotIn("B commitment", terminal_block)
+        self.assertNotIn("D opening", terminal_block)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(
+                summary["planned_levels"],
+                summary["proof_levels"],
+                terminal,
+                None,
+                None,
+                None,
+            )
+        report = output.getvalue()
+
+        self.assertIn(
+            "A commitment: ring D64 · input width 128 · module rank 3", report
+        )
+        self.assertIn(
+            "z response: 1 input digit (basis bits 5) × "
+            "2 response digits (basis bits 6)",
+            report,
+        )
+        self.assertIn(
+            "Ring D64 · shell 31 at ±1 and 11 at ±2 · operator norm threshold 18",
+            report,
+        )
+        self.assertEqual(report.count("Maximum coefficient magnitude (Linf)"), 1)
+        self.assertIn("Sum of squared coefficients (L2): ≤ 633,237,013", report)
+        self.assertIn("<em>Input from L0</em><br>Field elements: 2,048", report)
+        self.assertIn("Clear z, e, and t terminal response", report)
+        self.assertNotIn("| L1 | terminal fold | — | — |", report)
 
     def test_multi_group_root_and_setup_offload_keep_group_parameters(self) -> None:
         from scripts.profile_bench_report import extract_summary, render_fold_details
@@ -667,22 +786,25 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            render_fold_details(planned, proof, planned, proof)
+            render_fold_details(planned, proof, None, planned, proof, None)
         report = output.getvalue()
 
         self.assertIn(
-            "<strong>Precommit 1</strong><br><em>Matrix geometry</em><br>"
-            "Rings A/B/D: 64 / 64 / 64",
+            "<strong>Precommit 1</strong><br>"
+            "<em>Commitment matrices used at this fold</em><br>"
+            "A commitment: ring D64 · module rank 3",
             report,
         )
         self.assertIn(
-            "<strong>Final group</strong><br><em>Matrix geometry</em><br>"
-            "Rings A/B/D: 256 / 64 / 64",
+            "<strong>Final group</strong><br>"
+            "<em>Commitment matrices used at this fold</em><br>"
+            "A commitment: ring D256 · module rank 1",
             report,
         )
         self.assertIn(
-            "<strong>Setup offload → L1</strong><br><em>Matrix geometry</em><br>"
-            "Rings A/B/D: 256 / 64 / 64",
+            "<strong>Setup offload → L1</strong><br>"
+            "<em>Commitment matrices used at this fold</em><br>"
+            "A commitment: ring D256 · module rank 2",
             report,
         )
         self.assertIn(
@@ -691,9 +813,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             report,
         )
         self.assertIn(
-            "<strong>Folded output</strong><br>Field elements: 47,963,968",
+            "<strong>Output to L1</strong><br>Field elements: 47,963,968",
             report,
         )
+        self.assertIn("Maximum coefficient magnitude (Linf)", report)
+        self.assertEqual(report.count("r shared quotient:"), 1)
         self.assertNotIn("setup fields; relation", report)
 
     def test_proof_breakdown_omits_zero_components(self) -> None:
@@ -704,16 +828,20 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         )
 
         log = (
-            'INFO proof fold level label=onehot_fp128 level=0 d=64 total_bytes=20 '
+            'INFO proof fold level label=onehot_fp128 level=0 d=64 total_bytes=28 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
             'stage1_range_image_evaluation_bytes=16 '
+            'stage1_norm_proof_bytes=8 response_l2_sq=Some(14) '
             'root_variant=terminal\n'
         )
         levels = extract_summary(log, "onehot_fp128", 24, 1)["proof_levels"]
-        self.assertEqual(proof_level_component_bytes(levels[0]), 20)
+        self.assertEqual(proof_level_component_bytes(levels[0]), 28)
+        self.assertEqual(levels[0]["response_l2_sq"], 14)
         planned_log = (
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
-            'n_a=4 n_b=6 n_d=8 challenge_l1_mass=16 log_basis=6 position_index_bits=7 '
+            'n_a=4 n_b=6 n_d=8 response_l2_sq_cap=Some(100) challenge_l1_mass=53 '
+            'challenge_count_pm1=31 challenge_count_pm2=11 '
+            'challenge_operator_norm_threshold=Some(18) log_basis=6 position_index_bits=7 '
             'block_index_bits=3 num_live_ring_elements_per_claim=768 num_live_blocks=6 '
             'block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 delta_open=5 '
             'delta_fold=6 current_w_len=1024 next_w_len=2048\n'
@@ -722,12 +850,15 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            render_fold_details(planned, levels, planned, levels)
+            render_fold_details(planned, levels, None, planned, levels, None)
         report = output.getvalue()
 
         self.assertIn("Fold by fold", report)
-        self.assertIn("<strong>Stage 1</strong><br>16 bytes", report)
-        self.assertIn("<sub>range image 16</sub>", report)
+        self.assertIn("<strong>Stage 1</strong><br>24 bytes", report)
+        self.assertIn("range image 16", report)
+        self.assertIn("L2 norm proof 8", report)
+        self.assertIn("Sum of squared response coefficients", report)
+        self.assertIn("14 ≤ cap 100", report)
         self.assertNotIn("<strong>Opening</strong>", report)
         self.assertNotIn("<strong>Stage 2</strong>", report)
         self.assertIn("+0.0% vs merge base", report)
@@ -739,6 +870,142 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             if line.startswith("| Fold | Step |") or line.startswith("| L0 | terminal root |")
         ]
         self.assertEqual(len({line.count("|") for line in proof_table_lines}), 1)
+
+    def test_grind_attempts_are_truthful_and_nonzero(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        derived_log = (
+            "INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=4 "
+            "fold_grind_nonce_bytes=4 grind_nonce=0\n"
+        )
+        level = extract_summary(derived_log, "onehot_fp128_d64", 24, 1)[
+            "proof_levels"
+        ][0]
+        self.assertEqual(level["grind_attempts"], 1)
+
+        impossible_log = derived_log.replace(
+            "grind_nonce=0", "grind_nonce=0 grind_attempts=0"
+        )
+        with self.assertRaisesRegex(ValueError, "accepted nonce plus one"):
+            extract_summary(impossible_log, "onehot_fp128_d64", 24, 1)
+
+    def test_l2_grinding_observations_survive_sample_aggregation(self) -> None:
+        from scripts.profile_bench_report import (
+            combine_case_run_summaries,
+            extract_summary,
+            render_fold_details,
+        )
+
+        planned = (
+            "INFO planned fold level label=onehot_fp128_d64 level=5 d=64 d_a=64 d_b=64 "
+            "d_d=64 n_a=4 n_b=4 n_d=4 response_l2_sq_cap=Some(4294967296) "
+            "challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 "
+            "delta_open=5 delta_fold=6 current_w_len=1024 next_w_len=2048\n"
+        )
+        summaries = []
+        for run_index, nonce in enumerate((0, 2), start=1):
+            proof = (
+                "INFO proof fold level label=onehot_fp128_d64 level=5 d=64 total_bytes=4 "
+                f"fold_grind_nonce_bytes=4 grind_nonce={nonce} grind_attempts={nonce + 1} "
+                f"response_l2_sq=Some({80 + run_index})\n"
+            )
+            summary = extract_summary(planned + proof, "onehot_fp128_d64", 24, 1)
+            summary["run_index"] = run_index
+            summary["exit_code"] = 0
+            summaries.append(summary)
+
+        combined = combine_case_run_summaries(summaries)
+        observation = combined["l2_grind_observations"][0]
+        self.assertEqual(observation["samples"], 2)
+        self.assertEqual(observation["attempts"], 4)
+        self.assertEqual(observation["rejected_attempts"], 2)
+        self.assertEqual(observation["accepted_nonces"], [0, 2])
+        self.assertEqual(observation["response_l2_sq_values"], [81, 82])
+        self.assertEqual(observation["maximum_cap_utilization"], 82 / 4_294_967_296)
+        self.assertEqual(observation["observed_failure_rate"], 0.5)
+        self.assertEqual(
+            combined["grind_retry_observations"],
+            [{"level": 5, "retries": [0, 2]}],
+        )
+        self.assertEqual(
+            combined["samples"][1]["l2_grind_observations"][0]["accepted_nonce"], 2
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(
+                combined["planned_levels"],
+                combined["proof_levels"],
+                None,
+                None,
+                None,
+                None,
+            )
+        report = output.getvalue()
+        self.assertNotIn("L2 cap grinding observations", report)
+        self.assertNotIn("50.00%", report)
+
+    def test_terminal_l2_response_is_joined_to_its_scheduled_cap(self) -> None:
+        from scripts.profile_bench_report import extract_summary, l2_grind_observations_for_run
+
+        log = (
+            "INFO planned terminal state label=onehot_fp128_d64 level=6 "
+            "input_witness_len=512 d_a=64 n_a=6 inner_width=64 "
+            "log_basis_inner=5 num_digits_inner=1 fold_log_basis=6 "
+            "fold_digit_count=2 response_l2_sq_cap=Some(100)\n"
+            "INFO proof fold level label=onehot_fp128_d64 level=6 d=64 "
+            "total_bytes=4 fold_grind_nonce_bytes=4 grind_nonce=2 "
+            "grind_attempts=3 response_l2_sq=Some(90)\n"
+        )
+        summary = extract_summary(log, "onehot_fp128_d64", 24, 1)
+        summary["run_index"] = 1
+        summary["exit_code"] = 0
+
+        self.assertEqual(
+            l2_grind_observations_for_run(summary),
+            [
+                {
+                    "level": 6,
+                    "response_l2_sq_cap": 100,
+                    "response_l2_sq": 90,
+                    "cap_utilization": 0.9,
+                    "accepted_nonce": 2,
+                    "attempts": 3,
+                    "rejected_attempts": 2,
+                }
+            ],
+        )
+
+    def test_failed_l2_run_preserves_partial_sample_without_grind_diagnostics(self) -> None:
+        from scripts.profile_bench_report import combine_case_run_summaries
+
+        failed = {
+            "run_index": 1,
+            "exit_code": 1,
+            "error": "prover failed before measured L2 level",
+            "planned_levels": [
+                {
+                    "level": 5,
+                    "security_route": "L2",
+                    "response_l2_sq_cap": 100,
+                }
+            ],
+            "proof_levels": [
+                {
+                    "level": 0,
+                    "grind_nonce_val": 0,
+                    "grind_attempts": 1,
+                }
+            ],
+        }
+
+        combined = combine_case_run_summaries([failed])
+
+        self.assertEqual(combined["exit_code"], 1)
+        self.assertEqual(combined["samples"][0]["exit_code"], 1)
+        self.assertNotIn("l2_grind_observations", combined)
 
     def test_matrix_splits_metrics_and_embeds_merge_base_deltas(self) -> None:
         from scripts.profile_bench_report import normalize_case_summary, render_matrix_summary
@@ -759,9 +1026,17 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "max_rss_kib": 2048,
                 "proof_size_bytes": 4096,
                 "planned_levels": [{"level": 0, "d_a": 64, "d_b": 64, "d_d": 64}],
+                "grind_retry_observations": [
+                    {"level": 0, "retries": [0, 2, 1]},
+                    {"level": 2, "retries": [0, 0, 0]},
+                ],
             }
         )
         baseline = dict(current)
+        baseline["grind_retry_observations"] = [
+            {"level": 0, "retries": [0, 0, 0]},
+            {"level": 2, "retries": [1, 0, 0]},
+        ]
         for key in (
             "setup_s",
             "setup_vector_bytes",
@@ -787,6 +1062,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("### Phase time", report)
         self.assertIn("### Memory and setup size", report)
         self.assertIn("### Proof size and protocol shape", report)
+        self.assertLess(
+            report.index("### Proof size and protocol shape"),
+            report.index("### Memory and setup size"),
+        )
         self.assertNotIn("### Protocol shape", report)
         self.assertNotIn("| Status |", report)
         self.assertIn("Setup vector", report)
@@ -794,6 +1073,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Verify, multi-threaded", report)
         self.assertIn("Verify, single-threaded", report)
         self.assertIn("Fold A/B/D schedule", report)
+        self.assertIn("| Fold levels | Grinding retries |", report)
+        self.assertIn("L0: 0 / 2 / 1", report)
+        self.assertIn("L2: 0 / 0 / 0", report)
+        self.assertIn("<sub>Merge base</sub>", report)
+        self.assertIn("L2: 1 / 0 / 0", report)
+        self.assertIn("listed in measured-run order", report)
         self.assertIn("64/64/64", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
@@ -1121,6 +1406,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             "stage1_sumcheck_bytes": 0,
             "stage1_interstage_claims_bytes": 0,
             "stage1_range_image_evaluation_bytes": 0,
+            "stage1_norm_proof_bytes": 0,
             "stage2_sumcheck_bytes": 0,
             "stage3_sumcheck_bytes": 0,
             "next_w_payload_bytes": 0,
@@ -1177,7 +1463,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Execution parameters", report)
         self.assertIn("Fold schedule and proof cost", report)
         self.assertIn("Fold by fold", report)
-        self.assertIn("Rings A/B/D", report)
+        self.assertIn("Commitment matrices used at this fold", report)
         self.assertIn("Proof bytes", report)
         self.assertNotIn("Proof byte components", report)
         self.assertNotIn("Planned fold-level proof bytes", report)

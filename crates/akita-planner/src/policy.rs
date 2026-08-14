@@ -63,20 +63,11 @@ pub(crate) fn direct_only_policy(mut policy: PlannerPolicy) -> PlannerPolicy {
     policy
 }
 
-pub(crate) fn chunks_at_level(policy: &PlannerPolicy, fold_level: usize) -> usize {
-    let chunk = policy.witness_chunk;
-    if chunk.uses_multi_chunk() && fold_level < chunk.num_activated_levels {
-        chunk.num_chunks
-    } else {
-        1
-    }
-}
-
 pub(crate) fn witness_chunk_at_level(
     policy: &PlannerPolicy,
     fold_level: usize,
 ) -> ChunkedWitnessCfg {
-    let num_chunks = chunks_at_level(policy, fold_level);
+    let num_chunks = policy.chunks_at_level(fold_level);
     if num_chunks > 1 {
         ChunkedWitnessCfg {
             num_chunks,

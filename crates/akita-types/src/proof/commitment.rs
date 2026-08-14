@@ -268,10 +268,12 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
             .log_basis_inner
             .serialize_with_mode(&mut writer, Compress::No)?;
         write_usize(&mut writer, profile.num_digits_inner)?;
-        for matrix in [
-            profile.inner_commit_matrix.sis_table_key(),
-            profile.outer_commit_matrix.sis_table_key(),
-        ] {
+        let inner_table_key = profile.inner_commit_matrix.sis_table_key().ok_or_else(|| {
+            SerializationError::InvalidData(
+                "precommitted group cannot use an L2 A security route".into(),
+            )
+        })?;
+        for matrix in [inner_table_key, profile.outer_commit_matrix.sis_table_key()] {
             matrix
                 .modulus_profile
                 .tag()
@@ -401,6 +403,7 @@ where
         }
         let num_vars = read_usize(&mut reader)?;
         let num_polynomials = read_usize(&mut reader)?;
+        let group = PolynomialGroupLayout::new(num_vars, num_polynomials);
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
@@ -439,7 +442,7 @@ where
 
         let descriptor = CommittedGroupProfile {
             version,
-            group: PolynomialGroupLayout::new(num_vars, num_polynomials),
+            group,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -696,25 +699,31 @@ mod committed_group_tests {
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                inner.coeff_linf_bound(),
+                inner.coeff_linf_bound().expect("L infinity test matrix"),
                 inner.ring_dimension(),
             ),
             InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
-                inner.sis_table_key().table_digest,
+                inner
+                    .sis_table_key()
+                    .expect("L infinity test matrix")
+                    .table_digest,
                 inner.sis_modulus_profile(),
                 inner.output_rank().saturating_sub(1),
                 inner.input_width(),
-                inner.coeff_linf_bound(),
+                inner.coeff_linf_bound().expect("L infinity test matrix"),
                 inner.ring_dimension(),
             ),
             InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
-                inner.sis_table_key().table_digest,
+                inner
+                    .sis_table_key()
+                    .expect("L infinity test matrix")
+                    .table_digest,
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                inner.coeff_linf_bound() - 1,
+                inner.coeff_linf_bound().expect("L infinity test matrix") - 1,
                 inner.ring_dimension(),
             ),
         ];

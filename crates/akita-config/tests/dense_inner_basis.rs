@@ -25,7 +25,7 @@ struct Snapshot {
 }
 
 fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
-    let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
+    let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(26),
     ))
     .expect("generated dense nv=26 schedule");
@@ -82,22 +82,22 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     assert_eq!(
         fp64,
         Snapshot {
-            inner_basis: 10,
+            inner_basis: 8,
             opening_basis: 3,
             positions: 512,
-            blocks: 256,
-            outer_slices: 2,
-            inner_digits: 7,
-            n_a: 2,
+            blocks: 512,
+            outer_slices: 4,
+            inner_digits: 8,
+            n_a: 4,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_835_008,
+            a_input_raw: 1_048_576,
             a_output_raw: 1_024,
             b_input_raw: 2_883_584,
             b_output_raw: 256,
             d_input_raw: 2_883_584,
             d_output_raw: 256,
-            next_witness: 19_767_040,
+            next_witness: 20_854_016,
         }
     );
 
@@ -105,22 +105,22 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
     assert_eq!(
         fp128,
         Snapshot {
-            inner_basis: 8,
+            inner_basis: 7,
             opening_basis: 3,
             positions: 512,
             blocks: 512,
             outer_slices: 2,
-            inner_digits: 16,
+            inner_digits: 19,
             n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 2_097_152,
+            a_input_raw: 2_490_368,
             a_output_raw: 512,
             b_input_raw: 5_636_096,
             b_output_raw: 64,
             d_input_raw: 5_636_096,
             d_output_raw: 64,
-            next_witness: 29_563_264,
+            next_witness: 31_922_560,
         }
     );
 }

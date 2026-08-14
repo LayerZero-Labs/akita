@@ -86,7 +86,7 @@ where
 {
     let (selection, claims) = opening.into_low_level_parts();
     let opening_claims = claims.opening_claims();
-    let opening_batch = opening_claims.layout()?;
+    let opening_batch = claims.opening_layout()?;
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
     let resolved = Cfg::resolve_schedule_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
@@ -194,7 +194,7 @@ where
         // Every public group commitment is the fixed terminal F payload. The
         // frozen B geometry derives the complete compression plan and therefore
         // the only accepted coefficient count.
-        let opening_batch = claims.opening_claims().layout()?;
+        let opening_batch = claims.opening_layout()?;
         let commitments = claims.commitments();
         if commitments.len() != opening_batch.num_groups() {
             return Err(AkitaError::InvalidInput(

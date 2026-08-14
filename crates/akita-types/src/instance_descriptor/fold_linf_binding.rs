@@ -14,15 +14,12 @@ pub struct FoldLinfProtocolBinding {
     pub max_grind_attempts: u32,
     /// Wire width of every fold nonce.
     pub grind_nonce_wire_bytes: u8,
-    /// Challenge entropy charged for the nonce range.
-    pub grind_entropy_bits_per_level: u8,
 }
 
 impl FoldLinfProtocolBinding {
     pub const CURRENT: Self = Self {
         max_grind_attempts: MAX_FOLD_GRIND_ATTEMPTS,
         grind_nonce_wire_bytes: 4,
-        grind_entropy_bits_per_level: 12,
     };
 
     /// Validate a Fiat–Shamir grind nonce against this protocol binding.
@@ -55,14 +52,12 @@ impl AkitaSerialize for FoldLinfProtocolBinding {
             .serialize_with_mode(&mut writer, compress)?;
         self.grind_nonce_wire_bytes
             .serialize_with_mode(&mut writer, compress)?;
-        self.grind_entropy_bits_per_level
-            .serialize_with_mode(&mut writer, compress)
+        Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.max_grind_attempts.serialized_size(compress)
             + self.grind_nonce_wire_bytes.serialized_size(compress)
-            + self.grind_entropy_bits_per_level.serialized_size(compress)
     }
 }
 
@@ -78,12 +73,6 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
         let binding = Self {
             max_grind_attempts: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             grind_nonce_wire_bytes: u8::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
-            grind_entropy_bits_per_level: u8::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,

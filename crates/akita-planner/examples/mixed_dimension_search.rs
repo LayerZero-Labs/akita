@@ -115,10 +115,10 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &direct_policy,
         OneHot::ring_challenge_config,
     )?;
-    let descriptor = CommittedGroupProfile::from_params(
+    let descriptor = CommittedGroupProfile::try_from_params(
         precommit_layout,
         &independent.schedule.root.params.final_group.commitment,
-    );
+    )?;
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],

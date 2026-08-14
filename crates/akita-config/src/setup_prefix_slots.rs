@@ -92,7 +92,7 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     for key in
         recursive_group_batch_candidates_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?
     {
-        let Ok(schedule) = Cfg::select_schedule_for_key(&key) else {
+        let Ok(schedule) = Cfg::resolve_catalog_row_for_key(&key) else {
             continue;
         };
         let root_layout = key.opening_layout()?;
@@ -193,10 +193,10 @@ mod tests {
 
     #[test]
     fn capacity_candidates_include_scalar_recursive_key() {
-        let scalar = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(36));
+        let scalar_k256 = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(36, 1));
         let candidates =
             recursive_group_batch_candidates_for_capacity::<SetupCfg>(36, 1).expect("candidates");
-        assert_eq!(candidates, vec![scalar]);
+        assert_eq!(candidates, vec![scalar_k256]);
 
         let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(36, 1).expect("slots");
         assert!(
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
-        let schedule = SetupCfg::select_schedule_for_key(&key).expect("recursive schedule");
+        let schedule = SetupCfg::resolve_catalog_row_for_key(&key).expect("recursive schedule");
         let ids = extract_setup_prefix_slot_ids_from_schedule(
             schedule.schedule(),
             &key.opening_layout().expect("layout"),

@@ -63,7 +63,10 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
     const OUTER_BOUND: u128 = 3;
     lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner_commit_matrix.security_policy(),
-        lp.inner_commit_matrix.sis_table_key().table_digest,
+        lp.inner_commit_matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         lp.inner_commit_matrix.sis_modulus_profile(),
         lp.inner_commit_matrix.output_rank(),
         lp.inner_commit_matrix.input_width(),
@@ -107,8 +110,10 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         precommit_lp.outer_commit_matrix.coeff_linf_bound(),
         precommit_lp.d_a(),
     );
-    let mut layout =
-        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
+    let mut layout = CommittedGroupProfile::from_params_unchecked_for_test(
+        PolynomialGroupLayout::new(4, 1),
+        &precommit_lp,
+    );
     layout.outer_commit_matrix = outer_commit_matrix;
     let precommit = PrecommittedLevelParams {
         layout,

@@ -13,6 +13,7 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
+use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
     GeneratedSetupPrefixInput, GeneratedTerminalFold,
@@ -162,7 +163,6 @@ impl GeneratedSetupPrefixInput {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -287,6 +287,7 @@ impl GeneratedCommittedGroup {
         fold_level: usize,
         exact_num_digits_inner: Option<u32>,
         generated_num_digits_fold: u32,
+        response_l2_sq_cap: Option<u128>,
         input_witness_len: usize,
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -368,7 +369,12 @@ impl GeneratedCommittedGroup {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
-        let ring_challenge_cfg = ring_challenge_config(ring_d)?;
+        let ring_challenge_cfg = if response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(ring_d)
+                .unwrap_or(ring_challenge_config(ring_d)?)
+        } else {
+            ring_challenge_config(ring_d)?
+        };
         let num_digits_inner = if let Some(num_digits_inner) = exact_num_digits_inner {
             usize::try_from(num_digits_inner).map_err(|_| {
                 AkitaError::InvalidSetup(
@@ -401,10 +407,9 @@ impl GeneratedCommittedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
-        let n_a = secure_rank(
+        let linf_n_a = secure_rank(
             "a",
             sis_key(
                 policy,
@@ -414,6 +419,54 @@ impl GeneratedCommittedGroup {
             ),
             inner_width,
         )?;
+        let inner_commit_matrix = if let Some(response_l2_sq_cap) = response_l2_sq_cap {
+            let fold_basis = 1usize
+                .checked_shl(log_basis_open)
+                .ok_or_else(|| AkitaError::InvalidSetup("generated L2 basis overflow".into()))?;
+            let matrix = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
+                    fold_level,
+                    num_claims,
+                    num_chunks: policy.chunks_at_level(fold_level),
+                    inner_width,
+                    ring_dimension: ring_d,
+                    fold_basis,
+                    fold_digit_count: num_digits_fold,
+                    fold_challenge_config: &ring_challenge_cfg,
+                    response_l2_sq_cap: Some(response_l2_sq_cap),
+                    norm_proof_shape: None,
+                },
+            )?
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated L2 route is not admitted by the calibrated response model".into(),
+                )
+            })?;
+            if !matches!(
+                matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: canonical_cap,
+                    ..
+                } if canonical_cap == response_l2_sq_cap
+            ) {
+                return Err(AkitaError::InvalidSetup(
+                    "generated L2 cap disagrees with canonical candidate policy".into(),
+                ));
+            }
+            matrix
+        } else {
+            InnerCommitMatrixParams::try_new(
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                linf_n_a,
+                inner_width,
+                a_bucket,
+                ring_d,
+            )?
+        };
+        let n_a = inner_commit_matrix.output_rank();
 
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
@@ -513,15 +566,7 @@ impl GeneratedCommittedGroup {
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::try_new(
-                sis_policy,
-                policy.sis_table_digest,
-                sis_modulus_profile,
-                n_a,
-                inner_width,
-                a_bucket,
-                ring_d,
-            )?,
+            inner_commit_matrix,
             outer_commit_matrix: OuterCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
@@ -656,7 +701,6 @@ impl GeneratedCommittedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -788,7 +832,7 @@ impl GeneratedTerminalFold {
         &self,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        _fold_level: usize,
+        fold_level: usize,
         input_witness_len: usize,
     ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
@@ -830,38 +874,108 @@ impl GeneratedTerminalFold {
                 "generated terminal inner digit depth must be nonzero".into(),
             ));
         }
+        let fold_digit_count = usize::try_from(self.fold_digit_count).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated terminal fold digit count does not fit the target platform".into(),
+            )
+        })?;
+        if self.fold_log_basis == 0 || fold_digit_count == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal fold basis and digit count must be nonzero".into(),
+            ));
+        }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal A width overflow".to_string()))?;
-        let sparse = ring_challenge_config(ring_dimension)?;
+        let sparse = if self.response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no certified operator-norm challenge".into(),
+                )
+            })?
+        } else {
+            ring_challenge_config(ring_dimension)?
+        };
         let output_rank = usize::try_from(self.inner_output_rank).map_err(|_| {
             AkitaError::InvalidSetup(
                 "generated terminal inner rank does not fit the target platform".into(),
             )
         })?;
-        if output_rank == 0 || self.inner_coeff_linf_bound == 0 {
+        if output_rank == 0
+            || (self.response_l2_sq_cap.is_none() && self.inner_coeff_linf_bound == 0)
+        {
             return Err(AkitaError::InvalidSetup(
                 "generated terminal matrix contract must be nonzero".into(),
             ));
         }
-        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            output_rank,
-            inner_width,
-            self.inner_coeff_linf_bound,
-            ring_dimension,
-        )?;
+        let inner_commit_matrix = if let Some(response_l2_sq_cap) = self.response_l2_sq_cap {
+            let fold_basis = 1usize
+                .checked_shl(self.fold_log_basis)
+                .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
+            let matrix = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
+                    fold_level,
+                    num_claims: 1,
+                    num_chunks: 1,
+                    inner_width,
+                    ring_dimension,
+                    fold_basis,
+                    fold_digit_count,
+                    fold_challenge_config: &sparse,
+                    response_l2_sq_cap: Some(response_l2_sq_cap),
+                    norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                        physical_response_len: inner_width.checked_mul(ring_dimension).ok_or_else(
+                            || {
+                                AkitaError::InvalidSetup(
+                                    "terminal L2 response length overflow".into(),
+                                )
+                            },
+                        )?,
+                    }),
+                },
+            )?
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no canonical source model".into(),
+                )
+            })?;
+            let cap_matches = matches!(
+                matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: cap,
+                    ..
+                } if cap == response_l2_sq_cap
+            );
+            if matrix.output_rank() != output_rank || !cap_matches {
+                return Err(AkitaError::InvalidSetup(
+                    "generated terminal L2 matrix disagrees with its canonical source model".into(),
+                ));
+            }
+            matrix
+        } else {
+            InnerCommitMatrixParams::try_new(
+                policy.sis_security_policy,
+                policy.sis_table_digest,
+                policy.sis_modulus_profile,
+                output_rank,
+                inner_width,
+                self.inner_coeff_linf_bound,
+                ring_dimension,
+            )?
+        };
         let terminal = TerminalCommittedGroupParams {
             log_basis_inner,
+            fold_log_basis: self.fold_log_basis,
+            fold_digit_count,
             inner_commit_matrix,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
             num_digits_inner,
         };
-        if self.z_admission_linf_cap == 0
-            || self.z_admission_linf_cap > terminal.certified_response_linf_cap(&sparse)?
+        if terminal
+            .validate_terminal_linf_cap(&sparse, self.z_linf_cap)
+            .is_err()
             || self.z_rice_low_bits >= 64
             || self.z_payload_bytes == 0
         {
@@ -907,6 +1021,7 @@ mod tests {
     fn recursive_fp128_policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -924,7 +1039,7 @@ mod tests {
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
-            ring_subfield_norm_bound: 1,
+            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (3, 16),

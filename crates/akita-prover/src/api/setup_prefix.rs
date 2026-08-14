@@ -235,7 +235,10 @@ mod tests {
         params.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: inner.security_policy(),
-                table_digest: inner.sis_table_key().table_digest,
+                table_digest: inner
+                    .sis_table_key()
+                    .expect("L infinity test matrix")
+                    .table_digest,
                 modulus_profile: inner.sis_modulus_profile(),
                 role: akita_types::sis::SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),

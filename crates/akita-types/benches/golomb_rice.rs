@@ -26,7 +26,7 @@ fn bench_terminal_decode(c: &mut Criterion) {
         z_coords: COORDINATES,
         e_field_elems: 0,
         t_field_elems: 0,
-        z_admission_linf_cap: CAP,
+        z_linf_cap: Some(CAP),
         z_rice_low_bits: rice_low_bits,
         z_payload_bytes: encoded.len(),
     };

@@ -9,9 +9,9 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
-    AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
+    extension_opening_reduction_level_bytes, level_proof_bytes, AkitaScheduleLookupKey,
+    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalResponseShape,
 };
 
 use crate::generated::{validate_entry_key, GeneratedFoldScheduleEntry};
@@ -79,6 +79,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 0,
                 Some(entry.root.final_group.num_digits_inner),
                 entry.root.final_group.num_digits_fold,
+                None,
                 expected_root_w_len,
                 key.final_group.num_polynomials(),
                 entry.root.open_commit_matrix,
@@ -120,6 +121,7 @@ pub(crate) fn walk_generated_schedule_entry(
             index + 1,
             None,
             fold.num_digits_fold,
+            fold.response_l2_sq_cap,
             input_witness_len,
             1,
             fold.open_commit_matrix,
@@ -172,7 +174,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 z_coords,
                 e_field_elems,
                 t_field_elems,
-                z_admission_linf_cap: entry.terminal.z_admission_linf_cap,
+                z_linf_cap: entry.terminal.z_linf_cap,
                 z_rice_low_bits: entry.terminal.z_rice_low_bits,
                 z_payload_bytes,
             }],
@@ -234,7 +236,11 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("terminal direct byte count overflow".to_string())
         })?;
-    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
+    let terminal_bytes = akita_types::terminal_response_planner_bytes(
+        field_bits,
+        &witness_shape,
+        terminal_params.response_l2_sq_cap(),
+    );
     total_bytes = total_bytes
         .checked_add(terminal_direct_bytes)
         .and_then(|value| value.checked_add(terminal_bytes))
@@ -283,9 +289,19 @@ pub(crate) fn walk_generated_schedule_entry(
         folds,
         CandidateTerminalResponse {
             params: terminal_params,
-            sparse_challenge_config: ring_challenge_config(
-                entry.terminal.inner_commit_matrix.ring_dimension as usize,
-            )?,
+            sparse_challenge_config: if entry.terminal.response_l2_sq_cap.is_some() {
+                akita_challenges::selective_l2_challenge_config(
+                    entry.terminal.inner_commit_matrix.ring_dimension as usize,
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated terminal L2 route has no certified operator-norm challenge"
+                            .into(),
+                    )
+                })?
+            } else {
+                ring_challenge_config(entry.terminal.inner_commit_matrix.ring_dimension as usize)?
+            },
             input_witness_len,
             estimated_direct_payload_bytes: terminal_direct_bytes,
             response_shape: witness_shape,

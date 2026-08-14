@@ -21,7 +21,11 @@ fn test_lp() -> CommittedGroupParams {
     .expect("tail segment test params");
     let key = crate::sis::SisTableKey {
         policy: params.inner_commit_matrix.security_policy(),
-        table_digest: params.inner_commit_matrix.sis_table_key().table_digest,
+        table_digest: params
+            .inner_commit_matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         modulus_profile: params.inner_commit_matrix.sis_modulus_profile(),
         role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
@@ -67,7 +71,7 @@ fn recompose_and_split_digits_round_trip() {
 }
 
 #[test]
-fn terminal_decoder_uses_one_coding_and_admission_cap() {
+fn terminal_decoder_uses_one_coding_and_linf_cap() {
     let cap = 7;
     let values = [6, -6];
     let rice_low_bits = wire_rice_low_bits(cap);
@@ -77,7 +81,28 @@ fn terminal_decoder_uses_one_coding_and_admission_cap() {
         z_coords: values.len(),
         e_field_elems: 0,
         t_field_elems: 0,
-        z_admission_linf_cap: cap,
+        z_linf_cap: Some(cap),
+        z_rice_low_bits: rice_low_bits,
+        z_payload_bytes: payload.len(),
+    };
+    assert_eq!(
+        decode_terminal_z_golomb_payload(&payload, &group).unwrap(),
+        values.map(|value| value as i16)
+    );
+}
+
+#[test]
+fn terminal_decoder_without_linf_cap_uses_only_the_signed_wire_range() {
+    let values = [1_000, -1_000];
+    let wire_abs_bound = i16::MAX as u128;
+    let rice_low_bits = 7;
+    let zigzag_w = golomb_rice_zigzag_width(wire_abs_bound);
+    let payload = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
+    let group = TailSegmentGroupLayout {
+        z_coords: values.len(),
+        e_field_elems: 0,
+        t_field_elems: 0,
+        z_linf_cap: None,
         z_rice_low_bits: rice_low_bits,
         z_payload_bytes: payload.len(),
     };
@@ -98,7 +123,7 @@ fn terminal_decoder_rejects_coefficient_outside_i16() {
         z_coords: 1,
         e_field_elems: 0,
         t_field_elems: 0,
-        z_admission_linf_cap: cap,
+        z_linf_cap: Some(cap),
         z_rice_low_bits: rice_low_bits,
         z_payload_bytes: payload.len(),
     };
@@ -203,7 +228,7 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     );
     let group = layout.groups[0];
     let rice_low_bits = group.z_rice_low_bits;
-    let zigzag_w_z = golomb_rice_zigzag_width(group.z_admission_linf_cap);
+    let zigzag_w_z = golomb_rice_zigzag_width(group.z_linf_cap.expect("Linf fixture cap"));
     let centered = [[-3i32, 0, 1, 2, -1, 4, 0, 0]; 2];
     let z_payload = test_support::encode_z_segment_from_centered(
         &centered,
@@ -297,7 +322,7 @@ fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
         z_coords: 1,
         e_field_elems: 0,
         t_field_elems: 0,
-        z_admission_linf_cap: cap,
+        z_linf_cap: Some(cap),
         z_rice_low_bits: rice_low_bits,
         z_payload_bytes: payload.len(),
     };
@@ -317,7 +342,7 @@ fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
         z_coords: 3,
         e_field_elems: 0,
         t_field_elems: 0,
-        z_admission_linf_cap: cap,
+        z_linf_cap: Some(cap),
         z_rice_low_bits: rice_low_bits,
         z_payload_bytes: payload.len(),
     };
@@ -333,7 +358,7 @@ fn terminal_layout_validation_rejects_overflow_without_panicking() {
                 z_coords: 1,
                 e_field_elems: usize::MAX,
                 t_field_elems: 1,
-                z_admission_linf_cap: 1,
+                z_linf_cap: Some(1),
                 z_payload_bytes: 1,
                 z_rice_low_bits: 0,
             },
@@ -341,7 +366,7 @@ fn terminal_layout_validation_rejects_overflow_without_panicking() {
                 z_coords: 1,
                 e_field_elems: 1,
                 t_field_elems: usize::MAX,
-                z_admission_linf_cap: 1,
+                z_linf_cap: Some(1),
                 z_payload_bytes: usize::MAX,
                 z_rice_low_bits: 0,
             },

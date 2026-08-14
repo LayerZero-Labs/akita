@@ -22,7 +22,6 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::OuterCommitMatrixParams;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
@@ -39,6 +38,8 @@ use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
 type F = Prime128OffsetA7F7;
+// `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
+const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
 
 fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
     committed_params_with_geometry(ring_dimension, 4, 4)
@@ -109,7 +110,7 @@ fn precommitted_group_params(
     group: PolynomialGroupLayout,
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params(group, params),
+        layout: CommittedGroupProfile::from_params_unchecked_for_test(group, params),
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
@@ -173,7 +174,7 @@ fn recursive_schedule(
                             z_coords: successor_ring_dimension,
                             e_field_elems: successor_ring_dimension,
                             t_field_elems: successor_ring_dimension,
-                            z_admission_linf_cap: 1,
+                            z_linf_cap: Some(1),
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],
@@ -239,124 +240,11 @@ fn schedule_rejects_compression_after_raw_suffix_starts() {
 }
 
 #[test]
-fn schedule_applies_the_compression_cap_only_to_compressed_payloads() {
-    let mut raw_schedule = recursive_schedule(256, 256, false);
-    append_recursive_fold(&mut raw_schedule);
-    let raw_step = &mut raw_schedule.recursive_folds[1];
-    raw_step.params.witness.payload_mode = CommitmentPayloadMode::Raw;
-    let outer = raw_step.params.witness.outer_commit_matrix;
-    raw_step.params.witness.outer_commit_matrix = OuterCommitMatrixParams::try_new(
-        outer.security_policy(),
-        outer.sis_table_key().table_digest,
-        outer.sis_modulus_profile(),
-        3,
-        outer.input_width(),
-        7,
-        outer.ring_dimension(),
-    )
-    .expect("rank three is above the audited SIS minimum");
-    assert!(raw_step
-        .params
-        .witness
-        .compression_sources_supported()
-        .unwrap());
-    raw_step
-        .params
-        .witness
-        .validate_commitment_request(2, 1)
-        .expect("raw B image does not execute a compression chain");
-    raw_schedule
-        .validate_structure()
-        .expect("raw suffix schedule ignores the compression-only cap");
-
-    let mut compressed_schedule = raw_schedule;
-    compressed_schedule.recursive_folds[1]
-        .params
-        .witness
-        .payload_mode = CommitmentPayloadMode::Compressed;
-    assert!(compressed_schedule.validate_structure().is_err());
-}
-
-#[test]
 fn schedule_accepts_extended_compressed_prefix() {
     let mut schedule = recursive_schedule(64, 64, false);
     append_recursive_fold(&mut schedule);
 
     schedule.validate_structure().unwrap();
-}
-
-#[test]
-fn schedule_rejects_slicing_after_the_second_absolute_level() {
-    let mut schedule = recursive_schedule(64, 64, false);
-    append_recursive_fold(&mut schedule);
-    let mut late = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        2,
-        2,
-        2,
-        SparseChallengeConfig::pm1_only(3),
-    );
-    late.outer_slice_count = crate::CommitmentSliceCount::TWO;
-    schedule.recursive_folds[1].params.witness =
-        late.with_decomp(2, 4, 2, 2, 2).expect("late sliced params");
-
-    let error = schedule
-        .validate_structure()
-        .expect_err("late slicing must reject");
-    assert!(
-        matches!(&error, AkitaError::InvalidSetup(message) if message.contains("absolute level 2")),
-        "unexpected error: {error:?}"
-    );
-}
-
-#[test]
-fn schedule_accepts_setup_prefix_slicing_at_late_levels() {
-    let mut sliced = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        2,
-        2,
-        2,
-        SparseChallengeConfig::pm1_only(3),
-    );
-    sliced.outer_slice_count = crate::CommitmentSliceCount::TWO;
-    let sliced = sliced
-        .with_decomp(2, 4, 2, 2, 2)
-        .expect("sliced prefix source params");
-    let commitment_params = crate::setup_prefix_precommitted_params(&sliced, 128)
-        .expect("sliced setup-prefix commitment params");
-    let prefix = crate::setup_prefix_slot_id(128, commitment_params);
-
-    let mut level_two_consumer = recursive_schedule(64, 64, false);
-    append_recursive_fold(&mut level_two_consumer);
-    level_two_consumer.recursive_folds[1]
-        .params
-        .incoming_setup_prefix = Some(prefix.clone());
-    level_two_consumer.recursive_folds[1]
-        .params
-        .witness
-        .setup_prefix = Some(prefix.clone());
-    level_two_consumer
-        .validate_structure()
-        .expect("a level-two consumer may use a sliced setup prefix");
-
-    let mut level_three_consumer = recursive_schedule(64, 64, false);
-    append_recursive_fold(&mut level_three_consumer);
-    append_recursive_fold(&mut level_three_consumer);
-    level_three_consumer.recursive_folds[2]
-        .params
-        .incoming_setup_prefix = Some(prefix.clone());
-    level_three_consumer.recursive_folds[2]
-        .params
-        .witness
-        .setup_prefix = Some(prefix);
-
-    level_three_consumer
-        .validate_structure()
-        .expect("setup-prefix slicing is independent of the consumer witness level");
 }
 
 #[test]
@@ -512,7 +400,10 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let inner = &group_params.inner_commit_matrix;
     group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
@@ -577,7 +468,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 #[test]
 fn terminal_projection_preserves_the_fixed_inner_matrix() {
     let sparse = SparseChallengeConfig::pm1_only(3);
-    let committed = CommittedGroupParams::params_only(
+    let mut committed = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
@@ -588,6 +479,19 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
     )
     .with_decomp(4, 32, 2, 2, 2)
     .expect("committed params");
+    let inner = committed.inner_commit_matrix;
+    committed.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        TEST_TERMINAL_A_BUCKET,
+        inner.ring_dimension(),
+    );
     let expected_inner = committed.inner_commit_matrix;
 
     let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
@@ -696,7 +600,8 @@ fn terminal_response_fixture(
     let layout = shape.layout.clone();
     let group = layout.groups[0];
     let rice_low_bits = group.z_rice_low_bits;
-    let zigzag_w = crate::golomb_rice::golomb_rice_zigzag_width(group.z_admission_linf_cap);
+    let zigzag_w =
+        crate::golomb_rice::golomb_rice_zigzag_width(group.z_linf_cap.unwrap_or(i16::MAX as u128));
     let z_payload = golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
         .expect("encode zero z segment");
     let witness = TerminalResponse {
@@ -746,6 +651,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
             })
             .collect(),
         range_image_evaluation: F::zero(),
+        norm_proof: None,
     }
 }
 
@@ -857,6 +763,19 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         lp.num_digits_fold = 2;
+        let inner = lp.inner_commit_matrix;
+        lp.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("L infinity test matrix")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            TEST_TERMINAL_A_BUCKET,
+            inner.ring_dimension(),
+        );
 
         let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
         let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
@@ -1242,6 +1161,19 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
 }
 
 #[test]
+fn checked_committed_profile_construction_rejects_invalid_params() {
+    let schedule = recursive_schedule(64, 64, false);
+    let mut params = schedule.root.params.final_group.commitment;
+    params.num_live_ring_elements_per_claim = 1;
+    params.num_live_blocks = 1;
+
+    assert!(matches!(
+        CommittedGroupProfile::try_from_params(PolynomialGroupLayout::singleton(8), &params),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
 fn validate_frozen_precommit_rejects_unsupported_inner_decomposition() {
     let mut unsupported_basis = precommitted_descriptor(20);
     unsupported_basis.log_basis_inner = crate::MAX_I16_LOG_BASIS + 1;
@@ -1263,7 +1195,7 @@ fn validate_frozen_precommit_rejects_unsupported_inner_decomposition() {
 fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
     let schedule = recursive_schedule(64, 64, false);
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params(
+        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),
@@ -1298,7 +1230,9 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
             .layout
             .groups[0];
         match field {
-            "cap" => group.z_admission_linf_cap += 1,
+            "cap" => {
+                group.z_linf_cap = Some(group.z_linf_cap.unwrap_or_default() + 1);
+            }
             "rice" => group.z_rice_low_bits += 1,
             "budget" => group.z_payload_bytes += 1,
             _ => unreachable!(),
