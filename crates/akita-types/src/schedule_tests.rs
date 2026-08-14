@@ -111,10 +111,12 @@ fn precommitted_group_params(
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
         layout: CommittedGroupProfile::from_params_unchecked_for_test(group, params),
-        log_basis_open: params.log_basis_open,
-        fold_challenge_config: params.fold_challenge_config,
-        num_digits_open: params.num_digits_open,
-        num_digits_fold: params.num_digits_fold,
+        opening: crate::GroupOpeningPlan::evaluation_trace(
+            params.fold_challenge_config,
+            params.log_basis_open,
+            params.num_digits_open,
+            params.num_digits_fold,
+        ),
     }
 }
 
@@ -129,7 +131,7 @@ fn recursive_schedule(
         let natural_len = successor_ring_dimension;
         let commitment_params = crate::setup_prefix_precommitted_params(&successor, natural_len)
             .expect("setup-prefix commitment params");
-        crate::setup_prefix_slot_id(natural_len, commitment_params)
+        crate::scheduled_setup_prefix(natural_len, commitment_params)
     });
     successor.setup_prefix = incoming_setup_prefix.clone();
     let terminal = TerminalCommittedGroupParams::from_expanded_group(committed_params(
@@ -257,7 +259,7 @@ fn schedule_rejects_setup_prefix_inside_raw_suffix() {
     let commitment_params =
         crate::setup_prefix_precommitted_params(&raw.params.witness, natural_len)
             .expect("setup-prefix commitment params");
-    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
+    let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
     raw.params.incoming_setup_prefix = Some(prefix.clone());
     raw.params.witness.setup_prefix = Some(prefix);
 
@@ -278,7 +280,7 @@ fn schedule_rejects_setup_prefix_that_resumes_compression() {
     let commitment_params =
         crate::setup_prefix_precommitted_params(&resumed.params.witness, natural_len)
             .expect("setup-prefix commitment params");
-    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
+    let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
     resumed.params.incoming_setup_prefix = Some(prefix.clone());
     resumed.params.witness.setup_prefix = Some(prefix);
 
@@ -454,7 +456,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let consumer = committed_params_with_geometry(64, prefix_ring_slots, 64);
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
         .expect("consumer-compatible prefix commitment");
-    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
+    let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
     schedule.recursive_folds[0].params.witness = consumer.clone();
     schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix;
     schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix.clone());
@@ -1244,4 +1246,187 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
             "terminal response-shape field {field} must change the row digest"
         );
     }
+}
+
+#[test]
+fn schedule_row_identity_binds_setup_prefix_opening_method() {
+    let schedule = recursive_schedule(64, 64, true);
+    let profiles = CommittedGroupBatchProfile {
+        final_group: CommittedGroupProfile::from_params(
+            PolynomialGroupLayout::singleton(8),
+            &schedule.root.params.final_group.commitment,
+        ),
+        precommitteds: Vec::new(),
+    };
+    let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
+
+    let mut changed = schedule;
+    let changed_prefix = changed.recursive_folds[0]
+        .params
+        .incoming_setup_prefix
+        .as_mut()
+        .expect("setup prefix");
+    changed_prefix.commitment_params.opening.opening_method =
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    changed.recursive_folds[0].params.witness.setup_prefix = changed.recursive_folds[0]
+        .params
+        .incoming_setup_prefix
+        .clone();
+    assert_ne!(
+        digest,
+        crate::schedule_row_digest(&profiles, &changed).expect("changed opening-method digest")
+    );
+    assert!(changed.validate_structure().is_err());
+
+    let mut changed_dimension = changed.clone();
+    changed_dimension.recursive_folds[0]
+        .params
+        .incoming_setup_prefix
+        .as_mut()
+        .expect("setup prefix")
+        .commitment_params
+        .opening
+        .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 128,
+    };
+    changed_dimension.recursive_folds[0]
+        .params
+        .witness
+        .setup_prefix = changed_dimension.recursive_folds[0]
+        .params
+        .incoming_setup_prefix
+        .clone();
+    assert_ne!(
+        crate::schedule_row_digest(&profiles, &changed).expect("subring-dimension-64 digest"),
+        crate::schedule_row_digest(&profiles, &changed_dimension)
+            .expect("subring-dimension-128 digest")
+    );
+}
+
+#[test]
+fn schedule_row_identity_binds_main_opening_method() {
+    let schedule = recursive_schedule(64, 64, false);
+    let profiles = CommittedGroupBatchProfile {
+        final_group: CommittedGroupProfile::from_params(
+            PolynomialGroupLayout::singleton(8),
+            &schedule.root.params.final_group.commitment,
+        ),
+        precommitteds: Vec::new(),
+    };
+    let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
+    let mut changed = schedule;
+    changed.root.params.final_group.commitment.opening_method =
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    assert_ne!(
+        digest,
+        crate::schedule_row_digest(&profiles, &changed)
+            .expect("changed main opening-method digest")
+    );
+    assert!(changed.validate_structure().is_err());
+}
+
+#[test]
+fn schedule_row_identity_binds_root_precommitted_opening_method() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    let group_layout = PolynomialGroupLayout::singleton(8);
+    let mut group_params = schedule.root.params.final_group.commitment.clone();
+    group_params.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
+            .expect("precommitted test group production challenge");
+    let inner = group_params.inner_commit_matrix;
+    group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        2,
+        inner.ring_dimension(),
+    );
+    let outer = group_params.outer_commit_matrix;
+    group_params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width(),
+        3,
+        outer.ring_dimension(),
+    );
+    let precommitted = precommitted_group_params(&group_params, group_layout);
+    let extra_d_width = precommitted
+        .d_segment_width(
+            schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .role_dims()
+                .d_d(),
+        )
+        .expect("root precommitted D width");
+    let open = schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .open_commit_matrix;
+    let widened_open = crate::sis::OpenCommitMatrixParams::new_unchecked(
+        open.security_policy(),
+        open.sis_table_key().table_digest,
+        open.sis_modulus_profile(),
+        open.output_rank(),
+        open.input_width() + extra_d_width,
+        open.coeff_linf_bound(),
+        open.ring_dimension(),
+    );
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .open_commit_matrix = widened_open;
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .precommitted_groups = vec![precommitted.clone()];
+    schedule.root.params.open_commit_matrix = widened_open;
+    schedule.root.params.precommitted_groups = vec![RootPrecommittedGroupParams {
+        descriptor: precommitted.layout,
+        commitment: precommitted,
+    }];
+    schedule
+        .validate_structure()
+        .expect("valid root precommitted schedule");
+
+    let profiles = CommittedGroupBatchProfile {
+        final_group: CommittedGroupProfile::from_params(
+            PolynomialGroupLayout::singleton(8),
+            &schedule.root.params.final_group.commitment,
+        ),
+        precommitteds: vec![schedule.root.params.precommitted_groups[0].descriptor],
+    };
+    let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
+    let mut changed = schedule;
+    changed.root.params.precommitted_groups[0]
+        .commitment
+        .opening
+        .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    assert_ne!(
+        digest,
+        crate::schedule_row_digest(&profiles, &changed)
+            .expect("changed root precommitted opening-method digest")
+    );
+    assert!(changed.validate_structure().is_err());
 }

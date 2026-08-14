@@ -1,7 +1,7 @@
 //! Focused geometry helpers for setup-prefix commitments.
 
 use crate::{
-    CompressionChainPlan, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedLevelParams,
+    CommittedGroupProfile, CompressionChainPlan, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use akita_field::AkitaError;
 use akita_serialization::SerializationError;
@@ -49,11 +49,10 @@ pub fn suffix_opening_layout(
 }
 
 pub(super) fn setup_prefix_compression_plan(
-    params: &PrecommittedLevelParams,
+    params: &CommittedGroupProfile,
 ) -> Result<CompressionChainPlan, SerializationError> {
-    let matrix = &params.layout.outer_commit_matrix;
+    let matrix = &params.outer_commit_matrix;
     let source_coefficients = params
-        .layout
         .outer_slice_count
         .complete_source_coefficients(matrix.output_rank(), matrix.ring_dimension())
         .map_err(|error| SerializationError::InvalidData(error.to_string()))?;

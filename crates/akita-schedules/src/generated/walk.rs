@@ -86,6 +86,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 None,
             )?
     };
+    root_params.opening_method = entry.root.final_group.opening_method;
     let distributed_levels = distributed_activation_depth(
         entry.root.witness_partition,
         entry
@@ -127,6 +128,7 @@ pub(crate) fn walk_generated_schedule_entry(
             fold.open_commit_matrix,
             fold.incoming_setup_prefix,
         )?;
+        params.opening_method = fold.opening_method;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
         let output_witness_len =
             planned_next_witness_len(field_bits, &params, 1, params.witness_chunk.num_chunks)?

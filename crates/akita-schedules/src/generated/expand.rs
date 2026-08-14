@@ -74,18 +74,18 @@ impl GeneratedSetupPrefixInput {
         log_basis_open: u32,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
         super::validate_certified_bases(
-            self.commitment.inner_commit_matrix.log_basis,
-            self.commitment.outer_commit_matrix.log_basis,
+            self.generated_commitment.inner_commit_matrix.log_basis,
+            self.generated_commitment.outer_commit_matrix.log_basis,
             log_basis_open,
             policy,
             "generated setup-prefix group",
         )?;
         let dimensions = CommitmentRingDims {
-            inner: self.commitment.inner_commit_matrix.ring_dimension as usize,
-            outer: self.commitment.outer_commit_matrix.ring_dimension as usize,
+            inner: self.generated_commitment.inner_commit_matrix.ring_dimension as usize,
+            outer: self.generated_commitment.outer_commit_matrix.ring_dimension as usize,
             // A setup-prefix group is opened by its consuming fold's D matrix,
             // so only its persisted A/B dimensions are reconstructed here.
-            opening: self.commitment.outer_commit_matrix.ring_dimension as usize,
+            opening: self.generated_commitment.outer_commit_matrix.ring_dimension as usize,
         };
         validate_role_dims(dimensions)?;
         let d_a = dimensions.d_a();
@@ -93,7 +93,7 @@ impl GeneratedSetupPrefixInput {
         let ring_challenge_cfg = ring_challenge_config(d_a)?;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
-        let geometry = self.commitment.geometry;
+        let geometry = self.generated_commitment.geometry;
         let num_live_ring_elements_per_claim = generated_count(
             geometry.live_ring_elements_per_claim,
             "live ring-element count",
@@ -102,7 +102,7 @@ impl GeneratedSetupPrefixInput {
             generated_count(geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
         let outer_slice_count =
-            CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
+            CommitmentSliceCount::try_new(self.generated_commitment.outer_slice_count as usize)?;
         outer_slice_count.validate_for_commitment(
             0,
             akita_types::CommitmentPayloadMode::Compressed,
@@ -120,11 +120,11 @@ impl GeneratedSetupPrefixInput {
         }
         let prefix_num_vars = n_prefix.trailing_zeros() as usize;
         let inner_decomp = DecompositionParams {
-            log_basis: self.commitment.inner_commit_matrix.log_basis,
+            log_basis: self.generated_commitment.inner_commit_matrix.log_basis,
             ..policy.decomposition
         };
         let outer_decomp = DecompositionParams {
-            log_basis: self.commitment.outer_commit_matrix.log_basis,
+            log_basis: self.generated_commitment.outer_commit_matrix.log_basis,
             ..policy.decomposition
         };
         let open_decomp = DecompositionParams {
@@ -138,8 +138,8 @@ impl GeneratedSetupPrefixInput {
             AkitaError::InvalidSetup(format!(
                 "no audited setup-prefix {role}-role layout for generated schedule \
                  (profile={sis_modulus_profile:?}, dims={dimensions:?}, inner={}, outer={}, open={})",
-                self.commitment.inner_commit_matrix.log_basis,
-                self.commitment.outer_commit_matrix.log_basis,
+                self.generated_commitment.inner_commit_matrix.log_basis,
+                self.generated_commitment.outer_commit_matrix.log_basis,
                 log_basis_open
             ))
         };
@@ -228,21 +228,32 @@ impl GeneratedSetupPrefixInput {
             num_positions_per_block,
             num_live_blocks,
             outer_slice_count,
-            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
+            log_basis_inner: self.generated_commitment.inner_commit_matrix.log_basis,
             num_digits_inner,
             inner_commit_matrix,
-            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            log_basis_outer: self.generated_commitment.outer_commit_matrix.log_basis,
             num_digits_outer,
             outer_commit_matrix,
         };
         layout.validate_root_geometry()?;
-        Ok(PrecommittedLevelParams {
-            layout,
+        let replayed_opening = akita_types::GroupOpeningPlan::evaluation_trace(
+            ring_challenge_cfg,
             log_basis_open,
-            fold_challenge_config: ring_challenge_cfg,
-            num_digits_open: num_digits_open_val,
+            num_digits_open_val,
             num_digits_fold,
-        })
+        );
+        if layout != self.commitment || replayed_opening != self.opening {
+            return Err(AkitaError::InvalidSetup(
+                "generated setup-prefix replay disagrees with its frozen commitment or opening plan"
+                    .into(),
+            ));
+        }
+        let params = PrecommittedLevelParams {
+            layout: self.commitment,
+            opening: self.opening,
+        };
+        params.validate()?;
+        Ok(params)
     }
 }
 
@@ -517,7 +528,7 @@ impl GeneratedCommittedGroup {
                     "generated setup-prefix natural length exceeds commitment domain".into(),
                 ));
             }
-            Some(akita_types::setup_prefix_slot_id(
+            Some(akita_types::scheduled_setup_prefix(
                 group.natural_len as usize,
                 commitment_params,
             ))
@@ -563,6 +574,7 @@ impl GeneratedCommittedGroup {
         // of the panicking `new`).
         let params = CommittedGroupParams {
             payload_mode,
+            opening_method: akita_types::OpeningMethod::EvaluationTrace,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -776,6 +788,7 @@ impl GeneratedCommittedGroup {
         )?;
         let params = CommittedGroupParams {
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            opening_method: akita_types::OpeningMethod::EvaluationTrace,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -1008,7 +1021,7 @@ impl GeneratedFoldScheduleEntry {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fp128-onehot-recursive"))]
 mod tests {
     use std::cell::RefCell;
 
@@ -1051,26 +1064,11 @@ mod tests {
 
     #[test]
     fn setup_prefix_expansion_preserves_independent_a_b_dimensions() {
-        let input = GeneratedSetupPrefixInput {
-            natural_len: 1 << 16,
-            num_digits_fold: 4,
-            commitment: GeneratedCommittedGroup {
-                geometry: crate::generated::GeneratedBlockGeometry {
-                    live_ring_elements_per_claim: 512,
-                    positions_per_block: 32,
-                    live_blocks: 16,
-                },
-                inner_commit_matrix: crate::generated::GeneratedInnerCommitMatrix {
-                    ring_dimension: 128,
-                    log_basis: 3,
-                },
-                outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
-                    ring_dimension: 64,
-                    log_basis: 3,
-                },
-                outer_slice_count: 1,
-            },
-        };
+        let input = crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
+            .iter()
+            .flat_map(|entry| entry.recursive_folds)
+            .find_map(|fold| fold.incoming_setup_prefix)
+            .expect("generated recursive setup-prefix fixture");
         let requested_dimensions = RefCell::new(Vec::new());
         let ring_challenge_config = |d| {
             requested_dimensions.borrow_mut().push(d);
@@ -1080,52 +1078,41 @@ mod tests {
         };
 
         let expanded = input
-            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
+            .expand_to_precommitted_group(
+                &recursive_fp128_policy(),
+                &ring_challenge_config,
+                input.opening.log_basis_open,
+            )
             .expect("audited mixed-dimension setup-prefix layout");
 
-        assert_eq!(&*requested_dimensions.borrow(), &[128]);
-        assert_eq!(expanded.layout.inner_commit_matrix.ring_dimension(), 128);
-        assert_eq!(expanded.layout.inner_commit_matrix.input_width(), 1376);
-        assert_eq!(expanded.layout.outer_commit_matrix.ring_dimension(), 64);
-        assert_eq!(expanded.layout.outer_commit_matrix.input_width(), 4128);
         assert_eq!(
-            expanded.fold_challenge_config,
-            SparseChallengeConfig::production_for_ring_dim(128)
-                .expect("production D128 challenge config")
+            &*requested_dimensions.borrow(),
+            &[input.commitment.inner_commit_matrix.ring_dimension()]
         );
+        assert_eq!(expanded.layout, input.commitment);
+        assert_eq!(expanded.opening, input.opening);
     }
 
     #[test]
-    fn setup_prefix_expansion_accepts_slicing_independent_of_fold_level() {
-        let input = GeneratedSetupPrefixInput {
-            natural_len: 1 << 16,
-            num_digits_fold: 4,
-            commitment: GeneratedCommittedGroup {
-                geometry: crate::generated::GeneratedBlockGeometry {
-                    live_ring_elements_per_claim: 512,
-                    positions_per_block: 32,
-                    live_blocks: 16,
-                },
-                inner_commit_matrix: crate::generated::GeneratedInnerCommitMatrix {
-                    ring_dimension: 128,
-                    log_basis: 3,
-                },
-                outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
-                    ring_dimension: 64,
-                    log_basis: 3,
-                },
-                outer_slice_count: 2,
-            },
-        };
+    fn setup_prefix_expansion_rejects_frozen_profile_mutation() {
+        let mut input = crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
+            .iter()
+            .flat_map(|entry| entry.recursive_folds)
+            .find_map(|fold| fold.incoming_setup_prefix)
+            .expect("generated recursive setup-prefix fixture");
+        input.commitment.num_live_blocks += 1;
         let ring_challenge_config = |d| {
             SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
                 AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
             })
         };
 
-        let expanded = input
-            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
-            .expect("setup-prefix precommitment may use slicing at any consumer level");
-        assert_eq!(expanded.layout.outer_slice_count, CommitmentSliceCount::TWO);
+        input
+            .expand_to_precommitted_group(
+                &recursive_fp128_policy(),
+                &ring_challenge_config,
+                input.opening.log_basis_open,
+            )
+            .expect_err("frozen setup-prefix profile mutation must reject");
     }
 }

@@ -86,7 +86,7 @@ pub struct RecursiveFoldParams {
     pub witness: CommittedGroupParams,
     pub open_commit_matrix: crate::OpenCommitMatrixParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub incoming_setup_prefix: Option<crate::SetupPrefixSlotId>,
+    pub incoming_setup_prefix: Option<crate::ScheduledSetupPrefix>,
     pub witness_partition: WitnessPartition,
 }
 
@@ -342,6 +342,9 @@ impl FoldSchedule {
         let root_commitment = &self.root.params.final_group.commitment;
         root_commitment
             .validate_commitment_request(0, root_commitment.commitment_polynomial_count()?)?;
+        for group in &self.root.params.precommitted_groups {
+            group.commitment.validate()?;
+        }
         if !self
             .root
             .params
@@ -425,6 +428,7 @@ impl FoldSchedule {
                 )));
             }
             if let Some(prefix) = &step.params.incoming_setup_prefix {
+                prefix.commitment_params.validate()?;
                 prefix
                     .commitment_params
                     .layout

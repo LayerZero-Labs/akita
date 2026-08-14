@@ -12,7 +12,7 @@ use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::{
     CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
-    SetupPrefixSlotId,
+    ScheduledSetupPrefix,
 };
 
 pub use crate::sis::{
@@ -61,7 +61,8 @@ mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 pub use precommitted::{
-    LevelParamsLike, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+    GroupOpeningPlan, LevelParamsLike, OpeningMethod, PrecommittedGroupAdmissionPolicy,
+    PrecommittedLevelParams,
 };
 
 /// Gadget basis used by opening-digit segments in the shared D product.
@@ -86,6 +87,8 @@ pub fn shared_d_digit_log_basis(
 pub struct CommittedGroupParams {
     /// Public B/D payload encoding selected for this fold level.
     pub payload_mode: crate::CommitmentPayloadMode,
+    /// Procedure used to reduce and open this group's coefficients.
+    pub opening_method: OpeningMethod,
     /// Base-2 logarithm of the A/source gadget decomposition base.
     pub log_basis_inner: u32,
     /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
@@ -132,7 +135,7 @@ pub struct CommittedGroupParams {
     /// [`crate::RecursiveFoldParams::incoming_setup_prefix`] is authoritative;
     /// [`crate::FoldSchedule::validate_structure`] rejects disagreement before
     /// prover or verifier execution.
-    pub setup_prefix: Option<SetupPrefixSlotId>,
+    pub setup_prefix: Option<ScheduledSetupPrefix>,
 }
 
 impl CommittedGroupParams {
@@ -254,6 +257,7 @@ impl CommittedGroupParams {
     ) -> Self {
         Self {
             payload_mode: crate::CommitmentPayloadMode::Compressed,
+            opening_method: OpeningMethod::EvaluationTrace,
             log_basis_inner: log_basis,
             log_basis_outer: log_basis,
             log_basis_open: log_basis,
@@ -483,6 +487,14 @@ impl CommittedGroupParams {
         fold_level: usize,
         num_polynomials: usize,
     ) -> Result<crate::CommitmentSliceGeometry, AkitaError> {
+        if matches!(
+            self.opening_method,
+            OpeningMethod::SubringCoefficientPacking { .. }
+        ) {
+            return Err(AkitaError::InvalidSetup(
+                "subring coefficient packing is not implemented yet".to_string(),
+            ));
+        }
         if num_polynomials == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment request requires at least one polynomial".into(),
@@ -601,6 +613,7 @@ impl CommittedGroupParams {
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.payload_mode.tag());
+        self.opening_method.append_descriptor_bytes(bytes);
         push_u32(bytes, self.log_basis_inner);
         push_u32(bytes, self.log_basis_outer);
         push_u32(bytes, self.log_basis_open);
@@ -736,6 +749,14 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
+        if matches!(
+            self.opening_method,
+            OpeningMethod::SubringCoefficientPacking { .. }
+        ) {
+            return Err(AkitaError::InvalidSetup(
+                "subring coefficient packing is not implemented yet".to_string(),
+            ));
+        }
         opening_batch.check()?;
         if self.log_basis_open < self.log_basis_outer {
             return Err(AkitaError::InvalidSetup(
@@ -752,7 +773,7 @@ impl CommittedGroupParams {
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             group_params.validate()?;
-            if group_params.log_basis_open != self.log_basis_open {
+            if group_params.opening.log_basis_open != self.log_basis_open {
                 return Err(AkitaError::InvalidSetup(
                     "all opening groups must use the batch-shared opening basis".to_string(),
                 ));
@@ -1197,6 +1218,7 @@ impl CommittedGroupParams {
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
             payload_mode: self.payload_mode,
+            opening_method: self.opening_method,
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
@@ -1254,6 +1276,7 @@ impl CommittedGroupParams {
     pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
             payload_mode: other.payload_mode,
+            opening_method: other.opening_method,
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,

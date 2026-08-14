@@ -97,7 +97,7 @@ fn retarget_precommitted_test_role_dims(
     outer_ring_dimension: usize,
 ) {
     let group = &mut params.precommitted_groups[group_id];
-    group.fold_challenge_config =
+    group.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
     let mut layout = group.layout;
@@ -261,10 +261,12 @@ fn test_inputs_for_group_sizes(
                 layout.outer_commit_matrix = outer_commit_matrix;
                 crate::PrecommittedLevelParams {
                     layout,
-                    log_basis_open: lp.log_basis_open,
-                    fold_challenge_config: lp.fold_challenge_config,
-                    num_digits_open: lp.num_digits_open,
-                    num_digits_fold: depth_fold,
+                    opening: crate::GroupOpeningPlan::evaluation_trace(
+                        lp.fold_challenge_config,
+                        lp.log_basis_open,
+                        lp.num_digits_open,
+                        depth_fold,
+                    ),
                 }
             })
             .collect();

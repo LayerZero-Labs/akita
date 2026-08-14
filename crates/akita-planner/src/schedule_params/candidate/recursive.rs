@@ -182,6 +182,7 @@ impl RecursiveCandidateContext<'_> {
             };
             candidates.push(CommittedGroupParams {
                 payload_mode: self.payload_mode,
+                opening_method: akita_types::OpeningMethod::EvaluationTrace,
                 log_basis_inner: self.log_basis_inner,
                 log_basis_outer: self.log_basis_open,
                 log_basis_open: self.log_basis_open,
@@ -349,7 +350,7 @@ struct RecursiveLevelSearch {
     reduced_vars: usize,
     current_witness_len: usize,
     opening_layout: OpeningClaimsLayout,
-    setup_prefixes: Vec<Option<akita_types::SetupPrefixSlotId>>,
+    setup_prefixes: Vec<Option<akita_types::ScheduledSetupPrefix>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -411,7 +412,7 @@ fn prepare_recursive_level_search(
             }
             groups
                 .into_iter()
-                .map(|group| Some(akita_types::setup_prefix_slot_id(natural_len, group)))
+                .map(|group| Some(akita_types::scheduled_setup_prefix(natural_len, group)))
                 .collect()
         }
         None => vec![None],
@@ -427,7 +428,7 @@ fn prepare_recursive_level_search(
 }
 
 fn attach_recursive_setup_prefix(
-    setup_prefix: Option<&akita_types::SetupPrefixSlotId>,
+    setup_prefix: Option<&akita_types::ScheduledSetupPrefix>,
     mut candidate_params: CommittedGroupParams,
 ) -> Result<CommittedGroupParams, AkitaError> {
     candidate_params.setup_prefix = setup_prefix.cloned();

@@ -727,7 +727,7 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
+                    scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
                     CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
                     OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
                     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
@@ -779,12 +779,14 @@ mod tests {
                         num_digits_outer: 1,
                         outer_commit_matrix,
                     },
-                    log_basis_open: 1,
-                    fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-                    num_digits_open: 1,
-                    num_digits_fold: 1,
+                    opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                        akita_challenges::SparseChallengeConfig::pm1_only(0),
+                        1,
+                        1,
+                        1,
+                    ),
                 };
-                let id = setup_prefix_slot_id(1, commitment_params.clone());
+                let id = scheduled_setup_prefix(1, commitment_params.clone()).slot_id();
                 let compression_plan = CompressionChainPlan::for_complete_source(
                     commitment_params
                         .layout

@@ -10,9 +10,8 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_types::{
-    dispatch_for_field, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
-    CompressionChainPlan, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
-    SetupPrefixSlot,
+    dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupProfile,
+    CompressionChainPlan, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
 };
 
 /// Commit one actual power-of-two flat prefix of the shared setup matrix.
@@ -30,7 +29,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup,
-    level_params: &PrecommittedLevelParams,
+    commitment_profile: &CommittedGroupProfile,
     n_prefix: usize,
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
@@ -49,10 +48,9 @@ where
         ));
     }
     let full_prefix_ring_slots = n_prefix / D;
-    let witness_ring_slots = level_params
-        .layout
+    let witness_ring_slots = commitment_profile
         .num_live_blocks
-        .checked_mul(level_params.layout.num_positions_per_block)
+        .checked_mul(commitment_profile.num_positions_per_block)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
@@ -75,7 +73,7 @@ where
     let witnesses = backend.commit_inner_group(
         prepared,
         vec![view],
-        CommitInnerPlan::from_profile(&level_params.layout),
+        CommitInnerPlan::from_profile(commitment_profile),
     )?;
     let [witness] = witnesses.try_into().map_err(|witnesses: Vec<_>| {
         AkitaError::InvalidSetup(format!(
@@ -83,8 +81,8 @@ where
             witnesses.len()
         ))
     })?;
-    let n_a = level_params.layout.inner_commit_matrix.output_rank();
-    let recomposed_inner_rows = (0..level_params.layout.num_live_blocks)
+    let n_a = commitment_profile.inner_commit_matrix.output_rank();
+    let recomposed_inner_rows = (0..commitment_profile.num_live_blocks)
         .map(|block| {
             witness
                 .block_rows::<D>(block, n_a)
@@ -92,14 +90,14 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let n_b = level_params.layout.outer_commit_matrix.output_rank();
-    let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
+    let n_b = commitment_profile.outer_commit_matrix.output_rank();
+    let d_b = commitment_profile.outer_commit_matrix.ring_dimension();
     let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
-        level_params.layout.outer_slice_count,
-        level_params.layout.num_live_blocks,
+        commitment_profile.outer_slice_count,
+        commitment_profile.num_live_blocks,
         1,
         n_a,
-        level_params.layout.num_digits_outer,
+        commitment_profile.num_digits_outer,
         D,
         d_b,
     )?;
@@ -111,8 +109,8 @@ where
                 .collect::<Vec<_>>();
             let decomposed_inner_rows = decompose_commit_blocks_into::<F, D, D_B>(
                 &blocks,
-                level_params.layout.num_digits_outer,
-                level_params.layout.log_basis_outer,
+                commitment_profile.num_digits_outer,
+                commitment_profile.log_basis_outer,
             )?;
             let u = commit_outer_slices::<F, _, D_B>(
                 backend,
@@ -120,7 +118,7 @@ where
                 n_b,
                 std::iter::once(&decomposed_inner_rows),
                 &slice_geometry,
-                level_params.layout.log_basis_outer,
+                commitment_profile.log_basis_outer,
             )?;
             Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
         })?;
@@ -137,8 +135,7 @@ where
         }
     }
     let plan = CompressionChainPlan::for_complete_source(
-        level_params
-            .layout
+        commitment_profile
             .outer_commit_matrix
             .sis_table_key()
             .modulus_profile,
@@ -168,7 +165,10 @@ where
         &output.witness,
         &output.quotients,
     )?;
-    let id = setup_prefix_slot_id(natural_len, level_params.clone());
+    let id = SetupPrefixSlotId {
+        natural_len,
+        commitment_profile: *commitment_profile,
+    };
     Ok(SetupPrefixSlot {
         id,
         commitment: SetupPrefixPublicCommitment {
@@ -370,7 +370,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params,
+            &prefix_params.layout,
             n_prefix,
             natural_len,
         )
@@ -398,7 +398,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params,
+            &prefix_params.layout,
             n_prefix,
             natural_len,
         )
@@ -442,7 +442,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params,
+            &prefix_params.layout,
             n_prefix,
             n_prefix,
         )

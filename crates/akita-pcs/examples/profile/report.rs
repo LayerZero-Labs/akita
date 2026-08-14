@@ -478,7 +478,7 @@ impl PlannedGroupReport {
         let challenge_operator_norm_threshold = reported_operator_norm_threshold(
             security_route,
             role_dims.d_a(),
-            &params.fold_challenge_config,
+            &params.opening.fold_challenge_config,
         );
         let n_b = layout.outer_commit_matrix.output_rank();
         let b_geometry = b_slice_report_geometry(
@@ -515,14 +515,14 @@ impl PlannedGroupReport {
             complete_b_compression_bytes: b_geometry.complete_compression_bytes,
             log_basis_inner: layout.log_basis_inner,
             log_basis_outer: layout.log_basis_outer,
-            log_basis_open: params.log_basis_open,
+            log_basis_open: params.opening.log_basis_open,
             num_digits_inner: layout.num_digits_inner,
             num_digits_outer: layout.num_digits_outer,
-            num_digits_open: params.num_digits_open,
-            num_digits_fold: params.num_digits_fold,
+            num_digits_open: params.opening.num_digits_open,
+            num_digits_fold: params.opening.num_digits_fold,
             challenge_l1_mass: params.challenge_l1_mass(),
-            challenge_count_pm1: params.fold_challenge_config.count_pm1,
-            challenge_count_pm2: params.fold_challenge_config.count_pm2,
+            challenge_count_pm1: params.opening.fold_challenge_config.count_pm1,
+            challenge_count_pm2: params.opening.fold_challenge_config.count_pm2,
             challenge_operator_norm_threshold,
             num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
             num_live_blocks: layout.num_live_blocks,

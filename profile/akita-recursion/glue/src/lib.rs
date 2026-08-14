@@ -502,7 +502,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275;
     use akita_types::{
-        derive_public_matrix_prefix, sample_akita_setup_seed, setup_prefix_slot_id,
+        derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
         CommittedGroupProfile, CompressionChainPlan, InnerCommitMatrixParams,
         OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
         SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
@@ -641,7 +641,7 @@ mod tests {
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
-        let id = setup_prefix_slot_id(1, commitment_params);
+        let id = scheduled_setup_prefix(1, commitment_params).slot_id();
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {

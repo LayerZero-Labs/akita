@@ -395,7 +395,7 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             collect_group_ring_dimensions(fold.witness, &mut dims);
             push_unique(&mut dims, fold.open_commit_matrix.ring_dimension as usize);
             if let Some(prefix) = fold.incoming_setup_prefix {
-                collect_group_ring_dimensions(prefix.commitment, &mut dims);
+                collect_group_ring_dimensions(prefix.generated_commitment, &mut dims);
             }
         }
         push_unique(
@@ -562,15 +562,18 @@ fn entries_key_digest_with_setup_prefix_content_mode(
         write_generated_group(&mut h, entry.root.final_group.commitment);
         h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
         h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
+        write_opening_method(&mut h, entry.root.final_group.opening_method);
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
             h.write_u64(u64::from(group.num_digits_fold));
+            write_opening_method(&mut h, group.opening_method);
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
         write_generated_partition(&mut h, entry.root.witness_partition);
         h.write_u64(entry.recursive_folds.len() as u64);
         for fold in entry.recursive_folds {
+            write_opening_method(&mut h, fold.opening_method);
             write_generated_group(&mut h, fold.witness);
             write_generated_open_matrix(&mut h, fold.open_commit_matrix);
             write_generated_partition(&mut h, fold.witness_partition);
@@ -580,7 +583,9 @@ fn entries_key_digest_with_setup_prefix_content_mode(
                     write_setup_prefix_content_mode_full_prefix(&mut h);
                 }
                 h.write_u64(prefix.natural_len);
-                write_generated_group(&mut h, prefix.commitment);
+                write_generated_group(&mut h, prefix.generated_commitment);
+                h.write_bytes(&prefix.commitment.canonical_descriptor_bytes());
+                h.write_bytes(&prefix.opening.canonical_descriptor_bytes());
             }
         }
         write_generated_geometry(&mut h, entry.terminal.geometry);
@@ -590,6 +595,18 @@ fn entries_key_digest_with_setup_prefix_content_mode(
         h.write_u64(u64::from(entry.terminal.fold_digit_count));
     }
     h.finish()
+}
+
+fn write_opening_method(h: &mut Fnv64, method: akita_types::OpeningMethod) {
+    match method {
+        akita_types::OpeningMethod::EvaluationTrace => {}
+        akita_types::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => {
+            h.write_u64(1);
+            h.write_u64(challenge_subring_dimension as u64);
+        }
+    }
 }
 
 fn write_generated_geometry(h: &mut Fnv64, value: GeneratedBlockGeometry) {

@@ -29,11 +29,14 @@ fn suffix_commitment_payloads<F: FieldCore>(
 ) -> Result<Vec<RingVec<F>>, AkitaError> {
     let mut group_payloads = Vec::with_capacity(opening_batch.num_groups());
     if let Some(setup_prefix_id) = lp.setup_prefix.as_ref() {
-        let slot = setup.prefix_slots.get(setup_prefix_id).ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "planned setup-prefix slot is missing from verifier setup".to_string(),
-            )
-        })?;
+        let slot = setup
+            .prefix_slots
+            .get(&setup_prefix_id.slot_id())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "planned setup-prefix slot is missing from verifier setup".to_string(),
+                )
+            })?;
         let mut coeffs = Vec::new();
         for row in &slot.commitment.rows {
             coeffs.extend_from_slice(row.coeffs());

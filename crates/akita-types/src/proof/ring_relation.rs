@@ -746,10 +746,12 @@ mod tests {
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
-            log_basis_open: precommit_lp.log_basis_open,
-            fold_challenge_config: precommit_lp.fold_challenge_config,
-            num_digits_open: precommit_lp.num_digits_open,
-            num_digits_fold: precommit_lp.num_digits_fold,
+            opening: crate::GroupOpeningPlan::evaluation_trace(
+                precommit_lp.fold_challenge_config,
+                precommit_lp.log_basis_open,
+                precommit_lp.num_digits_open,
+                precommit_lp.num_digits_fold,
+            ),
         };
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];

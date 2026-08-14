@@ -38,6 +38,7 @@ pub struct GeneratedRootFinalGroup {
     pub layout: akita_types::PolynomialGroupLayout,
     pub num_digits_inner: u32,
     pub num_digits_fold: u32,
+    pub opening_method: akita_types::OpeningMethod,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -45,6 +46,7 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
+    pub opening_method: akita_types::OpeningMethod,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,13 +66,18 @@ pub struct GeneratedRootFold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
+    /// Compact fields retained for independent replay auditing.
     pub num_digits_fold: u32,
-    pub commitment: GeneratedCommittedGroup,
+    pub generated_commitment: GeneratedCommittedGroup,
+    /// Exact frozen commitment identity emitted by the planner.
+    pub commitment: akita_types::CommittedGroupProfile,
+    pub opening: akita_types::GroupOpeningPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRecursiveFold {
     pub payload_mode: akita_types::CommitmentPayloadMode,
+    pub opening_method: akita_types::OpeningMethod,
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
     pub response_l2_sq_cap: Option<u128>,

@@ -194,11 +194,13 @@ where
         .ok_or_else(|| {
             AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
         })?;
-    let slot = prefix_slots.get(selected_slot_id).ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "planned setup-prefix slot is missing from prover setup".to_string(),
-        )
-    })?;
+    let slot = prefix_slots
+        .get(&selected_slot_id.slot_id())
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "planned setup-prefix slot is missing from prover setup".to_string(),
+            )
+        })?;
     let setup_eval_len = setup_prefix_coverage_eval_len(
         Some(expanded.shared_matrix().num_field_elements()),
         &slot.id,

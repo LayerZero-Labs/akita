@@ -65,8 +65,9 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         };
         let natural_len = active_setup_field_len(params, &opening_layout)?;
         let n_prefix = padded_setup_prefix_len(natural_len);
-        setup_prefix_slot_matches(slot_id, natural_len, n_prefix)?;
-        if !ids.insert(slot_id.clone()) {
+        let commitment_id = slot_id.slot_id();
+        setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;
+        if !ids.insert(commitment_id) {
             continue;
         }
     }

@@ -563,10 +563,12 @@ mod tests {
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
             layout: synthetic_profile(pre_layout, &pre),
-            log_basis_open: pre.log_basis_open,
-            fold_challenge_config: pre.fold_challenge_config,
-            num_digits_open: pre.num_digits_open,
-            num_digits_fold: pre.num_digits_fold,
+            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                pre.fold_challenge_config,
+                pre.log_basis_open,
+                pre.num_digits_open,
+                pre.num_digits_fold,
+            ),
         });
         root
     }

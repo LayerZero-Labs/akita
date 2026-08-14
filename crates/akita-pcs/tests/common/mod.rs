@@ -413,12 +413,13 @@ pub(super) fn first_stage3_proof_mut(
         .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
 }
 
-fn first_setup_prefix_slot(schedule: &FoldSchedule) -> &SetupPrefixSlotId {
+fn first_setup_prefix_slot(schedule: &FoldSchedule) -> SetupPrefixSlotId {
     schedule
         .recursive_folds
         .iter()
         .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
         .expect("recursive profile must carry a setup prefix")
+        .slot_id()
 }
 
 fn verifier_setup_with_alternate_full_prefix(
@@ -467,7 +468,7 @@ fn verifier_setup_with_alternate_full_prefix(
                 &altered_setup.expanded,
                 &backend,
                 &prepared,
-                &slot_id.commitment_params,
+                &slot_id.commitment_profile,
                 n_prefix,
                 natural_len,
             )
@@ -699,7 +700,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let alternate_verifier_setup = verifier_setup_with_alternate_full_prefix(
             &setup,
             &verifier_setup,
-            first_setup_prefix_slot(&schedule),
+            &first_setup_prefix_slot(&schedule),
         );
         let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let alternate_result = Recursive::<BaseCfg>::batched_verify(

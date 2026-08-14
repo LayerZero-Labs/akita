@@ -140,10 +140,12 @@ impl SetupPrefixCandidateContext<'_> {
         };
         let params = PrecommittedLevelParams {
             layout,
-            log_basis_open: self.log_basis_open,
-            fold_challenge_config: *self.ring_challenge_cfg,
-            num_digits_open: self.num_digits_open,
-            num_digits_fold: inner_candidate.num_digits_fold,
+            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                *self.ring_challenge_cfg,
+                self.log_basis_open,
+                self.num_digits_open,
+                inner_candidate.num_digits_fold,
+            ),
         };
         let physical_width = akita_schedules::planner_support::grouped_segment_rings(
             1,
@@ -154,11 +156,11 @@ impl SetupPrefixCandidateContext<'_> {
             split.num_digits_inner,
             self.num_digits_outer,
             self.num_digits_open,
-            params.num_digits_fold,
+            params.opening.num_digits_fold,
         )?;
         let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
         let setup_fields = akita_types::setup_prefix_slot_field_elements(
-            &akita_types::setup_prefix_slot_id(self.n_prefix, params.clone()),
+            &akita_types::scheduled_setup_prefix(self.n_prefix, params.clone()).slot_id(),
         )?;
         let coords = [physical_width, padded_setup_prefix_len(setup_fields)];
         let descriptor = params.canonical_descriptor_bytes();

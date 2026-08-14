@@ -105,7 +105,7 @@ impl NttExecutionRequirements {
             requirements.add_group_commit(predecessor_level, &step.params.witness)?;
             requirements.add_group_relation(level, &step.params.witness)?;
             if let Some(prefix) = &step.params.incoming_setup_prefix {
-                requirements.add_setup_prefix_commitment(level, prefix)?;
+                requirements.add_setup_prefix_commitment(level, &prefix.slot_id())?;
                 requirements.add_precommitted_relation(level, &prefix.commitment_params)?;
             }
             let open_extent = matrix_extent(
@@ -154,7 +154,7 @@ impl NttExecutionRequirements {
         fold_level: usize,
         slot: &SetupPrefixSlotId,
     ) -> Result<(), AkitaError> {
-        let params = &slot.commitment_params.layout;
+        let params = &slot.commitment_profile;
         let inner_key = NttCacheKey::from_matrix_shape(
             params.inner_commit_matrix.ring_dimension(),
             params.inner_commit_matrix.output_rank(),
@@ -298,8 +298,8 @@ impl NttExecutionRequirements {
             params.layout.outer_commit_matrix.ring_dimension(),
             params.layout.outer_commit_matrix.output_rank(),
             params.layout.outer_commit_matrix.input_width(),
-            params.log_basis_open,
-            params.num_digits_fold,
+            params.opening.log_basis_open,
+            params.opening.num_digits_fold,
             params.layout.inner_commit_matrix.sis_modulus_profile(),
         )
     }

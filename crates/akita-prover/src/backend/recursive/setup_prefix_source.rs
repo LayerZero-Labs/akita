@@ -174,11 +174,10 @@ fn setup_prefix_fold_geometry<const D: usize>(
     slot: &SetupPrefixSlot<impl FieldCore>,
     source_ring_len: usize,
 ) -> Result<(usize, usize), AkitaError> {
-    let geometry = &slot.id.commitment_params.layout;
+    let geometry = &slot.id.commitment_profile;
     geometry.validate(
         slot.id
-            .commitment_params
-            .layout
+            .commitment_profile
             .inner_commit_matrix
             .sis_modulus_profile()
             .field_bits(),

@@ -336,7 +336,7 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         outer.coeff_linf_bound(),
         outer.ring_dimension(),
     );
-    precommitted.fold_challenge_config =
+    precommitted.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
 
     assert_eq!(lp.d_a(), 64, "the final group remains native at A=64");
@@ -445,10 +445,12 @@ fn address_oracle_precommit(
     );
     PrecommittedLevelParams {
         layout,
-        log_basis_open: lp.log_basis_open,
-        fold_challenge_config: lp.fold_challenge_config,
-        num_digits_open: lp.num_digits_open,
-        num_digits_fold: lp.num_digits_fold,
+        opening: crate::GroupOpeningPlan::evaluation_trace(
+            lp.fold_challenge_config,
+            lp.log_basis_open,
+            lp.num_digits_open,
+            lp.num_digits_fold,
+        ),
     }
 }
 

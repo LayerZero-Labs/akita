@@ -430,6 +430,7 @@ fn root_final_group_level_params_candidate(
 
     let params = CommittedGroupParams {
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        opening_method: akita_types::OpeningMethod::EvaluationTrace,
         log_basis_inner,
         log_basis_outer: log_basis_open,
         log_basis_open,

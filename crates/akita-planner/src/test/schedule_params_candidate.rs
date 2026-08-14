@@ -49,10 +49,12 @@ fn grouped_level_params() -> CommittedGroupParams {
     .expect("precommitted params");
     params.precommitted_groups = vec![PrecommittedLevelParams {
         layout: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
-        log_basis_open: precommitted.log_basis_open,
-        fold_challenge_config: precommitted.fold_challenge_config,
-        num_digits_open: precommitted.num_digits_open,
-        num_digits_fold: precommitted.num_digits_fold,
+        opening: akita_types::GroupOpeningPlan::evaluation_trace(
+            precommitted.fold_challenge_config,
+            precommitted.log_basis_open,
+            precommitted.num_digits_open,
+            precommitted.num_digits_fold,
+        ),
     }];
     params
 }
@@ -197,10 +199,9 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
         )
         .expect("setup-prefix frontier");
         for params in groups {
-            akita_types::setup_prefix_slot_field_elements(&akita_types::setup_prefix_slot_id(
-                1usize << log_prefix,
-                params,
-            ))
+            akita_types::setup_prefix_slot_field_elements(
+                &akita_types::scheduled_setup_prefix(1usize << log_prefix, params).slot_id(),
+            )
             .expect("frontier candidate must support its compression source");
         }
     }

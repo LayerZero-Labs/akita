@@ -22,7 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
-pub const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF1";
+pub const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF2";
 
 #[path = "setup_prefix_helpers.rs"]
 mod helpers;
@@ -37,8 +37,49 @@ pub use helpers::suffix_opening_layout;
 pub struct SetupPrefixSlotId {
     /// Active setup-weight support in flat field coefficients.
     pub natural_len: usize,
-    /// Commitment parameters used to build the setup-prefix object.
+    /// Frozen commitment profile used to build the setup-prefix object.
+    pub commitment_profile: CommittedGroupProfile,
+}
+
+/// Setup-prefix commitment identity plus the consuming fold's opening policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledSetupPrefix {
+    /// Active setup-weight support in flat field coefficients.
+    pub natural_len: usize,
+    /// Frozen commitment profile and schedule-owned opening plan.
     pub commitment_params: PrecommittedLevelParams,
+}
+
+impl ScheduledSetupPrefix {
+    /// Commitment-only registry key for this scheduled setup prefix.
+    #[must_use]
+    pub fn slot_id(&self) -> SetupPrefixSlotId {
+        SetupPrefixSlotId {
+            natural_len: self.natural_len,
+            commitment_profile: self.commitment_params.layout,
+        }
+    }
+
+    /// Full power-of-two flat coefficient length committed for this prefix.
+    pub fn n_prefix(&self) -> Result<usize, AkitaError> {
+        self.slot_id().n_prefix()
+    }
+
+    /// Ring dimension used for the frozen setup-prefix commitment.
+    #[must_use]
+    pub fn d_setup(&self) -> usize {
+        self.commitment_params
+            .layout
+            .inner_commit_matrix
+            .ring_dimension()
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        self.slot_id().append_descriptor_bytes(bytes);
+        self.commitment_params
+            .opening
+            .append_descriptor_bytes(bytes);
+    }
 }
 
 impl PartialEq for SetupPrefixSlotId {
@@ -53,15 +94,12 @@ impl SetupPrefixSlotId {
     /// Ring dimension used to commit the setup-prefix coefficient vector.
     #[must_use]
     pub fn d_setup(&self) -> usize {
-        self.commitment_params
-            .layout
-            .inner_commit_matrix
-            .ring_dimension()
+        self.commitment_profile.inner_commit_matrix.ring_dimension()
     }
 
     /// Full power-of-two flat coefficient length committed for this slot.
     pub fn n_prefix(&self) -> Result<usize, AkitaError> {
-        n_prefix_from_commitment_params(&self.commitment_params).map_err(|err| {
+        n_prefix_from_commitment_profile(&self.commitment_profile).map_err(|err| {
             AkitaError::InvalidSetup(format!("invalid setup-prefix commitment domain: {err}"))
         })
     }
@@ -69,21 +107,21 @@ impl SetupPrefixSlotId {
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(SETUP_PREFIX_CONTENT_TAG);
         crate::descriptor_bytes::push_usize(bytes, self.natural_len);
-        self.commitment_params.append_descriptor_bytes(bytes);
+        self.commitment_profile.append_descriptor_bytes(bytes);
     }
 }
 
-fn precommitted_level_params_descriptor_bytes(params: &PrecommittedLevelParams) -> Vec<u8> {
+fn committed_group_profile_descriptor_bytes(params: &CommittedGroupProfile) -> Vec<u8> {
     let mut bytes = Vec::new();
     params.append_descriptor_bytes(&mut bytes);
     bytes
 }
 
-fn n_prefix_from_commitment_params(
-    params: &PrecommittedLevelParams,
+fn n_prefix_from_commitment_profile(
+    params: &CommittedGroupProfile,
 ) -> Result<usize, SerializationError> {
     1usize
-        .checked_shl(params.layout.group.num_vars() as u32)
+        .checked_shl(params.group.num_vars() as u32)
         .ok_or_else(|| {
             SerializationError::InvalidData(
                 "setup prefix slot commitment domain overflows usize".to_string(),
@@ -94,8 +132,8 @@ fn n_prefix_from_commitment_params(
 impl Ord for SetupPrefixSlotId {
     fn cmp(&self, other: &Self) -> Ordering {
         self.natural_len.cmp(&other.natural_len).then_with(|| {
-            precommitted_level_params_descriptor_bytes(&self.commitment_params).cmp(
-                &precommitted_level_params_descriptor_bytes(&other.commitment_params),
+            committed_group_profile_descriptor_bytes(&self.commitment_profile).cmp(
+                &committed_group_profile_descriptor_bytes(&other.commitment_profile),
             )
         })
     }
@@ -110,7 +148,7 @@ impl PartialOrd for SetupPrefixSlotId {
 impl Hash for SetupPrefixSlotId {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.natural_len.hash(state);
-        precommitted_level_params_descriptor_bytes(&self.commitment_params).hash(state);
+        committed_group_profile_descriptor_bytes(&self.commitment_profile).hash(state);
     }
 }
 
@@ -122,7 +160,7 @@ impl Valid for SetupPrefixSlotId {
                 "setup prefix slot d_setup must be non-zero".to_string(),
             ));
         }
-        let n_prefix = n_prefix_from_commitment_params(&self.commitment_params)?;
+        let n_prefix = n_prefix_from_commitment_profile(&self.commitment_profile)?;
         if self.natural_len == 0 || self.natural_len > n_prefix {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot natural_len must be in 1..=n_prefix".to_string(),
@@ -138,10 +176,15 @@ impl Valid for SetupPrefixSlotId {
                 "setup prefix slot n_prefix must be a multiple of d_setup".to_string(),
             ));
         }
-        self.commitment_params
-            .validate()
+        self.commitment_profile
+            .validate(
+                self.commitment_profile
+                    .inner_commit_matrix
+                    .sis_modulus_profile()
+                    .field_bits(),
+            )
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        if self.commitment_params.layout.group.num_polynomials() != 1 {
+        if self.commitment_profile.group.num_polynomials() != 1 {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot commitment params must be singleton".to_string(),
             ));
@@ -239,82 +282,64 @@ use commit_matrix::{
     commit_matrix_serialized_size, deserialize_commit_matrix, serialize_commit_matrix,
 };
 
-fn serialize_precommitted_level_params<W: Write>(
-    params: &PrecommittedLevelParams,
+fn serialize_committed_group_profile<W: Write>(
+    params: &CommittedGroupProfile,
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
+    params.version.serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
-        .version
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .layout
         .group
         .num_vars()
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
         .group
         .num_polynomials()
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
+        .group
+        .source()
+        .tag()
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .group
+        .source()
+        .onehot_chunk_size()
+        .unwrap_or(0)
+        .serialize_with_mode(&mut writer, compress)?;
+    params
         .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
         .num_positions_per_block
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
         .num_live_blocks
         .serialize_with_mode(&mut writer, compress)?;
-    let outer_slice_count = params.layout.outer_slice_count.get();
+    let outer_slice_count = params.outer_slice_count.get();
     outer_slice_count.serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
         .log_basis_inner
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
         .num_digits_inner
         .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.layout.inner_commit_matrix, &mut writer, compress)?;
+    serialize_commit_matrix(&params.inner_commit_matrix, &mut writer, compress)?;
     params
-        .layout
         .log_basis_outer
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .layout
         .num_digits_outer
         .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.layout.outer_commit_matrix, &mut writer, compress)?;
-    params
-        .log_basis_open
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .fold_challenge_config
-        .count_pm1
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .fold_challenge_config
-        .count_pm2
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .num_digits_open
-        .serialize_with_mode(&mut writer, compress)?;
-    params
-        .num_digits_fold
-        .serialize_with_mode(&mut writer, compress)?;
+    serialize_commit_matrix(&params.outer_commit_matrix, &mut writer, compress)?;
     Ok(())
 }
 
-fn deserialize_precommitted_level_params<R: Read>(
+fn deserialize_committed_group_profile<R: Read>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
-) -> Result<PrecommittedLevelParams, SerializationError> {
+) -> Result<CommittedGroupProfile, SerializationError> {
     let version = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
     if version != CommittedGroupProfile::VERSION {
         return Err(SerializationError::InvalidData(format!(
@@ -340,75 +365,49 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let outer_commit_matrix: OuterCommitMatrixParams =
         deserialize_commit_matrix(&mut reader, compress, validate)?;
-    let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let challenge_count_pm1 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let challenge_count_pm2 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_digits_fold = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    Ok(PrecommittedLevelParams {
-        layout: CommittedGroupProfile {
-            version,
-            group,
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-            outer_slice_count,
-            log_basis_inner,
-            num_digits_inner,
-            inner_commit_matrix,
-            log_basis_outer,
-            num_digits_outer,
-            outer_commit_matrix,
-        },
-        log_basis_open,
-        fold_challenge_config: akita_challenges::SparseChallengeConfig {
-            count_pm1: challenge_count_pm1,
-            count_pm2: challenge_count_pm2,
-        },
-        num_digits_open,
-        num_digits_fold,
+    Ok(CommittedGroupProfile {
+        version,
+        group,
+        num_live_ring_elements_per_claim,
+        num_positions_per_block,
+        num_live_blocks,
+        outer_slice_count,
+        log_basis_inner,
+        num_digits_inner,
+        inner_commit_matrix,
+        log_basis_outer,
+        num_digits_outer,
+        outer_commit_matrix,
     })
 }
 
-fn precommitted_level_params_serialized_size(
-    params: &PrecommittedLevelParams,
+fn committed_group_profile_serialized_size(
+    params: &CommittedGroupProfile,
     compress: Compress,
 ) -> usize {
-    let outer_slice_count = params.layout.outer_slice_count.get();
-    params.layout.version.serialized_size(compress)
-        + params.layout.group.num_vars().serialized_size(compress)
+    let outer_slice_count = params.outer_slice_count.get();
+    params.version.serialized_size(compress)
+        + params.group.num_vars().serialized_size(compress)
+        + params.group.num_polynomials().serialized_size(compress)
+        + params.group.source().tag().serialized_size(compress)
         + params
-            .layout
             .group
-            .num_polynomials()
+            .source()
+            .onehot_chunk_size()
+            .unwrap_or(0)
             .serialized_size(compress)
         + params
-            .layout
             .num_live_ring_elements_per_claim
             .serialized_size(compress)
-        + params
-            .layout
-            .num_positions_per_block
-            .serialized_size(compress)
-        + params.layout.num_live_blocks.serialized_size(compress)
+        + params.num_positions_per_block.serialized_size(compress)
+        + params.num_live_blocks.serialized_size(compress)
         + outer_slice_count.serialized_size(compress)
-        + params.layout.log_basis_inner.serialized_size(compress)
-        + params.layout.num_digits_inner.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.layout.inner_commit_matrix, compress)
-        + params.layout.log_basis_outer.serialized_size(compress)
-        + params.layout.num_digits_outer.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.layout.outer_commit_matrix, compress)
-        + params.log_basis_open.serialized_size(compress)
-        + params
-            .fold_challenge_config
-            .count_pm1
-            .serialized_size(compress)
-        + params
-            .fold_challenge_config
-            .count_pm2
-            .serialized_size(compress)
-        + params.num_digits_open.serialized_size(compress)
-        + params.num_digits_fold.serialized_size(compress)
+        + params.log_basis_inner.serialized_size(compress)
+        + params.num_digits_inner.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.inner_commit_matrix, compress)
+        + params.log_basis_outer.serialized_size(compress)
+        + params.num_digits_outer.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.outer_commit_matrix, compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -421,14 +420,14 @@ impl AkitaSerialize for SetupPrefixSlotId {
         writer.write_all(SETUP_PREFIX_CONTENT_TAG)?;
         self.natural_len
             .serialize_with_mode(&mut writer, compress)?;
-        serialize_precommitted_level_params(&self.commitment_params, &mut writer, compress)?;
+        serialize_committed_group_profile(&self.commitment_profile, &mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         SETUP_PREFIX_CONTENT_TAG.len()
             + self.natural_len.serialized_size(compress)
-            + precommitted_level_params_serialized_size(&self.commitment_params, compress)
+            + committed_group_profile_serialized_size(&self.commitment_profile, compress)
     }
 }
 
@@ -449,11 +448,11 @@ impl AkitaDeserialize for SetupPrefixSlotId {
             ));
         }
         let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let commitment_params =
-            deserialize_precommitted_level_params(&mut reader, compress, validate)?;
+        let commitment_profile =
+            deserialize_committed_group_profile(&mut reader, compress, validate)?;
         let out = Self {
             natural_len,
-            commitment_params,
+            commitment_profile,
         };
         if validate == Validate::Yes {
             out.check()?;
@@ -597,7 +596,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
         self.id.check()?;
         self.commitment.check()?;
         let expected_payload_coefficients =
-            setup_prefix_compression_plan(&self.id.commitment_params)?.terminal_coefficients();
+            setup_prefix_compression_plan(&self.id.commitment_profile)?.terminal_coefficients();
         if self.commitment.rows.len() != 1 {
             return Err(SerializationError::InvalidData(
                 "setup prefix commitment must contain one compressed payload".into(),
@@ -677,7 +676,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
         self.commitment.check()?;
-        let compression_plan = setup_prefix_compression_plan(&self.id.commitment_params)?;
+        let compression_plan = setup_prefix_compression_plan(&self.id.commitment_profile)?;
         let expected_payload_coefficients = compression_plan.terminal_coefficients();
         if self.commitment.rows.len() != 1 {
             return Err(SerializationError::InvalidData(
@@ -753,7 +752,7 @@ where
 
 impl<F: FieldCore> SetupPrefixSlot<F> {
     fn validate_compression_hint(&self) -> Result<(), AkitaError> {
-        let plan = setup_prefix_compression_plan(&self.id.commitment_params)
+        let plan = setup_prefix_compression_plan(&self.id.commitment_profile)
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
         self.hint.validate_outer_compression(&plan)
     }
@@ -1209,10 +1208,12 @@ pub fn setup_prefix_precommitted_params(
                     num_digits_outer: prefix_params.num_digits_outer,
                     outer_commit_matrix,
                 },
-                log_basis_open: prefix_params.log_basis_open,
-                fold_challenge_config: prefix_params.fold_challenge_config,
-                num_digits_open: prefix_params.num_digits_open,
-                num_digits_fold: prefix_params.num_digits_fold,
+                opening: crate::GroupOpeningPlan::evaluation_trace(
+                    prefix_params.fold_challenge_config,
+                    prefix_params.log_basis_open,
+                    prefix_params.num_digits_open,
+                    prefix_params.num_digits_fold,
+                ),
             });
         }
         num_positions_per_block = num_positions_per_block.checked_mul(2).ok_or_else(|| {
@@ -1224,12 +1225,12 @@ pub fn setup_prefix_precommitted_params(
     ))
 }
 
-/// Build the slot id for one committed setup prefix.
-pub fn setup_prefix_slot_id(
+/// Attach a consuming opening plan to one setup-prefix commitment.
+pub fn scheduled_setup_prefix(
     natural_len: usize,
     commitment_params: PrecommittedLevelParams,
-) -> SetupPrefixSlotId {
-    SetupPrefixSlotId {
+) -> ScheduledSetupPrefix {
+    ScheduledSetupPrefix {
         natural_len,
         commitment_params,
     }
@@ -1259,7 +1260,7 @@ pub fn setup_prefix_coverage_eval_len(
             "Stage 3 requires a selected setup-prefix slot".to_string(),
         ));
     };
-    if selected_slot_id != template {
+    if selected_slot_id != &template.slot_id() {
         return Err(AkitaError::InvalidSetup(format!(
             "{coverage_error}: selected setup-prefix slot id does not match planned slot"
         )));

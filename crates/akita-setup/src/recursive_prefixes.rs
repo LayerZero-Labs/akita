@@ -31,7 +31,7 @@ where
                 &setup.expanded,
                 backend,
                 prepared,
-                &id.commitment_params,
+                &id.commitment_profile,
                 n_prefix,
                 id.natural_len,
             )

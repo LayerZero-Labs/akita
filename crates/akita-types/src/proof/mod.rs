@@ -92,10 +92,11 @@ pub use setup_envelope::{
     verifier_setup_matrix_capacity_for_schedule,
 };
 pub use setup_prefix::{
-    active_setup_field_len, padded_setup_prefix_len, setup_prefix_coverage_eval_len,
-    setup_prefix_precommitted_params, setup_prefix_slot_id, suffix_opening_layout,
-    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
+    active_setup_field_len, padded_setup_prefix_len, scheduled_setup_prefix,
+    setup_prefix_coverage_eval_len, setup_prefix_precommitted_params, suffix_opening_layout,
+    ScheduledSetupPrefix, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,

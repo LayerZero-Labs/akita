@@ -143,7 +143,8 @@ pub fn accumulate_matrix_field_elements_for_level(
     }
     accumulate_compression_matrix_field_elements_for_level(params, max_field_elements)?;
     if let Some(slot) = &params.setup_prefix {
-        *max_field_elements = (*max_field_elements).max(setup_prefix_slot_field_elements(slot)?);
+        *max_field_elements =
+            (*max_field_elements).max(setup_prefix_slot_field_elements(&slot.slot_id())?);
     }
     Ok(())
 }
@@ -255,29 +256,28 @@ pub fn setup_prefix_slot_field_elements(slot: &SetupPrefixSlotId) -> Result<usiz
         ));
     }
     let mut max_field_elements = n_prefix;
-    let params = &slot.commitment_params;
+    let params = &slot.commitment_profile;
     include_matrix_field_elements(
         &mut max_field_elements,
-        params.layout.inner_commit_matrix.output_rank(),
-        params.inner_width(),
-        params.layout.inner_commit_matrix.ring_dimension(),
+        params.inner_commit_matrix.output_rank(),
+        params.inner_commit_matrix.input_width(),
+        params.inner_commit_matrix.ring_dimension(),
         "setup-prefix inner setup",
     )?;
     include_matrix_field_elements(
         &mut max_field_elements,
-        params.layout.outer_commit_matrix.output_rank(),
-        params.outer_width(),
-        params.layout.outer_commit_matrix.ring_dimension(),
+        params.outer_commit_matrix.output_rank(),
+        params.outer_commit_matrix.input_width(),
+        params.outer_commit_matrix.ring_dimension(),
         "setup-prefix outer setup",
     )?;
     include_compression_setup(
         &mut max_field_elements,
-        params.layout.outer_commit_matrix.sis_modulus_profile(),
+        params.outer_commit_matrix.sis_modulus_profile(),
         params
-            .layout
             .outer_slice_count
-            .logical_output_rows(params.layout.outer_commit_matrix.output_rank())?,
-        params.layout.outer_commit_matrix.ring_dimension(),
+            .logical_output_rows(params.outer_commit_matrix.output_rank())?,
+        params.outer_commit_matrix.ring_dimension(),
         "setup-prefix outer compression setup",
     )?;
     Ok(max_field_elements)
@@ -467,7 +467,7 @@ mod tests {
         .expect("prefix compression")
         .max_setup_field_elements()
         .expect("prefix setup");
-        params.setup_prefix = Some(crate::setup_prefix_slot_id(64, prefix_params));
+        params.setup_prefix = Some(crate::scheduled_setup_prefix(64, prefix_params));
 
         let mut without_prefix = 1;
         let mut final_group_only = params.clone();

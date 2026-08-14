@@ -242,11 +242,12 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile, CompressionChainPlan,
-            CompressionChainWitness, InnerCommitMatrixParams, OuterCommitMatrixParams,
-            PackedNegativeBinary, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
-            SetupPrefixPublicCommitment, SetupPrefixSlot, SisMatrixRole, SisModulusProfileId,
-            SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+            scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
+            CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
+            OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
+            PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+            SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+            DEFAULT_SIS_SECURITY_POLICY,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -328,15 +329,17 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            log_basis_open: 1,
-            fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-            num_digits_open: 1,
-            num_digits_fold: 1,
+            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                akita_challenges::SparseChallengeConfig::pm1_only(0),
+                1,
+                1,
+                1,
+            ),
         };
         let err = setup
             .prefix_slots
             .insert(SetupPrefixSlot {
-                id: setup_prefix_slot_id(1, commitment_params),
+                id: scheduled_setup_prefix(1, commitment_params).slot_id(),
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![
                         RingVec::from_coeffs(vec![Prime128Offset275::default(); 64]);

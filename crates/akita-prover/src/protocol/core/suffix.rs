@@ -489,7 +489,7 @@ where
         .setup_prefix
         .as_ref()
         .map(|id| {
-            prefix_slots.get(id).ok_or_else(|| {
+            prefix_slots.get(&id.slot_id()).ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "planned setup-prefix slot is missing from prover setup".into(),
                 )

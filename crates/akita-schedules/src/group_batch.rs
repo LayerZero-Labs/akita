@@ -46,13 +46,16 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
                         .to_string(),
                 )
             })?;
-            PrecommittedLevelParams::admit(
+            let mut params = PrecommittedLevelParams::admit(
                 *layout,
                 num_digits_fold,
                 admission_policy,
                 ring_challenge_cfg,
                 log_basis_open,
-            )
+            )?;
+            params.opening.opening_method = generated.opening_method;
+            params.validate()?;
+            Ok(params)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut d_width = 0usize;

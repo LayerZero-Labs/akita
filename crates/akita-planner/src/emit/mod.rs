@@ -13,7 +13,7 @@ use akita_field::AkitaError;
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile, FoldSchedule,
-    OpenCommitMatrixParams, PolynomialGroupLayout, SetupPrefixSlotId, WitnessPartition,
+    OpenCommitMatrixParams, PolynomialGroupLayout, ScheduledSetupPrefix, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -164,12 +164,12 @@ fn runtime_witness_partition(p: &WitnessPartition) -> GeneratedWitnessPartition 
     }
 }
 
-fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInput {
+fn setup_prefix_slot_input(slot: &ScheduledSetupPrefix) -> GeneratedSetupPrefixInput {
     let group = &slot.commitment_params;
     GeneratedSetupPrefixInput {
         natural_len: slot.natural_len as u64,
-        num_digits_fold: group.num_digits_fold as u32,
-        commitment: GeneratedCommittedGroup {
+        num_digits_fold: group.opening.num_digits_fold as u32,
+        generated_commitment: GeneratedCommittedGroup {
             geometry: GeneratedBlockGeometry {
                 live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim as u64,
                 positions_per_block: group.layout.num_positions_per_block as u64,
@@ -185,6 +185,8 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
             },
             outer_slice_count: group.layout.outer_slice_count.get() as u32,
         },
+        commitment: group.layout,
+        opening: group.opening,
     }
 }
 
@@ -201,7 +203,8 @@ fn generated_entry(
         .zip(&root_fold.precommitted_groups)
         .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
             descriptor,
-            num_digits_fold: group.commitment.num_digits_fold as u32,
+            num_digits_fold: group.commitment.opening.num_digits_fold as u32,
+            opening_method: group.commitment.opening.opening_method,
         })
         .collect::<Vec<_>>();
     let recursive_folds = schedule
@@ -209,6 +212,7 @@ fn generated_entry(
         .iter()
         .map(|step| GeneratedRecursiveFold {
             payload_mode: step.params.witness.payload_mode,
+            opening_method: step.params.witness.opening_method,
             witness: committed_group(&step.params.witness),
             num_digits_fold: step.params.witness.num_digits_fold as u32,
             response_l2_sq_cap: match step.params.witness.inner_commit_matrix.security_route() {
@@ -246,6 +250,7 @@ fn generated_entry(
                 layout: key.final_group,
                 num_digits_inner: root_params.num_digits_inner as u32,
                 num_digits_fold: root_params.num_digits_fold as u32,
+                opening_method: root_params.opening_method,
                 commitment: committed_group(root_params),
             },
             precommitted_groups: Box::leak(precommitted_groups.into_boxed_slice()),
@@ -405,16 +410,52 @@ fn emit_payload_mode(value: akita_types::CommitmentPayloadMode) -> &'static str 
     }
 }
 
+fn emit_opening_method(value: akita_types::OpeningMethod) -> String {
+    match value {
+        akita_types::OpeningMethod::EvaluationTrace => {
+            "akita_types::OpeningMethod::EvaluationTrace".to_string()
+        }
+        akita_types::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => format!(
+            "akita_types::OpeningMethod::SubringCoefficientPacking {{ challenge_subring_dimension: {challenge_subring_dimension} }}"
+        ),
+    }
+}
+
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, num_digits_fold: {}, commitment: {} }})",
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, num_digits_fold: {}, generated_commitment: {}, commitment: {}, opening: {} }})",
             value.natural_len,
             value.num_digits_fold,
-            emit_committed_group(value.commitment)
+            emit_committed_group(value.generated_commitment),
+            emit_precommitted_group_key(&value.commitment),
+            emit_group_opening_plan(value.opening),
         ),
         None => "None".to_string(),
     }
+}
+
+fn emit_group_opening_plan(value: akita_types::GroupOpeningPlan) -> String {
+    let method = match value.opening_method {
+        akita_types::OpeningMethod::EvaluationTrace => {
+            "akita_types::OpeningMethod::EvaluationTrace".to_string()
+        }
+        akita_types::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => format!(
+            "akita_types::OpeningMethod::SubringCoefficientPacking {{ challenge_subring_dimension: {challenge_subring_dimension} }}"
+        ),
+    };
+    format!(
+        "akita_types::GroupOpeningPlan {{ opening_method: {method}, fold_challenge_config: akita_challenges::SparseChallengeConfig {{ count_pm1: {}, count_pm2: {} }}, log_basis_open: {}, num_digits_open: {}, num_digits_fold: {} }}",
+        value.fold_challenge_config.count_pm1,
+        value.fold_challenge_config.count_pm2,
+        value.log_basis_open,
+        value.num_digits_open,
+        value.num_digits_fold,
+    )
 }
 
 fn emit_schedule_entry(
@@ -427,10 +468,11 @@ fn emit_schedule_entry(
     writeln!(out, "        root: GeneratedRootFold {{").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "            final_group: GeneratedRootFinalGroup {{ layout: {}, num_digits_inner: {}, num_digits_fold: {},",
+        "            final_group: GeneratedRootFinalGroup {{ layout: {}, num_digits_inner: {}, num_digits_fold: {}, opening_method: {},",
         emit_key(entry.root.final_group.layout),
         entry.root.final_group.num_digits_inner,
         entry.root.final_group.num_digits_fold,
+        emit_opening_method(entry.root.final_group.opening_method),
     )
     .map_err(|e| e.to_string())?;
     writeln!(
@@ -446,9 +488,10 @@ fn emit_schedule_entry(
         for group in entry.root.precommitted_groups {
             writeln!(
                 out,
-                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {} }},",
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, opening_method: {} }},",
                 emit_precommitted_group_key(&group.descriptor),
                 group.num_digits_fold,
+                emit_opening_method(group.opening_method),
             )
             .map_err(|e| e.to_string())?;
         }
@@ -474,8 +517,9 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, response_l2_sq_cap: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, opening_method: {}, witness: {}, num_digits_fold: {}, response_l2_sq_cap: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
                 emit_payload_mode(fold.payload_mode),
+                emit_opening_method(fold.opening_method),
                 emit_committed_group(fold.witness),
                 fold.num_digits_fold,
                 fold.response_l2_sq_cap.map_or_else(

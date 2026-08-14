@@ -117,10 +117,10 @@ fn audit_precommitted_group(
     audit_outer_matrix(label, &params.layout.outer_commit_matrix, policy)?;
 
     let expected_open_digits = num_digits_open(DecompositionParams {
-        log_basis: params.log_basis_open,
+        log_basis: params.opening.log_basis_open,
         ..policy.decomposition
     });
-    if params.num_digits_open != expected_open_digits {
+    if params.opening.num_digits_open != expected_open_digits {
         return Err(invalid(
             label,
             "opening digit depth is not canonical for the field and basis",
@@ -145,9 +145,9 @@ fn audit_precommitted_group(
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             params.layout.inner_commit_matrix.ring_dimension(),
-            params.log_basis_open,
-            &params.fold_challenge_config,
-            params.num_digits_fold,
+            params.opening.log_basis_open,
+            &params.opening.fold_challenge_config,
+            params.opening.num_digits_fold,
         ),
     )?;
     audit_bound(
@@ -158,7 +158,7 @@ fn audit_precommitted_group(
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
             params.layout.outer_commit_matrix.ring_dimension(),
-            params.log_basis_open,
+            params.opening.log_basis_open,
         ),
     )
 }

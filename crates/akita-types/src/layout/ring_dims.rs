@@ -232,12 +232,12 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
                 .field_bits(),
         )?;
         group.commitment.validate()?;
-        if group.commitment.log_basis_open != final_params.log_basis_open {
+        if group.commitment.opening.log_basis_open != final_params.log_basis_open {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} opening basis disagrees with the batch-shared basis"
             )));
         }
-        if group.commitment.fold_challenge_config.weight() == 0 {
+        if group.commitment.opening.fold_challenge_config.weight() == 0 {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} has an empty fold challenge"
             )));
