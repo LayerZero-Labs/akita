@@ -10,11 +10,17 @@ use akita_types::{
 };
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
-    Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(num_vars),
-    ))
-    .expect("runtime schedule")
-    .into_schedule()
+    let group = match Cfg::root_honest_fold_policy() {
+        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+            PolynomialGroupLayout::singleton(num_vars)
+        }
+        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
+            PolynomialGroupLayout::unit_one_hot(num_vars, 1, 256)
+        }
+    };
+    Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
+        .expect("runtime schedule")
+        .into_schedule()
 }
 
 fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {
