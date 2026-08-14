@@ -971,7 +971,6 @@ where
     E: FieldCore + MulBaseUnreduced<F>,
 {
     layout.validate()?;
-    layout.require_evaluation_trace()?;
     if !v.can_decode_vec(layout.d_ring_dimension) {
         return Err(AkitaError::InvalidSize {
             expected: layout.d_ring_dimension,
@@ -1154,7 +1153,6 @@ where
     F: FieldCore + CanonicalField,
     E: FieldCore + MulBaseUnreduced<F>,
 {
-    layout.require_evaluation_trace()?;
     let row_families = layout.row_families()?;
     if rhs.coeff_len() != relation_rhs_coeff_len(layout)? {
         return Err(AkitaError::InvalidSize {
@@ -1167,7 +1165,8 @@ where
     let mut offset = 0usize;
     let mut claim = E::zero();
     for (row_index, family) in row_families.into_iter().enumerate() {
-        let ring_dim = family.geometry().physical_coefficient_width();
+        let geometry = family.geometry();
+        let ring_dim = geometry.physical_coefficient_width();
         let end = offset
             .checked_add(ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("relation RHS offset overflow".into()))?;
@@ -1175,12 +1174,30 @@ where
             .coeffs()
             .get(offset..end)
             .ok_or(AkitaError::InvalidProof)?;
+        if geometry.coordinate_plane_count() != 1 {
+            if !matches!(
+                family,
+                RelationRowFamily::Consistency {
+                    opening_method: crate::OpeningMethod::SubringCoefficientPacking { .. },
+                    ..
+                }
+            ) || row.iter().any(|coefficient| !coefficient.is_zero())
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "only a zero coefficient-packing consistency RHS may use coordinate planes"
+                        .into(),
+                ));
+            }
+            offset = end;
+            continue;
+        }
+        let modulus_dimension = geometry.polynomial_modulus_dimension();
         let power_index = alpha_powers
             .iter()
-            .position(|(dimension, _)| *dimension == ring_dim)
+            .position(|(dimension, _)| *dimension == modulus_dimension)
             .unwrap_or_else(|| {
                 let index = alpha_powers.len();
-                alpha_powers.push((ring_dim, scalar_powers(alpha, ring_dim)));
+                alpha_powers.push((modulus_dimension, scalar_powers(alpha, modulus_dimension)));
                 index
             });
         let powers = &alpha_powers
@@ -1188,8 +1205,8 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .1;
         if include(family) {
-            claim += *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)?
-                * eval_flat_ring_at_pows_fast(row, powers);
+            let row_evaluation = eval_flat_ring_at_pows_fast(row, powers);
+            claim += *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)? * row_evaluation;
         }
         offset = end;
     }

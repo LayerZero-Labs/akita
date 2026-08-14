@@ -7,7 +7,10 @@ use super::{
     StructuredLinearWeights,
 };
 use crate::compute::SubringCoefficientPackingPartials;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, LiftBase};
+use akita_field::{
+    canonical_extension_basis, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+    LiftBase,
+};
 use akita_types::proof::relation::relation_row_weight;
 use akita_types::{
     coefficient_packing_scalar_opening, gadget_row_scalars, OpeningClaimsLayout, OpeningMethod,
@@ -37,30 +40,6 @@ pub(crate) struct PreparedCoefficientPackingLinearTerms<E: FieldCore> {
     pub(crate) linear_terms: PreparedProverLinearTerms<E>,
     pub(crate) scalar_opening: E,
     pub(crate) weighted_scalar_opening_claim: E,
-}
-
-fn extension_basis<F, E>(degree: usize) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    if degree != E::EXT_DEGREE {
-        return Err(AkitaError::InvalidSetup(
-            "coefficient-packing extension basis has the wrong degree".into(),
-        ));
-    }
-    let mut basis = Vec::new();
-    basis.try_reserve_exact(degree).map_err(|_| {
-        AkitaError::InvalidInput("coefficient-packing extension basis is too large".into())
-    })?;
-    for coordinate in 0..degree {
-        let mut coordinates = vec![F::zero(); degree];
-        *coordinates
-            .get_mut(coordinate)
-            .ok_or(AkitaError::InvalidProof)? = F::one();
-        basis.push(E::from_base_slice(&coordinates));
-    }
-    Ok(basis)
 }
 
 fn packing_geometry<F: FieldCore, E: ExtField<F>>(
@@ -217,7 +196,7 @@ where
         .into_iter()
         .map(E::lift_base)
         .collect::<Vec<_>>();
-    let basis = extension_basis::<F, E>(geometry.extension_degree())?;
+    let basis = canonical_extension_basis::<F, E>(geometry.extension_degree())?;
     let mut opening_source = Vec::with_capacity(physical_width);
     for &basis_element in &basis {
         opening_source.extend(

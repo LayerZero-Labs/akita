@@ -35,6 +35,22 @@ pub struct RingRelationGroupOpening<F: FieldCore> {
     kind: RingRelationGroupOpeningKind<F>,
 }
 
+/// Borrowed, method-typed view of one relation group's opening material.
+#[derive(Debug, Clone, Copy)]
+pub enum RingRelationGroupOpeningView<'a, F: FieldCore> {
+    /// EvaluationTrace challenges and its ring-multiplier point.
+    EvaluationTrace {
+        challenges: &'a Challenges,
+        ring_multiplier_point: &'a RingMultiplierOpeningPoint<F>,
+    },
+    /// Canonical subring challenges and their derived ambient-A embedding.
+    SubringCoefficientPacking {
+        geometry: SubringCoefficientPackingGeometry,
+        canonical_subring_challenges: &'a Challenges,
+        ambient_a_challenges: &'a Challenges,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RingRelationGroupOpeningKind<F: FieldCore> {
     EvaluationTrace {
@@ -49,6 +65,29 @@ enum RingRelationGroupOpeningKind<F: FieldCore> {
 }
 
 impl<F: FieldCore> RingRelationGroupOpening<F> {
+    /// Borrow this opening without erasing its algebraic method.
+    #[must_use]
+    pub fn view(&self) -> RingRelationGroupOpeningView<'_, F> {
+        match &self.kind {
+            RingRelationGroupOpeningKind::EvaluationTrace {
+                challenges,
+                ring_multiplier_point,
+            } => RingRelationGroupOpeningView::EvaluationTrace {
+                challenges,
+                ring_multiplier_point,
+            },
+            RingRelationGroupOpeningKind::SubringCoefficientPacking {
+                geometry,
+                subring_challenges,
+                embedded_a_challenges,
+            } => RingRelationGroupOpeningView::SubringCoefficientPacking {
+                geometry: *geometry,
+                canonical_subring_challenges: subring_challenges,
+                ambient_a_challenges: embedded_a_challenges,
+            },
+        }
+    }
+
     /// Construct the current full-A evaluation-trace carrier.
     pub fn evaluation_trace(
         challenges: Challenges,
@@ -339,6 +378,17 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
     pub fn group_openings(&self) -> &[RingRelationGroupOpening<F>] {
         &self.group_openings
+    }
+
+    /// Method-typed opening material for one group.
+    pub fn group_opening_view(
+        &self,
+        group: usize,
+    ) -> Result<RingRelationGroupOpeningView<'_, F>, AkitaError> {
+        self.group_openings
+            .get(group)
+            .map(RingRelationGroupOpening::view)
+            .ok_or_else(|| AkitaError::InvalidInput("relation group index is invalid".into()))
     }
 
     /// Protocol field extension degree used to resolve packing coordinate planes.

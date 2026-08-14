@@ -438,7 +438,7 @@ fn structured_terms_match_independent_dense_weights_and_scalar_opening() {
         .into_iter()
         .map(E::lift_base)
         .collect::<Vec<_>>();
-    let basis = extension_basis::<F, E>(2).unwrap();
+    let basis = canonical_extension_basis::<F, E>(2).unwrap();
     let mut expected = vec![E::zero(); witness_layout.live_coeff_len()];
     for (claim, &claim_coefficient) in claim_coefficients.iter().enumerate() {
         for unit in witness_layout.units_for_group(0).unwrap() {

@@ -8,6 +8,7 @@
 //! Proof, commitment, setup, and claim data shapes.
 
 pub mod batch;
+pub mod coefficient_packing_relation;
 pub mod commitment;
 pub mod compression_relation_weights;
 pub mod relation;
@@ -47,6 +48,12 @@ pub use batch::{
     root_tensor_projection_enabled_for_width, validate_batched_inputs, PreparedOpeningPoint,
     RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
+pub use coefficient_packing_relation::{
+    prepare_coefficient_packing_group_semantics, CoefficientPackingGroupSemanticInputs,
+    CoefficientPackingGroupSemantics, CoefficientPackingRelationEvent,
+    CoefficientPackingRelationEvents, CoefficientPackingStage2Segment,
+    CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
+};
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
@@ -76,8 +83,8 @@ pub use relation_range_image::{
     RelationRangeImagePlan,
 };
 pub use ring_relation::{
-    ring_relation_segment_lengths, RingRelationGroupOpening, RingRelationInstance,
-    RingRelationOpeningCounts, RingRelationSegmentLengths,
+    ring_relation_segment_lengths, RingRelationGroupOpening, RingRelationGroupOpeningView,
+    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{

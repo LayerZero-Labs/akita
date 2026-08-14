@@ -1,0 +1,1213 @@
+use super::*;
+
+use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_field::{
+    CanonicalField, Ext2, FieldCore, FpExt4, FromPrimitiveInt, LiftBase, Prime128OffsetA7F7,
+    Prime32Offset99, Prime64Offset59,
+};
+
+use crate::{
+    relation_claim_from_compressed_rhs_extension, relation_rhs_coeff_len, ChunkedWitnessCfg,
+    CommitmentPayloadMode, CommitmentRingDims, DigitRangePlan, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, RelationAddressGeometry,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingVec,
+    SisModulusProfileId, WitnessLayout,
+};
+use crate::{
+    CommittedGroupProfile, GroupOpeningPlan, InnerCommitMatrixParams, PrecommittedLevelParams,
+};
+
+type F = Prime64Offset59;
+type E = Ext2<F>;
+
+struct Fixture<Base: FieldCore, Extension: FieldCore> {
+    params: CommittedGroupParams,
+    opening_batch: OpeningClaimsLayout,
+    relation_plan: RelationRangeImagePlan,
+    relation: RingRelationInstance<Base>,
+    prepared_point: PreparedSubringCoefficientPackingPoint<Extension>,
+    claim_coefficients: Vec<Extension>,
+    tau1: Vec<Extension>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fixture<Base, Extension>(
+    profile: SisModulusProfileId,
+    d_a: usize,
+    d_d: usize,
+    s: usize,
+    live_positions: usize,
+    positions_per_block: usize,
+    num_vars: usize,
+    num_claims: usize,
+    num_chunks: usize,
+) -> Fixture<Base, Extension>
+where
+    Base: FieldCore + CanonicalField + FromPrimitiveInt,
+    Extension:
+        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+{
+    let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+    let mut params = CommittedGroupParams::params_only(profile, d_a, 2, 2, 2, 2, config)
+        .with_decomp(positions_per_block, live_positions, 2, 2, 2)
+        .unwrap();
+    params.payload_mode = CommitmentPayloadMode::Raw;
+    params.witness_chunk = ChunkedWitnessCfg {
+        num_chunks,
+        num_activated_levels: usize::from(num_chunks > 1),
+    };
+    params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: s,
+    };
+    let outer = params.outer_commit_matrix;
+    params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width(),
+        outer.coeff_linf_bound(),
+        64,
+    );
+    let opening = params.open_commit_matrix;
+    params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+        opening.security_policy(),
+        opening.sis_table_key().table_digest,
+        opening.sis_modulus_profile(),
+        opening.output_rank(),
+        opening.input_width(),
+        opening.coeff_linf_bound(),
+        d_d,
+    );
+    let opening_batch =
+        OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(num_vars, num_claims)])
+            .unwrap();
+    let extension_degree = <Extension as ExtField<Base>>::EXT_DEGREE;
+    let relation_geometry =
+        RelationWitnessGeometry::for_level(&params, &opening_batch, extension_degree).unwrap();
+    let witness_layout = WitnessLayout::new(
+        &params,
+        &opening_batch,
+        &relation_geometry,
+        params.witness_chunk.num_chunks,
+        r_decomp_levels::<Base>(params.log_basis_open),
+    )
+    .unwrap();
+    let relation_address_geometry = RelationAddressGeometry::for_relation(
+        &relation_geometry,
+        d_d,
+        witness_layout.live_coeff_len(),
+    )
+    .unwrap();
+    let relation_plan = RelationRangeImagePlan::new(
+        relation_geometry.clone(),
+        relation_address_geometry,
+        DigitRangePlan::new(4).unwrap(),
+        witness_layout,
+        &opening_batch,
+    )
+    .unwrap();
+    let geometry = SubringCoefficientPackingGeometry::try_new(extension_degree, d_a, s).unwrap();
+    let point_values = (0..num_vars)
+        .map(|index| Extension::from_u64((index + 2) as u64))
+        .collect::<Vec<_>>();
+    let prepared_point = PreparedSubringCoefficientPackingPoint::new(
+        geometry,
+        live_positions,
+        positions_per_block,
+        num_vars,
+        &point_values,
+    )
+    .unwrap();
+    let challenge_count = num_claims * prepared_point.num_live_blocks();
+    let sparse = (0..challenge_count)
+        .map(|challenge| SparseChallenge {
+            positions: (0..config.weight())
+                .map(|term| ((term + challenge) % s) as u32)
+                .collect(),
+            coeffs: (0..config.count_pm1)
+                .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
+                .chain((0..config.count_pm2).map(|_| 2))
+                .collect(),
+        })
+        .collect();
+    let challenges =
+        Challenges::from_sparse(sparse, prepared_point.num_live_blocks(), num_claims).unwrap();
+    let group_opening =
+        RingRelationGroupOpening::subring_coefficient_packing(geometry, challenges).unwrap();
+    let gamma = (0..num_claims)
+        .map(|claim| Base::from_u64((claim + 3) as u64))
+        .collect::<Vec<_>>();
+    let mut row_coefficients = vec![Base::zero(); num_claims * d_a];
+    for (claim, &coefficient) in gamma.iter().enumerate() {
+        row_coefficients[claim * d_a] = coefficient;
+    }
+    let rhs = RingVec::from_coeffs(vec![
+        Base::zero();
+        relation_rhs_coeff_len(relation_geometry.rhs_layout())
+            .unwrap()
+    ]);
+    let relation = RingRelationInstance::new(
+        vec![group_opening],
+        extension_degree,
+        opening_batch.clone(),
+        gamma,
+        RingVec::from_coeffs_with_ring_dim(row_coefficients, d_a).unwrap(),
+        rhs,
+        RingVec::from_coeffs(Vec::new()),
+        params.role_dims(),
+    )
+    .unwrap();
+    let claim_coefficients = (0..num_claims)
+        .map(|claim| Extension::from_u64((claim + 5) as u64))
+        .collect();
+    let tau1 = (0..relation_plan.relation_row_index_num_vars().unwrap())
+        .map(|index| Extension::from_u64((index + 7) as u64))
+        .collect();
+    Fixture {
+        params,
+        opening_batch,
+        relation_plan,
+        relation,
+        prepared_point,
+        claim_coefficients,
+        tau1,
+    }
+}
+
+fn prepare<Base, Extension>(
+    fixture: &Fixture<Base, Extension>,
+    alpha: Extension,
+) -> CoefficientPackingGroupSemantics<Extension>
+where
+    Base: FieldCore + CanonicalField + FromPrimitiveInt,
+    Extension:
+        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+{
+    prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+        level_params: &fixture.params,
+        opening_batch: &fixture.opening_batch,
+        relation_plan: &fixture.relation_plan,
+        relation: &fixture.relation,
+        group_index: 0,
+        prepared_point: &fixture.prepared_point,
+        alpha,
+        tau1: &fixture.tau1,
+        claim_coefficients: &fixture.claim_coefficients,
+    })
+    .unwrap()
+}
+
+fn materialize_events(events: &CoefficientPackingRelationEvents<E>) -> Vec<E> {
+    let mut dense = vec![E::zero(); events.physical_field_len()];
+    for event in events.events() {
+        for (offset, index) in event.physical_coefficients().enumerate() {
+            dense[index] +=
+                event.scalar() * events.alpha_powers()[event.alpha_exponent_start() + offset];
+        }
+    }
+    dense
+}
+
+fn materialize_stage2_source<Extension: FieldCore>(
+    terms: &CoefficientPackingStage2Terms<Extension>,
+    selected_source: CoefficientPackingStage2Source,
+) -> Vec<Extension> {
+    let mut dense = vec![Extension::zero(); terms.physical_field_len()];
+    let source = match selected_source {
+        CoefficientPackingStage2Source::DirectOpening => terms.direct_opening_source(),
+        CoefficientPackingStage2Source::PackingZ => terms.packing_z_source(),
+    };
+    for term in terms
+        .terms()
+        .iter()
+        .filter(|term| term.source() == selected_source)
+    {
+        for segment in &terms.segments()[term.segments()] {
+            let physical = segment.physical_coefficients();
+            let source_range = segment.source_coefficients();
+            for offset in 0..physical.len() {
+                dense[physical.start + offset] +=
+                    term.factor() * source[source_range.start + offset];
+            }
+        }
+    }
+    dense
+}
+
+#[test]
+fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        1,
+    );
+    let alpha = E::from_u64(13);
+    let semantics = prepare(&fixture, alpha);
+    assert_eq!(semantics.geometry().packing_factor(), 2);
+    assert_eq!(semantics.stage2_terms().group_claim_range(), 0..2);
+    assert_eq!(semantics.stage2_terms().direct_opening_source().len(), 128);
+    assert_eq!(semantics.stage2_terms().packing_z_source().len(), 256);
+    assert_eq!(
+        semantics.stage2_terms().scalar_claim_weight(),
+        relation_row_weight(
+            fixture.relation_plan.scalar_opening_row_index().unwrap(),
+            &fixture.tau1,
+        )
+        .unwrap()
+    );
+
+    let depth_open = fixture.params.num_digits_open;
+    let quotient_depth = fixture.relation_plan.witness_layout().quotient_depth();
+    let extension_degree = <E as ExtField<F>>::EXT_DEGREE;
+    let expected_e_events = 2 * 2 * depth_open * extension_degree;
+    let expected_q_events = quotient_depth * extension_degree;
+    let events = semantics.relation_events().events();
+    assert_eq!(events.len(), expected_e_events + expected_q_events);
+    for event in &events[..expected_e_events] {
+        assert_eq!(event.physical_coefficients().len(), 64);
+        assert_eq!(event.alpha_exponent_start(), 0);
+    }
+    for event in &events[expected_e_events..] {
+        assert_eq!(event.physical_coefficients().len(), 64);
+        assert_eq!(event.alpha_exponent_start(), 0);
+        assert!(!event.scalar().is_zero());
+    }
+
+    let consistency_weight = relation_row_weight(
+        fixture.relation_plan.consistency_row_index(0).unwrap(),
+        &fixture.tau1,
+    )
+    .unwrap();
+    let geometry = semantics.geometry();
+    let alpha_powers = scalar_powers(alpha, geometry.challenge_subring_dimension());
+    let basis = [
+        E::from_base_slice(&[F::one(), F::zero()]),
+        E::from_base_slice(&[F::zero(), F::one()]),
+    ];
+    let challenges = match fixture.relation.group_opening_view(0).unwrap() {
+        RingRelationGroupOpeningView::SubringCoefficientPacking {
+            canonical_subring_challenges,
+            ambient_a_challenges,
+            ..
+        } => {
+            let ambient_powers = scalar_powers(alpha, geometry.a_ring_dimension());
+            let ambient_base = ambient_powers[geometry.subring_embedding_stride()];
+            let embedded_subring_powers =
+                scalar_powers(ambient_base, geometry.challenge_subring_dimension());
+            assert_eq!(
+                ambient_a_challenges
+                    .eval_at_pows::<F, E>(0, &ambient_powers)
+                    .unwrap(),
+                canonical_subring_challenges
+                    .eval_at_pows::<F, E>(0, &embedded_subring_powers)
+                    .unwrap()
+            );
+            canonical_subring_challenges
+        }
+        RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
+    };
+    let opening_gadget = gadget_row_scalars::<F>(
+        fixture.params.num_digits_open,
+        fixture.params.log_basis_open,
+    );
+    let first_challenge = challenges.eval_at_pows::<F, E>(0, &alpha_powers).unwrap();
+    assert_eq!(
+        events[0].scalar(),
+        consistency_weight * first_challenge * E::lift_base(opening_gadget[0]) * basis[0]
+    );
+    let denominator = alpha_powers.last().copied().unwrap() * alpha + E::one();
+    let quotient_gadget = gadget_row_scalars::<F>(
+        fixture.relation_plan.witness_layout().quotient_depth(),
+        fixture.params.log_basis_open,
+    );
+    assert_eq!(
+        events[expected_e_events].scalar(),
+        -(consistency_weight * E::lift_base(quotient_gadget[0]) * basis[0] * denominator)
+    );
+
+    let direct_source = semantics.stage2_terms().direct_opening_source();
+    for (plane, &basis_element) in basis.iter().enumerate() {
+        for (coefficient, &tail_weight) in fixture.prepared_point.tail_weights().iter().enumerate()
+        {
+            assert_eq!(
+                direct_source[plane * geometry.challenge_subring_dimension() + coefficient],
+                basis_element * tail_weight
+            );
+        }
+    }
+    let packing_z_source = semantics.stage2_terms().packing_z_source();
+    for (low, &packing_weight) in fixture.prepared_point.packing_weights().iter().enumerate() {
+        for (coefficient, &alpha_power) in alpha_powers.iter().enumerate() {
+            let physical = geometry.a_ring_coefficient_index(low, coefficient).unwrap();
+            assert_eq!(packing_z_source[physical], packing_weight * alpha_power);
+        }
+    }
+
+    let direct_terms = semantics
+        .stage2_terms()
+        .terms()
+        .iter()
+        .filter(|term| term.source() == CoefficientPackingStage2Source::DirectOpening)
+        .count();
+    let z_terms = semantics
+        .stage2_terms()
+        .terms()
+        .iter()
+        .filter(|term| term.source() == CoefficientPackingStage2Source::PackingZ)
+        .count();
+    assert_eq!(direct_terms, 2 * 2 * depth_open);
+    assert_eq!(
+        z_terms,
+        fixture.params.num_positions_per_block
+            * fixture.params.num_digits_inner
+            * fixture.params.num_digits_fold()
+    );
+    for term in semantics.stage2_terms().terms() {
+        let source_len = match term.source() {
+            CoefficientPackingStage2Source::DirectOpening => {
+                semantics.stage2_terms().direct_opening_source().len()
+            }
+            CoefficientPackingStage2Source::PackingZ => {
+                semantics.stage2_terms().packing_z_source().len()
+            }
+        };
+        for segment in &semantics.stage2_terms().segments()[term.segments()] {
+            assert_eq!(
+                segment.physical_coefficients().len(),
+                segment.source_coefficients().len()
+            );
+            assert!(
+                segment.physical_coefficients().end
+                    <= semantics.stage2_terms().physical_field_len()
+            );
+            assert!(segment.source_coefficients().end <= source_len);
+        }
+    }
+}
+
+#[test]
+fn e_events_split_planes_at_d_boundaries_without_changing_exponents() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        64,
+        128,
+        2,
+        2,
+        9,
+        1,
+        1,
+    );
+    let semantics = prepare(&fixture, E::from_u64(17));
+    let continued_plane_chunks = semantics
+        .relation_events()
+        .events()
+        .iter()
+        .filter(|event| event.alpha_exponent_start() == 64)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        continued_plane_chunks.len(),
+        fixture.params.num_digits_open * 2
+    );
+    for event in continued_plane_chunks {
+        assert_eq!(event.physical_coefficients().len(), 64);
+    }
+}
+
+#[test]
+fn semantic_events_match_an_independent_dense_accumulation() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        1,
+    );
+    let alpha = E::from_u64(19);
+    let semantics = prepare(&fixture, alpha);
+    let got = materialize_events(semantics.relation_events());
+    let mut expected = vec![E::zero(); got.len()];
+    let geometry = semantics.geometry();
+    let s = geometry.challenge_subring_dimension();
+    let powers = scalar_powers(alpha, s);
+    let basis = [
+        E::from_base_slice(&[F::one(), F::zero()]),
+        E::from_base_slice(&[F::zero(), F::one()]),
+    ];
+    let challenges = match fixture.relation.group_opening_view(0).unwrap() {
+        RingRelationGroupOpeningView::SubringCoefficientPacking {
+            canonical_subring_challenges,
+            ..
+        } => canonical_subring_challenges,
+        RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
+    };
+    let consistency_weight = relation_row_weight(
+        fixture.relation_plan.consistency_row_index(0).unwrap(),
+        &fixture.tau1,
+    )
+    .unwrap();
+    let opening_gadget = gadget_row_scalars::<F>(
+        fixture.params.num_digits_open,
+        fixture.params.log_basis_open,
+    );
+    let d_d = fixture.params.role_dims().d_d();
+    let claims = fixture.opening_batch.num_total_polynomials();
+    for claim in 0..claims {
+        for unit in fixture
+            .relation_plan
+            .witness_layout()
+            .units_for_group(0)
+            .unwrap()
+        {
+            for block in unit.global_block_range() {
+                let challenge = challenges
+                    .eval_at_pows::<F, E>(claim * fixture.params.num_live_blocks + block, &powers)
+                    .unwrap();
+                for (digit, &gadget) in opening_gadget.iter().enumerate() {
+                    for (plane, &basis_element) in basis.iter().enumerate() {
+                        for (coefficient, &power) in powers.iter().enumerate() {
+                            let flat = plane * s + coefficient;
+                            let physical = unit
+                                .e_coefficient_index(
+                                    d_d,
+                                    claims,
+                                    fixture.params.num_digits_open,
+                                    claim,
+                                    block,
+                                    flat / d_d,
+                                    digit,
+                                    flat % d_d,
+                                )
+                                .unwrap();
+                            expected[physical] += consistency_weight
+                                * challenge
+                                * E::lift_base(gadget)
+                                * basis_element
+                                * power;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let denominator = powers.last().copied().unwrap() * alpha + E::one();
+    let quotient_gadget = gadget_row_scalars::<F>(
+        fixture.relation_plan.witness_layout().quotient_depth(),
+        fixture.params.log_basis_open,
+    );
+    let row = fixture.relation_plan.consistency_row_index(0).unwrap();
+    for (digit, &gadget) in quotient_gadget.iter().enumerate() {
+        for (plane, &basis_element) in basis.iter().enumerate() {
+            for (coefficient, &power) in powers.iter().enumerate() {
+                let physical = fixture
+                    .relation_plan
+                    .witness_layout()
+                    .r_coefficient_index(row, digit, plane, coefficient)
+                    .unwrap();
+                expected[physical] -=
+                    consistency_weight * E::lift_base(gadget) * basis_element * denominator * power;
+            }
+        }
+    }
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
+    assert!(checked_product("test", &[usize::MAX, 2]).is_err());
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        1,
+    );
+    let mut short_claims = fixture.claim_coefficients.clone();
+    short_claims.pop();
+    assert!(
+        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            group_index: 0,
+            prepared_point: &fixture.prepared_point,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &short_claims,
+        })
+        .is_err()
+    );
+    let mut short_tau = fixture.tau1.clone();
+    short_tau.pop();
+    assert!(
+        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            group_index: 0,
+            prepared_point: &fixture.prepared_point,
+            alpha: E::from_u64(3),
+            tau1: &short_tau,
+            claim_coefficients: &fixture.claim_coefficients,
+        })
+        .is_err()
+    );
+    assert!(
+        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            group_index: 1,
+            prepared_point: &fixture.prepared_point,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        })
+        .is_err()
+    );
+    let wrong_arity_point = PreparedSubringCoefficientPackingPoint::new(
+        fixture.prepared_point.geometry(),
+        4,
+        4,
+        10,
+        &[E::from_u64(2); 10],
+    )
+    .unwrap();
+    assert!(
+        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            group_index: 0,
+            prepared_point: &wrong_arity_point,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        })
+        .is_err()
+    );
+
+    let canonical_challenges = match fixture.relation.group_opening_view(0).unwrap() {
+        RingRelationGroupOpeningView::SubringCoefficientPacking {
+            canonical_subring_challenges,
+            ..
+        } => canonical_subring_challenges.clone(),
+        RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
+    };
+    let trace_point = RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
+        position_weights: vec![F::zero(); fixture.params.num_positions_per_block],
+        live_block_weights: vec![F::zero(); fixture.params.num_live_blocks],
+    });
+    let trace_relation = RingRelationInstance::new(
+        vec![RingRelationGroupOpening::evaluation_trace(
+            canonical_challenges,
+            trace_point,
+        )],
+        fixture.relation.extension_degree(),
+        fixture.opening_batch.clone(),
+        fixture.relation.gamma().to_vec(),
+        fixture.relation.row_coefficient_rings().clone(),
+        fixture.relation.rhs().clone(),
+        fixture.relation.v().clone(),
+        fixture.relation.role_dims(),
+    )
+    .unwrap();
+    assert!(
+        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &trace_relation,
+            group_index: 0,
+            prepared_point: &fixture.prepared_point,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        })
+        .is_err()
+    );
+
+    match fixture.relation.group_opening_view(0).unwrap() {
+        RingRelationGroupOpeningView::SubringCoefficientPacking { geometry, .. } => {
+            assert_eq!(geometry.partial_base_field_width(), 128);
+        }
+        RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
+    }
+
+    for mutate in [
+        |params: &mut CommittedGroupParams| params.log_basis_open = 128,
+        |params: &mut CommittedGroupParams| params.log_basis_inner = 128,
+    ] {
+        let mut malformed = fixture.params.clone();
+        mutate(&mut malformed);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+                level_params: &malformed,
+                opening_batch: &fixture.opening_batch,
+                relation_plan: &fixture.relation_plan,
+                relation: &fixture.relation,
+                group_index: 0,
+                prepared_point: &fixture.prepared_point,
+                alpha: E::from_u64(3),
+                tau1: &fixture.tau1,
+                claim_coefficients: &fixture.claim_coefficients,
+            })
+        }));
+        assert!(matches!(outcome, Ok(Err(_))));
+    }
+}
+
+#[test]
+fn structured_stage2_terms_match_independent_dense_tables() {
+    type F4 = Prime32Offset99;
+    type E4 = FpExt4<F4>;
+
+    let fixture = fixture::<F4, E4>(
+        SisModulusProfileId::Q32Offset99,
+        1024,
+        128,
+        64,
+        6,
+        4,
+        13,
+        2,
+        2,
+    );
+    let alpha = E4::from_u64(41);
+    let semantics = prepare(&fixture, alpha);
+    let terms = semantics.stage2_terms();
+    let direct_got =
+        materialize_stage2_source(terms, CoefficientPackingStage2Source::DirectOpening);
+    let packing_z_got = materialize_stage2_source(terms, CoefficientPackingStage2Source::PackingZ);
+    let mut direct_expected = vec![E4::zero(); terms.physical_field_len()];
+    let mut packing_z_expected = vec![E4::zero(); terms.physical_field_len()];
+
+    let geometry = semantics.geometry();
+    assert_eq!(geometry.extension_degree(), 4);
+    assert_eq!(geometry.packing_factor(), 4);
+    assert_eq!(fixture.prepared_point.num_live_blocks(), 2);
+    assert_eq!(
+        fixture
+            .relation_plan
+            .witness_layout()
+            .units_for_group(0)
+            .unwrap()
+            .count(),
+        2
+    );
+    let basis = canonical_extension_basis::<F4, E4>(4).unwrap();
+    let opening_gadget = gadget_row_scalars::<F4>(
+        fixture.params.num_digits_open,
+        fixture.params.log_basis_open,
+    );
+    let witness_gadget = gadget_row_scalars::<F4>(
+        fixture.params.num_digits_inner,
+        fixture.params.log_basis_inner,
+    );
+    let fold_gadget = gadget_row_scalars::<F4>(
+        fixture.params.num_digits_fold,
+        fixture.params.log_basis_open,
+    );
+    let consistency_weight = relation_row_weight(
+        fixture.relation_plan.consistency_row_index(0).unwrap(),
+        &fixture.tau1,
+    )
+    .unwrap();
+    let scalar_weight = relation_row_weight(
+        fixture.relation_plan.scalar_opening_row_index().unwrap(),
+        &fixture.tau1,
+    )
+    .unwrap();
+    let d_d = fixture.params.role_dims().d_d();
+    let s = geometry.challenge_subring_dimension();
+    let kh = geometry.subring_embedding_stride();
+    let alpha_powers = scalar_powers(alpha, s);
+    let units = fixture
+        .relation_plan
+        .witness_layout()
+        .units_for_group(0)
+        .unwrap()
+        .collect::<Vec<_>>();
+
+    for claim in 0..fixture.opening_batch.num_total_polynomials() {
+        for unit in &units {
+            for block in unit.global_block_range() {
+                let block_weight = fixture.prepared_point.live_block_weights()[block];
+                for (digit, &gadget) in opening_gadget.iter().enumerate() {
+                    for (plane, &basis_element) in basis.iter().enumerate() {
+                        for (coefficient, &tail_weight) in
+                            fixture.prepared_point.tail_weights().iter().enumerate()
+                        {
+                            let flat = plane * s + coefficient;
+                            let physical = unit
+                                .e_coefficient_index(
+                                    d_d,
+                                    fixture.opening_batch.num_total_polynomials(),
+                                    fixture.params.num_digits_open,
+                                    claim,
+                                    block,
+                                    flat / d_d,
+                                    digit,
+                                    flat % d_d,
+                                )
+                                .unwrap();
+                            direct_expected[physical] += scalar_weight
+                                * fixture.claim_coefficients[claim]
+                                * block_weight
+                                * E4::lift_base(gadget)
+                                * basis_element
+                                * tail_weight;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for unit in &units {
+        for (position, &position_weight) in
+            fixture.prepared_point.position_weights().iter().enumerate()
+        {
+            for (witness_digit, &witness_weight) in witness_gadget.iter().enumerate() {
+                for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
+                    let factor = -(consistency_weight
+                        * position_weight
+                        * E4::lift_base(witness_weight)
+                        * E4::lift_base(fold_weight));
+                    for coefficient in 0..geometry.a_ring_dimension() {
+                        let low_index = coefficient % kh;
+                        let subring_index = coefficient / kh;
+                        let source_weight = fixture.prepared_point.packing_weights()[low_index]
+                            * alpha_powers[subring_index];
+                        let physical = unit
+                            .z_coefficient_index(
+                                geometry.a_ring_dimension(),
+                                fixture.params.num_positions_per_block,
+                                fixture.params.num_digits_inner,
+                                fixture.params.num_digits_fold,
+                                position,
+                                witness_digit,
+                                fold_digit,
+                                coefficient,
+                            )
+                            .unwrap();
+                        packing_z_expected[physical] += factor * source_weight;
+                    }
+                }
+            }
+        }
+    }
+
+    assert_eq!(direct_got, direct_expected);
+    assert_eq!(packing_z_got, packing_z_expected);
+    assert_eq!(
+        direct_got
+            .iter()
+            .zip(&packing_z_got)
+            .map(|(&direct, &packing_z)| direct + packing_z)
+            .collect::<Vec<_>>(),
+        direct_expected
+            .iter()
+            .zip(&packing_z_expected)
+            .map(|(&direct, &packing_z)| direct + packing_z)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn public_rhs_accepts_zero_packing_consistency_and_rejects_nonzero_payload() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        1,
+    );
+    let layout = fixture
+        .relation_plan
+        .relation_witness_geometry()
+        .rhs_layout();
+    assert_eq!(
+        relation_claim_from_compressed_rhs_extension::<F, E>(
+            layout,
+            &fixture.tau1,
+            E::from_u64(23),
+            fixture.relation.rhs(),
+        )
+        .unwrap(),
+        E::zero()
+    );
+    let mut malformed = fixture.relation.rhs().coeffs().to_vec();
+    malformed[0] = F::one();
+    assert!(relation_claim_from_compressed_rhs_extension::<F, E>(
+        layout,
+        &fixture.tau1,
+        E::from_u64(23),
+        &RingVec::from_coeffs(malformed),
+    )
+    .is_err());
+
+    let alpha = E::from_u64(29);
+    let families = layout.row_families().unwrap();
+    let mut native_rhs = vec![F::zero(); relation_rhs_coeff_len(layout).unwrap()];
+    let mut expected = E::zero();
+    let mut offset = 0usize;
+    for (row_index, family) in families.into_iter().enumerate() {
+        let geometry = family.geometry();
+        if matches!(
+            family,
+            RelationRowFamily::Outer { .. } | RelationRowFamily::Opening { .. }
+        ) {
+            let coefficient = 3.min(geometry.polynomial_modulus_dimension() - 1);
+            let value = F::from_u64((row_index + 2) as u64);
+            native_rhs[offset + coefficient] = value;
+            expected += relation_row_weight(row_index, &fixture.tau1).unwrap()
+                * scalar_powers(alpha, geometry.polynomial_modulus_dimension())[coefficient]
+                * E::lift_base(value);
+        }
+        offset += geometry.physical_coefficient_width();
+    }
+    assert_eq!(
+        relation_claim_from_compressed_rhs_extension::<F, E>(
+            layout,
+            &fixture.tau1,
+            alpha,
+            &RingVec::from_coeffs(native_rhs),
+        )
+        .unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn alpha_and_role_dimensions_are_bound_by_the_shared_plan() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        1,
+    );
+    let at_zero = prepare(&fixture, E::zero());
+    let at_one = prepare(&fixture, E::one());
+    assert_eq!(
+        at_zero.relation_events().alpha_powers(),
+        scalar_powers(E::zero(), 64)
+    );
+    assert_eq!(
+        at_one.relation_events().alpha_powers(),
+        scalar_powers(E::one(), 64)
+    );
+    assert_ne!(
+        materialize_events(at_zero.relation_events()),
+        materialize_events(at_one.relation_events())
+    );
+
+    let wrong_relation = RingRelationInstance::new(
+        fixture.relation.group_openings().to_vec(),
+        fixture.relation.extension_degree(),
+        fixture.opening_batch.clone(),
+        fixture.relation.gamma().to_vec(),
+        fixture.relation.row_coefficient_rings().clone(),
+        fixture.relation.rhs().clone(),
+        RingVec::from_coeffs(Vec::new()),
+        CommitmentRingDims {
+            inner: fixture.params.role_dims().d_a(),
+            outer: fixture.params.role_dims().d_b(),
+            opening: 64,
+        },
+    )
+    .unwrap();
+    assert!(
+        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+            level_params: &fixture.params,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &wrong_relation,
+            group_index: 0,
+            prepared_point: &fixture.prepared_point,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        })
+        .is_err()
+    );
+
+    let mut unsupported = fixture.params.clone();
+    let inner = unsupported.inner_commit_matrix;
+    unsupported.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().unwrap().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        inner.coeff_linf_bound().unwrap_or(0),
+        1usize << 20,
+    );
+    assert!(
+        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+            level_params: &unsupported,
+            opening_batch: &fixture.opening_batch,
+            relation_plan: &fixture.relation_plan,
+            relation: &fixture.relation,
+            group_index: 0,
+            prepared_point: &fixture.prepared_point,
+            alpha: E::from_u64(3),
+            tau1: &fixture.tau1,
+            claim_coefficients: &fixture.claim_coefficients,
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn production_extension_degrees_include_exact_overlap_and_h_greater_than_one() {
+    type F1 = Prime128OffsetA7F7;
+    let overlap = fixture::<F1, F1>(
+        SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        64,
+        64,
+        1,
+        1,
+        6,
+        1,
+        1,
+    );
+    let overlap_semantics = prepare(&overlap, F1::from_u64(29));
+    assert_eq!(overlap_semantics.geometry().extension_degree(), 1);
+    assert_eq!(overlap_semantics.geometry().packing_factor(), 1);
+    assert_eq!(
+        overlap_semantics.geometry().partial_base_field_width(),
+        overlap.params.role_dims().d_a()
+    );
+    assert!(matches!(
+        overlap.relation.group_opening_view(0).unwrap(),
+        RingRelationGroupOpeningView::SubringCoefficientPacking { .. }
+    ));
+
+    type F4 = Prime32Offset99;
+    type E4 = FpExt4<F4>;
+    let four_planes = fixture::<F4, E4>(
+        SisModulusProfileId::Q32Offset99,
+        1024,
+        128,
+        64,
+        2,
+        2,
+        11,
+        1,
+        1,
+    );
+    let four_plane_semantics = prepare(&four_planes, E4::from_u64(31));
+    assert_eq!(four_plane_semantics.geometry().extension_degree(), 4);
+    assert_eq!(four_plane_semantics.geometry().packing_factor(), 4);
+    let q_events = four_planes.relation_plan.witness_layout().quotient_depth() * 4;
+    let events = four_plane_semantics.relation_events().events();
+    for event in &events[events.len() - q_events..] {
+        assert_eq!(event.physical_coefficients().len(), 64);
+        assert_eq!(event.alpha_exponent_start(), 0);
+    }
+}
+
+#[test]
+fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
+    let base = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        1,
+    );
+    let mut params = base.params.clone();
+    let mut frozen = params.with_decomp(4, 8, 2, 2, 2).unwrap();
+    frozen.precommitted_groups.clear();
+    frozen.log_basis_inner = 9;
+    let inner = frozen.inner_commit_matrix;
+    frozen.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().unwrap().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        2,
+        inner.ring_dimension(),
+    );
+    let outer = frozen.outer_commit_matrix;
+    frozen.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width(),
+        3,
+        outer.ring_dimension(),
+    );
+    let pre_layout = PolynomialGroupLayout::new(11, 1);
+    params.precommitted_groups = vec![PrecommittedLevelParams {
+        layout: CommittedGroupProfile::from_params(pre_layout, &frozen),
+        opening: GroupOpeningPlan {
+            opening_method: OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            },
+            fold_challenge_config: params.fold_challenge_config,
+            log_basis_open: params.log_basis_open,
+            num_digits_open: params.num_digits_open,
+            num_digits_fold: params.num_digits_fold(),
+        },
+    }];
+    let final_layout = PolynomialGroupLayout::new(11, 2);
+    let opening_batch = OpeningClaimsLayout::from_root_groups(&[pre_layout], final_layout).unwrap();
+    let relation_geometry = RelationWitnessGeometry::for_level(&params, &opening_batch, 2).unwrap();
+    let witness_layout = WitnessLayout::new(
+        &params,
+        &opening_batch,
+        &relation_geometry,
+        params.witness_chunk.num_chunks,
+        r_decomp_levels::<F>(params.log_basis_open),
+    )
+    .unwrap();
+    let relation_address = RelationAddressGeometry::for_relation(
+        &relation_geometry,
+        params.role_dims().d_d(),
+        witness_layout.live_coeff_len(),
+    )
+    .unwrap();
+    let relation_plan = RelationRangeImagePlan::new(
+        relation_geometry.clone(),
+        relation_address,
+        DigitRangePlan::new(4).unwrap(),
+        witness_layout,
+        &opening_batch,
+    )
+    .unwrap();
+    assert_eq!(
+        relation_plan
+            .groups()
+            .iter()
+            .map(|group| group.group_index())
+            .collect::<Vec<_>>(),
+        vec![1, 0]
+    );
+
+    let config = params.fold_challenge_config;
+    let make_challenges = |claims: usize| {
+        Challenges::from_sparse(
+            (0..claims * params.num_live_blocks)
+                .map(|challenge| SparseChallenge {
+                    positions: (0..config.weight())
+                        .map(|term| ((term + challenge) % 64) as u32)
+                        .collect(),
+                    coeffs: (0..config.count_pm1)
+                        .map(|_| 1)
+                        .chain((0..config.count_pm2).map(|_| 2))
+                        .collect(),
+                })
+                .collect(),
+            params.num_live_blocks,
+            claims,
+        )
+        .unwrap()
+    };
+    let geometry = SubringCoefficientPackingGeometry::try_new(2, 256, 64).unwrap();
+    let openings = vec![
+        RingRelationGroupOpening::subring_coefficient_packing(geometry, make_challenges(1))
+            .unwrap(),
+        RingRelationGroupOpening::subring_coefficient_packing(geometry, make_challenges(2))
+            .unwrap(),
+    ];
+    let total_claims = opening_batch.num_total_polynomials();
+    let gamma = (0..total_claims)
+        .map(|claim| F::from_u64((claim + 2) as u64))
+        .collect::<Vec<_>>();
+    let mut row_coefficients = vec![F::zero(); total_claims * 256];
+    for (claim, &coefficient) in gamma.iter().enumerate() {
+        row_coefficients[claim * 256] = coefficient;
+    }
+    let relation = RingRelationInstance::new(
+        openings,
+        2,
+        opening_batch.clone(),
+        gamma,
+        RingVec::from_coeffs_with_ring_dim(row_coefficients, 256).unwrap(),
+        RingVec::from_coeffs(vec![
+            F::zero();
+            relation_rhs_coeff_len(relation_geometry.rhs_layout())
+                .unwrap()
+        ]),
+        RingVec::from_coeffs(Vec::new()),
+        params.role_dims(),
+    )
+    .unwrap();
+    let claim_coefficients = (0..total_claims)
+        .map(|claim| E::from_u64((claim + 11) as u64))
+        .collect::<Vec<_>>();
+    let tau1 = vec![E::from_u64(7); relation_plan.relation_row_index_num_vars().unwrap()];
+    for group in relation_plan.groups() {
+        let group_index = group.group_index();
+        let group_layout = opening_batch.group_layout(group_index).unwrap();
+        let group_params = params
+            .group_params_geometry(&opening_batch, group_index)
+            .unwrap();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            group_params.num_live_ring_elements_per_claim(),
+            group_params.num_positions_per_block(),
+            group_layout.num_vars(),
+            &vec![E::from_u64(5 + group_index as u64); group_layout.num_vars()],
+        )
+        .unwrap();
+        let semantics =
+            prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
+                level_params: &params,
+                opening_batch: &opening_batch,
+                relation_plan: &relation_plan,
+                relation: &relation,
+                group_index,
+                prepared_point: &point,
+                alpha: E::from_u64(37),
+                tau1: &tau1,
+                claim_coefficients: &claim_coefficients,
+            })
+            .unwrap();
+        assert_eq!(semantics.group_index(), group_index);
+        assert_eq!(
+            semantics.stage2_terms().group_claim_range(),
+            group.claim_range()
+        );
+        if group_index == 0 {
+            assert_eq!(group_params.log_basis_inner(), 9);
+        }
+    }
+}
