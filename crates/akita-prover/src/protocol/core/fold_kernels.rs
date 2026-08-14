@@ -152,7 +152,7 @@ where
         });
     }
     if reduction.as_ref().is_some_and(|reduction| {
-        reduction.final_claims.len() != opening_batch.num_total_polynomials()
+        reduction.proof.final_claims.len() != opening_batch.num_total_polynomials()
             || reduction.final_factors.len() != opening_batch.num_groups()
     }) {
         return Err(AkitaError::InvalidProof);
@@ -214,6 +214,7 @@ where
         || expected_trace_eval_target,
         |reduction| {
             reduction
+                .proof
                 .final_claims
                 .iter()
                 .zip(&row_coefficients)
@@ -324,7 +325,7 @@ where
         });
     }
     if reduction.as_ref().is_some_and(|reduction| {
-        reduction.final_claims.len() != opening_batch.num_total_polynomials()
+        reduction.proof.final_claims.len() != opening_batch.num_total_polynomials()
             || reduction.final_factors.len() != opening_batch.num_groups()
     }) {
         return Err(AkitaError::InvalidProof);
@@ -350,6 +351,7 @@ where
         || expected_trace_eval_target,
         |reduction| {
             reduction
+                .proof
                 .final_claims
                 .iter()
                 .zip(&row_coefficients)

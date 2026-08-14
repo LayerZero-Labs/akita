@@ -558,11 +558,11 @@ mod tests {
         let reduction = Some(ExtensionOpeningReduction {
             proof: ExtensionOpeningReductionProof {
                 partials: Vec::new(),
-                sumcheck: akita_sumcheck::SharedChallengeSumcheckProof {
+                sumcheck: akita_sumcheck::SumcheckProof {
                     round_polys: Vec::new(),
                 },
+                final_claims: vec![TestF::one()],
             },
-            final_claims: vec![TestF::one()],
             final_factors: vec![TestF::one()],
         });
 
@@ -582,5 +582,34 @@ mod tests {
             matches!(err, AkitaError::InvalidProof),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn late_application_batch_rejects_beta_orthogonal_terminal_error() {
+        let openings = [TestF::zero(), TestF::zero()];
+        // This error vector cancels under the possible early batch (1, 1).
+        // The independent application batch must still reject it.
+        let reduction = Some(ExtensionOpeningReduction {
+            proof: ExtensionOpeningReductionProof {
+                partials: Vec::new(),
+                sumcheck: akita_sumcheck::SumcheckProof {
+                    round_polys: Vec::new(),
+                },
+                final_claims: vec![TestF::one(), -TestF::one()],
+            },
+            final_factors: vec![TestF::one()],
+        });
+
+        let opening_batch = OpeningClaimsLayout::new(0, 2).expect("two-claim opening batch");
+        let mut transcript =
+            AkitaTranscript::<TestF>::new(b"test/suffix-independent-late-eor-batch");
+        let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
+            &reduction,
+            &openings,
+            &opening_batch,
+            &mut transcript,
+        );
+
+        assert!(matches!(result, Err(AkitaError::InvalidProof)));
     }
 }

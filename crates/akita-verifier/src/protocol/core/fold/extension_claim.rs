@@ -147,16 +147,37 @@ where
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
     let input_claims = eor_input_claims_from_partials::<F, E>(&reduction.partials, shape, &eta)?;
-    if input_claims.len() != num_claims {
+    if input_claims.len() != num_claims || reduction.final_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let (final_claims, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
-        &input_claims,
+    let claim_coefficients =
+        sample_row_coefficients::<F, E, T>(opening_batch, CHALLENGE_EOR_CLAIM_BATCH, transcript)?;
+    let batched_input_claim = input_claims
+        .iter()
+        .zip(&claim_coefficients)
+        .fold(E::zero(), |acc, (&claim, &coefficient)| {
+            acc + coefficient * claim
+        });
+    let (batched_final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
+        batched_input_claim,
         shape.num_rounds,
         &reduction.sumcheck,
         transcript,
         |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
     )?;
+    let expected_batched_final = reduction
+        .final_claims
+        .iter()
+        .zip(&claim_coefficients)
+        .fold(E::zero(), |acc, (&claim, &coefficient)| {
+            acc + coefficient * claim
+        });
+    if batched_final_claim != expected_batched_final {
+        return Err(AkitaError::InvalidProof);
+    }
+    for final_claim in &reduction.final_claims {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EOR_FINAL_CLAIM, final_claim);
+    }
     let mut final_factors = Vec::with_capacity(group_points.len());
     for group_point in group_points {
         let tail_point = group_point
@@ -176,7 +197,7 @@ where
     }
     Ok(Some(EorSumcheckReplay {
         rho,
-        final_claims,
+        final_claims: reduction.final_claims.clone(),
         final_factors,
     }))
 }
@@ -350,8 +371,8 @@ where
 }
 
 /// Extension-claim root prefix: per-group point width checks, direct
-/// preparation at gate-off roots, and one shared-challenge EOR vector at
-/// gate-on roots. Payload presence is enforced exactly against the per-level
+/// preparation at gate-off roots, and one batched EOR sumcheck at gate-on
+/// roots. Payload presence is enforced exactly against the per-level
 /// predicate inside `verify_eor_sumcheck`.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
@@ -445,8 +466,8 @@ where
     })
 }
 
-/// Terminal-suffix extension-claim prefix: one shared-challenge EOR replay over
-/// the recursive opening group, then the prepared points are absorbed.
+/// Terminal-suffix extension-claim prefix: one batched EOR replay over the
+/// recursive opening group, then the prepared points are absorbed.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
@@ -494,8 +515,8 @@ where
     })
 }
 
-/// Recursive-suffix extension-claim prefix: one shared-challenge EOR replay
-/// over the suffix opening groups. Application claim batching remains pending
+/// Recursive-suffix extension-claim prefix: one batched EOR replay over the
+/// suffix opening groups. Application claim batching remains pending
 /// until the opening payload is absorbed.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
@@ -544,7 +565,7 @@ mod tests {
     use super::*;
     use akita_algebra::CompressedUniPoly;
     use akita_field::{FpExt4, Prime32Offset99};
-    use akita_sumcheck::SharedChallengeSumcheckProof;
+    use akita_sumcheck::SumcheckProof;
     use akita_transcript::AkitaTranscript;
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
 
@@ -584,21 +605,17 @@ mod tests {
         let max_tail_rounds = WITNESS_VARS - split_bits;
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
-            sumcheck: SharedChallengeSumcheckProof {
+            sumcheck: SumcheckProof {
                 round_polys: (0..max_tail_rounds)
-                    .map(|_| {
-                        vec![
-                            CompressedUniPoly {
-                                coeffs_except_linear_term: vec![
-                                    E::zero();
-                                    EXTENSION_OPENING_REDUCTION_DEGREE
-                                ],
-                            };
-                            opening_batch.num_total_polynomials()
-                        ]
+                    .map(|_| CompressedUniPoly {
+                        coeffs_except_linear_term: vec![
+                            E::zero();
+                            EXTENSION_OPENING_REDUCTION_DEGREE
+                        ],
                     })
                     .collect(),
             },
+            final_claims: vec![E::zero(); opening_batch.num_total_polynomials()],
         };
 
         let mut transcript = AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
@@ -615,12 +632,12 @@ mod tests {
         assert_eq!(replay.rho.len(), max_tail_rounds);
         assert_eq!(replay.final_factors.len(), 2);
 
-        let mut missing_claim_round = reduction.clone();
-        missing_claim_round.sumcheck.round_polys[0].pop();
+        let mut missing_final_claim = reduction.clone();
+        missing_final_claim.final_claims.pop();
         let mut missing_claim_transcript =
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
         let missing_claim_result = verify_eor_sumcheck::<F, E, _>(
-            Some(&missing_claim_round),
+            Some(&missing_final_claim),
             &group_point_refs,
             &openings,
             &opening_batch,
@@ -628,8 +645,8 @@ mod tests {
             &mut missing_claim_transcript,
         );
         assert!(
-            matches!(missing_claim_result, Err(AkitaError::InvalidSize { .. })),
-            "every shared-challenge round must contain every opening claim"
+            matches!(missing_claim_result, Err(AkitaError::InvalidProof)),
+            "the explicit terminal vector must contain every opening claim"
         );
 
         let mut tampered = reduction.clone();
@@ -677,18 +694,17 @@ mod tests {
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
         let reduction = ExtensionOpeningReductionProof {
             partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
-            sumcheck: SharedChallengeSumcheckProof {
+            sumcheck: SumcheckProof {
                 round_polys: (0..NUM_VARS - split_bits)
-                    .map(|_| {
-                        vec![CompressedUniPoly {
-                            coeffs_except_linear_term: vec![
-                                E::zero();
-                                EXTENSION_OPENING_REDUCTION_DEGREE
-                            ],
-                        }]
+                    .map(|_| CompressedUniPoly {
+                        coeffs_except_linear_term: vec![
+                            E::zero();
+                            EXTENSION_OPENING_REDUCTION_DEGREE
+                        ],
                     })
                     .collect(),
             },
+            final_claims: vec![E::zero()],
         };
 
         // Honest gate-off level: no payload, predicate off, replay is a no-op.

@@ -16,6 +16,9 @@ where
         reduction
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
+        for final_claim in &reduction.final_claims {
+            final_claim.serialize_with_mode(&mut writer, compress)?;
+        }
     }
     Ok(())
 }
@@ -34,6 +37,11 @@ where
             .map(|partial| partial.serialized_size(compress))
             .sum::<usize>()
             + { reduction.sumcheck.serialized_size(compress) }
+            + reduction
+                .final_claims
+                .iter()
+                .map(|claim| claim.serialized_size(compress))
+                .sum::<usize>()
     })
 }
 
@@ -61,13 +69,23 @@ where
             &(),
         )?);
     }
-    let sumcheck = SharedChallengeSumcheckProof::deserialize_with_mode(
-        &mut reader,
-        compress,
-        validate,
-        &shape.sumcheck,
-    )?;
-    Ok(Some(ExtensionOpeningReductionProof { partials, sumcheck }))
+    let sumcheck =
+        SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
+    let mut final_claims = Vec::new();
+    reserve_shape_len(&mut final_claims, shape.final_claims)?;
+    for _ in 0..shape.final_claims {
+        final_claims.push(E::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?);
+    }
+    Ok(Some(ExtensionOpeningReductionProof {
+        partials,
+        sumcheck,
+        final_claims,
+    }))
 }
 
 /// Reject EOR payloads when the claim field coincides with the coefficient field.

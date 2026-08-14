@@ -40,11 +40,10 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
 
 /// Header-stripped byte size of an extension-opening reduction proof.
 ///
-/// The reduction proof serializes `partials` challenge-field elements followed
-/// by one fixed degree-two sumcheck round polynomial per opening claim over
-/// `opening_vars - log2(extension_width)` rounds. All claims share each round
-/// challenge. `extension_width = 1` means the claim field is already the base
-/// field and contributes zero bytes.
+/// The reduction proof serializes `partials` challenge-field elements, one
+/// fixed degree-two sumcheck over all opening claims, and one terminal claim
+/// handle per opening. `extension_width = 1` means the claim field is already
+/// the base field and contributes zero bytes.
 ///
 /// # Errors
 ///
@@ -78,10 +77,14 @@ pub fn extension_opening_reduction_proof_bytes(
         )));
     }
     let num_claims = partials / extension_width;
-    Ok(partials.saturating_mul(elem_bytes).saturating_add(
-        sumcheck_bytes(rounds, EXTENSION_OPENING_REDUCTION_DEGREE, elem_bytes)
-            .saturating_mul(num_claims),
-    ))
+    Ok(partials
+        .saturating_mul(elem_bytes)
+        .saturating_add(sumcheck_bytes(
+            rounds,
+            EXTENSION_OPENING_REDUCTION_DEGREE,
+            elem_bytes,
+        ))
+        .saturating_add(num_claims.saturating_mul(elem_bytes)))
 }
 
 /// Log2 of the next power-of-two Boolean cube width for recursive opening.
@@ -350,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_vector_eor_prices_each_claim_at_the_widest_group_arity() {
+    fn recursive_batched_eor_prices_one_sumcheck_and_each_terminal_claim() {
         let bytes = extension_opening_reduction_level_bytes(
             128,
             4,
@@ -363,7 +366,8 @@ mod tests {
 
         let elem_bytes = field_bytes(128);
         let partial_bytes = 4 * 2 * elem_bytes;
-        let sumcheck_bytes = (12 - 2) * EXTENSION_OPENING_REDUCTION_DEGREE * 2 * elem_bytes;
-        assert_eq!(bytes, partial_bytes + sumcheck_bytes);
+        let sumcheck_bytes = (12 - 2) * EXTENSION_OPENING_REDUCTION_DEGREE * elem_bytes;
+        let terminal_claim_bytes = 2 * elem_bytes;
+        assert_eq!(bytes, partial_bytes + sumcheck_bytes + terminal_claim_bytes);
     }
 }

@@ -1,7 +1,7 @@
 //! Standard sumcheck transcript drivers.
 
 use crate::traits::{SumcheckInstanceProver, SumcheckInstanceVerifier};
-use crate::types::{SharedChallengeSumcheckProof, SumcheckProof};
+use crate::types::SumcheckProof;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
@@ -95,93 +95,6 @@ where
     E: FieldCore,
     Inst: SumcheckInstanceProver<E>,
 {
-}
-
-/// Output of a shared-challenge vector sumcheck prover.
-pub struct SharedChallengeSumcheckProverOutput<E: FieldCore> {
-    /// Round-major proof messages.
-    pub proof: SharedChallengeSumcheckProof<E>,
-    /// Challenge point shared by every claim.
-    pub challenges: Vec<E>,
-    /// One final running claim per input claim.
-    pub final_claims: Vec<E>,
-}
-
-/// Prove several sumcheck instances with one challenge per round.
-///
-/// Every claim remains independent. The prover emits and absorbs all claim
-/// polynomials for a round before sampling the challenge shared by that round.
-pub fn prove_shared_challenge_sumcheck<F, T, E, P, S>(
-    provers: &mut [P],
-    transcript: &mut T,
-    mut sample_challenge: S,
-) -> Result<SharedChallengeSumcheckProverOutput<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-    E: FieldCore + AkitaSerialize,
-    P: SumcheckInstanceProver<E>,
-    S: FnMut(&mut T) -> E,
-{
-    let first = provers.first().ok_or_else(|| {
-        AkitaError::InvalidInput(
-            "shared-challenge sumcheck requires at least one claim".to_string(),
-        )
-    })?;
-    let num_rounds = first.num_rounds();
-    let degree_bound = first.degree_bound();
-    if provers
-        .iter()
-        .any(|prover| prover.num_rounds() != num_rounds || prover.degree_bound() != degree_bound)
-    {
-        return Err(AkitaError::InvalidInput(
-            "shared-challenge sumcheck instances must have equal shapes".to_string(),
-        ));
-    }
-
-    let mut claims = provers
-        .iter()
-        .map(SumcheckInstanceProver::input_claim)
-        .collect::<Vec<_>>();
-    for claim in &claims {
-        transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, claim);
-    }
-    let mut rounds = Vec::with_capacity(num_rounds);
-    let mut challenges = Vec::with_capacity(num_rounds);
-    for round_index in 0..num_rounds {
-        let mut round = Vec::with_capacity(provers.len());
-        for (prover, &claim) in provers.iter_mut().zip(&claims) {
-            let poly = prover
-                .compute_round_univariate(round_index, claim)
-                .compress();
-            if poly.degree() > degree_bound {
-                return Err(AkitaError::InvalidInput(format!(
-                    "sumcheck round poly degree {} exceeds bound {}",
-                    poly.degree(),
-                    degree_bound
-                )));
-            }
-            transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &poly);
-            round.push(poly);
-        }
-        let challenge = sample_challenge(transcript);
-        challenges.push(challenge);
-        for ((prover, claim), poly) in provers.iter_mut().zip(&mut claims).zip(&round) {
-            *claim = poly.eval_from_hint(claim, &challenge);
-            prover.ingest_challenge(round_index, challenge);
-        }
-        rounds.push(round);
-    }
-    for prover in provers {
-        prover.finalize();
-    }
-    Ok(SharedChallengeSumcheckProverOutput {
-        proof: SharedChallengeSumcheckProof {
-            round_polys: rounds,
-        },
-        challenges,
-        final_claims: claims,
-    })
 }
 
 /// Plain extension for standard sumcheck verifiers.

@@ -17,10 +17,9 @@ representatives visible to the hot loop.
 
 ## Multi-group openings
 
-A multi-group root emits one EOR proof with one sumcheck state per opening
-claim. All states use the same challenge in each round. Group `g` and claim
-`i` contribute their own complete public point, native packed witness, and
-transparent factor:
+A multi-group root emits one EOR proof with one ordinary sumcheck. Group `g`
+and claim `i` contribute their own complete public point, native packed
+witness, and transparent factor:
 
 \\[
 A_{\eta,g}(x) W_{g,i}(x).
@@ -28,9 +27,10 @@ A_{\eta,g}(x) W_{g,i}(x).
 
 The public points are independent; equal, nested, and unrelated values use the
 same per-group preparation path.
-The reduction embeds all claims in one maximum-arity Boolean domain. For every
-round, the prover sends one degree-two polynomial per claim. The transcript
-absorbs the complete vector before it samples the shared challenge.
+The reduction embeds all claims in one maximum-arity Boolean domain. After the
+partials and their input claims are fixed, the transcript samples an early
+coefficient vector. The prover linearly combines the claim polynomials with
+those coefficients and sends one degree-two polynomial per round.
 If a group has fewer variables, Akita treats its witness as independent of the
 additional high variables and multiplies it by equality to a fixed zero point
 on those variables.
@@ -42,13 +42,17 @@ to each group's native tail before preparing that group's resulting relation
 point.
 This internal shared reduction challenge is not an ambient public opening point.
 
-The application does not sample its row coefficients before EOR. EOR first
-authenticates every reduced claim and derives the shared relation points. The
-prover then builds the complete opening payload at those points. After the
-transcript absorbs that payload, prover and verifier sample the application row
-coefficients and combine the independently authenticated EOR claims. This order
-prevents errors in separate claims from cancelling under coefficients that the
-prover knew while constructing the payload.
+The proof also carries the unweighted terminal claim for every opening. The
+ordinary sumcheck terminal value must equal their early random combination.
+The transcript absorbs these terminal claims before the prover builds the
+opening payload.
+
+The application uses a second, independent coefficient vector. It samples
+these coefficients only after the complete opening payload is absorbed. Stage
+2 checks the resulting combination of the terminal claims against the
+committed witness relation. The early combination binds the logical EOR input
+claims to the terminal vector. The later combination binds that vector to the
+committed witness.
 
 **Sources to fold in**
 

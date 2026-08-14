@@ -24,12 +24,12 @@ use akita_field::{
     HalvingField, Invertible, LiftBase, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{prove_shared_challenge_sumcheck, SumcheckInstanceProverExt, SumcheckProof};
+use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
-    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
+    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL,
+    ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY,
+    CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_for_field;
@@ -54,10 +54,9 @@ use std::sync::Arc;
 
 pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: FieldCore> {
     pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<E>,
-    /// One final sumcheck claim per opening claim and one transparent-factor
-    /// evaluation per opening group. The application batches these claims only
-    /// after the complete opening payload is fixed.
-    pub(in crate::protocol::core) final_claims: Vec<E>,
+    /// One transparent factor evaluation per opening group. The application
+    /// batches the proof's terminal claims only after the complete opening
+    /// payload is fixed.
     pub(in crate::protocol::core) final_factors: Vec<E>,
 }
 

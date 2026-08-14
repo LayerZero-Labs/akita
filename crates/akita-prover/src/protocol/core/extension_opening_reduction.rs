@@ -4,6 +4,7 @@ use crate::compute::{
     TensorProjectionKernel,
 };
 use akita_field::unreduced::ReduceTo;
+use std::ops::Range;
 
 pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: FieldCore> {
     pub(in crate::protocol::core) reduction: ExtensionOpeningReduction<E>,
@@ -173,8 +174,17 @@ where
         .flat_map(|group| group.row_partials_by_claim.iter())
         .map(|row_partials| tensor_reduction_claim_from_rows::<F, E>(row_partials, &eta))
         .collect::<Result<Vec<_>, _>>()?;
+    let claim_coefficients =
+        sample_row_coefficients::<F, E, T>(&opening_batch, CHALLENGE_EOR_CLAIM_BATCH, transcript)?;
+    let true_input_claim = true_input_claims
+        .iter()
+        .zip(&claim_coefficients)
+        .fold(E::zero(), |acc, (&claim, &coefficient)| {
+            acc + coefficient * claim
+        });
 
-    let mut terms = Vec::with_capacity(num_claims);
+    let mut terms = Vec::new();
+    let mut term_ranges = Vec::<Range<usize>>::with_capacity(group_inputs.len());
     for group_index in 0..group_inputs.len() {
         let claim_range = opening_batch.root_group_claim_range(group_index)?;
         let input = group_inputs
@@ -187,10 +197,13 @@ where
             .ok_or(AkitaError::InvalidProof)?;
         let group_terms = input
             .group
-            .extension_opening_claim_terms(
+            .extension_opening_terms(
                 tensor_backend,
                 tensor_prepared,
                 input.ring_dimension,
+                claim_coefficients
+                    .get(claim_range.clone())
+                    .ok_or(AkitaError::InvalidProof)?,
                 tail_point,
                 &eta,
             )
@@ -199,6 +212,7 @@ where
                     "extension-opening group {group_index} terms failed: {error:?}"
                 ))
             })?;
+        let start = terms.len();
         let expected_domain_len = checked_table_len(max_tail_vars)?;
         for term in group_terms {
             let term = term.extend_cylindrically(vec![E::zero(); extra_vars])?;
@@ -214,33 +228,42 @@ where
         if terms.len() != claim_range.end {
             return Err(AkitaError::InvalidProof);
         }
+        term_ranges.push(start..terms.len());
     }
 
     if terms.len() != num_claims || true_input_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let mut provers = terms
-        .into_iter()
-        .zip(true_input_claims)
-        .map(|(term, true_input_claim)| {
-            let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
-                std::slice::from_ref(&term),
-            )?;
-            if prover_claim != true_input_claim {
-                return Err(AkitaError::InvalidInput(
-                    "extension-opening reduction input claim mismatch".to_string(),
-                ));
-            }
-            ExtensionOpeningReductionProver::new(vec![term], prover_claim)
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    let shared_sumcheck =
-        prove_shared_challenge_sumcheck::<F, T, E, _, _>(&mut provers, transcript, |tr| {
-            sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
-        })?;
-    let sumcheck = shared_sumcheck.proof;
-    let rho = shared_sumcheck.challenges;
-    let final_claims = shared_sumcheck.final_claims;
+    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
+    if prover_claim != true_input_claim {
+        return Err(AkitaError::InvalidInput(
+            "extension-opening reduction input claim mismatch".to_string(),
+        ));
+    }
+    let mut prover = ExtensionOpeningReductionProver::new(terms, prover_claim)?;
+    let (sumcheck, rho, batched_final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
+        sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+    })?;
+    let final_terms = prover.final_terms().ok_or_else(|| {
+        AkitaError::InvalidInput(format!(
+            "{path} extension-opening reduction has not reached a final point"
+        ))
+    })?;
+    let final_claims = final_terms
+        .iter()
+        .map(|(_, witness, factor)| *witness * *factor)
+        .collect::<Vec<_>>();
+    let expected_batched_final = final_claims
+        .iter()
+        .zip(&claim_coefficients)
+        .fold(E::zero(), |acc, (&claim, &coefficient)| {
+            acc + coefficient * claim
+        });
+    if batched_final_claim != expected_batched_final {
+        return Err(AkitaError::InvalidInput(format!(
+            "{path} extension-opening final oracle mismatch"
+        )));
+    }
     let mut final_factors = Vec::with_capacity(group_inputs.len());
     let mut protocol_points = Vec::with_capacity(group_inputs.len());
     for group_index in 0..group_inputs.len() {
@@ -259,16 +282,15 @@ where
         {
             factor *= E::one() - extra_challenge;
         }
-        let claim_range = opening_batch.root_group_claim_range(group_index)?;
-        if provers
-            .get(claim_range)
+        let term_range = term_ranges
+            .get(group_index)
+            .cloned()
+            .ok_or(AkitaError::InvalidProof)?;
+        if final_terms
+            .get(term_range)
             .ok_or(AkitaError::InvalidProof)?
             .iter()
-            .any(|prover| {
-                prover
-                    .final_witness_and_factor_evals()
-                    .is_none_or(|(_, term_factor)| term_factor != factor)
-            })
+            .any(|(_, _, term_factor)| *term_factor != factor)
         {
             return Err(AkitaError::InvalidInput(format!(
                 "{path} extension-opening transparent factor mismatch"
@@ -283,19 +305,8 @@ where
         final_factors.push(factor);
         protocol_points.push(protocol_point);
     }
-    let expected_finals = provers
-        .iter()
-        .map(|prover| {
-            prover
-                .final_witness_and_factor_evals()
-                .map(|(witness, factor)| witness * factor)
-                .ok_or(AkitaError::InvalidProof)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if final_claims != expected_finals {
-        return Err(AkitaError::InvalidInput(format!(
-            "{path} extension-opening final oracle mismatch"
-        )));
+    for final_claim in &final_claims {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EOR_FINAL_CLAIM, final_claim);
     }
 
     Ok(ProvedExtensionOpeningReduction {
@@ -303,18 +314,25 @@ where
             proof: ExtensionOpeningReductionProof {
                 partials: proof_partials,
                 sumcheck,
+                final_claims,
             },
-            final_claims,
             final_factors,
         },
         protocol_points,
     })
 }
 
-pub(in crate::protocol::core) fn build_extension_opening_claim_terms<F, E, P, B, const D: usize>(
+pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
+    F,
+    E,
+    P,
+    B,
+    const D: usize,
+>(
     backend: &B,
     prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
+    claim_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
 ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
@@ -327,15 +345,27 @@ where
         + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
     let _span =
-        tracing::info_span!("extension_opening_claim_terms", num_terms = polys.len()).entered();
+        tracing::info_span!("extension_opening_reduction_terms", num_terms = polys.len()).entered();
+    if polys.len() != claim_coefficients.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: polys.len(),
+            actual: claim_coefficients.len(),
+        });
+    }
     polys
         .iter()
-        .map(|poly| {
+        .zip(claim_coefficients)
+        .map(|(poly, &coefficient)| {
             let witness = {
                 let _s = tracing::info_span!("eor_packed_witness").entered();
                 TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
             };
-            extension_opening_term_from_packed_witness::<F, E>(witness, tail_point, eta, E::one())
+            extension_opening_term_from_packed_witness::<F, E>(
+                witness,
+                tail_point,
+                eta,
+                coefficient,
+            )
         })
         .collect()
 }

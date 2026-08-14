@@ -43,6 +43,10 @@ pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"ak/c/scb";
+/// Challenge for compressing parallel EOR claims into one sumcheck.
+pub const CHALLENGE_EOR_CLAIM_BATCH: &[u8] = b"ak/c/ecb";
+/// Absorb the individual EOR terminal claims before application batching.
+pub const ABSORB_EOR_FINAL_CLAIM: &[u8] = b"ak/a/efc";
 /// Challenge batching the support-restricted negative-binary compression check.
 pub const CHALLENGE_COMPRESSION_BINARY: &[u8] = b"ak/c/cb";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
@@ -101,6 +105,8 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_EOR_CLAIM_BATCH,
+    ABSORB_EOR_FINAL_CLAIM,
     CHALLENGE_COMPRESSION_BINARY,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
     ABSORB_STOP_CONDITION,

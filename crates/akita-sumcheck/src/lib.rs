@@ -23,16 +23,14 @@ pub use batched_sumcheck::{
 };
 pub use compact_fold::CompactPairFoldLut;
 pub use drivers::{
-    advance_eq_factored_claim, check_sumcheck_output_claim, prove_shared_challenge_sumcheck,
-    EqFactoredSumcheckInstanceProverExt, EqFactoredSumcheckInstanceVerifierExt,
-    SharedChallengeSumcheckProverOutput, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
+    advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
+    EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 pub use types::{
-    uniform_shared_challenge_sumcheck_shape, uniform_sumcheck_shape, EqFactoredSumcheckProof,
-    EqFactoredSumcheckProofShape, EqFactoredUniPoly, SharedChallengeSumcheckProof,
-    SharedChallengeSumcheckProofShape, SumcheckProof, SumcheckProofShape,
+    uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
+    EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
 };

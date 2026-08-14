@@ -27,10 +27,10 @@ EOR materialization uses `RootTensorProjectionPoly` plus
 suffix paths use `RecursiveWitnessFlat` / `SuffixWitnessView` with the same
 kernel family.
 
-**Post vector-EOR cutover (#403):** EOR keeps one sumcheck state per opening
-claim and shares only the round challenges. Application row coefficients are
-sampled after the complete opening payload. The proof and shape wire formats
-now encode a round-major vector of claim polynomials.
+**Post EOR batching cutover (#403):** EOR uses one ordinary sumcheck for an
+early random combination of all opening claims and carries the individual
+terminal claims. Application row coefficients are sampled independently after
+the terminal claims and complete opening payload are fixed.
 
 ## Intent
 
@@ -53,9 +53,9 @@ The refactor is implemented in the prover and verifier protocol crates:
 
 ### Invariants
 
-- `ExtensionOpeningReductionProof` stores one round polynomial per opening
-  claim. Every round absorbs the complete claim vector before sampling one
-  shared challenge.
+- `ExtensionOpeningReductionProof` stores one ordinary sumcheck and one
+  unweighted terminal claim per opening. The sumcheck terminal value equals
+  the early random combination of those claims.
 - Every EOR path absorbs logical openings and proof partials, then samples EOR
   η. It does not sample application row coefficients. The shared opening
   payload owner samples those coefficients only after it absorbs the complete
@@ -138,19 +138,19 @@ Additional review checks:
 
 - Search for stale module references to `protocol/flow/root_extension`.
 - Search for root-only EOR materialization paths that bypass `FoldInputPoly`.
-- Confirm every EOR opening batch binds all vector round messages before the
-  shared round challenge, and calls `sample_row_coefficients` only after the
-  complete opening payload.
+- Confirm every EOR opening batch fixes its partials before the early batching
+  challenge, absorbs its terminal claims before the opening payload, and
+  samples application row coefficients only after the complete payload.
 - Confirm terminal witness shape checks still use the segment-aware
   `admits_realized` relation after merging main's tail encoding work.
 
 ### Performance
 
-The vector-EOR cutover increases sumcheck bytes in proportion to the number of
-opening claims. Two performance boundaries matter:
+The EOR batching cutover sends one sumcheck polynomial per round plus one
+terminal field element per opening claim. Two performance boundaries matter:
 
 - **Sparse EOR storage:** one-hot tensor projections must remain sparse so the
-  vector sumcheck does not materialize dense witnesses. Column partials remain
+  batched sumcheck does not materialize dense witnesses. Column partials remain
   batched, while each claim obtains its own packed sparse witness and lazy
   tensor factor.
 - **Fold engine locality:** moving `prove_fold` / `verify_fold` into
@@ -209,12 +209,14 @@ The consolidated path has one EOR lifecycle:
 1. `prove_extension_opening_reduction` pads the logical opening point and
    derives tensor column partials. Every path then absorbs logical openings and
    proof partials, and samples EOR η.
-2. `build_extension_opening_claim_terms` builds one sparse or dense term
+2. `build_extension_opening_reduction_terms` builds one sparse or dense term
    for every opening claim.
-3. The shared-challenge vector sumcheck proves every claim recurrence and
-   returns the common challenge point used by the ordinary fold relation.
-4. The ring relation fixes and absorbs the complete opening payload, then
-   samples application row coefficients and combines the EOR final claims.
+3. An early random linear combination compresses those parallel terms into one
+   ordinary sumcheck. The proof carries each unweighted terminal claim at the
+   common challenge point.
+4. The transcript absorbs the terminal claims. The ring relation then fixes
+   and absorbs the complete opening payload before it samples independent
+   application row coefficients and combines the same terminal claims.
 5. Root fold preparation transforms the committed polynomials with
    `tensor_packed_extension_fold_input` and then treats those transformed values
    as ordinary fold inputs.

@@ -91,7 +91,7 @@ fn extension_opening_reduction_shares_challenges_across_groups() {
 
     assert_eq!(proved.protocol_points.len(), 2);
     assert_eq!(proved.reduction.final_factors.len(), 2);
-    assert_eq!(proved.reduction.final_claims.len(), 2);
+    assert_eq!(proved.reduction.proof.final_claims.len(), 2);
     assert_eq!(proved.reduction.proof.num_rounds(), long_point.len() - 1);
 }
 

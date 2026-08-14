@@ -120,7 +120,7 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
 fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let (verifier_setup, commitment, mut proof, opening_point, opening, _) =
         make_verify_fixture(16);
-    let dummy_sumcheck = akita_sumcheck::SharedChallengeSumcheckProof {
+    let dummy_sumcheck = akita_sumcheck::SumcheckProof {
         round_polys: proof
             .root
             .stage2
@@ -128,12 +128,12 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
             .round_polys
             .iter()
             .cloned()
-            .map(|poly| vec![poly])
             .collect(),
     };
     proof.root.extension_opening_reduction = Some(ExtensionOpeningReductionProof {
         partials: vec![F::zero()],
         sumcheck: dummy_sumcheck,
+        final_claims: vec![F::zero()],
     });
 
     let openings = [opening];

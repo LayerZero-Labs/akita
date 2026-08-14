@@ -765,6 +765,59 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
                 common::assert_claim_batching_follows_opening_payload(&prover_events) > 0,
                 "multi-claim EOR must batch claims after the opening payload"
             );
+            let event_index = |label: &[u8]| {
+                prover_events
+                    .iter()
+                    .position(|event| {
+                        common::event_label(event).is_some_and(|candidate| {
+                            common::is_label_or_extension_limb(candidate, label)
+                        })
+                    })
+                    .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
+            };
+            let beta = event_index(akita_transcript::labels::CHALLENGE_EOR_CLAIM_BATCH);
+            let eta = prover_events[..beta]
+                .iter()
+                .rposition(|event| {
+                    common::event_label(event).is_some_and(|candidate| {
+                        common::is_label_or_extension_limb(
+                            candidate,
+                            akita_transcript::labels::CHALLENGE_SUMCHECK_BATCH,
+                        )
+                    })
+                })
+                .expect("EOR eta must precede claim batching");
+            let event_index_after = |start: usize, label: &[u8]| {
+                prover_events[start..]
+                    .iter()
+                    .position(|event| {
+                        common::event_label(event).is_some_and(|candidate| {
+                            common::is_label_or_extension_limb(candidate, label)
+                        })
+                    })
+                    .map(|offset| start + offset)
+                    .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
+            };
+            let combined_claim =
+                event_index_after(beta + 1, akita_transcript::labels::ABSORB_SUMCHECK_CLAIM);
+            let terminal_claim = event_index_after(
+                combined_claim + 1,
+                akita_transcript::labels::ABSORB_EOR_FINAL_CLAIM,
+            );
+            let payload = event_index_after(
+                terminal_claim + 1,
+                akita_transcript::labels::ABSORB_OPENING_PAYLOAD,
+            );
+            let gamma =
+                event_index_after(payload + 1, akita_transcript::labels::CHALLENGE_EVAL_BATCH);
+            assert!(
+                eta < beta
+                    && beta < combined_claim
+                    && combined_claim < terminal_claim
+                    && terminal_claim < payload
+                    && payload < gamma,
+                "EOR transcript must order beta, sumcheck, terminal claims, payload, then gamma"
+            );
         }
         honest_result.expect("honest fp32 extension proof must verify");
 
@@ -801,20 +854,17 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
         )
         .expect_err("tampered extension-opening reduction partial must reject");
 
-        // (3) Each claim has its own EOR round message. Changing only the
-        // second claim must not be hidden by application batching.
+        // (3) The individual EOR terminal handles remain bound even though the
+        // round messages are compressed into one sumcheck.
         let mut tampered = proof.clone();
         *tampered
             .root
             .extension_opening_reduction
             .as_mut()
             .expect("root EOR payload")
-            .sumcheck
-            .round_polys
-            .last_mut()
-            .and_then(|round| round.get_mut(1))
-            .and_then(|poly| poly.coeffs_except_linear_term.first_mut())
-            .expect("two-claim EOR must carry a second round polynomial") += SE::one();
+            .final_claims
+            .get_mut(1)
+            .expect("two-claim EOR must carry a second terminal handle") += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &tampered,
@@ -823,7 +873,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
             BasisMode::Lagrange,
         )
-        .expect_err("tampered per-claim EOR round message must reject");
+        .expect_err("tampered per-claim EOR terminal handle must reject");
 
         // (4) Omitting the required EOR entirely must be rejected.
         let mut stripped = proof.clone();

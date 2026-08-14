@@ -718,24 +718,6 @@ fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F
     }
 }
 
-fn dummy_shared_sumcheck<F: FieldCore>(
-    rounds: usize,
-    claims: usize,
-    degree: usize,
-) -> akita_sumcheck::SharedChallengeSumcheckProof<F> {
-    akita_sumcheck::SharedChallengeSumcheckProof {
-        round_polys: (0..rounds)
-            .map(|_| {
-                (0..claims)
-                    .map(|_| CompressedUniPoly {
-                        coeffs_except_linear_term: vec![F::zero(); degree],
-                    })
-                    .collect()
-            })
-            .collect(),
-    }
-}
-
 fn dummy_eq_factored_sumcheck<F: FieldCore>(
     rounds: usize,
     degree: usize,
@@ -990,11 +972,11 @@ fn planned_root_extension_reduction_bytes_match_payload() {
     let partials = extension_width.saturating_mul(num_claims);
     let reduction = ExtensionOpeningReductionProof {
         partials: vec![F::zero(); partials],
-        sumcheck: dummy_shared_sumcheck(
+        sumcheck: dummy_sumcheck(
             opening_vars - extension_width.trailing_zeros() as usize,
-            num_claims,
             EXTENSION_OPENING_REDUCTION_DEGREE,
         ),
+        final_claims: vec![F::zero(); num_claims],
     };
     let sumcheck_bytes = reduction.sumcheck.serialized_size(Compress::No);
 
@@ -1006,7 +988,12 @@ fn planned_root_extension_reduction_bytes_match_payload() {
             .iter()
             .map(|partial| partial.serialized_size(Compress::No))
             .sum::<usize>()
-            + sumcheck_bytes,
+            + sumcheck_bytes
+            + reduction
+                .final_claims
+                .iter()
+                .map(|claim| claim.serialized_size(Compress::No))
+                .sum::<usize>(),
         "planned root EOR bytes should match the headerless serialized payload"
     );
 }

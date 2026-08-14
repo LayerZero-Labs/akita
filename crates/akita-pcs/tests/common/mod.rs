@@ -854,7 +854,7 @@ pub(super) fn assert_claim_batching_follows_opening_payload(
 }
 
 #[cfg(feature = "logging-transcript")]
-fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
+pub(super) fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
     candidate == base || akita_transcript::is_ext_limb_label(candidate, base)
 }
 

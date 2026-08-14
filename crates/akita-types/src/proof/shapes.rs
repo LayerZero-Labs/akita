@@ -18,9 +18,10 @@ pub struct AkitaStage1StageShape {
 pub struct ExtensionOpeningReductionShape {
     /// Number of partial evaluations serialized before the sumcheck.
     pub partials: usize,
-    /// Round-major reduction shape with one compact coefficient count per
-    /// independently checked opening claim.
-    pub sumcheck: SharedChallengeSumcheckProofShape,
+    /// Number of individual terminal claims serialized after the sumcheck.
+    pub final_claims: usize,
+    /// One compact coefficient count per round of the batched reduction.
+    pub sumcheck: SumcheckProofShape,
 }
 
 /// Headerless shape for [`SetupSumcheckProof`].
@@ -35,11 +36,8 @@ impl ExtensionOpeningReductionShape {
     pub fn standard(partials: usize, num_rounds: usize, num_claims: usize) -> Self {
         Self {
             partials,
-            sumcheck: uniform_shared_challenge_sumcheck_shape(
-                num_rounds,
-                num_claims,
-                EXTENSION_OPENING_REDUCTION_DEGREE,
-            ),
+            final_claims: num_claims,
+            sumcheck: uniform_sumcheck_shape(num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
         }
     }
 }
@@ -63,31 +61,20 @@ impl Valid for SetupProductSumcheckShape {
 impl Valid for ExtensionOpeningReductionShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.partials)?;
+        checked_shape_len(self.final_claims)?;
         checked_shape_sequence_len(self.sumcheck.len())?;
-        if self.sumcheck.is_empty() {
-            return Ok(());
-        }
-        let num_claims = self.sumcheck.first().map_or(0, Vec::len);
-        if num_claims == 0 {
+        if self.final_claims == 0 {
             return Err(SerializationError::InvalidData(
-                "extension opening reduction shape must contain rounds and claims".to_string(),
+                "extension opening reduction shape must contain terminal claims".to_string(),
             ));
         }
-        for round in &self.sumcheck {
-            checked_shape_sequence_len(round.len())?;
-            if round.len() != num_claims {
-                return Err(SerializationError::InvalidData(
-                    "extension opening reduction claim count changes across rounds".to_string(),
-                ));
-            }
-            for &degree in round {
-                checked_shape_len(degree)?;
-                if degree != EXTENSION_OPENING_REDUCTION_DEGREE {
-                    return Err(SerializationError::InvalidData(format!(
-                        "extension opening reduction degree {} does not match expected degree {}",
-                        degree, EXTENSION_OPENING_REDUCTION_DEGREE
-                    )));
-                }
+        for &degree in &self.sumcheck {
+            checked_shape_len(degree)?;
+            if degree != EXTENSION_OPENING_REDUCTION_DEGREE {
+                return Err(SerializationError::InvalidData(format!(
+                    "extension opening reduction degree {} does not match expected degree {}",
+                    degree, EXTENSION_OPENING_REDUCTION_DEGREE
+                )));
             }
         }
         Ok(())
@@ -408,6 +395,9 @@ impl AkitaSerialize for LevelProofShape {
                 .partials
                 .serialize_with_mode(&mut writer, compress)?;
             reduction
+                .final_claims
+                .serialize_with_mode(&mut writer, compress)?;
+            reduction
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
@@ -444,6 +434,7 @@ impl AkitaSerialize for LevelProofShape {
                 .as_ref()
                 .map_or(0, |reduction| {
                     reduction.partials.serialized_size(compress)
+                        + reduction.final_claims.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
         reduction_size
@@ -477,8 +468,13 @@ impl AkitaDeserialize for LevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let final_claims = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
             let sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
-            Some(ExtensionOpeningReductionShape { partials, sumcheck })
+            Some(ExtensionOpeningReductionShape {
+                partials,
+                final_claims,
+                sumcheck,
+            })
         } else {
             None
         };
@@ -546,6 +542,9 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 .partials
                 .serialize_with_mode(&mut writer, compress)?;
             reduction
+                .final_claims
+                .serialize_with_mode(&mut writer, compress)?;
+            reduction
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
@@ -561,6 +560,7 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 .as_ref()
                 .map_or(0, |reduction| {
                     reduction.partials.serialized_size(compress)
+                        + reduction.final_claims.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
         reduction_size + self.terminal_response.serialized_size(compress)
@@ -579,8 +579,13 @@ impl AkitaDeserialize for TerminalLevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let final_claims = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
             let sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
-            Some(ExtensionOpeningReductionShape { partials, sumcheck })
+            Some(ExtensionOpeningReductionShape {
+                partials,
+                final_claims,
+                sumcheck,
+            })
         } else {
             None
         };
@@ -640,9 +645,8 @@ impl AkitaBatchedProofShape {
         ) -> Result<(), SerializationError> {
             if let Some(shape) = shape {
                 add(total, shape.partials)?;
-                for round in &shape.sumcheck {
-                    add_sumcheck(total, round)?;
-                }
+                add_sumcheck(total, &shape.sumcheck)?;
+                add(total, shape.final_claims)?;
             }
             Ok(())
         }
