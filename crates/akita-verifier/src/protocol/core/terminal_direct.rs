@@ -151,7 +151,10 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
-    if group_layout.z_admission_linf_cap > params.certified_response_linf_cap(sparse)? {
+    if params
+        .validate_terminal_linf_cap(sparse, group_layout.z_linf_cap)
+        .is_err()
+    {
         return Err(AkitaError::InvalidProof);
     }
     dispatch_for_field!(

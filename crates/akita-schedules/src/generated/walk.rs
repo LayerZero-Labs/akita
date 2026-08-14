@@ -174,7 +174,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 z_coords,
                 e_field_elems,
                 t_field_elems,
-                z_admission_linf_cap: entry.terminal.z_admission_linf_cap,
+                z_linf_cap: entry.terminal.z_linf_cap,
                 z_rice_low_bits: entry.terminal.z_rice_low_bits,
                 z_payload_bytes,
             }],

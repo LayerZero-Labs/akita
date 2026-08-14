@@ -46,8 +46,8 @@ Intermediate folds and terminal raw responses have different contracts.
 Intermediate folds are accepted through balanced digit decomposition, so their
 schedule rows store `num_digits_fold` and do not store a separate honest
 infinity norm cap. Terminal responses are raw integers. Their verifier-visible
-shape stores the response admission cap and the exact Golomb-Rice wire
-parameters.
+shape stores the selected norm route, an optional Linf cap, and the exact
+Golomb-Rice wire parameters. A terminal L2 route stores no Linf cap.
 
 ## Intent
 
@@ -65,8 +65,8 @@ This cut MUST do the following:
    signed-sparse tail result.
 5. Add an exact unit one-hot sizing policy with the universal result as its
    fallback and dominance guard.
-6. Move terminal admission and Golomb-Rice ownership into the terminal response
-   shape.
+6. Move terminal norm admission and Golomb-Rice ownership into the terminal
+   response shape.
 7. Remove all residual ZK grind probe behavior. Akita has one sequential probe
    rule.
 8. Complete the cutover without compatibility wrappers, deprecated aliases, or
@@ -91,7 +91,7 @@ This cut does not change the challenge sampler, the shared fold nonce, or the
 nonce attempt limit.
 
 This cut can change balanced signed digit proof size by removing the historical
-digit-boundary discounts. Terminal response admission and Golomb-Rice budgets
+digit-boundary discounts. Terminal norm admission and Golomb-Rice budgets
 remain verifier-enforced schedule data.
 
 ## Ownership
@@ -106,7 +106,7 @@ The verifier MUST know:
 - the exact matrices and their security parameters;
 - each challenge configuration;
 - the shared nonce range and transcript position;
-- each terminal response admission cap;
+- each terminal norm route and optional Linf cap;
 - each terminal Golomb-Rice remainder width and payload byte budget.
 
 The verifier MUST NOT know:
@@ -435,12 +435,13 @@ probe order. There is no ZK-specific fold grind behavior in this protocol.
 ### Why the terminal is separate
 
 A terminal response carries raw centered integers. No later balanced digit
-decomposition constrains those integers. The verifier therefore needs an
-explicit raw response admission cap.
+decomposition constrains those integers. The verifier therefore checks the norm
+selected by the terminal A route directly.
 
-The terminal response cap is not an intermediate honest sizing cap. It is a
-verifier admission and wire decoding parameter. The scheduled cap MUST fit the
-terminal matrix security capacity.
+For a Linf route, the raw coefficient cap is verifier admission data and MUST
+fit the terminal matrix security capacity. For an L2 route, no independent
+Linf cap exists. The signed coefficient type and Golomb-Rice byte budget are
+wire constraints, and the complete scheduled L2 cap is the norm admission.
 
 ### Exact terminal shape
 
@@ -451,7 +452,7 @@ pub struct TerminalResponseGroupShape {
     pub z_coords: usize,
     pub e_field_elems: usize,
     pub t_field_elems: usize,
-    pub z_admission_linf_cap: u128,
+    pub z_linf_cap: Option<u128>,
     pub z_rice_low_bits: u32,
     pub z_payload_bytes: usize,
 }
@@ -460,8 +461,10 @@ pub struct TerminalResponseGroupShape {
 The final name MAY remain `TailSegmentGroupLayout`. The field ownership is
 normative.
 
-`z_admission_linf_cap` is the maximum raw absolute coefficient accepted by the
-verifier.
+`z_linf_cap` is present only for a terminal Linf route. In that route it is the
+maximum raw absolute coefficient accepted by the verifier. A terminal L2 route
+MUST set it to `None`. Its decoded `z` is checked only against the complete
+scheduled L2 bound.
 
 `z_rice_low_bits` is the actual Golomb-Rice remainder width used by both the
 encoder and decoder. It MUST NOT be a planning proxy that runtime code converts
@@ -470,7 +473,8 @@ again.
 `z_payload_bytes` is the maximum encoded payload length accepted for that
 group.
 
-The canonical zigzag width MAY be derived from `z_admission_linf_cap`. It need
+The canonical zigzag width MAY be derived from `z_linf_cap` for a Linf route.
+For an L2 route it MUST cover the signed coefficient representation. It need
 not be stored when one total derivation exists.
 
 ### Offline versus runtime use
@@ -483,21 +487,27 @@ Runtime encoding and decoding MUST consume the terminal shape directly. They
 MUST NOT call `fold_witness_linf_cap_for_claims`, rebuild a fold tail model, or
 read intermediate `num_digits_fold` to recover terminal wire parameters.
 
-The prover MUST check that every raw terminal coefficient is within
-`z_admission_linf_cap`. It MUST encode with `z_rice_low_bits`. It MUST reject a
-candidate whose encoded payload exceeds `z_payload_bytes`.
+For a Linf route, the prover MUST check that every raw terminal coefficient is
+within `z_linf_cap`. For an L2 route, it MUST instead check the complete sum of
+squared decoded coefficients against the scheduled L2 cap. In both routes it
+MUST require the signed coefficient representation, encode with
+`z_rice_low_bits`, and reject a candidate whose encoded payload exceeds
+`z_payload_bytes`.
 
 The verifier MUST decode with the same `z_rice_low_bits`, reject values outside
-`z_admission_linf_cap`, and reject a payload longer than `z_payload_bytes`.
+the signed coefficient representation, and reject a payload longer than
+`z_payload_bytes`. It MUST enforce `z_linf_cap` only for a Linf route. For an L2
+route it MUST enforce the complete scheduled L2 bound and MUST NOT impose an
+independent Linf cap.
 
 The terminal response shape and all these fields MUST be bound into the exact
 schedule row and transcript descriptor.
 
 ### Behavior preservation
 
-For every existing balanced signed digit schedule, this cut MUST preserve:
+For every existing terminal Linf schedule, this cut MUST preserve:
 
-- the raw terminal coefficient admission cap;
+- the raw terminal coefficient cap;
 - the actual Golomb-Rice remainder width;
 - the terminal payload byte budget;
 - the serialized proof size produced by the same fixture.
@@ -520,7 +530,7 @@ The descriptor MUST bind:
 - the fixed global nonce limit and nonce wire width;
 - the fact that probe order is sequential;
 - each intermediate digit depth and basis through the selected row;
-- each terminal response admission cap;
+- each terminal norm route and optional Linf cap;
 - each terminal Rice remainder width;
 - each terminal payload byte budget.
 
@@ -553,8 +563,8 @@ The implementation MUST complete these changes in one pass:
    group parameters, setup descriptors, schedule digests, and grind contracts.
 7. Make intermediate grind acceptance use the canonical balanced digit interval
    only.
-8. Add the terminal response admission cap to the terminal group shape and make
-   exact Rice parameters authoritative there.
+8. Add the terminal route's optional Linf cap to the terminal group shape and
+   make exact Rice parameters authoritative there.
 9. Rewire terminal builders, decoders, proof sizing, schedule validation, and
    verifier admission to consume the terminal shape.
 10. Delete ZK probe shuffle code and descriptor fields. Delete terminal planner
@@ -599,7 +609,7 @@ After the cutover, tests MUST prove exact equality for:
 - `num_digits_fold`;
 - accepted negative and positive digit bounds;
 - matrix widths and ranks affected by the fold depth;
-- terminal response admission caps;
+- terminal norm routes and optional Linf caps;
 - terminal Rice remainder widths;
 - terminal payload byte budgets;
 - serialized proof sizes for fixed balanced fixtures.
@@ -636,9 +646,12 @@ Tests MUST prove that:
 Tests MUST prove that:
 
 - encoding and decoding use the exact `z_rice_low_bits` from the terminal shape;
-- coefficients above `z_admission_linf_cap` are rejected;
+- Linf routes reject coefficients above `z_linf_cap`;
+- L2 routes carry no independent Linf cap and reject a decoded response whose
+  complete squared norm exceeds the scheduled L2 cap;
+- both routes reject coefficients outside the signed wire representation;
 - payloads above `z_payload_bytes` are rejected before an unbounded allocation;
-- the terminal admission cap does not exceed matrix security capacity;
+- a terminal Linf cap does not exceed matrix security capacity;
 - runtime terminal code does not call an honest fold sizing policy;
 - fixed balanced fixtures preserve their old cap, Rice width, byte budget, and
   proof size.

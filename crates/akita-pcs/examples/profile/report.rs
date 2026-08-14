@@ -54,9 +54,19 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             .z_payload_bytes();
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = terminal_response_z_fold_stats(segment, schedule, field_bits).ok();
-        let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
-        let z_rice_low_bits_wire = z_stats.as_ref().map(|s| s.rice_low_bits_wire).unwrap_or(0);
-        let z_rice_low_bits_cap = z_stats.as_ref().map(|s| s.rice_low_bits_cap).unwrap_or(0);
+        let z_linf_cap = segment
+            .layout
+            .groups
+            .first()
+            .and_then(|group| group.z_linf_cap);
+        let z_rice_low_bits_wire = segment
+            .layout
+            .groups
+            .first()
+            .map(|group| group.z_rice_low_bits)
+            .unwrap_or(0);
+        let z_rice_low_bits_cap =
+            z_linf_cap.and_then(|_| z_stats.as_ref().map(|stats| stats.rice_low_bits_cap));
         let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
         let z_bits_per_coord_golomb = z_stats
             .as_ref()
@@ -92,9 +102,9 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             tail_t_ring_elems = t_ring_elems,
             tail_e_bytes = e_bytes,
             tail_t_bytes = t_bytes,
-            z_witness_linf_cap,
+            z_linf_cap = ?z_linf_cap,
             z_rice_low_bits_wire,
-            z_rice_low_bits_cap,
+            z_rice_low_bits_cap = ?z_rice_low_bits_cap,
             z_coords = z_stats_coords,
             z_bits_per_coord_golomb,
             z_bits_per_coord_packed,
@@ -106,14 +116,11 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let golomb_line = z_stats
             .map(|stats| {
                 format!(
-                    " Golomb z: witness_linf_cap={} wire_low_bits={} cap_low_bits={} sample_low_bits={} ring_elems={z_ring_elems} field_coeffs={} \
+                    " Golomb z: coefficient_linf_cap={z_linf_cap:?} wire_low_bits={z_rice_low_bits_wire} sample_low_bits={} ring_elems={z_ring_elems} field_coeffs={} \
                      {:.2} bits/coord@wire vs {:.2}@sample vs packed {:.2} bits/field_coeff \
                      (hypothetical packed z={} B, savings={} B); \
                      planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
                      dist max={} median={} p90={} p99={}",
-                    stats.witness_linf_cap,
-                    stats.rice_low_bits_wire,
-                    stats.rice_low_bits_cap,
                     stats.rice_low_bits_sample,
                     stats.coord_count,
                     stats.bits_per_coord_at_wire,
@@ -163,7 +170,7 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
         .groups
         .first()
         .ok_or(akita_field::AkitaError::InvalidProof)?;
-    let admission_cap = group.z_admission_linf_cap;
+    let encoding_abs_bound = group.z_linf_cap.unwrap_or(i16::MAX as u128);
     let z_values = akita_types::decode_terminal_z_golomb_payload(
         witness
             .z_payloads
@@ -174,13 +181,14 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     .into_iter()
     .map(i64::from)
     .collect::<Vec<_>>();
-    let log_cap = u128::BITS - admission_cap.leading_zeros();
+    let log_cap = u128::BITS - encoding_abs_bound.leading_zeros();
     let hypothetical_digits =
         num_digits_for_bound(log_cap, field_bits, params.log_basis_inner).max(1);
     analyze_z_fold_golomb_encoding(
         &z_values,
-        admission_cap,
-        golomb_rice_zigzag_width(admission_cap),
+        encoding_abs_bound,
+        group.z_rice_low_bits,
+        golomb_rice_zigzag_width(encoding_abs_bound),
         hypothetical_digits,
         params.log_basis_inner,
         witness.z_payloads.first().map_or(0, Vec::len),
@@ -776,13 +784,13 @@ pub(crate) fn emit_runtime_schedule_summary(
     let challenge = &terminal.params.sparse_challenge_config;
     let security_route = witness.inner_commit_matrix.security_route();
     let response_l2_sq_cap = witness.response_l2_sq_cap();
-    let z_admission_linf_cap = terminal
+    let z_linf_cap = terminal
         .params
         .response_shape
         .layout
         .groups
         .first()
-        .map(|group| group.z_admission_linf_cap);
+        .and_then(|group| group.z_linf_cap);
     let challenge_operator_norm_threshold =
         reported_operator_norm_threshold(security_route, witness.d_a(), challenge);
     tracing::info!(
@@ -804,7 +812,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
         security_route = ?security_route,
         response_l2_sq_cap = ?response_l2_sq_cap,
-        z_admission_linf_cap = ?z_admission_linf_cap,
+        z_linf_cap = ?z_linf_cap,
         num_live_ring_elements_per_claim = witness.num_live_ring_elements_per_claim,
         num_positions_per_block = witness.num_positions_per_block,
         num_live_blocks = witness.num_live_blocks,

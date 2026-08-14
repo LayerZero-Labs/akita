@@ -241,7 +241,9 @@ pub fn sample_optimal_rice_low_bits(values: &[i64], zigzag_w: u32, low_bits_hi: 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZFoldEncodingStats {
     pub coord_count: usize,
-    pub witness_linf_cap: u128,
+    /// Scale used only for the planner comparison below. This is not a
+    /// verifier Linf cap for an L2 terminal route.
+    pub encoding_scale: u128,
     pub observed_max_abs: u64,
     pub mean_abs: f64,
     pub median_abs: u64,
@@ -279,14 +281,14 @@ fn percentile_abs(sorted_abs: &[u64], p_num: usize, p_den: usize) -> u64 {
 /// `values` are centered fold-response ring coefficients (one per `z_coord`).
 pub fn analyze_z_fold_golomb_encoding(
     values: &[i64],
-    witness_linf_cap: u128,
+    encoding_scale: u128,
+    rice_low_bits_wire: u32,
     zigzag_w: u32,
     depth_fold: usize,
     log_basis: u32,
     actual_payload_bytes: usize,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let rice_low_bits_cap = cap_rice_low_bits(witness_linf_cap);
-    let rice_low_bits_wire = wire_rice_low_bits(witness_linf_cap);
+    let rice_low_bits_cap = cap_rice_low_bits(encoding_scale);
     let low_bits_search_hi = rice_low_bits_cap.saturating_add(4);
     let rice_low_bits_sample = sample_optimal_rice_low_bits(values, zigzag_w, low_bits_search_hi);
 
@@ -312,7 +314,7 @@ pub fn analyze_z_fold_golomb_encoding(
 
     Ok(ZFoldEncodingStats {
         coord_count: values.len(),
-        witness_linf_cap,
+        encoding_scale,
         observed_max_abs,
         mean_abs,
         median_abs: percentile_abs(&abs_vals, 50, 100),

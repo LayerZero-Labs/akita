@@ -206,8 +206,8 @@ impl TerminalCommittedGroupParams {
         )
     }
 
-    /// Largest raw response admitted by this terminal's selected inner-matrix
-    /// SIS bucket and the signed coefficient representation.
+    /// Largest raw response admitted by a terminal Linf route's selected
+    /// inner-matrix SIS bucket and signed coefficient representation.
     ///
     /// The matrix rank can incidentally support a larger collision bucket. The
     /// terminal wire does not consume that slack because doing so would change
@@ -220,10 +220,9 @@ impl TerminalCommittedGroupParams {
             self.inner_commit_matrix.security_route(),
             crate::sis::InnerCommitSecurityRoute::L2 { .. }
         ) {
-            // A clear-terminal L2 route still needs a finite coefficient cap
-            // for signed-i16 kernels and Golomb decoding, but SIS security is
-            // provided by the directly checked complete Euclidean norm.
-            return Ok(i16::MAX as u128);
+            return Err(AkitaError::InvalidSetup(
+                "terminal L2 route has no independent Linf cap".into(),
+            ));
         }
         let challenge = crate::sis::FoldChallengeNorms::new(sparse);
         let collision_capacity = self.inner_commit_matrix.coeff_linf_bound().ok_or_else(|| {
@@ -238,6 +237,35 @@ impl TerminalCommittedGroupParams {
         // Terminal NTT kernels currently consume signed i16 coefficients.
         // This representation limit is independent of the SIS capacity.
         Ok(certified_capacity.min(i16::MAX as u128))
+    }
+
+    /// Validate that the wire carries exactly the norm cap required by the
+    /// selected terminal security route.
+    pub fn validate_terminal_linf_cap(
+        &self,
+        sparse: &akita_challenges::SparseChallengeConfig,
+        scheduled_cap: Option<u128>,
+    ) -> Result<(), AkitaError> {
+        match self.inner_commit_matrix.security_route() {
+            crate::sis::InnerCommitSecurityRoute::Linf(_) => {
+                let cap = scheduled_cap.ok_or_else(|| {
+                    AkitaError::InvalidSetup("terminal Linf route is missing its cap".into())
+                })?;
+                if cap == 0 || cap > self.certified_response_linf_cap(sparse)? {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal Linf cap exceeds its matrix-certified capacity".into(),
+                    ));
+                }
+            }
+            crate::sis::InnerCommitSecurityRoute::L2 { .. } => {
+                if scheduled_cap.is_some() {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal L2 route must not carry an independent Linf cap".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Verifier-enforced complete physical L2 cap for a clear terminal route.

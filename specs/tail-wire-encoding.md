@@ -7,9 +7,13 @@
 > **Architecture revision for #338.** The cap-derived wire behavior in this
 > document remains the regression baseline. The ownership changes under
 > [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
-> The terminal response shape stores the exact admission cap, Rice remainder
-> width, and payload budget. Runtime code does not derive them from an
-> intermediate honest fold cap.
+> The terminal response shape stores the selected norm route, an optional Linf
+> cap, the exact Rice remainder width, and the payload budget. The cap-derived
+> discussion below applies to terminal Linf routes. A terminal L2 route stores
+> no Linf cap: decode is bounded by the signed coefficient representation and
+> payload budget, then the verifier checks the complete decoded squared norm.
+> Runtime code does not derive wire parameters from an intermediate honest fold
+> cap.
 
 | Field       | Value                                                     |
 |-------------|-----------------------------------------------------------|

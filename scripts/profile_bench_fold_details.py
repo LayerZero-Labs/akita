@@ -170,16 +170,16 @@ def challenge_line(params: dict[str, object]) -> str:
 
 
 def response_bound_lines(params: dict[str, object]) -> list[str]:
-    linf_cap = params.get("z_admission_linf_cap")
-    linf_line = "Maximum coefficient magnitude (Linf)"
-    if linf_cap is not None:
-        linf_line += f": ≤ {fmt_count(float(linf_cap))}"
     if params.get("security_route") == "L2":
-        rows = [linf_line, "Sum of squared coefficients (L2)"]
+        rows = ["Sum of squared coefficients (L2)"]
         cap = params.get("response_l2_sq_cap")
         if cap is not None:
-            rows[-1] += f": ≤ {fmt_count(float(cap))}"
+            rows[0] += f": ≤ {fmt_count(float(cap))}"
         return rows
+    linf_line = "Maximum coefficient magnitude (Linf)"
+    linf_cap = params.get("z_linf_cap")
+    if linf_cap is not None:
+        linf_line += f": ≤ {fmt_count(float(linf_cap))}"
     return [linf_line]
 
 

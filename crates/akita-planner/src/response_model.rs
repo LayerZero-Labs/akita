@@ -16,6 +16,8 @@
 use akita_field::AkitaError;
 use akita_types::sis::{compute_num_digits_field_width, HonestFoldPolicySpec};
 use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 /// Relative envelope for any underestimate by the typed moment model.
 ///
@@ -383,6 +385,26 @@ fn normal_cdf(value: f64) -> f64 {
     0.5 * (1.0 + libm::erf(value / core::f64::consts::SQRT_2))
 }
 
+type GaussianDigitMomentKey = (u128, usize, u128, u32, usize);
+type GaussianDigitMoment = (u128, u128);
+
+thread_local! {
+    // The quantile depends only on the response coefficient count, while one
+    // planner worker evaluates it for many source moments, slices, and DP
+    // states. Keep the exact binary-search result local to that worker so the
+    // offline search does not repeat 64 software `erfc` evaluations per
+    // candidate or contend on a process-global cache.
+    static WHOLE_RESPONSE_NORMAL_QUANTILES: RefCell<HashMap<usize, f64>> =
+        RefCell::new(HashMap::new());
+    // Recursive DP states often reproduce the same typed response moment and
+    // decomposition geometry. The Gaussian digit calculation is deterministic
+    // but may perform hundreds of software `erf` evaluations, so retain each
+    // exact successful result within its planner worker.
+    static GAUSSIAN_RESPONSE_DIGIT_MOMENTS:
+        RefCell<HashMap<GaussianDigitMomentKey, GaussianDigitMoment>> =
+        RefCell::new(HashMap::new());
+}
+
 /// Two-sided standard-normal quantile whose joint centered-Gaussian slab
 /// probability is at least one fortieth over `count` coordinates.
 ///
@@ -391,9 +413,10 @@ fn normal_cdf(value: f64) -> f64 {
 /// marginal probabilities, regardless of the covariance matrix. Thus each
 /// marginal needs probability at least `(1/40)^(1/count)`; coordinate
 /// independence is not assumed.
-fn whole_response_normal_quantile(count: usize) -> Option<f64> {
+fn compute_whole_response_normal_quantile(count: usize) -> f64 {
+    debug_assert!(count != 0);
     if count == 0 {
-        return None;
+        return 0.0;
     }
     let target_tail = -libm::expm1(libm::log(1.0 / 40.0) / count as f64);
     let mut lower = 0.0;
@@ -407,7 +430,21 @@ fn whole_response_normal_quantile(count: usize) -> Option<f64> {
             upper = midpoint;
         }
     }
-    Some(upper)
+    upper
+}
+
+fn whole_response_normal_quantile(count: usize) -> Option<f64> {
+    if count == 0 {
+        return None;
+    }
+    Some(WHOLE_RESPONSE_NORMAL_QUANTILES.with(|cache| {
+        if let Some(&quantile) = cache.borrow().get(&count) {
+            return quantile;
+        }
+        let quantile = compute_whole_response_normal_quantile(count);
+        cache.borrow_mut().insert(count, quantile);
+        quantile
+    }))
 }
 
 /// Expected squared centered residue of a rounded normal integer.
@@ -471,7 +508,7 @@ pub(crate) fn gaussian_response_digit_energy(
     )
 }
 
-fn gaussian_response_digit_moments(
+fn compute_gaussian_response_digit_moments(
     response_l2_sq: u128,
     response_coeff_count: usize,
     peak_response_second_moment_ppm: u128,
@@ -494,6 +531,38 @@ fn gaussian_response_digit_moments(
         sigma /= basis as f64;
     }
     Ok((energy, moment_to_ppm(peak, "Gaussian digit peak moment")?))
+}
+
+fn gaussian_response_digit_moments(
+    response_l2_sq: u128,
+    response_coeff_count: usize,
+    peak_response_second_moment_ppm: u128,
+    log_basis: u32,
+    digit_count: usize,
+) -> Result<(u128, u128), AkitaError> {
+    let key = (
+        response_l2_sq,
+        response_coeff_count,
+        peak_response_second_moment_ppm,
+        log_basis,
+        digit_count,
+    );
+    if let Some(moments) =
+        GAUSSIAN_RESPONSE_DIGIT_MOMENTS.with(|cache| cache.borrow().get(&key).copied())
+    {
+        return Ok(moments);
+    }
+    let moments = compute_gaussian_response_digit_moments(
+        response_l2_sq,
+        response_coeff_count,
+        peak_response_second_moment_ppm,
+        log_basis,
+        digit_count,
+    )?;
+    GAUSSIAN_RESPONSE_DIGIT_MOMENTS.with(|cache| {
+        cache.borrow_mut().insert(key, moments);
+    });
+    Ok(moments)
 }
 
 /// Expected energy of negative-binary compression digits.

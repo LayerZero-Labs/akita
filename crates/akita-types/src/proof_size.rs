@@ -225,7 +225,9 @@ mod tests {
         let layout = shape.layout.clone();
         let group = layout.groups[0];
         let rice_low_bits = group.z_rice_low_bits;
-        let zigzag_w = crate::golomb_rice::golomb_rice_zigzag_width(group.z_admission_linf_cap);
+        let zigzag_w = crate::golomb_rice::golomb_rice_zigzag_width(
+            group.z_linf_cap.unwrap_or(i16::MAX as u128),
+        );
         let z_payload =
             golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
                 .expect("encode zero z segment");

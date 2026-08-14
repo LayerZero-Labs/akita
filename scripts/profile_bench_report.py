@@ -423,7 +423,6 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_e_bytes",
     "tail_t_bytes",
     "z_rice_low_bits_wire",
-    "z_rice_low_bits_cap",
     "z_coords",
     "z_packed_hypothetical_bytes",
     "z_golomb_savings_bytes",
@@ -455,10 +454,16 @@ def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) 
     for key in TAIL_SUMMARY_FLOAT_FIELDS:
         if key in kvs:
             summary[key] = float(kvs[key])
-    if "z_witness_linf_cap" in kvs:
-        summary["z_witness_linf_cap"] = kvs["z_witness_linf_cap"]
+    if "z_linf_cap" in kvs:
+        summary["z_linf_cap"] = parse_tracing_optional_int(kvs["z_linf_cap"])
+    elif "z_witness_linf_cap" in kvs:
+        summary["z_linf_cap"] = int(kvs["z_witness_linf_cap"])
     elif "z_beta_inf" in kvs:
-        summary["z_witness_linf_cap"] = kvs["z_beta_inf"]
+        summary["z_linf_cap"] = int(kvs["z_beta_inf"])
+    if "z_rice_low_bits_cap" in kvs:
+        summary["z_rice_low_bits_cap"] = parse_tracing_optional_int(
+            kvs["z_rice_low_bits_cap"]
+        )
     terminal_log_basis = summary.get(
         "tail_log_basis_inner",
         summary.get("tail_log_basis_open", summary.get("tail_log_basis")),
@@ -576,7 +581,7 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     if z_budget is not None and z_golomb is not None:
         parameter = current.get("z_rice_low_bits_wire")
         scheduled_parameter = current.get("z_rice_low_bits_cap")
-        cap = current.get("z_witness_linf_cap")
+        cap = current.get("z_linf_cap", current.get("z_witness_linf_cap"))
         details = []
         if parameter is not None:
             details.append(f"Golomb parameter `{parameter}`")
@@ -1167,8 +1172,8 @@ def extract_summary(
                 "response_l2_sq_cap": parse_tracing_optional_int(
                     kvs.get("response_l2_sq_cap")
                 ),
-                "z_admission_linf_cap": parse_tracing_optional_int(
-                    kvs.get("z_admission_linf_cap")
+                "z_linf_cap": parse_tracing_optional_int(
+                    kvs.get("z_linf_cap")
                 ),
                 **{
                     key: int(kvs[key])

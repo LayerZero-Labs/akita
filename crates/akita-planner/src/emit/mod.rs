@@ -28,7 +28,9 @@ use akita_schedules::generated::{
     GeneratedTerminalFold, GeneratedWitnessPartition,
 };
 pub use publish::publish_generated_outputs;
-pub use render::{render_generated_outputs, GeneratedOutput};
+pub use render::{
+    render_generated_outputs, render_generated_outputs_with_validation, GeneratedOutput,
+};
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -292,7 +294,7 @@ fn generated_entry(
                 .coeff_linf_bound()
                 .unwrap_or(0),
             response_l2_sq_cap: schedule.terminal.params.witness.response_l2_sq_cap(),
-            z_admission_linf_cap: terminal_group.z_admission_linf_cap,
+            z_linf_cap: terminal_group.z_linf_cap,
             z_rice_low_bits: terminal_group.z_rice_low_bits,
             z_payload_bytes: terminal_group.z_payload_bytes as u64,
         },
@@ -490,7 +492,7 @@ fn emit_schedule_entry(
     }
     writeln!(
         out,
-        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, fold_log_basis: {}, fold_digit_count: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, fold_log_basis: {}, fold_digit_count: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
         emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
@@ -503,7 +505,10 @@ fn emit_schedule_entry(
             || "None".to_string(),
             |cap| format!("Some({cap})"),
         ),
-        entry.terminal.z_admission_linf_cap,
+        entry.terminal.z_linf_cap.map_or_else(
+            || "None".to_string(),
+            |cap| format!("Some({cap})"),
+        ),
         entry.terminal.z_rice_low_bits,
         entry.terminal.z_payload_bytes,
     )
@@ -672,7 +677,7 @@ struct IndexedPlanningRequest {
     request: PlanningRequest,
 }
 
-pub(super) type MaterializedEntry = (AkitaScheduleLookupKey, FoldSchedule);
+pub type MaterializedEntry = (AkitaScheduleLookupKey, FoldSchedule);
 
 pub(super) fn materialized_entries_for_specs(
     specs: &[EmitSpec],

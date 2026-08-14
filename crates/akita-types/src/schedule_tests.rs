@@ -174,7 +174,7 @@ fn recursive_schedule(
                             z_coords: successor_ring_dimension,
                             e_field_elems: successor_ring_dimension,
                             t_field_elems: successor_ring_dimension,
-                            z_admission_linf_cap: 1,
+                            z_linf_cap: Some(1),
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],
@@ -600,7 +600,8 @@ fn terminal_response_fixture(
     let layout = shape.layout.clone();
     let group = layout.groups[0];
     let rice_low_bits = group.z_rice_low_bits;
-    let zigzag_w = crate::golomb_rice::golomb_rice_zigzag_width(group.z_admission_linf_cap);
+    let zigzag_w =
+        crate::golomb_rice::golomb_rice_zigzag_width(group.z_linf_cap.unwrap_or(i16::MAX as u128));
     let z_payload = golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
         .expect("encode zero z segment");
     let witness = TerminalResponse {
@@ -1229,7 +1230,9 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
             .layout
             .groups[0];
         match field {
-            "cap" => group.z_admission_linf_cap += 1,
+            "cap" => {
+                group.z_linf_cap = Some(group.z_linf_cap.unwrap_or_default() + 1);
+            }
             "rice" => group.z_rice_low_bits += 1,
             "budget" => group.z_payload_bytes += 1,
             _ => unreachable!(),

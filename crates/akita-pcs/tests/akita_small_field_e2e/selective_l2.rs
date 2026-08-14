@@ -342,7 +342,13 @@ fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
             .into_iter()
             .map(i64::from)
             .collect::<Vec<_>>();
-        let coordinate = i64::try_from(group.z_admission_linf_cap).expect("i64 terminal cap");
+        assert!(
+            group.z_linf_cap.is_none(),
+            "terminal L2 routes must not enforce a separate Linf cap"
+        );
+        // Stay comfortably inside the signed terminal wire type while making
+        // the complete decoded response exceed its scheduled L2 bound.
+        let coordinate = i64::from(i16::MAX / 2);
         let coordinate_sq = u128::try_from(coordinate * coordinate).expect("positive square");
         let mut forced_l2_sq = 0u128;
         for value in &mut values {

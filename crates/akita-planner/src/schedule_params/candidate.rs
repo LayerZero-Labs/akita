@@ -33,7 +33,28 @@ pub(crate) struct AbCommitmentCandidate {
     pub(crate) outer_commit_matrix: OuterCommitMatrixParams,
 }
 
-struct OuterCommitmentCandidateRequest<'a> {
+pub(super) struct InnerCommitmentCandidateRequest<'a> {
+    pub(super) policy: &'a PlannerPolicy,
+    pub(super) fold_policy: &'a dyn HonestFoldPolicy,
+    pub(super) ring_challenge_cfg: &'a SparseChallengeConfig,
+    pub(super) dimensions: CommitmentRingDims,
+    pub(super) num_claims: usize,
+    pub(super) num_live_ring_elements_per_claim: usize,
+    pub(super) num_live_blocks: usize,
+    pub(super) num_positions_per_block: usize,
+    pub(super) num_chunks: usize,
+    pub(super) witness_norms: FoldWitnessNorms,
+    pub(super) log_basis_open: u32,
+    pub(super) width_s: usize,
+    pub(super) modeled_linf_cap: Option<u128>,
+}
+
+pub(super) struct InnerCommitmentCandidate {
+    pub(super) num_digits_fold: usize,
+    pub(super) inner_commit_matrix: InnerCommitMatrixParams,
+}
+
+pub(super) struct OuterCommitmentCandidateRequest<'a> {
     policy: &'a PlannerPolicy,
     dimensions: CommitmentRingDims,
     payload_mode: akita_types::CommitmentPayloadMode,
@@ -47,7 +68,7 @@ struct OuterCommitmentCandidateRequest<'a> {
 
 /// Derive the one physical B matrix and complete logical B source after the
 /// route-specific A rank is known.
-fn derive_outer_commitment_candidate(
+pub(super) fn derive_outer_commitment_candidate(
     request: OuterCommitmentCandidateRequest<'_>,
 ) -> Result<Option<OuterCommitMatrixParams>, AkitaError> {
     let OuterCommitmentCandidateRequest {
@@ -106,31 +127,23 @@ fn derive_outer_commitment_candidate(
     Ok(Some(outer_commit_matrix))
 }
 
-/// Derive the shared A/B commitment geometry for one planner candidate.
-///
-/// Root, recursive, and setup-prefix search own different enumeration and
-/// scoring rules, but security sizing and complete-source admission are one
-/// policy boundary. Returning `None` rejects a candidate that has no certified
-/// rank or exceeds the canonical compression envelope.
-pub(crate) fn derive_ab_commitment_candidate(
-    request: AbCommitmentCandidateRequest<'_>,
-) -> Result<Option<AbCommitmentCandidate>, AkitaError> {
-    let AbCommitmentCandidateRequest {
+/// Derive the slice-independent response digit count and A matrix.
+pub(super) fn derive_inner_commitment_candidate(
+    request: InnerCommitmentCandidateRequest<'_>,
+) -> Result<Option<InnerCommitmentCandidate>, AkitaError> {
+    let InnerCommitmentCandidateRequest {
         policy,
         fold_policy,
         ring_challenge_cfg,
         dimensions,
-        payload_mode,
         num_claims,
         num_live_ring_elements_per_claim,
         num_live_blocks,
         num_positions_per_block,
         num_chunks,
-        outer_slice_count,
         witness_norms,
         log_basis_open,
         width_s,
-        num_digits_outer,
         modeled_linf_cap,
     } = request;
     let d_a = dimensions.d_a();
@@ -175,6 +188,60 @@ pub(crate) fn derive_ab_commitment_candidate(
     ) else {
         return Ok(None);
     };
+    Ok(Some(InnerCommitmentCandidate {
+        num_digits_fold,
+        inner_commit_matrix,
+    }))
+}
+
+/// Derive the shared A/B commitment geometry for one planner candidate.
+///
+/// Root, recursive, and setup-prefix search own different enumeration and
+/// scoring rules, but security sizing and complete-source admission are one
+/// policy boundary. Returning `None` rejects a candidate that has no certified
+/// rank or exceeds the canonical compression envelope.
+pub(crate) fn derive_ab_commitment_candidate(
+    request: AbCommitmentCandidateRequest<'_>,
+) -> Result<Option<AbCommitmentCandidate>, AkitaError> {
+    let AbCommitmentCandidateRequest {
+        policy,
+        fold_policy,
+        ring_challenge_cfg,
+        dimensions,
+        payload_mode,
+        num_claims,
+        num_live_ring_elements_per_claim,
+        num_live_blocks,
+        num_positions_per_block,
+        num_chunks,
+        outer_slice_count,
+        witness_norms,
+        log_basis_open,
+        width_s,
+        num_digits_outer,
+        modeled_linf_cap,
+    } = request;
+    let Some(inner_candidate) =
+        derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
+            policy,
+            fold_policy,
+            ring_challenge_cfg,
+            dimensions,
+            num_claims,
+            num_live_ring_elements_per_claim,
+            num_live_blocks,
+            num_positions_per_block,
+            num_chunks,
+            witness_norms,
+            log_basis_open,
+            width_s,
+            modeled_linf_cap,
+        })?
+    else {
+        return Ok(None);
+    };
+    let num_digits_fold = inner_candidate.num_digits_fold;
+    let inner_commit_matrix = inner_candidate.inner_commit_matrix;
     let Some(outer_commit_matrix) =
         derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
             policy,

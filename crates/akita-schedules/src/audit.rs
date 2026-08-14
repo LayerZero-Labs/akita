@@ -448,10 +448,11 @@ fn audit_terminal(
             "terminal response shape disagrees with the committed witness geometry",
         ));
     }
-    if group.z_admission_linf_cap == 0
+    if params
+        .validate_terminal_linf_cap(sparse, group.z_linf_cap)
+        .is_err()
         || group.z_rice_low_bits >= 64
         || group.z_payload_bytes == 0
-        || group.z_admission_linf_cap > params.certified_response_linf_cap(sparse)?
     {
         return Err(invalid(
             label,
@@ -639,7 +640,7 @@ mod tests {
             inner_output_rank: expected.output_rank() as u32,
             inner_coeff_linf_bound: 0,
             response_l2_sq_cap: Some(RESPONSE_CAP),
-            z_admission_linf_cap: 10,
+            z_linf_cap: None,
             z_rice_low_bits: 1,
             z_payload_bytes: 1,
         };

@@ -11,4 +11,4 @@ fi
 cd "$repo_root"
 
 cargo run --release -p akita-planner --features catalog-gen --bin gen_schedule_tables -- \
-    crates/akita-schedules/src/generated
+    crates/akita-schedules/src/generated "$@"

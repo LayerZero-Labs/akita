@@ -449,6 +449,31 @@ pub(crate) fn derive_selected_suffix_schedule(
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
     let (min_open_basis, max_open_basis) =
         crate::policy::log_basis_search_range_at_level(policy, level);
+    let mut dimension_work = Vec::new();
+    for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
+        let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+            policy.challenge_field_bits()?,
+            policy.claim_ext_degree,
+            level,
+            eor_key,
+            current_witness_len,
+            dimensions.d_a(),
+        )?
+        else {
+            continue;
+        };
+        let ring_challenge_cfg = if root_level_key.is_some()
+            && dimensions == CommitmentRingDims::uniform(policy.uniform_ring_dimension)
+        {
+            *default_ring_challenge_cfg
+        } else {
+            let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
+                continue;
+            };
+            config
+        };
+        dimension_work.push((dimensions, eor_bytes, ring_challenge_cfg));
+    }
     // Every opening basis contributes to one state frontier. In particular,
     // terminal-direct candidates have no first fold and therefore share the
     // `None` key; they must be compared by the canonical objective instead of
@@ -473,28 +498,7 @@ pub(crate) fn derive_selected_suffix_schedule(
 
         for inner_lb in min_inner_basis..=max_inner_basis {
             if let Some(root_key) = root_level_key {
-                for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
-                    let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
-                        policy.challenge_field_bits()?,
-                        policy.claim_ext_degree,
-                        level,
-                        eor_key,
-                        current_witness_len,
-                        dimensions.d_a(),
-                    )?
-                    else {
-                        continue;
-                    };
-                    let ring_challenge_cfg = if dimensions
-                        == CommitmentRingDims::uniform(policy.uniform_ring_dimension)
-                    {
-                        *default_ring_challenge_cfg
-                    } else {
-                        let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
-                            continue;
-                        };
-                        config
-                    };
+                for &(dimensions, eor_bytes, ring_challenge_cfg) in &dimension_work {
                     let dimension_candidates = root_level_candidates_for_basis(
                         root_key,
                         root_honest_fold_policy.ok_or_else(|| {
@@ -521,21 +525,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                     );
                 }
             } else {
-                for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
-                    let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
-                        policy.challenge_field_bits()?,
-                        policy.claim_ext_degree,
-                        level,
-                        eor_key,
-                        current_witness_len,
-                        dimensions.d_a(),
-                    )?
-                    else {
-                        continue;
-                    };
-                    let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
-                        continue;
-                    };
+                for &(dimensions, eor_bytes, ring_challenge_cfg) in &dimension_work {
                     for &mode in
                         payload_phase.candidate_modes(level, incoming_setup_prefix.is_some())
                     {

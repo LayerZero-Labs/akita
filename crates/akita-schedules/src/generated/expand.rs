@@ -973,8 +973,9 @@ impl GeneratedTerminalFold {
             num_live_blocks,
             num_digits_inner,
         };
-        if self.z_admission_linf_cap == 0
-            || self.z_admission_linf_cap > terminal.certified_response_linf_cap(&sparse)?
+        if terminal
+            .validate_terminal_linf_cap(&sparse, self.z_linf_cap)
+            .is_err()
             || self.z_rice_low_bits >= 64
             || self.z_payload_bytes == 0
         {

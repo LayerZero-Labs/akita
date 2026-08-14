@@ -324,7 +324,7 @@ mod tests {
                     z_coords: 1024,
                     e_field_elems: 64,
                     t_field_elems: 128,
-                    z_admission_linf_cap: 2_570,
+                    z_linf_cap: Some(2_570),
                     z_rice_low_bits: 9,
                     z_payload_bytes: 4_096,
                 }],

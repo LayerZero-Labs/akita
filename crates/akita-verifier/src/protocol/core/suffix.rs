@@ -270,8 +270,9 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     if scheduled.response_shape.layout.groups.len() != 1
-        || group.z_admission_linf_cap
-            > params.certified_response_linf_cap(&scheduled.sparse_challenge_config)?
+        || params
+            .validate_terminal_linf_cap(&scheduled.sparse_challenge_config, group.z_linf_cap)
+            .is_err()
     {
         return Err(AkitaError::InvalidProof);
     }

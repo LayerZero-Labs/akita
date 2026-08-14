@@ -291,9 +291,11 @@ therefore accepts every recomposed coefficient in the full range represented
 by that depth. A role security uses this representable range, not the smaller
 honest-prover cap that the planner used to choose the depth.
 
-At the terminal boundary, the response is clear. The schedule stores a raw
-coefficient admission cap for codec and completeness sizing. The verifier
-decodes every centered coefficient and checks that cap directly.
+At the terminal boundary, the response is clear. A Linf route stores and checks
+a raw coefficient cap. An L2 route stores no independent Linf cap. It requires
+the signed coefficient wire representation, canonical Golomb-Rice encoding,
+and the scheduled payload budget, then checks the complete decoded squared
+norm directly.
 
 An error in the planner's Linf response prediction can reject an honest proof.
 It cannot make the verifier accept a coefficient outside the range priced by
@@ -904,13 +906,19 @@ The selected typed digit depth is capped by the universal depth. The suffix
 search also retains the relevant universal Linf alternative. No historical
 half-tail or three-quarter digit snap remains.
 
-### Terminal Linf sizing
+### Terminal norm and encoding sizing
 
-The terminal response is encoded as centered integers. Its raw admission cap
-is the smaller of the typed model cap and the certified universal cap when the
-typed model is available. If the typed model is unavailable, it uses the
-certified cap alone. Terminal byte pricing derives the Golomb parameters and
-segment sizes from this exact response shape.
+The terminal response is encoded as centered integers. For a Linf route, its
+raw cap is the smaller of the typed model cap and the certified universal cap
+when the typed model is available. If the typed model is unavailable, it uses
+the certified cap alone.
+
+For an L2 route, the same typed response scale selects the Rice remainder width
+and payload budget, but it is not emitted or enforced as a coefficient cap.
+The prover may retry when the canonical payload exceeds that budget. Every
+accepted coefficient must fit the signed wire type, and the complete decoded
+response must satisfy `S <= S_max`. There is no later digit decomposition and
+no separate Linf security condition at this boundary.
 
 ## Candidate generation and selection
 

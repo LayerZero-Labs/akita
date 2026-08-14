@@ -184,12 +184,8 @@ where
             "terminal response shape does not match terminal A width".into(),
         ));
     }
-    let admission_cap = expected_group.z_admission_linf_cap;
-    if admission_cap > params.certified_response_linf_cap(sparse)? {
-        return Err(AkitaError::InvalidSetup(
-            "terminal response cap exceeds its fixed matrix capacity".into(),
-        ));
-    }
+    let linf_cap = expected_group.z_linf_cap;
+    params.validate_terminal_linf_cap(sparse, linf_cap)?;
     let response_l2_sq_cap = params.response_l2_sq_cap();
     let operator_rejection = if response_l2_sq_cap.is_some() {
         Some(
@@ -234,7 +230,11 @@ where
                 }
             )?;
             let centered = witness.centered_coeffs_flat();
-            if golomb_rice_values_within_cap(centered, admission_cap).is_err() {
+            if let Some(cap) = linf_cap {
+                if golomb_rice_values_within_cap(centered, cap).is_err() {
+                    return Ok(None);
+                }
+            } else if centered.iter().any(|&value| i16::try_from(value).is_err()) {
                 return Ok(None);
             }
             if response_l2_sq_cap.is_some_and(|cap| {
@@ -242,7 +242,7 @@ where
             }) {
                 return Ok(None);
             }
-            let zigzag_width = golomb_rice_zigzag_width(admission_cap);
+            let zigzag_width = golomb_rice_zigzag_width(linf_cap.unwrap_or(i16::MAX as u128));
             let wire_bits = golomb_rice_total_wire_bits(
                 centered,
                 expected_group.z_rice_low_bits,
