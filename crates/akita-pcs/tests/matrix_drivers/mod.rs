@@ -40,8 +40,11 @@ where
 
     init_rayon_pool();
     run_on_large_stack(move || {
-        let schedule_key =
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
+        let schedule_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::unit_one_hot(
+            FINAL_NV,
+            FINAL_GROUP_SIZE,
+            256,
+        ));
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
         let schedule = RecursiveCommitmentConfig::<BaseCfg>::select_schedule_for_key(&schedule_key)
             .expect("recursive direct schedule")
@@ -216,7 +219,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     for &nv in nv_values {
-        let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
+        let opening_batch = OpeningClaimsLayout::unit_one_hot(nv, 1, k).expect("opening batch");
         let layout = Cfg::select_schedule_for_opening(&opening_batch)
             .expect("layout")
             .into_schedule()
@@ -439,10 +442,12 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         // An independent precommit commits with its own row without prior
         // groups, so take the pre-group ring dimension from exactly the row
         // `commit` will select below.
-        let pre_d = Cfg::profile_without_precommitted_groups(PolynomialGroupLayout::new(PRE_NV, 1))
-            .expect("pre profile without precommitted groups")
-            .inner_commit_matrix
-            .ring_dimension();
+        let pre_d = Cfg::profile_without_precommitted_groups(PolynomialGroupLayout::unit_one_hot(
+            PRE_NV, 1, k,
+        ))
+        .expect("pre profile without precommitted groups")
+        .inner_commit_matrix
+        .ring_dimension();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -469,7 +474,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         .expect("precommit");
 
         let schedule_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(final_nv, 1),
+            final_group: PolynomialGroupLayout::unit_one_hot(final_nv, 1, k),
             precommitteds: vec![pre_commitment.profile],
         };
         let schedule = Cfg::select_schedule_for_key(&schedule_key)

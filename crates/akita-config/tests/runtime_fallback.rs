@@ -299,11 +299,11 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
     feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2"
 )))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
-    let precommitted_group = PolynomialGroupLayout::singleton(16);
+    let precommitted_group = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
     let descriptor = fp128::OneHot::profile_without_precommitted_groups(precommitted_group)
         .expect("base OneHot precommit profile");
     let key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(32, 2),
+        final_group: PolynomialGroupLayout::unit_one_hot(32, 2, 256),
         precommitteds: vec![descriptor, descriptor],
     };
     assert!(matches!(
@@ -348,7 +348,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 fn runtime_rejects_malformed_extension_geometry_without_panicking() {
     type Cfg = fp128::OneHot;
     let catalog = Cfg::schedule_catalog();
-    let key = PolynomialGroupLayout::singleton(14);
+    let key = PolynomialGroupLayout::unit_one_hot(14, 1, 256);
     let reject = |mutate: fn(&mut PlannerPolicy)| {
         let mut policy = policy_of::<Cfg>();
         mutate(&mut policy);

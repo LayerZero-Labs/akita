@@ -318,8 +318,8 @@ macro_rules! small_field_test {
                 let label = concat!("completeness/", stringify!($name)).as_bytes();
                 let onehot_k: usize = $k;
                 for &nv in &[$($nv),+] {
-                    let opening_batch =
-                        OpeningClaimsLayout::new(nv, 1).expect("opening batch");
+                    let opening_batch = OpeningClaimsLayout::unit_one_hot(nv, 1, onehot_k)
+                        .expect("opening batch");
                     let layout = <$cfg as CommitmentConfig>::select_schedule_for_opening(
                         &opening_batch,
                     )
@@ -375,7 +375,7 @@ macro_rules! small_field_test {
                 // An independent precommit commits with its own row without
                 // precommitted groups, so take the ring dimension from that row.
                 let pre_d = <$cfg as CommitmentConfig>::profile_without_precommitted_groups(
-                    PolynomialGroupLayout::new(PRE_NV, 1),
+                    PolynomialGroupLayout::unit_one_hot(PRE_NV, 1, onehot_k),
                 )
                 .expect("pre profile without precommitted groups")
                 .inner_commit_matrix
@@ -422,7 +422,11 @@ macro_rules! small_field_test {
 
                     let multi_schedule = <$cfg as CommitmentConfig>::select_schedule_for_key(
                         &AkitaScheduleLookupKey {
-                            final_group: PolynomialGroupLayout::new(final_nv, 1),
+                            final_group: PolynomialGroupLayout::unit_one_hot(
+                                final_nv,
+                                1,
+                                onehot_k,
+                            ),
                             precommitteds: vec![pre_commitment.profile],
                         },
                     )
@@ -610,7 +614,7 @@ fn fp32_onehot_multi_group() {
         };
 
         let pre_group_schedule = SmallCfg::select_schedule_for_key(
-            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(PRE_NV, 1)),
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::unit_one_hot(PRE_NV, 1, 256)),
         )
         .expect("pre schedule")
         .into_schedule();
@@ -639,7 +643,7 @@ fn fp32_onehot_multi_group() {
         .expect("precommit");
 
         let multi_schedule = SmallCfg::select_schedule_for_key(&AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
+            final_group: PolynomialGroupLayout::unit_one_hot(FINAL_NV, 1, 256),
             precommitteds: vec![pre_commitment.profile],
         })
         .expect("multi-group schedule")
@@ -795,7 +799,8 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("L2 opening layout");
+        let opening_layout =
+            OpeningClaimsLayout::unit_one_hot(NUM_VARS, 1, 256).expect("L2 opening layout");
         let schedule = Cfg::select_schedule_for_opening(&opening_layout)
             .expect("shipped L2 schedule")
             .into_schedule();
@@ -961,7 +966,8 @@ fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("terminal L2 layout");
+        let opening_layout =
+            OpeningClaimsLayout::unit_one_hot(NUM_VARS, 1, 256).expect("terminal L2 layout");
         let schedule = Cfg::select_schedule_for_opening(&opening_layout)
             .expect("shipped fp32 schedule")
             .into_schedule();
