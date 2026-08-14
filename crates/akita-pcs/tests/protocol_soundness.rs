@@ -373,8 +373,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         type Cfg = fp128::OneHot;
         const NV: usize = 20;
 
-        let opening_batch =
-            akita_types::OpeningClaimsLayout::unit_one_hot(NV, 2, ONEHOT_K).expect("opening_batch");
+        let opening_batch = akita_types::OpeningClaimsLayout::new(NV, 2).expect("opening_batch");
         let layout = Cfg::select_schedule_for_opening(&opening_batch)
             .map(|row| row.schedule().root.params.final_group.commitment.clone())
             .expect("layout");
@@ -910,7 +909,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         let layout = akita_batched_root_layout::<Cfg>(NV, 2).expect("layout");
         let root_d = layout.d_a();
         let plan = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::unit_one_hot(NV, 2, ONEHOT_K),
+            PolynomialGroupLayout::new(NV, 2),
         ))
         .expect("runtime schedule")
         .into_schedule();

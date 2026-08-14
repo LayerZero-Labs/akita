@@ -29,7 +29,6 @@ struct ExplicitGroup {
     family: String,
     num_vars: ExplicitRange,
     num_polys: ExplicitRange,
-    onehot_chunk_size: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -46,8 +45,7 @@ fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
      --bin gen_schedule_tables -- <output-dir> [--wiring-only] [family_module_name ...] \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
-     [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]\n\
-     Append `:K` to either group form for an exact unit-one-hot source."
+     [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
 
 fn sorted_unique_specs(specs: &[EmitSpec]) -> Vec<EmitSpec> {
@@ -99,27 +97,16 @@ fn parse_range(raw: &str, context: &str) -> Result<ExplicitRange, String> {
 
 fn parse_explicit_group(raw: &str) -> Result<ExplicitGroup, String> {
     let parts = raw.split(':').collect::<Vec<_>>();
-    if !(3..=4).contains(&parts.len()) {
-        return Err(format!(
-            "expected `family:nv:num_polys` or `family:nv:num_polys:K`, got `{raw}`"
-        ));
+    if parts.len() != 3 {
+        return Err(format!("expected `family:nv:num_polys`, got `{raw}`"));
     }
     if !known_family(parts[0]) {
         return Err(format!("unknown schedule family: {}", parts[0]));
-    }
-    let onehot_chunk_size = parts
-        .get(3)
-        .map(|raw| parse_usize(raw, "one-hot chunk size"))
-        .transpose()?;
-    if onehot_chunk_size.is_some_and(|chunk_size| chunk_size == 0 || !chunk_size.is_power_of_two())
-    {
-        return Err("one-hot chunk size must be a nonzero power of two".into());
     }
     Ok(ExplicitGroup {
         family: parts[0].to_string(),
         num_vars: parse_range(parts[1], "num_vars")?,
         num_polys: parse_range(parts[2], "num_polys")?,
-        onehot_chunk_size,
     })
 }
 
@@ -308,12 +295,7 @@ impl ExplicitGroup {
         let mut layouts = Vec::new();
         for num_vars in self.num_vars.values() {
             for num_polys in self.num_polys.values() {
-                layouts.push(match self.onehot_chunk_size {
-                    Some(chunk_size) => {
-                        PolynomialGroupLayout::unit_one_hot(num_vars, num_polys, chunk_size)
-                    }
-                    None => PolynomialGroupLayout::new(num_vars, num_polys),
-                });
+                layouts.push(PolynomialGroupLayout::new(num_vars, num_polys));
             }
         }
         layouts
@@ -553,9 +535,7 @@ mod tests {
     fn explicit_scalar_sweep_replaces_default_catalog_work() {
         let family = family_by_name("fp128_onehot").expect("known family");
         let explicit_rows = ExplicitRows {
-            final_group: Some(
-                parse_explicit_group("fp128_onehot:14:1:16").expect("explicit group"),
-            ),
+            final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
             precommitted_groups: Vec::new(),
         };
 
@@ -568,24 +548,14 @@ mod tests {
         )
         .expect("explicit emit spec");
 
-        assert_eq!(
-            spec.keys,
-            vec![PolynomialGroupLayout::unit_one_hot(14, 1, 16)]
-        );
+        assert_eq!(spec.keys, vec![PolynomialGroupLayout::new(14, 1)]);
         assert!(spec.group_batch_keys.is_empty());
         assert_eq!(spec.generator_command, "generator command");
     }
 
     #[test]
-    fn explicit_onehot_k_must_be_a_nonzero_power_of_two() {
-        assert!(parse_explicit_group("fp128_onehot:14:1:0").is_err());
-        assert!(parse_explicit_group("fp128_onehot:14:1:24").is_err());
-        assert_eq!(
-            parse_explicit_group("fp128_onehot:14:1:256")
-                .unwrap()
-                .layouts(),
-            vec![PolynomialGroupLayout::unit_one_hot(14, 1, 256)]
-        );
+    fn explicit_group_rejects_source_metadata() {
+        assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
     }
 
     #[test]

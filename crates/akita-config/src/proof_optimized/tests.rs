@@ -31,7 +31,7 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
 #[test]
 fn generated_schedule_has_explicit_terminal_inner_only_topology() {
     let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::unit_one_hot(32, 1, 256),
+        PolynomialGroupLayout::new(32, 1),
     ))
     .expect("generated one-hot schedule")
     .into_schedule();
@@ -50,7 +50,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn d64_selective_l2_binds_the_certified_operator_norm_family() {
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::unit_one_hot(40, 1, 256));
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(40, 1));
     let schedule = fp128::OneHot::select_schedule_for_key(&key)
         .expect("generated one-hot schedule")
         .into_schedule();
@@ -126,7 +126,7 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn fp64_response_model_selects_globally_winning_l2_suffix() {
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::unit_one_hot(28, 1, 256));
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(28, 1));
     let schedule = fp64::OneHot::select_schedule_for_key(&key)
         .expect("generated fp64 schedule")
         .into_schedule();
@@ -171,7 +171,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn terminal_l2_uses_its_catalog_fold_geometry() {
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::unit_one_hot(28, 1, 256));
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(28, 1));
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 one-hot catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
     assert_eq!(
@@ -358,8 +358,8 @@ fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
     assert!(layouts.iter().any(|layout| {
         layout.groups()
             == [
-                PolynomialGroupLayout::unit_one_hot(14, 2, 256),
-                PolynomialGroupLayout::unit_one_hot(14, 1, 256),
+                PolynomialGroupLayout::new(14, 2),
+                PolynomialGroupLayout::new(14, 1),
             ]
     }));
 }

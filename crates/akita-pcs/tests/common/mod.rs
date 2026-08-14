@@ -511,11 +511,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
 
     init_rayon_pool();
     run_on_large_stack(move || {
-        let pre_key = PolynomialGroupLayout::unit_one_hot(PRE_NV, PRE_GROUP_SIZE, 256);
+        let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
         let pre_frozen =
             BaseCfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
         let schedule_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::unit_one_hot(FINAL_NV, FINAL_GROUP_SIZE, 256),
+            final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
         };
         let opening_layout = schedule_key.opening_layout().expect("opening layout");

@@ -406,15 +406,22 @@ accepted only when that checked enclosure is below the runtime threshold.
 
 ### Production certified families
 
-| Ring | Signed sparse shell | Squared L2 mass `q_c` | Certified true threshold | Runtime strict threshold `gamma` | Certified accepted support |
+| Ring | Signed sparse shell | Squared L2 mass `q_c` | Runtime threshold `gamma` | Fixed-point containment | Certified accepted support |
 |---|---:|---:|---:|---:|---:|
-| D64 | 31 coefficients at magnitude 1 and 11 at magnitude 2 | 75 | 18 | 19 | 128.062439 bits |
-| D128 | 31 coefficients at magnitude 1 | 31 | 13 | 14 | 128.563317 bits |
+| D64 | 31 coefficients at magnitude 1 and 11 at magnitude 2 | 75 | 18 | `Gamma < 18 - 600 / 2^48` | 128.062439 bits |
+| D128 | 31 coefficients at magnitude 1 | 31 | 13 | `Gamma < 13 - 351 / 2^48` | 128.563317 bits |
 
-The support proof certifies a subset under the smaller mathematical threshold.
-The runtime uses the larger strict threshold so that fixed-point enclosure
-cannot reject any challenge in that certified subset. Security pricing uses
-the runtime threshold, not the smaller certificate threshold.
+The runtime checker uses 48 fractional bits. It validates the certified root
+coordinate error bound and proves the rounding margin with checked integer
+arithmetic. The margin condition is
+
+```text
+h^2 > 8 * (max_l1 * eps_root)^2.
+```
+
+The D64 margin is 600 units and the D128 margin is 351 units. Security pricing
+uses the runtime threshold. The exact certificate replay proves that the
+contained accepted subset retains the support stated above.
 
 Each challenge draw has at least 128 bits of accepted support. The schedule and
 transcript bind the sparse shell and both thresholds. D64 and D128 have
@@ -634,9 +641,28 @@ key supported without that heuristic.
 
 #### Unit one-hot root
 
-A unit one-hot source has exactly one unit entry per declared source chunk. Its
-total source energy is the exact number of unit entries, and its peak second
-moment is one.
+A unit one-hot source permits any hot position inside each policy-owned source
+chunk. Tensor projection can map one logical hot to more than one physical
+coefficient, and different projected monomials can coalesce. The L2 root model
+therefore enumerates the same physical source classes as the tensor projection
+kernel. For each class it computes
+
+```text
+class energy = count_abs_1 + 4 * count_abs_2,
+```
+
+then takes the maximum class energy and multiplies by the exact number of
+independent physical groups. The peak coefficient square is four if any class
+contains a magnitude-two collision and one otherwise. This is a deterministic
+maximum over the public unit one-hot contract. It does not average over hot
+positions.
+
+This distinction matters for proper extension fields. For fp64 with extension
+degree two and chunk size 256, a hot at coordinate zero emits one monomial but
+every nonzero coordinate emits two. The older coordinate average
+`(2K - 1) / K` underestimated a witness that chooses nonzero coordinates in
+every chunk. The corrected root bound charges two units of physical energy per
+chunk. The fp32 policy uses the same kernel-faithful maximum.
 
 The Linf root policy also evaluates the exact one-coordinate moment generating
 function for the signed sparse challenge. Directed floating-point inflation
@@ -751,8 +777,14 @@ Pr[all 4096 attempts fail] <= (39/40)^4096 < 2^-149.
 ```
 
 This argument does not assume a Gaussian response tail. It is rigorous only
-conditional on the 3 percent source envelope. The empirical section tests that
-condition directly.
+conditional on the 3 percent source envelope. The empirical workflow tests
+that condition against the exact schedule used by each measured proof.
+
+The 4096 honest attempts are a completeness mechanism. They do not cause a
+fixed 12-bit soundness debit at every fold. Each adversarial nonce trial is a
+random-oracle query and is charged through the total query budget in the
+Fiat-Shamir CWSS theorem. See
+[`book/src/foundations/pcs-and-binding.md`](../book/src/foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
 ## Linf response sizing
 
@@ -1000,9 +1032,42 @@ A total proof size alone cannot answer these questions. The validation records
 source energy, modeled response mean, observed response norm, cap, nonce, route,
 and exact serialized bytes at each fold.
 
-### Broad calibration sample
+### Current calibration contract
 
-The final calibration run contains 13 production profiles. It covers:
+Empirical values are not copied into planner unit tests. Such literals lose the
+profile name, schedule identity, seed, and capture provenance, then become
+stale when catalogs change. Instead, a diagnostic production proof emits the
+exact source and response measurements beside its planned fold events. The CI
+report parser joins both sides by fold level within the same run.
+
+For every successful L2 fold, the parser requires and retains:
+
+* the frozen response cap from that run's selected schedule;
+* the measured squared response norm;
+* cap utilization;
+* the accepted nonce and number of attempts;
+* the profile case and run identity carried by the surrounding summary.
+
+A successful run with a missing measurement or a response above its cap makes
+report generation fail. Repeated samples are aggregated without discarding the
+individual response values or nonces. This validates the current generated
+schedule rather than a detached copy of an older model.
+
+This production report checks the frozen cap, realized response, and retry
+behavior. It does not by itself validate the three percent source-model
+envelope. A binary built with `response-model-diagnostics` also emits the exact
+incoming source energy and its challenge-scaled conditional mean. Those values
+are retained for separate calibration analysis because multi-group proofs can
+carry several source observations into one scheduled fold. Claims about model
+error must cite such a diagnostic data set, not the ordinary cap report.
+
+### Historical calibration snapshot
+
+The following measurements were collected before the source-free runtime
+cleanup and the kernel-faithful one-hot root correction. They explain how the
+3 percent envelope was chosen. They are not a current schedule acceptance test.
+
+That calibration run contained 13 production profiles. It covered:
 
 * Dense and one-hot fp32.
 * Dense and one-hot fp64.
@@ -1012,7 +1077,8 @@ The final calibration run contains 13 production profiles. It covers:
 * W2, W4, and W8 multi-chunk variants.
 * Recursive W8 adapters.
 
-Every proof passed multi-threaded and single-threaded verification.
+Every proof in that snapshot passed multi-threaded and single-threaded
+verification.
 
 This run measures the total-energy formula. The later component-capacity
 experiment measures the Linf column formula. A Linf model change can select a
@@ -1050,7 +1116,7 @@ W8 setup values that retained correlation instead of behaving as fully mixed
 uniform values. Those overestimates cost planner efficiency but do not threaten
 honest acceptance.
 
-### Final schedule remeasurement
+### Historical schedule remeasurement
 
 The component-capacity correction was measured on every recursive and terminal
 state of fp32 and fp64 dense and one-hot profiles. The diagnostic computed the
@@ -1074,9 +1140,10 @@ quantile and L2 grinding allowance.
 | fp128 multi-chunk W4R2 | 73,993 | 851 | 836 | 1.8% |
 | fp128 multi-chunk W8R2 | 75,583 | 851 | 835 | 1.9% |
 
-Every proof passed multi-threaded and single-threaded verification. The profile
-harness uses fixed seeds. These four maxima are samples, not estimates of an
-acceptance quantile.
+Every proof in that snapshot passed multi-threaded and single-threaded
+verification. The profile harness used fixed seeds. These maxima are samples,
+not estimates of an acceptance quantile and not frozen expectations for the
+current catalog.
 
 The old scalar calculation gave every typed component the complete block
 column. In the eight-block fp64 terminal experiment, that counted four

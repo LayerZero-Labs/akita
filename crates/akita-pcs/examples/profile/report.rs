@@ -1036,6 +1036,19 @@ where
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce;
     let grind_attempts = fold_grind_attempts(grind_nonce);
+    let response_l2_sq = level
+        .terminal_response()
+        .layout
+        .groups
+        .first()
+        .and_then(|group| {
+            akita_types::decode_terminal_z_golomb_payload(
+                level.terminal_response().z_payloads.first()?,
+                group,
+            )
+            .ok()
+        })
+        .and_then(|values| akita_types::sis::checked_centered_l2_sq(&values));
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes the terminal response to mirror the planner's
     // `terminal_level_proof_bytes`. The response is reported separately as
@@ -1058,6 +1071,7 @@ where
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
         grind_attempts,
+        response_l2_sq = ?response_l2_sq,
         terminal_response_bytes = terminal_response_size,
         root_variant = root_variant,
         "proof fold level"

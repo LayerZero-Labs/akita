@@ -3,7 +3,6 @@
 //! These policies select an exact gadget depth for schedule generation. They
 //! are not runtime protocol metadata and are never evaluated by the verifier.
 
-use crate::RootSourceProfile;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
@@ -31,8 +30,6 @@ pub struct HonestFoldSizingQuery<'a> {
     pub num_chunks: usize,
     /// Total coefficients emitted across all physical response windows.
     pub num_fold_coeffs: usize,
-    /// Exact root-source representation for this commitment group.
-    pub source: RootSourceProfile,
     /// Exact source-plane norms after the selected inner decomposition.
     pub witness_norms: FoldWitnessNorms,
     /// Basis used to decompose the emitted folded response.
@@ -89,11 +86,6 @@ impl BalancedSignedDigitFoldPolicy {
 
 impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-        if query.source != RootSourceProfile::Dense {
-            return Err(AkitaError::InvalidSetup(
-                "balanced fold policy requires dense source metadata".into(),
-            ));
-        }
         let cap = self.universal_cap(query)?;
         Ok(self.digit_depth_for_cap(cap, query.log_basis_response))
     }
@@ -104,6 +96,7 @@ impl HonestFoldPolicy for BalancedSignedDigitFoldPolicy {
 pub struct UnitOneHotFoldPolicy {
     field_bits: u32,
     extension_degree: usize,
+    source_chunk_size: usize,
 }
 
 /// Canonical logical chunk size of the shipping unit one-hot representation.
@@ -112,10 +105,11 @@ pub const DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE: usize = 256;
 impl UnitOneHotFoldPolicy {
     /// Construct a unit one-hot policy for one base/extension field profile.
     #[must_use]
-    pub const fn new(field_bits: u32, extension_degree: usize) -> Self {
+    pub const fn new(field_bits: u32, extension_degree: usize, source_chunk_size: usize) -> Self {
         Self {
             field_bits,
             extension_degree,
+            source_chunk_size,
         }
     }
 
@@ -125,8 +119,10 @@ impl UnitOneHotFoldPolicy {
         self.extension_degree
     }
 
-    fn source_chunk_size(&self, query: HonestFoldSizingQuery<'_>) -> Option<usize> {
-        query.source.onehot_chunk_size()
+    /// Logical source chunk size covered by the unit one-hot contract.
+    #[must_use]
+    pub const fn source_chunk_size(self) -> usize {
+        self.source_chunk_size
     }
 
     fn physical_extension_degree(&self, query: HonestFoldSizingQuery<'_>) -> Option<usize> {
@@ -151,7 +147,7 @@ impl UnitOneHotFoldPolicy {
     }
 
     fn independent_challenge_groups(&self, query: HonestFoldSizingQuery<'_>) -> Option<usize> {
-        let chunk_size = self.source_chunk_size(query)?;
+        let chunk_size = self.source_chunk_size;
         let max_groups_per_claim = if chunk_size <= query.ring_dimension
             || query.num_positions_per_block >= chunk_size / query.ring_dimension
         {
@@ -213,7 +209,7 @@ impl UnitOneHotFoldPolicy {
     fn source_classes(&self, query: HonestFoldSizingQuery<'_>) -> Option<Vec<SourceClass>> {
         projected_source_classes(
             query.ring_dimension,
-            self.source_chunk_size(query)?,
+            self.source_chunk_size,
             self.physical_extension_degree(query)?,
         )
     }
@@ -221,7 +217,7 @@ impl UnitOneHotFoldPolicy {
     fn deterministic_cap(&self, query: HonestFoldSizingQuery<'_>) -> Option<u128> {
         let per_group = deterministic_convolution_cap(
             query.ring_dimension,
-            self.source_chunk_size(query)?,
+            self.source_chunk_size,
             self.physical_extension_degree(query)?,
             query.challenge_config,
         )?;
@@ -253,7 +249,7 @@ impl UnitOneHotFoldPolicy {
             let lambda = 2f64.powi(exponent);
             let log_mgf = max_log_mgf_upper(
                 query.ring_dimension,
-                self.source_chunk_size(query)?,
+                self.source_chunk_size,
                 self.physical_extension_degree(query)?,
                 cfg,
                 exponent,
@@ -309,9 +305,9 @@ fn distinct_source_chunks_for_range(
 impl HonestFoldPolicy for UnitOneHotFoldPolicy {
     fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
         validate_query(query)?;
-        if !matches!(query.source, RootSourceProfile::UnitOneHot { .. }) {
+        if self.source_chunk_size == 0 || !self.source_chunk_size.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
-                "unit one-hot fold policy requires unit one-hot source metadata".into(),
+                "unit one-hot source chunk size must be a nonzero power of two".into(),
             ));
         }
         let expected_fold_coeffs = query
@@ -358,7 +354,6 @@ impl HonestFoldPolicySpec {
         self,
         log_basis_inner: u32,
         ring_dimension: usize,
-        source: RootSourceProfile,
         num_vars: usize,
     ) -> FoldWitnessNorms {
         match self {
@@ -366,21 +361,21 @@ impl HonestFoldPolicySpec {
                 FoldWitnessNorms::bounded(log_basis_inner, ring_dimension)
             }
             Self::UnitOneHot(policy) => {
-                let classes = source
-                    .onehot_chunk_size()
-                    .and_then(|chunk_size| {
-                        let extension_degree = if crate::root_tensor_projection_enabled_for_width(
-                            policy.extension_degree,
-                            ring_dimension,
-                            num_vars,
-                        ) {
-                            policy.extension_degree
-                        } else {
-                            1
-                        };
-                        projected_source_classes(ring_dimension, chunk_size, extension_degree)
-                    })
-                    .unwrap_or_default();
+                let extension_degree = if crate::root_tensor_projection_enabled_for_width(
+                    policy.extension_degree,
+                    ring_dimension,
+                    num_vars,
+                ) {
+                    policy.extension_degree
+                } else {
+                    1
+                };
+                let classes = projected_source_classes(
+                    ring_dimension,
+                    policy.source_chunk_size,
+                    extension_degree,
+                )
+                .unwrap_or_default();
                 let infinity_norm = classes
                     .iter()
                     .map(|class| class.infinity_norm())
@@ -392,6 +387,62 @@ impl HonestFoldPolicySpec {
                     .max()
                     .unwrap_or(infinity_norm);
                 FoldWitnessNorms::new(infinity_norm, l1_norm)
+            }
+        }
+    }
+
+    /// Maximum physical squared coefficient norm of a valid root source.
+    ///
+    /// This follows the tensor projection kernel. It maximizes over every hot
+    /// position allowed by the unit one-hot chunk contract and includes
+    /// same-coordinate coalescing inside each physical ring.
+    pub fn root_source_l2_sq(
+        self,
+        logical_len: usize,
+        ring_dimension: usize,
+        num_vars: usize,
+    ) -> Option<(u128, u128)> {
+        match self {
+            Self::BalancedSignedDigit(_) => None,
+            Self::UnitOneHot(policy) => {
+                if logical_len == 0
+                    || ring_dimension == 0
+                    || policy.source_chunk_size == 0
+                    || !logical_len.is_multiple_of(policy.source_chunk_size)
+                    || !logical_len.is_multiple_of(ring_dimension)
+                {
+                    return None;
+                }
+                let extension_degree = if crate::root_tensor_projection_enabled_for_width(
+                    policy.extension_degree,
+                    ring_dimension,
+                    num_vars,
+                ) {
+                    policy.extension_degree
+                } else {
+                    1
+                };
+                let classes = projected_source_classes(
+                    ring_dimension,
+                    policy.source_chunk_size,
+                    extension_degree,
+                )?;
+                let per_group_energy = classes.iter().try_fold(0u128, |maximum, class| {
+                    let energy = (class.magnitude_one as u128)
+                        .checked_add((class.magnitude_two as u128).checked_mul(4)?)?;
+                    Some(maximum.max(energy))
+                })?;
+                let group_count = if policy.source_chunk_size >= ring_dimension {
+                    logical_len / policy.source_chunk_size
+                } else {
+                    logical_len / ring_dimension
+                };
+                let energy = per_group_energy.checked_mul(group_count as u128)?;
+                let coefficient_sq_max = classes
+                    .iter()
+                    .map(|class| if class.magnitude_two == 0 { 1 } else { 4 })
+                    .max()?;
+                Some((energy, coefficient_sq_max))
             }
         }
     }
@@ -441,297 +492,12 @@ fn validate_query(query: HonestFoldSizingQuery<'_>) -> Result<(), AkitaError> {
         .map_err(|message| AkitaError::InvalidSetup(message.to_string()))
 }
 
-#[cfg(any())]
-mod legacy_tests {
-    use super::*;
-    use akita_challenges::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
-
-    fn d64_challenge() -> SparseChallengeConfig {
-        SparseChallengeConfig::production_for_ring_dim(64).expect("D64 production challenge")
-    }
-
-    fn query<'a>(challenge: &'a SparseChallengeConfig) -> HonestFoldSizingQuery<'a> {
-        HonestFoldSizingQuery {
-            ring_dimension: 64,
-            num_claims: 4,
-            num_live_blocks: 16,
-            num_chunks: 1,
-            num_fold_coeffs: 4_096,
-            witness_norms: FoldWitnessNorms::bounded(3, 64),
-            log_basis_response: 3,
-            challenge_config: challenge,
-        }
-    }
-
-    #[test]
-    fn d64_one_hot_mgf_uses_31_and_10_masses() {
-        let challenge = d64_challenge();
-        assert_eq!(challenge.count_pm1, D64_PRODUCTION_PM1_COUNT);
-        assert_eq!(challenge.count_pm2, D64_PRODUCTION_PM2_COUNT);
-        assert_eq!((challenge.count_pm1, challenge.count_pm2), (31, 10));
-
-        let lambda = 0.75f64;
-        let implemented = 1.0
-            + (challenge.count_pm1 as f64 / 64.0) * (lambda.cosh() - 1.0)
-            + (challenge.count_pm2 as f64 / 64.0) * ((2.0 * lambda).cosh() - 1.0);
-        let specified = 1.0
-            + (31.0 / 64.0) * (lambda.cosh() - 1.0)
-            + (10.0 / 64.0) * ((2.0 * lambda).cosh() - 1.0);
-        assert_eq!(implemented, specified);
-    }
-
-    fn directly_enumerated_one_coordinate_mgf(
-        challenge: &SparseChallengeConfig,
-        dimension: usize,
-        lambda: f64,
-    ) -> f64 {
-        let zero_count = dimension - challenge.weight();
-        let pm1_mass = challenge.count_pm1 as f64 * (lambda.exp() + (-lambda).exp()) / 2.0;
-        let pm2_mass =
-            challenge.count_pm2 as f64 * ((2.0 * lambda).exp() + (-2.0 * lambda).exp()) / 2.0;
-        (zero_count as f64 + pm1_mass + pm2_mass) / dimension as f64
-    }
-
-    #[test]
-    fn one_hot_mgf_matches_direct_law_and_uses_each_dimensions_counts() {
-        let lambda = 0.625;
-        for dimension in [64, 128, 256] {
-            let challenge = SparseChallengeConfig::production_for_ring_dim(dimension)
-                .expect("production challenge");
-            let direct = directly_enumerated_one_coordinate_mgf(&challenge, dimension, lambda);
-            let formula = 1.0
-                + (challenge.count_pm1 as f64 / dimension as f64) * (lambda.cosh() - 1.0)
-                + (challenge.count_pm2 as f64 / dimension as f64) * ((2.0 * lambda).cosh() - 1.0);
-            assert!((formula - direct).abs() <= 8.0 * f64::EPSILON * direct);
-            assert!(unit_one_hot_mgf_upper(&challenge, dimension as f64, lambda) >= direct);
-        }
-
-        let d128 = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
-        assert_eq!((d128.count_pm1, d128.count_pm2), (31, 0));
-        assert_ne!(
-            (d128.count_pm1, d128.count_pm2),
-            (D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT)
-        );
-    }
-
-    #[test]
-    fn balanced_policy_uses_the_universal_digit_depth() {
-        let challenge = d64_challenge();
-        let query = query(&challenge);
-        let witness = FoldWitnessNorms::bounded(3, 64);
-        let policy = BalancedSignedDigitFoldPolicy::universal(128, witness);
-        let actual = policy.num_digits_fold(query).expect("balanced policy");
-        let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_coeffs(&challenge, query.num_fold_coeffs)
-                .expect("cap config");
-        let expected_cap = fold_witness_linf_cap(
-            query.num_live_blocks,
-            query.num_claims,
-            FoldChallengeNorms::new(&challenge),
-            witness,
-            &cap_config,
-        )
-        .expect("universal cap")
-        .0;
-        let expected = num_digits_for_linf_cap(expected_cap, 128, query.log_basis_response);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn unit_one_hot_never_exceeds_the_universal_bound() {
-        let challenge = d64_challenge();
-        let legacy_witness = FoldWitnessNorms::new(1, 4);
-        let one_hot = UnitOneHotFoldPolicy::new(128, legacy_witness);
-        let legacy = BalancedSignedDigitFoldPolicy::universal(128, legacy_witness);
-        let flat = query(&challenge);
-        let exact_digits = one_hot.num_digits_fold(flat).expect("one-hot policy");
-        let legacy_digits = legacy.num_digits_fold(flat).expect("legacy policy");
-        assert!(exact_digits <= legacy_digits);
-        let deterministic_cap = one_hot
-            .contributions_per_emitted_coordinate(flat)
-            .and_then(|count| count.checked_mul(challenge.infinity_norm() as usize))
-            .unwrap() as u128;
-        assert!(one_hot.exact_threshold(flat).unwrap() <= deterministic_cap);
-    }
-
-    #[test]
-    fn wide_one_hot_blocks_price_every_packed_unit_entry() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
-        let one_hot = UnitOneHotFoldPolicy::new(32, FoldWitnessNorms::new(1, 4));
-        let query = HonestFoldSizingQuery {
-            ring_dimension: 512,
-            num_claims: 1,
-            num_live_blocks: 512,
-            num_chunks: 1,
-            num_fold_coeffs: 4_096 * 512,
-            witness_norms: FoldWitnessNorms::new(1, 4),
-            log_basis_response: 3,
-            challenge_config: &challenge,
-        };
-
-        assert_eq!(
-            one_hot.contributions_per_emitted_coordinate(query),
-            Some(8_192)
-        );
-        assert!(one_hot.exact_threshold(query).unwrap() > 31);
-        assert!(one_hot.num_digits_fold(query).unwrap() >= 3);
-    }
-
-    #[test]
-    fn unit_one_hot_tightens_at_least_one_supported_geometry() {
-        let challenge =
-            SparseChallengeConfig::production_for_ring_dim(256).expect("D256 production challenge");
-        let legacy_witness = FoldWitnessNorms::new(1, 4);
-        let one_hot = UnitOneHotFoldPolicy::new(128, legacy_witness);
-        let legacy = BalancedSignedDigitFoldPolicy::universal(128, legacy_witness);
-        let mut tightened = None;
-
-        'geometry: for num_claims in [1, 2, 4] {
-            for num_live_blocks in [4, 16, 64, 256, 1_024, 4_096] {
-                for num_fold_coeffs in [256, 1_024, 4_096, 16_384] {
-                    for log_basis in 1..=8 {
-                        let query = HonestFoldSizingQuery {
-                            ring_dimension: 256,
-                            num_claims,
-                            num_live_blocks,
-                            num_chunks: 1,
-                            num_fold_coeffs,
-                            witness_norms: legacy_witness,
-                            log_basis_response: log_basis,
-                            challenge_config: &challenge,
-                        };
-                        let exact_digits = one_hot.num_digits_fold(query).unwrap();
-                        let legacy_digits = legacy.num_digits_fold(query).unwrap();
-                        if exact_digits < legacy_digits {
-                            tightened = Some((query, exact_digits, legacy_digits));
-                            break 'geometry;
-                        }
-                    }
-                }
-            }
-        }
-
-        assert!(
-            tightened.is_some(),
-            "supported grid must include a tighter row"
-        );
-    }
-
-    #[test]
-    fn chunked_query_uses_physical_emitted_geometry() {
-        let challenge = d64_challenge();
-        let one_hot = UnitOneHotFoldPolicy::new(128, FoldWitnessNorms::new(1, 4));
-        for (
-            _label,
-            num_chunks,
-            logical_num_live_blocks,
-            logical_num_fold_coeffs,
-            physical_num_fold_coeffs,
-            expected_threshold,
-        ) in [
-            ("W2", 2, 16, 256, 512, 11),
-            ("W4", 4, 32, 256, 1_024, 12),
-            ("W8", 8, 64, 512, 4_096, 13),
-        ] {
-            let physical = HonestFoldSizingQuery {
-                ring_dimension: 64,
-                num_claims: 1,
-                num_live_blocks: logical_num_live_blocks,
-                num_chunks,
-                num_fold_coeffs: physical_num_fold_coeffs,
-                witness_norms: FoldWitnessNorms::new(1, 4),
-                log_basis_response: 3,
-                challenge_config: &challenge,
-            };
-            assert_eq!(
-                physical.num_fold_coeffs,
-                logical_num_fold_coeffs * num_chunks
-            );
-            assert_eq!(
-                one_hot.exact_threshold(physical).expect("threshold"),
-                expected_threshold
-            );
-            assert_eq!(one_hot.num_digits_fold(physical).expect("digit depth"), 2);
-        }
-
-        let old_w8_logical = HonestFoldSizingQuery {
-            ring_dimension: 64,
-            num_claims: 1,
-            num_live_blocks: 64,
-            num_chunks: 1,
-            num_fold_coeffs: 512,
-            witness_norms: FoldWitnessNorms::new(1, 4),
-            log_basis_response: 3,
-            challenge_config: &challenge,
-        };
-        assert_eq!(
-            one_hot
-                .exact_threshold(old_w8_logical)
-                .expect("old threshold"),
-            32
-        );
-        assert_eq!(
-            one_hot
-                .num_digits_fold(old_w8_logical)
-                .expect("old digit depth"),
-            3
-        );
-    }
-
-    #[test]
-    fn chunked_query_uses_largest_uneven_window() {
-        let challenge = d64_challenge();
-        let one_hot = UnitOneHotFoldPolicy::new(128, FoldWitnessNorms::new(1, 4));
-        let uneven = HonestFoldSizingQuery {
-            ring_dimension: 64,
-            num_claims: 2,
-            num_live_blocks: 10,
-            num_chunks: 4,
-            num_fold_coeffs: 512,
-            witness_norms: FoldWitnessNorms::new(1, 4),
-            log_basis_response: 3,
-            challenge_config: &challenge,
-        };
-        let largest_window = HonestFoldSizingQuery {
-            num_live_blocks: 3,
-            num_chunks: 1,
-            ..uneven
-        };
-
-        assert_eq!(
-            one_hot.exact_threshold(uneven),
-            one_hot.exact_threshold(largest_window)
-        );
-    }
-
-    #[test]
-    fn chunked_query_accepts_empty_physical_windows() {
-        let challenge = d64_challenge();
-        let one_hot = UnitOneHotFoldPolicy::new(128, FoldWitnessNorms::new(1, 4));
-        let query = HonestFoldSizingQuery {
-            ring_dimension: 64,
-            num_claims: 1,
-            num_live_blocks: 4,
-            num_chunks: 8,
-            num_fold_coeffs: 4_096,
-            witness_norms: FoldWitnessNorms::new(1, 4),
-            log_basis_response: 3,
-            challenge_config: &challenge,
-        };
-
-        one_hot
-            .num_digits_fold(query)
-            .expect("empty physical windows have valid honest-fold sizing");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn query<'a>(
         challenge: &'a SparseChallengeConfig,
-        source: RootSourceProfile,
         ring_dimension: usize,
         blocks: usize,
         positions_per_block: usize,
@@ -744,7 +510,6 @@ mod tests {
             num_positions_per_block: positions_per_block,
             num_chunks: 1,
             num_fold_coeffs: positions_per_block * ring_dimension,
-            source,
             witness_norms: FoldWitnessNorms::new(1, 1),
             log_basis_response: 3,
             challenge_config: challenge,
@@ -754,14 +519,8 @@ mod tests {
     #[test]
     fn fp128_nv36_drops_the_spurious_positions_per_block_multiplier() {
         let challenge = SparseChallengeConfig::production_for_ring_dim(256).unwrap();
-        let policy = UnitOneHotFoldPolicy::new(128, 1);
-        let query = query(
-            &challenge,
-            RootSourceProfile::UnitOneHot { chunk_size: 256 },
-            256,
-            4_096,
-            65_536,
-        );
+        let policy = UnitOneHotFoldPolicy::new(128, 1, 256);
+        let query = query(&challenge, 256, 4_096, 65_536);
         assert!(policy.exact_threshold(query).unwrap() <= 219);
         assert_eq!(policy.num_digits_fold(query).unwrap(), 3);
     }
@@ -770,22 +529,10 @@ mod tests {
     fn fp64_psi_expansion_crosses_the_two_digit_positive_endpoint() {
         let d256_challenge = SparseChallengeConfig::production_for_ring_dim(256).unwrap();
         let d512_challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
-        let policy = UnitOneHotFoldPolicy::new(64, 2);
+        let policy = UnitOneHotFoldPolicy::new(64, 2, 256);
         for query in [
-            query(
-                &d256_challenge,
-                RootSourceProfile::UnitOneHot { chunk_size: 256 },
-                256,
-                256,
-                4_096,
-            ),
-            query(
-                &d512_challenge,
-                RootSourceProfile::UnitOneHot { chunk_size: 256 },
-                512,
-                256,
-                8_192,
-            ),
+            query(&d256_challenge, 256, 256, 4_096),
+            query(&d512_challenge, 512, 256, 8_192),
         ] {
             assert!(policy.exact_threshold(query).unwrap() > 27);
             assert_eq!(policy.num_digits_fold(query).unwrap(), 3);
@@ -795,27 +542,85 @@ mod tests {
     #[test]
     fn every_k_vs_d_branch_uses_the_exact_group_source() {
         let challenge = SparseChallengeConfig::production_for_ring_dim(256).unwrap();
-        let direct = UnitOneHotFoldPolicy::new(128, 1);
-        let projected = UnitOneHotFoldPolicy::new(64, 2);
         for chunk_size in [16, 256, 512] {
-            let source = RootSourceProfile::UnitOneHot { chunk_size };
-            let query = query(&challenge, source, 256, 8, 4);
+            let direct = UnitOneHotFoldPolicy::new(128, 1, chunk_size);
+            let projected = UnitOneHotFoldPolicy::new(64, 2, chunk_size);
+            let query = query(&challenge, 256, 8, 4);
             assert!(direct.exact_threshold(query).is_some());
             assert!(projected.exact_threshold(query).is_some());
         }
     }
 
     #[test]
+    fn fp64_root_energy_maximizes_over_every_allowed_hot_position() {
+        let policy = HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(64, 2, 256));
+        let (energy, coefficient_sq_max) = policy
+            .root_source_l2_sq(4_096, 256, 12)
+            .expect("supported fp64 root geometry");
+
+        // There are sixteen source chunks. A hot at coordinate zero projects
+        // to one monomial, but every other allowed coordinate projects to two.
+        // The public source contract permits the latter choice in every chunk.
+        assert_eq!(energy, 32);
+        assert_eq!(coefficient_sq_max, 1);
+    }
+
+    #[test]
+    fn fp32_root_energy_uses_the_kernel_maximum_not_the_coordinate_average() {
+        let policy = HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(32, 4, 256));
+        let (energy, coefficient_sq_max) = policy
+            .root_source_l2_sq(4_096, 256, 12)
+            .expect("supported fp32 root geometry");
+
+        assert_eq!(energy, 32);
+        assert_eq!(coefficient_sq_max, 1);
+    }
+
+    #[test]
+    fn root_energy_matches_exhaustive_materialized_tensor_projection() {
+        const D: usize = 8;
+        for (extension_degree, chunk_size) in [(2, 8), (4, 4)] {
+            let policy = HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(
+                32,
+                extension_degree,
+                chunk_size,
+            ));
+            let modeled = policy
+                .root_source_l2_sq(D, D, 3)
+                .expect("supported small root geometry")
+                .0;
+            let chunk_count = D / chunk_size;
+            let choices_per_chunk = chunk_size + 1;
+            let mut observed_max = 0u128;
+            for mut choice_code in 0..choices_per_chunk.pow(chunk_count as u32) {
+                let mut source = vec![0i8; D];
+                for chunk in 0..chunk_count {
+                    let choice = choice_code % choices_per_chunk;
+                    choice_code /= choices_per_chunk;
+                    if choice != chunk_size {
+                        source[chunk * chunk_size + choice] = 1;
+                    }
+                }
+                let packed = crate::pack_tensor_base_lift_i8_digits::<D>(
+                    &source,
+                    extension_degree,
+                    extension_degree,
+                )
+                .expect("materialized tensor projection");
+                let energy = packed.iter().try_fold(0u128, |sum, value| {
+                    sum.checked_add(u128::from(value.unsigned_abs()).pow(2))
+                });
+                observed_max = observed_max.max(energy.expect("small energy"));
+            }
+            assert_eq!(modeled, observed_max);
+        }
+    }
+
+    #[test]
     fn fp32_small_block_row_does_not_use_ceil_p_over_k() {
         let challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
-        let policy = UnitOneHotFoldPolicy::new(32, 4);
-        let query = query(
-            &challenge,
-            RootSourceProfile::UnitOneHot { chunk_size: 256 },
-            512,
-            8,
-            4,
-        );
+        let policy = UnitOneHotFoldPolicy::new(32, 4, 256);
+        let query = query(&challenge, 512, 8, 4);
         let source_classes = policy.source_classes(query).unwrap();
         assert!(source_classes.iter().any(|class| class.magnitude_one == 4));
         assert_eq!(policy.independent_challenge_groups(query), Some(8));
@@ -824,14 +629,8 @@ mod tests {
     #[test]
     fn k16_multiple_ones_per_ring_are_charged_after_psi() {
         let challenge = SparseChallengeConfig::production_for_ring_dim(512).unwrap();
-        let policy = UnitOneHotFoldPolicy::new(32, 4);
-        let query = query(
-            &challenge,
-            RootSourceProfile::UnitOneHot { chunk_size: 16 },
-            512,
-            8,
-            4,
-        );
+        let policy = UnitOneHotFoldPolicy::new(32, 4, 16);
+        let query = query(&challenge, 512, 8, 4);
         let classes = policy.source_classes(query).unwrap();
         assert!(classes.iter().any(|class| class.magnitude_one == 64));
         assert!(classes.iter().any(|class| class.magnitude_two == 16));
@@ -839,17 +638,9 @@ mod tests {
     }
 
     #[test]
-    fn unit_policy_rejects_dense_metadata() {
-        let challenge = SparseChallengeConfig::production_for_ring_dim(256).unwrap();
-        let policy = UnitOneHotFoldPolicy::new(128, 1);
-        let dense = query(&challenge, RootSourceProfile::Dense, 256, 8, 4);
-        assert!(policy.num_digits_fold(dense).is_err());
-    }
-
-    #[test]
     fn k_greater_than_d_counts_distinct_chunks_inside_each_window() {
         let challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        let policy = UnitOneHotFoldPolicy::new(128, 1);
+        let policy = UnitOneHotFoldPolicy::new(128, 1, 256);
         let query = HonestFoldSizingQuery {
             ring_dimension: 64,
             num_claims: 1,
@@ -858,7 +649,6 @@ mod tests {
             num_positions_per_block: 1,
             num_chunks: 2,
             num_fold_coeffs: 2 * 64,
-            source: RootSourceProfile::UnitOneHot { chunk_size: 256 },
             witness_norms: FoldWitnessNorms::new(1, 1),
             log_basis_response: 3,
             challenge_config: &challenge,
@@ -870,7 +660,7 @@ mod tests {
     #[test]
     fn k_greater_than_d_handles_nondyadic_blocks_and_a_partial_final_block() {
         let challenge = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        let policy = UnitOneHotFoldPolicy::new(128, 1);
+        let policy = UnitOneHotFoldPolicy::new(128, 1, 256);
         let query = HonestFoldSizingQuery {
             ring_dimension: 64,
             num_claims: 1,
@@ -879,7 +669,6 @@ mod tests {
             num_positions_per_block: 3,
             num_chunks: 1,
             num_fold_coeffs: 3 * 64,
-            source: RootSourceProfile::UnitOneHot { chunk_size: 256 },
             witness_norms: FoldWitnessNorms::new(1, 1),
             log_basis_response: 3,
             challenge_config: &challenge,

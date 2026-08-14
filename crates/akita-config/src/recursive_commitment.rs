@@ -103,7 +103,7 @@ mod base_precommit_tests {
     /// split: the base config produces the profile, and the recursive one
     /// rejects the same request.
     fn assert_nv16_precommit_needs_the_base_config<Cfg: CommitmentConfig>() {
-        let group = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
+        let group = PolynomialGroupLayout::new(16, 1);
         Cfg::profile_without_precommitted_groups(group)
             .expect("base catalog must expose its independent profile");
         RecursiveCommitmentConfig::<Cfg>::profile_without_precommitted_groups(group)
@@ -133,8 +133,8 @@ mod tests {
     fn recursive_grouped_row_freezes_the_base_configs_precommit_profile() {
         type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
-        let precommitted = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
-        let final_group = PolynomialGroupLayout::unit_one_hot(32, 2, 256);
+        let precommitted = PolynomialGroupLayout::new(16, 1);
+        let final_group = PolynomialGroupLayout::new(32, 2);
         let expected = fp128::OneHot::profile_without_precommitted_groups(precommitted)
             .expect("independent profile");
         let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey {
@@ -157,7 +157,7 @@ mod tests {
     fn scalar_recursive_profile_uses_offloaded_catalog_row() {
         type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
         let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::unit_one_hot(36, 1, 256),
+            PolynomialGroupLayout::new(36, 1),
         ))
         .expect("scalar recursive schedule");
 

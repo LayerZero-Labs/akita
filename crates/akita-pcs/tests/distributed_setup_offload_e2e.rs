@@ -33,11 +33,11 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
 fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
-    let pre_group = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
+    let pre_group = PolynomialGroupLayout::new(16, 1);
     let precommitted = fp128::OneHotMultiChunk::profile_without_precommitted_groups(pre_group)
         .expect("independent profile");
     AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::unit_one_hot(32, 2, 256),
+        final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     }
 }

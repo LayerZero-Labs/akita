@@ -87,18 +87,10 @@ where
         .iter()
         .map(|group| {
             let num_vars = group.num_vars()?;
-            Ok(match group.source_profile()? {
-                akita_types::RootSourceProfile::Dense => {
-                    PolynomialGroupLayout::new(num_vars, group.num_polynomials())
-                }
-                akita_types::RootSourceProfile::UnitOneHot { chunk_size } => {
-                    PolynomialGroupLayout::unit_one_hot(
-                        num_vars,
-                        group.num_polynomials(),
-                        chunk_size,
-                    )
-                }
-            })
+            Ok(PolynomialGroupLayout::new(
+                num_vars,
+                group.num_polynomials(),
+            ))
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
     OpeningClaimsLayout::from_groups(layouts)
@@ -154,23 +146,13 @@ where
             ));
         }
         for (claims_group, source_group) in opening_claims.groups().iter().zip(&groups) {
-            let num_vars = source_group.num_vars()?;
-            let actual = match source_group.source_profile()? {
-                akita_types::RootSourceProfile::Dense => {
-                    PolynomialGroupLayout::new(num_vars, source_group.num_polynomials())
-                }
-                akita_types::RootSourceProfile::UnitOneHot { chunk_size } => {
-                    PolynomialGroupLayout::unit_one_hot(
-                        num_vars,
-                        source_group.num_polynomials(),
-                        chunk_size,
-                    )
-                }
-            };
+            let actual = PolynomialGroupLayout::new(
+                source_group.num_vars()?,
+                source_group.num_polynomials(),
+            );
             if claims_group.commitment().profile().group != actual {
                 return Err(AkitaError::InvalidInput(
-                    "committed group root-source profile does not match the prover polynomials"
-                        .into(),
+                    "committed group geometry does not match the prover polynomials".into(),
                 ));
             }
         }
@@ -643,8 +625,8 @@ mod tests {
         let final_refs = [&final_a, &final_b];
         let mut data = multi_group_data(&pre_refs, &final_refs);
         data.opening_layout = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::unit_one_hot(2, 1, 4),
-            PolynomialGroupLayout::unit_one_hot(4, 2, 16),
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(4, 2),
         ])
         .expect("one-hot layout");
 
@@ -659,8 +641,8 @@ mod tests {
                 .expect("preserved layout")
                 .groups(),
             &[
-                PolynomialGroupLayout::unit_one_hot(2, 1, 4),
-                PolynomialGroupLayout::unit_one_hot(4, 2, 16),
+                PolynomialGroupLayout::new(2, 1),
+                PolynomialGroupLayout::new(4, 2),
             ]
         );
     }

@@ -98,7 +98,6 @@ impl SetupPrefixCandidateContext<'_> {
             num_live_blocks: split.num_live_blocks,
             num_positions_per_block: split.num_positions_per_block,
             num_chunks: self.num_chunks,
-            source: akita_types::RootSourceProfile::Dense,
             outer_slice_count,
             witness_norms: FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
             log_basis_open: self.log_basis_open,

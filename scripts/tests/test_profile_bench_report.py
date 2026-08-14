@@ -3,11 +3,25 @@ import contextlib
 import io
 import json
 import pathlib
+import subprocess
 import tempfile
 import unittest
 
 
 class ProfileBenchReportTests(unittest.TestCase):
+    def test_report_direct_entrypoint_loads_split_modules(self) -> None:
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        completed = subprocess.run(
+            ["python3", "scripts/profile_bench_report.py", "--help"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout)
+
     def test_profile_bench_does_not_persist_setup_cache(self) -> None:
         repo = pathlib.Path(__file__).resolve().parents[2]
         workflow = (repo / ".github/workflows/profile-bench.yml").read_text(
@@ -894,7 +908,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         for run_index, nonce in enumerate((0, 2), start=1):
             proof = (
                 "INFO proof fold level label=onehot_fp128_d64 level=5 d=64 total_bytes=4 "
-                f"fold_grind_nonce_bytes=4 grind_nonce={nonce} grind_attempts={nonce + 1}\n"
+                f"fold_grind_nonce_bytes=4 grind_nonce={nonce} grind_attempts={nonce + 1} "
+                f"response_l2_sq=Some({80 + run_index})\n"
             )
             summary = extract_summary(planned + proof, "onehot_fp128_d64", 24, 1)
             summary["run_index"] = run_index
@@ -907,6 +922,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(observation["attempts"], 4)
         self.assertEqual(observation["rejected_attempts"], 2)
         self.assertEqual(observation["accepted_nonces"], [0, 2])
+        self.assertEqual(observation["response_l2_sq_values"], [81, 82])
+        self.assertEqual(observation["maximum_cap_utilization"], 82 / 4_294_967_296)
         self.assertEqual(observation["observed_failure_rate"], 0.5)
         self.assertEqual(
             combined["grind_retry_observations"],
@@ -929,6 +946,37 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         report = output.getvalue()
         self.assertNotIn("L2 cap grinding observations", report)
         self.assertNotIn("50.00%", report)
+
+    def test_terminal_l2_response_is_joined_to_its_scheduled_cap(self) -> None:
+        from scripts.profile_bench_report import extract_summary, l2_grind_observations_for_run
+
+        log = (
+            "INFO planned terminal state label=onehot_fp128_d64 level=6 "
+            "input_witness_len=512 d_a=64 n_a=6 inner_width=64 "
+            "log_basis_inner=5 num_digits_inner=1 fold_log_basis=6 "
+            "fold_digit_count=2 response_l2_sq_cap=Some(100)\n"
+            "INFO proof fold level label=onehot_fp128_d64 level=6 d=64 "
+            "total_bytes=4 fold_grind_nonce_bytes=4 grind_nonce=2 "
+            "grind_attempts=3 response_l2_sq=Some(90)\n"
+        )
+        summary = extract_summary(log, "onehot_fp128_d64", 24, 1)
+        summary["run_index"] = 1
+        summary["exit_code"] = 0
+
+        self.assertEqual(
+            l2_grind_observations_for_run(summary),
+            [
+                {
+                    "level": 6,
+                    "response_l2_sq_cap": 100,
+                    "response_l2_sq": 90,
+                    "cap_utilization": 0.9,
+                    "accepted_nonce": 2,
+                    "attempts": 3,
+                    "rejected_attempts": 2,
+                }
+            ],
+        )
 
     def test_failed_l2_run_preserves_partial_sample_without_grind_diagnostics(self) -> None:
         from scripts.profile_bench_report import combine_case_run_summaries

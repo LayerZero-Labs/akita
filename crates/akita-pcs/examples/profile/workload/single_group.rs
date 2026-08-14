@@ -454,7 +454,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         &onehot_poly,
         &pt,
         opening,
-        PolynomialGroupLayout::unit_one_hot(nv, 1, onehot_poly.onehot_k()),
+        PolynomialGroupLayout::new(nv, 1),
         plan,
         validate_against_planner,
     );

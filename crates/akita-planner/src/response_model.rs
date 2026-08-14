@@ -19,13 +19,12 @@ use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 
 /// Relative envelope for any underestimate by the typed moment model.
 ///
-/// Current aggregate source measurements across fp32, fp64, and fp128 are 0.09
-/// to 1.93 percent above the measured source energy. Separate typed-component
-/// validation found up to 2.24 percent error in the unfavorable direction.
-/// Three percent keeps model error separate from the response allowance. It
-/// covers the rounded Gaussian, pseudo-Mersenne, challenge-covariance, and
-/// finite-mixing approximations. Conservative overestimates do not consume
-/// this envelope.
+/// Historical cross-profile calibration found at most 2.24 percent error in
+/// the unfavorable direction. Three percent keeps model error separate from
+/// the response allowance. It covers the rounded Gaussian, pseudo-Mersenne,
+/// challenge-covariance, and finite-mixing approximations. Current production
+/// measurements are joined to their exact generated schedule by the profile
+/// report pipeline. Conservative overestimates do not consume this envelope.
 const SOURCE_MODEL_ENVELOPE_PPM: u128 = 1_030_000;
 
 /// Per-attempt response cap relative to the conditional response-energy mean.
@@ -568,38 +567,32 @@ pub(crate) fn root_group_source_moments(
         };
         let moment = match policy {
             HonestFoldPolicySpec::UnitOneHot(onehot) => {
-                let chunk = group_layout.source().onehot_chunk_size().ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "unit one-hot response policy requires one-hot group metadata".into(),
-                    )
-                })?;
+                let chunk = onehot.source_chunk_size();
                 if !logical_len.is_multiple_of(chunk) {
                     return Err(AkitaError::InvalidSetup(
                         "unit one-hot root length must be a multiple of its source chunk size"
                             .into(),
                     ));
                 }
-                let (energy, full_peak, local_peak) = tensor_packed_moments(
-                    (logical_len / chunk) as u128,
-                    MOMENT_PPM,
-                    if akita_types::root_tensor_projection_enabled_for_width(
-                        onehot.extension_degree(),
+                let (energy, coefficient_sq_max) = policy
+                    .root_source_l2_sq(
+                        logical_len,
                         group_params.inner_commit_matrix_params().ring_dimension(),
                         group_layout.num_vars(),
-                    ) {
-                        onehot.extension_degree()
-                    } else {
-                        1
-                    },
-                )
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("unit one-hot root source is empty".into())
+                    )
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "unit one-hot root source geometry is unsupported".into(),
+                        )
+                    })?;
+                let peak = coefficient_sq_max.checked_mul(MOMENT_PPM).ok_or_else(|| {
+                    AkitaError::InvalidSetup("unit one-hot root peak moment overflow".into())
                 })?;
                 let mut components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
                 components[Z_COMPONENT] = SourceMomentComponent {
                     mean_l2_sq: energy,
-                    full_ring_peak_second_moment_ppm: full_peak,
-                    local_peak_second_moment_ppm: local_peak,
+                    full_ring_peak_second_moment_ppm: peak,
+                    local_peak_second_moment_ppm: peak,
                 };
                 SourceMomentEstimate::from_components(
                     components,
@@ -609,19 +602,12 @@ pub(crate) fn root_group_source_moments(
                     AkitaError::InvalidSetup("unit one-hot source moments overflow".into())
                 })?
             }
-            HonestFoldPolicySpec::BalancedSignedDigit(_) => {
-                if group_layout.source() != akita_types::RootSourceProfile::Dense {
-                    return Err(AkitaError::InvalidSetup(
-                        "balanced response policy requires dense group metadata".into(),
-                    ));
-                }
-                bounded_field_source_moment(
-                    logical_len,
-                    field_bits,
-                    group_params.log_basis_inner(),
-                    group_params.num_digits_inner(),
-                )?
-            }
+            HonestFoldPolicySpec::BalancedSignedDigit(_) => bounded_field_source_moment(
+                logical_len,
+                field_bits,
+                group_params.log_basis_inner(),
+                group_params.num_digits_inner(),
+            )?,
         };
         moments.push(moment);
     }
@@ -810,201 +796,5 @@ pub(crate) fn next_source_moment(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn field_plane_moments_include_the_residual_top_plane() {
-        // fp64 at basis 64 has ten full planes and one four-bit top plane.
-        let energy = field_digit_energy(1_000_000, 64, 6, 11).unwrap();
-        let expected = 1_000_000.0 * (10.0 * 341.5 + 21.5);
-        assert_eq!(energy, expected as u128);
-    }
-
-    #[test]
-    fn tensor_pack_moments_match_supported_extension_factors() {
-        assert_eq!(tensor_packed_moments(400, 100, 1), Some((400, 100, 100)));
-        assert_eq!(tensor_packed_moments(400, 100, 2), Some((600, 150, 200)));
-        assert_eq!(tensor_packed_moments(400, 100, 4), Some((700, 175, 200)));
-        assert_eq!(tensor_packed_moments(400, 100, 8), Some((750, 188, 200)));
-    }
-
-    #[test]
-    fn peak_column_shares_capacity_across_disjoint_components() {
-        const PEAK: u128 = 1 << 24;
-        let component = SourceMomentComponent {
-            mean_l2_sq: 1024,
-            full_ring_peak_second_moment_ppm: PEAK,
-            local_peak_second_moment_ppm: 2 * PEAK,
-        };
-        let source = SourceMomentEstimate::from_components(
-            [
-                component,
-                component,
-                component,
-                component,
-                Default::default(),
-            ],
-            8,
-        )
-        .unwrap();
-
-        assert_eq!(
-            source.peak_column_second_moment_ppm(8, 1),
-            Some(8 * PEAK),
-            "four disjoint component classes must share one eight-coefficient column"
-        );
-        assert_eq!(
-            source.peak_column_second_moment_ppm(4, 2),
-            Some(16 * PEAK),
-            "a strict subring retains the local two-coordinate packing bound"
-        );
-    }
-
-    #[test]
-    fn gaussian_z_model_matches_measured_cross_field_states() {
-        // (response energy, coefficient count, log basis, digit count,
-        //  observed decomposed-Z energy). These are independent honest-prover
-        //  measurements from fp32, fp64, and fp128 schedules.
-        let rows = [
-            (21_319_133_492, 524_288, 3, 4, 8_570_345),
-            (352_065_629, 65_536, 4, 3, 2_447_776),
-            (3_847_283_483, 262_144, 3, 4, 3_767_203),
-            (473_967_459, 65_536, 4, 3, 2_593_330),
-            (234_370_171, 32_768, 5, 2, 3_041_573),
-            (9_985_694_564, 262_144, 4, 3, 11_458_186),
-            (483_233_512, 32_768, 6, 2, 11_379_250),
-            (2_853_063_371, 16_384, 6, 2, 6_333_831),
-        ];
-        for (response, count, log_basis, digits, observed) in rows {
-            let predicted =
-                gaussian_response_digit_energy(response, count, log_basis, digits).unwrap();
-            let relative_error = (predicted as f64 / observed as f64 - 1.0).abs();
-            assert!(
-                relative_error <= 0.02,
-                "response={response} basis={log_basis}: predicted={predicted}, observed={observed}, error={relative_error}"
-            );
-        }
-    }
-
-    #[test]
-    fn cap_multiplier_has_markov_grinding_budget() {
-        let source = SourceMomentEstimate::new(1_048_576).unwrap();
-        assert_eq!(source.response_l2_sq_cap(75), Some(83_079_484));
-        // The 3% source envelope followed by the 40/39 grinding allowance.
-        assert_eq!(
-            83_079_484u128,
-            (78_643_200u128 * 1_030_000u128 * 40).div_ceil(1_000_000u128 * 39)
-        );
-    }
-
-    #[test]
-    fn gaussian_slab_quantile_meets_joint_grinding_target() {
-        let count = 16_384;
-        let quantile = whole_response_normal_quantile(count).unwrap();
-        let marginal = 1.0 - libm::erfc(quantile / core::f64::consts::SQRT_2);
-        let joint_lower_bound = libm::exp(count as f64 * libm::log(marginal));
-        assert!((joint_lower_bound * 40.0 - 1.0).abs() <= 1e-9);
-    }
-
-    #[test]
-    fn source_moment_bucketing_is_conservative_and_below_one_over_sixty_four() {
-        for value in [1, 127, 128, 129, 1_000_000, u64::MAX as u128] {
-            let bucketed = SourceMomentEstimate::new(value).unwrap().mean_l2_sq();
-            assert!(bucketed >= value);
-            assert!(bucketed - value < value.div_ceil(64).max(1));
-        }
-    }
-
-    #[test]
-    fn empirical_selected_l2_caps_cover_all_profile_families_with_twenty_percent_slack() {
-        // (actual source energy, challenge energy, actual response energy,
-        //  frozen cap, attempts). These 51 observations come from fresh honest
-        //  proofs after the final catalog regeneration. They
-        //  cover dense and one-hot fp32, fp64, and fp128, direct and recursive
-        //  setup, multi-group, and W2/W4/W8 multi-chunk adapters. Every proof
-        //  passed both verifier modes.
-        let rows: [(u128, u128, u128, u128, u32); 51] = [
-            // dense and one-hot fp64
-            (36_377_951, 75, 2_741_456_911, 2_888_229_022, 1),
-            (19_742_844, 75, 1_486_348_884, 1_596_602_684, 1),
-            (39_353_267, 75, 2_904_628_561, 3_177_790_228, 1),
-            (31_818_884, 75, 2_357_542_772, 2_544_309_170, 4),
-            (4_773_827, 75, 359_247_329, 380_835_053, 1),
-            (21_415_054, 75, 1_605_640_842, 1_716_029_440, 1),
-            (39_779_231, 75, 3_051_107_723, 3_177_790_228, 1),
-            (31_794_955, 75, 2_387_505_109, 2_544_309_170, 3),
-            // dense and one-hot fp32
-            (40_636_017, 31, 1_264_250_777, 1_345_730_230, 1),
-            (42_533_515, 31, 1_318_821_345, 1_397_725_762, 1),
-            (33_290_268, 31, 1_027_222_760, 1_098_864_630, 1),
-            (40_718_457, 31, 1_269_963_959, 1_341_437_790, 1),
-            (42_433_311, 31, 1_313_863_335, 1_397_725_762, 1),
-            (33_295_963, 31, 1_006_319_953, 1_098_864_630, 3),
-            // dense, direct one-hot, and recursive one-hot fp128
-            (4_880_485, 75, 360_521_601, 387_650_167, 2),
-            (1_933_979, 75, 141_335_441, 154_232_517, 1),
-            (4_102_518, 75, 307_852_910, 328_910_376, 1),
-            (8_333_578, 75, 623_432_126, 661_390_573, 1),
-            (6_618_349, 75, 481_287_879, 527_197_736, 1),
-            (6_802_195, 75, 501_184_457, 545_695_902, 1),
-            (3_986_275, 75, 296_217_683, 319_174_499, 1),
-            (8_253_947, 75, 611_007_933, 661_390_573, 4),
-            (9_086_349, 75, 655_245_343, 723_862_450, 2),
-            (8_480_847, 75, 624_559_207, 678_752_887, 1),
-            (4_362_787, 75, 322_738_451, 347_084_013, 1),
-            (8_302_641, 75, 618_622_149, 663_986_807, 1),
-            // direct and recursive multi-group
-            (4_361_032, 75, 347_763_142, 348_057_600, 1),
-            (1_875_326, 75, 143_670_644, 149_202_314, 1),
-            (4_105_775, 75, 309_862_343, 327_612_259, 1),
-            (8_297_748, 75, 623_193_312, 661_390_573, 6),
-            (27_365_041, 75, 2_032_457_103, 2_176_130_757, 1),
-            (8_497_770, 75, 624_646_072, 678_428_357, 1),
-            (4_349_937, 75, 320_226_849, 347_084_013, 1),
-            (8_251_577, 75, 630_948_691, 663_986_807, 1),
-            // recursive multi-group W8R2
-            (83_730_610, 75, 6_095_056_218, 6_720_919_237, 1),
-            (8_920_740, 75, 655_485_118, 714_207_705, 1),
-            (8_491_858, 75, 642_392_086, 678_752_887, 1),
-            (4_359_942, 75, 329_555_882, 347_084_013, 1),
-            (8_331_832, 75, 625_512_838, 663_986_807, 5),
-            // W2R2
-            (7_729_843, 75, 582_150_045, 615_469_687, 1),
-            (7_382_860, 75, 557_351_162, 590_480_936, 1),
-            (4_191_220, 75, 324_120_482, 333_453_785, 1),
-            (8_340_674, 75, 619_814_264, 661_390_573, 5),
-            // W4R2
-            (9_004_434, 75, 680_329_646, 712_179_397, 1),
-            (8_485_411, 75, 625_088_747, 678_752_887, 1),
-            (4_346_063, 75, 333_780_161, 347_084_013, 1),
-            (8_358_015, 75, 627_831_795, 663_986_807, 4),
-            // W8R2
-            (25_391_642, 75, 1_890_084_424, 2_028_145_428, 1),
-            (8_270_359, 75, 620_511_743, 658_956_604, 1),
-            (4_365_132, 75, 323_097_542, 347_084_013, 1),
-            (8_352_664, 75, 615_112_704, 663_986_807, 2),
-        ];
-
-        for (source, challenge, response, cap, attempts) in rows {
-            assert!(response <= cap, "honest response exceeded its frozen cap");
-            assert!(
-                cap * 100 <= response * 120,
-                "frozen cap used more than twenty percent slack"
-            );
-            assert!(
-                attempts <= 6,
-                "empirical proof used an unexpected attempt count"
-            );
-
-            // Recover the planner's frozen source estimate from its cap. The
-            // current observations put aggregate source-model error between
-            // -0.18 and +2.07 percent.
-            let implied_source = cap as f64 * (PPM * RESPONSE_MEAN_MULTIPLIER_DENOMINATOR) as f64
-                / (challenge * SOURCE_MODEL_ENVELOPE_PPM * RESPONSE_MEAN_MULTIPLIER_NUMERATOR)
-                    as f64;
-            let source_ratio = implied_source / source as f64;
-            assert!((0.998..=1.021).contains(&source_ratio));
-        }
-    }
-}
+#[path = "response_model_tests.rs"]
+mod tests;

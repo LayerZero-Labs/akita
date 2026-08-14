@@ -105,22 +105,27 @@ clear terminal response, the verifier decodes every coefficient, computes the
 integer square sum, and checks the same cap without a sumcheck.
 
 The D64 and D128 L2 routes use transcript replayed operator norm rejection.
-D64 uses the `(31, 11)` signed shell, a certified true threshold of 18, and a
-strict fixed point threshold of 19. D128 reuses the production `(31, 0)` shell,
-a certified true threshold of 13, and a strict threshold of 14. The strict
-predicate only accepts when its integer interval calculation proves the bound.
-Exact accepted support certificates show that each rejected family retains at
-least 128 bits.
+D64 uses the `(31, 11)` signed shell and runtime threshold 18. D128 uses the
+production `(31, 0)` shell and runtime threshold 13. The fixed point checker
+uses 48 fractional bits and accepts only a certified subset below the stated
+mathematical threshold. Its rounding margins are 600 units for D64 and 351
+units for D128. Exact support certificates show that each accepted family
+retains at least 128 bits.
 
 The response model is an honest prover model, not a security assumption. An
 eligible source carries a modeled squared norm through the typed Z, E, T, R,
 compression, and extension packing operations. The planner rounds that source
 estimate upward, adds a 3 percent model envelope, and permits a response up to
-1.06 times the resulting conditional mean. Markov's inequality gives a
-distribution free grinding bound if the 3 percent envelope covers the source
+`40/39` times the resulting conditional mean. Markov's inequality gives a
+distribution-free grinding bound if the 3 percent envelope covers the source
 model error. The planner freezes the resulting cap into the schedule. The
 verifier enforces that exact cap. A model error can make proving fail more
 often, but it cannot make the verifier accept a response above the cap.
+
+The fold nonce does not incur a fixed 12-bit soundness loss. Every nonce trial
+is another random-oracle query, so the Fiat-Shamir reduction charges it through
+the adversary's total query budget. See
+[Polynomial commitments and binding](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

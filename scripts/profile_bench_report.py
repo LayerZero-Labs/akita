@@ -15,6 +15,71 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+if __package__:
+    from .profile_bench_fold_details import (
+        PROOF_LEVEL_BYTE_FIELDS,
+        challenge_line,
+        detail_block,
+        digit_count_phrase,
+        exact_choice,
+        format_witness_groups_inline,
+        matrix_line,
+        planned_group_key,
+        planned_group_label,
+        planned_group_planner_value,
+        planned_group_work_value,
+        planned_groups_for_render,
+        planned_terminal_planner_value,
+        planned_terminal_work_value,
+        proof_component_group,
+        proof_cost_summary,
+        proof_field_present,
+        proof_level_component_bytes,
+        proof_step_label,
+        render_fold_details,
+        render_group_choices,
+        response_bound_lines,
+        sample_range,
+    )
+    from .profile_bench_format import (
+        fmt_bytes,
+        fmt_count,
+        numeric_delta,
+        value_with_baseline_delta,
+    )
+else:
+    from profile_bench_fold_details import (
+        PROOF_LEVEL_BYTE_FIELDS,
+        challenge_line,
+        detail_block,
+        digit_count_phrase,
+        exact_choice,
+        format_witness_groups_inline,
+        matrix_line,
+        planned_group_key,
+        planned_group_label,
+        planned_group_planner_value,
+        planned_group_work_value,
+        planned_groups_for_render,
+        planned_terminal_planner_value,
+        planned_terminal_work_value,
+        proof_component_group,
+        proof_cost_summary,
+        proof_field_present,
+        proof_level_component_bytes,
+        proof_step_label,
+        render_fold_details,
+        render_group_choices,
+        response_bound_lines,
+        sample_range,
+    )
+    from profile_bench_format import (
+        fmt_bytes,
+        fmt_count,
+        numeric_delta,
+        value_with_baseline_delta,
+    )
+
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 KV_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)=(".*?"|\S+)')
@@ -43,25 +108,6 @@ REQUIRED_RUN_METRICS = (
     "akita_levels",
 )
 REQUIRED_RUN_SEQUENCES = ("planned_levels", "proof_levels")
-
-# Byte columns emitted by `crates/akita-pcs/examples/profile/report.rs` for each
-# fold level. Their sum must match `total_bytes`. The parser separately retains
-# field presence so structurally absent proof components render as an em dash,
-# rather than a misleading zero-byte component.
-PROOF_LEVEL_BYTE_FIELDS = (
-    "extension_opening_partials_bytes",
-    "extension_opening_sumcheck_bytes",
-    "fold_grind_nonce_bytes",
-    "opening_payload_bytes",
-    "stage1_sumcheck_bytes",
-    "stage1_interstage_claims_bytes",
-    "stage1_range_image_evaluation_bytes",
-    "stage1_norm_proof_bytes",
-    "stage2_sumcheck_bytes",
-    "stage3_sumcheck_bytes",
-    "next_w_payload_bytes",
-    "next_w_eval_bytes",
-)
 
 
 @dataclass(frozen=True)
@@ -1381,12 +1427,15 @@ def l2_grind_observations_for_run(
     planned_levels = summary.get("planned_levels")
     proof_levels = summary.get("proof_levels")
     if not isinstance(planned_levels, list):
-        return []
+        planned_levels = []
     l2_planned_levels = [
         planned
         for planned in planned_levels
         if isinstance(planned, dict) and planned.get("security_route") == "L2"
     ]
+    terminal_plan = summary.get("terminal_plan")
+    if isinstance(terminal_plan, dict) and terminal_plan.get("security_route") == "L2":
+        l2_planned_levels.append(terminal_plan)
     run_failed = int(summary.get("exit_code", 0)) != 0
     if not isinstance(proof_levels, list):
         if l2_planned_levels and not run_failed:
@@ -1409,10 +1458,24 @@ def l2_grind_observations_for_run(
         attempts = int(proof["grind_attempts"])
         if attempts != nonce + 1:
             raise ValueError(f"L2 fold level {level} has inconsistent grinding attempts")
+        response_l2_sq = proof.get("response_l2_sq")
+        if response_l2_sq is None:
+            if run_failed:
+                continue
+            raise ValueError(f"L2 fold level {level} is missing its measured response energy")
+        response_l2_sq = int(response_l2_sq)
+        response_l2_sq_cap = int(planned["response_l2_sq_cap"])
+        if response_l2_sq > response_l2_sq_cap:
+            raise ValueError(
+                f"L2 fold level {level} exceeded its scheduled response cap: "
+                f"{response_l2_sq} > {response_l2_sq_cap}"
+            )
         observations.append(
             {
                 "level": level,
-                "response_l2_sq_cap": int(planned["response_l2_sq_cap"]),
+                "response_l2_sq_cap": response_l2_sq_cap,
+                "response_l2_sq": response_l2_sq,
+                "cap_utilization": response_l2_sq / response_l2_sq_cap,
                 "accepted_nonce": nonce,
                 "attempts": attempts,
                 "rejected_attempts": nonce,
@@ -1437,6 +1500,7 @@ def combine_l2_grind_observations(
                     "attempts": 0,
                     "rejected_attempts": 0,
                     "accepted_nonces": [],
+                    "response_l2_sq_values": [],
                 },
             )
             aggregate["samples"] = int(aggregate["samples"]) + 1
@@ -1450,11 +1514,21 @@ def combine_l2_grind_observations(
             if not isinstance(accepted_nonces, list):
                 raise TypeError("internal L2 grind nonce aggregate must be a list")
             accepted_nonces.append(int(observation["accepted_nonce"]))
+            response_values = aggregate["response_l2_sq_values"]
+            if not isinstance(response_values, list):
+                raise TypeError("internal L2 response-energy aggregate must be a list")
+            response_values.append(int(observation["response_l2_sq"]))
     result = []
     for key in sorted(combined):
         aggregate = combined[key]
         aggregate["observed_failure_rate"] = int(aggregate["rejected_attempts"]) / int(
             aggregate["attempts"]
+        )
+        response_values = aggregate["response_l2_sq_values"]
+        if not isinstance(response_values, list) or not response_values:
+            raise TypeError("internal L2 response-energy aggregate must be nonempty")
+        aggregate["maximum_cap_utilization"] = max(response_values) / int(
+            aggregate["response_l2_sq_cap"]
         )
         result.append(aggregate)
     return result
@@ -1951,19 +2025,11 @@ def fmt_mib_from_bytes(value_bytes: float) -> str:
     return f"{value_bytes / (1024.0 * 1024.0):.1f}"
 
 
-def fmt_bytes(value: float) -> str:
-    return f"{int(round(value)):,}"
-
-
 def fmt_mib_with_exact_bytes(value_bytes: float) -> str:
     return (
         f"{fmt_mib_from_bytes(value_bytes)}<br>"
         f"<sub>{fmt_bytes(value_bytes)} bytes</sub>"
     )
-
-
-def fmt_count(value: float) -> str:
-    return f"{int(round(value)):,}"
 
 
 def case_status(summary: dict[str, object]) -> str:
@@ -2103,49 +2169,6 @@ def render_execution_parameters(
     print()
     for label, value in rows:
         print(f"- {label}: {value}")
-
-
-def numeric_delta(
-    current: dict[str, object],
-    baseline: dict[str, object] | None,
-    key: str,
-) -> str:
-    """Format a percentage delta of `current[key]` against `baseline[key]`.
-
-    Returns `"n/a"` when either side is missing. A zero baseline is reported as
-    unchanged when both values are zero, or explicitly as a new nonzero value;
-    other comparisons render as e.g. `"+5.2%"` or `"-1.2%"`. All report
-    comparisons use this formatter so proof size, prover wall-time, and other
-    numeric metrics have consistent deltas.
-    """
-    if baseline is None:
-        return "n/a"
-    current_value = current.get(key)
-    baseline_value = baseline.get(key)
-    if current_value is None or baseline_value is None:
-        return "n/a"
-    if float(baseline_value) == 0.0:
-        return "unchanged" if float(current_value) == 0.0 else "new; merge base is zero"
-    delta = (float(current_value) / float(baseline_value) - 1.0) * 100.0
-    sign = "+" if delta >= 0.0 else ""
-    return f"{sign}{delta:.1f}%"
-
-
-def value_with_baseline_delta(
-    current_value: object,
-    baseline_value: object | None,
-    formatter: callable,
-    unit: str = "",
-    compare_to_baseline: bool = False,
-    comparison_label: str = " vs merge base",
-) -> str:
-    value = f"{formatter(float(current_value))}{unit}"
-    if baseline_value is None:
-        if compare_to_baseline:
-            return f"{value}<br><sub>n/a{comparison_label}</sub>"
-        return value
-    delta = numeric_delta({"value": current_value}, {"value": baseline_value}, "value")
-    return f"{value}<br><sub>{delta}{comparison_label}</sub>"
 
 
 def optional_value_with_baseline_delta(
@@ -2654,627 +2677,6 @@ def render_matrix_summary(
             print(f"- {code_text(case['case_id'])}: {md_text(warning)}.")
 
 
-def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | None:
-    samples = summary.get("samples")
-    if not isinstance(samples, list):
-        return None
-    values = [float(sample[key]) for sample in samples if isinstance(sample, dict) and key in sample]
-    if len(values) <= 1:
-        return None
-    return min(values), max(values)
-
-
-def proof_level_component_bytes(level: dict[str, object]) -> int:
-    return sum(int(level.get(field, 0)) for field in PROOF_LEVEL_BYTE_FIELDS)
-
-
-def proof_field_present(level: dict[str, object], field: str) -> bool:
-    present = level.get("present_byte_fields")
-    if isinstance(present, list):
-        return field in present
-    return level.get("root_variant") != "direct"
-
-
-def proof_step_label(level: dict[str, object]) -> str:
-    variant = level.get("root_variant")
-    level_index = int(level["level"])
-    if variant == "direct":
-        return "direct root"
-    if variant == "terminal":
-        return "terminal root"
-    if variant == "fold":
-        return "fold root" if level_index == 0 else "terminal fold"
-    return "intermediate fold"
-
-
-def exact_choice(current: str, baseline: str | None) -> str:
-    if baseline is None or current == baseline:
-        return current
-    return f"{current}<br><sub>Merge base</sub><br>{baseline}"
-
-
-def detail_block(title: str, rows: list[str]) -> str:
-    return f"<strong>{title}</strong><br>" + "<br>".join(rows)
-
-
-def format_witness_groups_inline(groups: object) -> str:
-    if not isinstance(groups, list) or not groups:
-        return "n/a"
-    values = []
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        name = group.get("group")
-        field_elements = group.get("field_elements")
-        if name is None or field_elements is None:
-            continue
-        values.append(f"{name} {fmt_count(float(field_elements))}")
-    return "; ".join(values) if values else "n/a"
-
-
-def planned_group_label(group: dict[str, object]) -> str:
-    role = str(group["group_role"])
-    name = str(group["group"])
-    if role == "final":
-        return "Final group"
-    if role == "folded":
-        return "Folded witness"
-    if role == "precommitted" and name.startswith("pre"):
-        index = name.removeprefix("pre")
-        return f"Precommit {int(index) + 1}" if index.isdigit() else name
-    if role == "setup_offload":
-        return f"Setup offload → L{int(group['consumer_level'])}"
-    return name
-
-
-def planned_groups_for_render(level: dict[str, object]) -> list[dict[str, object]]:
-    groups = level.get("groups")
-    typed_groups = (
-        [group for group in groups if isinstance(group, dict)]
-        if isinstance(groups, list)
-        else []
-    )
-    if typed_groups:
-        return typed_groups
-
-    level_index = int(level["level"])
-    role = "final" if level_index == 0 else "folded"
-    witness_groups = level.get("current_w_len")
-    witness_field_elements = (
-        sum(
-            int(group.get("field_elements", 0))
-            for group in witness_groups
-            if isinstance(group, dict)
-        )
-        if isinstance(witness_groups, list)
-        else 0
-    )
-    return [
-        {
-            **level,
-            "group": role,
-            "group_role": role,
-            "consumer_level": level_index,
-            "witness_field_elements": witness_field_elements
-            or int(level.get("input_witness_len", 0)),
-            "num_digits_fold": int(level["delta_fold"]),
-            "legacy_level": True,
-        }
-    ]
-
-
-def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
-    return (
-        str(group["group_role"]),
-        str(group["group"]),
-        int(group["consumer_level"]),
-    )
-
-
-def matrix_line(
-    label: str,
-    ring_dimension: object,
-    input_width: object,
-    output_rank: object,
-) -> str:
-    width = int(input_width)
-    width_text = f" · input width {fmt_count(float(width))}" if width > 0 else ""
-    return (
-        f"{label}: ring D{fmt_count(float(ring_dimension))}{width_text} · "
-        f"module rank {fmt_count(float(output_rank))}"
-    )
-
-
-def challenge_line(params: dict[str, object]) -> str:
-    challenge = f"Ring D{fmt_count(float(params['d_a']))}"
-    count_pm1 = params.get("challenge_count_pm1")
-    count_pm2 = params.get("challenge_count_pm2")
-    if count_pm1 is not None and count_pm2 is not None:
-        challenge += f" · shell {fmt_count(float(count_pm1))} at ±1"
-        if int(count_pm2) != 0:
-            challenge += f" and {fmt_count(float(count_pm2))} at ±2"
-    threshold = params.get("challenge_operator_norm_threshold")
-    if threshold is not None:
-        challenge += f" · operator norm threshold {fmt_count(float(threshold))}"
-    return challenge
-
-
-def response_bound_lines(params: dict[str, object]) -> list[str]:
-    linf_cap = params.get("z_admission_linf_cap")
-    linf_line = "Maximum coefficient magnitude (Linf)"
-    if linf_cap is not None:
-        linf_line += f": ≤ {fmt_count(float(linf_cap))}"
-    if params.get("security_route") == "L2":
-        rows = [linf_line, "Sum of squared coefficients (L2)"]
-        cap = params.get("response_l2_sq_cap")
-        if cap is not None:
-            rows[-1] += f": ≤ {fmt_count(float(cap))}"
-        return rows
-    return [linf_line]
-
-
-def digit_count_phrase(value: object, role: str = "") -> str:
-    count = int(value)
-    role_prefix = f"{role} " if role else ""
-    suffix = "" if count == 1 else "s"
-    return f"{fmt_count(float(count))} {role_prefix}digit{suffix}"
-
-
-def planned_group_planner_value(group: dict[str, object]) -> str:
-    matrices = [
-        matrix_line("A commitment", group["d_a"], group.get("a_width", 0), group["n_a"]),
-        matrix_line("B commitment", group["d_b"], group.get("b_width", 0), group["n_b"]),
-        matrix_line("D opening", group["d_d"], group.get("d_width", 0), group["n_d"]),
-    ]
-    slice_count = int(group.get("b_slice_count", 1))
-    b_geometry = [f"Slices: {fmt_count(float(slice_count))}"]
-    if group.get("physical_b_input_width") is not None:
-        b_geometry.append(
-            "Physical B input ring elements: "
-            f"{fmt_count(float(group['physical_b_input_width']))}"
-        )
-    if group.get("logical_b_rows") is not None:
-        b_geometry.append(
-            f"Logical B rows: {fmt_count(float(group['logical_b_rows']))}"
-        )
-    if group.get("complete_b_compression_bytes") is not None:
-        b_geometry.append(
-            "Complete B compression input: "
-            f"{fmt_count(float(group['complete_b_compression_bytes']))} bytes"
-        )
-    segments = [
-        "z response: "
-        f"{digit_count_phrase(group['num_digits_inner'], 'input')} "
-        f"(basis bits {fmt_count(float(group['log_basis_inner']))}) × "
-        f"{digit_count_phrase(group['num_digits_fold'], 'response')} "
-        f"(basis bits {fmt_count(float(group['log_basis_open']))})",
-        "e opening: "
-        f"{digit_count_phrase(group['num_digits_open'])} "
-        f"(basis bits {fmt_count(float(group['log_basis_open']))})",
-        "t matrix image: "
-        f"{digit_count_phrase(group['num_digits_outer'])} "
-        f"(basis bits {fmt_count(float(group['log_basis_outer']))})",
-    ]
-    if str(group.get("group_role")) in ("final", "folded") and int(
-        group.get("num_digits_quotient", 0)
-    ) > 0:
-        segments.append(
-            "r shared quotient: "
-            f"{digit_count_phrase(group['num_digits_quotient'])} "
-            f"(basis bits {fmt_count(float(group['log_basis_open']))})"
-        )
-    return detail_block(
-        planned_group_label(group),
-        [
-            f"<em>Commitment matrices used at this fold</em><br>{'<br>'.join(matrices)}",
-            f"<br><em>B commitment slicing</em><br>{'<br>'.join(b_geometry)}",
-            f"<br><em>Folded response check</em><br>{'<br>'.join(response_bound_lines(group))}",
-            f"<br><em>Outgoing witness segments</em><br>{'<br>'.join(segments)}",
-            f"<br><em>Challenge used at this fold</em><br>{challenge_line(group)}",
-        ],
-    )
-
-
-def planned_group_work_value(group: dict[str, object]) -> str:
-    role = str(group["group_role"])
-    label = planned_group_label(group)
-    relation = (
-        "Live ring elements per claim: "
-        f"{fmt_count(float(group['num_live_ring_elements_per_claim']))}<br>"
-        f"Live blocks × positions: {fmt_count(float(group['num_live_blocks']))} × "
-        f"{fmt_count(float(group['num_positions_per_block']))}<br>"
-        f"Block domain slots: {fmt_count(float(group['block_index_domain_size']))}"
-    )
-    if group.get("legacy_level"):
-        source = (
-            f"Input → output: {format_witness_groups_inline(group.get('current_w_len'))} → "
-            f"{fmt_count(float(group['next_w_len']))}"
-        )
-    elif role == "setup_offload":
-        source = (
-            f"Natural → padded: "
-            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
-            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
-        )
-    else:
-        source = f"Field elements: {fmt_count(float(group['witness_field_elements']))}"
-    input_label = (
-        "Setup prefix"
-        if role == "setup_offload"
-        else f"Input at L{int(group['consumer_level'])}"
-    )
-    parts = [
-        f"<em>{input_label}</em><br>{source}",
-        f"<br><em>Relation geometry</em><br>{relation}",
-    ]
-    if group.get("legacy_level") and (
-        int(group.get("setup_prefix_natural_field_elements", 0)) != 0
-        or int(group.get("setup_prefix_padded_field_elements", 0)) != 0
-    ):
-        parts.append(
-            "<br><em>Setup prefix</em><br>Natural → padded: "
-            f"{fmt_count(float(group['setup_prefix_natural_field_elements']))} → "
-            f"{fmt_count(float(group['setup_prefix_padded_field_elements']))}"
-        )
-    return detail_block(
-        label,
-        parts,
-    )
-
-
-def render_group_choices(
-    groups: list[dict[str, object]],
-    baseline_groups: list[dict[str, object]],
-    value: callable,
-) -> str:
-    def comparison_value(group: dict[str, object]) -> str:
-        comparable = dict(group)
-        for field in ("a_width", "b_width", "d_width", "num_digits_quotient"):
-            comparable[field] = 0
-        return value(comparable)
-
-    current = {planned_group_key(group): group for group in groups}
-    baseline = {planned_group_key(group): group for group in baseline_groups}
-    keys = [*current, *(key for key in baseline if key not in current)]
-    rows = []
-    for key in keys:
-        current_group = current.get(key)
-        baseline_group = baseline.get(key)
-        label_source = current_group or baseline_group
-        if label_source is None:
-            continue
-        current_text = (
-            value(current_group)
-            if current_group is not None
-            else detail_block(planned_group_label(label_source), ["absent"])
-        )
-        baseline_text = (
-            value(baseline_group)
-            if baseline_group is not None
-            else (
-                detail_block(planned_group_label(label_source), ["absent"])
-                if baseline_groups
-                else None
-            )
-        )
-        if (
-            current_group is not None
-            and baseline_group is not None
-            and comparison_value(current_group) == comparison_value(baseline_group)
-        ):
-            rows.append(current_text)
-        else:
-            rows.append(exact_choice(current_text, baseline_text))
-    return "<br><br>".join(rows)
-
-
-def proof_component_group(
-    level: dict[str, object],
-    baseline: dict[str, object] | None,
-    group_label: str,
-    components: tuple[tuple[str, str], ...],
-) -> str | None:
-    def group_value(source: dict[str, object] | None) -> tuple[int, list[str]]:
-        if source is None:
-            return 0, []
-        values = []
-        total = 0
-        for field, label in components:
-            if not proof_field_present(source, field):
-                continue
-            value = int(source.get(field, 0))
-            total += value
-            if value != 0:
-                values.append(f"{label} {fmt_bytes(float(value))}")
-        return total, values
-
-    def render_value(total: int, values: list[str]) -> str:
-        detail = (
-            f"<br><sub>{' · '.join(values)}</sub>"
-            if len(components) > 1 and values
-            else ""
-        )
-        return f"<strong>{group_label}</strong><br>{fmt_bytes(float(total))} bytes{detail}"
-
-    current_total, current_values = group_value(level)
-    baseline_total, baseline_values = group_value(baseline)
-    if current_total == 0 and (baseline is None or baseline_total == 0):
-        return None
-    baseline_text = (
-        render_value(baseline_total, baseline_values) if baseline is not None else None
-    )
-    return exact_choice(render_value(current_total, current_values), baseline_text)
-
-
-def proof_cost_summary(
-    level: dict[str, object],
-    baseline: dict[str, object] | None,
-    planned: dict[str, object] | None,
-    baseline_planned: dict[str, object] | None,
-) -> str:
-    total = value_with_baseline_delta(
-        level["total_bytes"],
-        baseline.get("total_bytes") if baseline else None,
-        fmt_bytes,
-        " bytes",
-        baseline is not None,
-    )
-    rows = [f"<strong>Total</strong><br>{total}"]
-    groups = (
-        (
-            "Opening",
-            (
-                ("extension_opening_partials_bytes", "partials"),
-                ("extension_opening_sumcheck_bytes", "sumcheck"),
-                ("opening_payload_bytes", "p_H"),
-            ),
-        ),
-        (
-            "Stage 1",
-            (
-                ("stage1_sumcheck_bytes", "sumcheck"),
-                ("stage1_interstage_claims_bytes", "claims"),
-                ("stage1_range_image_evaluation_bytes", "range image"),
-                ("stage1_norm_proof_bytes", "L2 norm proof"),
-            ),
-        ),
-        ("Stage 2", (("stage2_sumcheck_bytes", "sumcheck"),)),
-        ("Stage 3", (("stage3_sumcheck_bytes", "sumcheck"),)),
-        (
-            "Next witness",
-            (
-                ("next_w_payload_bytes", "payload"),
-                ("next_w_eval_bytes", "evaluation"),
-            ),
-        ),
-        ("Grinding nonce", (("fold_grind_nonce_bytes", "nonce"),)),
-    )
-    for group_label, components in groups:
-        rendered = proof_component_group(
-            level, baseline, group_label, components
-        )
-        if rendered is not None:
-            rows.append(rendered)
-    if level.get("response_l2_sq") is not None:
-        cap = planned.get("response_l2_sq_cap") if planned is not None else None
-        observed = fmt_count(float(level["response_l2_sq"]))
-        if cap is not None:
-            observed += f" ≤ cap {fmt_count(float(cap))}"
-        baseline_observed = (
-            fmt_count(float(baseline["response_l2_sq"]))
-            if baseline is not None and baseline.get("response_l2_sq") is not None
-            else None
-        )
-        baseline_cap = (
-            baseline_planned.get("response_l2_sq_cap")
-            if baseline_planned is not None
-            else None
-        )
-        if baseline_observed is not None and baseline_cap is not None:
-            baseline_observed += f" ≤ cap {fmt_count(float(baseline_cap))}"
-        rows.append(
-            "<strong>Sum of squared response coefficients</strong><br>"
-            + exact_choice(observed, baseline_observed)
-        )
-    return "<br><br>".join(rows)
-
-
-def planned_terminal_planner_value(terminal: dict[str, object]) -> str:
-    matrix = matrix_line(
-        "A commitment",
-        terminal["d_a"],
-        terminal.get("inner_width", 0),
-        terminal["n_a"],
-    )
-    response = (
-        "z response: "
-        f"{digit_count_phrase(terminal['num_digits_inner'], 'input')} "
-        f"(basis bits {fmt_count(float(terminal['log_basis_inner']))}) × "
-        f"{digit_count_phrase(terminal['fold_digit_count'], 'response')} "
-        f"(basis bits {fmt_count(float(terminal['fold_log_basis']))})"
-    )
-    rows = [f"<em>Commitment matrix used at this fold</em><br>{matrix}"]
-    if terminal.get("complete"):
-        rows.extend(
-            [
-                "<br><em>Folded response check</em><br>"
-                + "<br>".join(response_bound_lines(terminal)),
-                f"<br><em>Response decomposition</em><br>{response}",
-                "<br><em>Challenge used at this fold</em><br>"
-                + challenge_line(terminal),
-            ]
-        )
-    return detail_block("Terminal fold", rows)
-
-
-def planned_terminal_work_value(terminal: dict[str, object]) -> str:
-    level = int(terminal["level"])
-    input_label = "Input at terminal root" if level == 0 else f"Input from L{level - 1}"
-    rows = [
-        f"<em>{input_label}</em><br>Field elements: "
-        f"{fmt_count(float(terminal['input_witness_len']))}"
-    ]
-    if terminal.get("complete"):
-        relation = (
-            "Live ring elements per claim: "
-            f"{fmt_count(float(terminal['num_live_ring_elements_per_claim']))}<br>"
-            "Live blocks × positions: "
-            f"{fmt_count(float(terminal['num_live_blocks']))} × "
-            f"{fmt_count(float(terminal['num_positions_per_block']))}<br>"
-            "Block domain slots: "
-            f"{fmt_count(float(terminal['block_index_domain_size']))}"
-        )
-        rows.extend(
-            [
-                f"<br><em>Relation geometry</em><br>{relation}",
-                "<br><em>Output</em><br>Clear z, e, and t terminal response",
-            ]
-        )
-    return detail_block("Terminal fold", rows)
-
-
-def render_fold_details(
-    planned_levels: list[dict[str, object]],
-    proof_levels: list[dict[str, object]],
-    terminal_plan: dict[str, object] | None,
-    baseline_planned_levels: list[dict[str, object]] | None,
-    baseline_proof_levels: list[dict[str, object]] | None,
-    baseline_terminal_plan: dict[str, object] | None,
-) -> None:
-    planned = {int(level["level"]): level for level in planned_levels}
-    proof = {int(level["level"]): level for level in proof_levels}
-    baseline_planned = {
-        int(level["level"]): level for level in (baseline_planned_levels or [])
-    }
-    baseline_proof = {
-        int(level["level"]): level for level in (baseline_proof_levels or [])
-    }
-    terminal_level = int(terminal_plan["level"]) if terminal_plan is not None else None
-    level_indices = sorted(
-        set(planned)
-        | set(proof)
-        | ({terminal_level} if terminal_level is not None else set())
-    )
-    print("<details>")
-    print("<summary>Fold schedule and proof cost</summary>")
-    print()
-    print("#### Fold by fold")
-    print()
-    headers = ["Fold", "Step", "Fold parameters", "Input and output", "Proof bytes"]
-    print("| " + " | ".join(headers) + " |")
-    print("| --- | --- | --- | --- | --- |")
-
-    for level_index in level_indices:
-        schedule = planned.get(level_index)
-        proof_level = proof.get(level_index)
-        baseline_schedule = baseline_planned.get(level_index)
-        baseline_proof_level = baseline_proof.get(level_index)
-        step = proof_step_label(proof_level) if proof_level is not None else "scheduled fold"
-        is_terminal = terminal_level == level_index
-        if schedule is None and is_terminal and terminal_plan is not None:
-            baseline_terminal = (
-                baseline_terminal_plan
-                if baseline_terminal_plan is not None
-                and baseline_terminal_plan.get("complete")
-                else None
-            )
-            schedule_choice = exact_choice(
-                planned_terminal_planner_value(terminal_plan),
-                (
-                    planned_terminal_planner_value(baseline_terminal)
-                    if baseline_terminal is not None
-                    else None
-                ),
-            )
-            work = exact_choice(
-                planned_terminal_work_value(terminal_plan),
-                (
-                    planned_terminal_work_value(baseline_terminal)
-                    if baseline_terminal is not None
-                    else None
-                ),
-            )
-        elif schedule is None:
-            schedule_choice = "—"
-            work = "—"
-        else:
-            current_groups = planned_groups_for_render(schedule)
-            baseline_groups = (
-                planned_groups_for_render(baseline_schedule)
-                if baseline_schedule is not None
-                else []
-            )
-            schedule_choice = render_group_choices(
-                current_groups, baseline_groups, planned_group_planner_value
-            )
-            work = render_group_choices(
-                current_groups, baseline_groups, planned_group_work_value
-            )
-            next_w = f"Field elements: {fmt_count(float(schedule['next_w_len']))}"
-            baseline_next_w = None
-            if (
-                baseline_schedule is not None
-                and baseline_schedule.get("next_w_len") is not None
-            ):
-                baseline_next_w = (
-                    f"Field elements: "
-                    f"{fmt_count(float(baseline_schedule['next_w_len']))}"
-                )
-            work = (
-                f"{work}<br><br>"
-                f"{detail_block(f'Output to L{level_index + 1}', [exact_choice(next_w, baseline_next_w)])}"
-            )
-
-        proof_bytes = "n/a"
-        if proof_level is not None:
-            proof_bytes = proof_cost_summary(
-                proof_level,
-                baseline_proof_level,
-                schedule,
-                baseline_schedule,
-            )
-        row = [f"L{level_index}", step, schedule_choice, work, proof_bytes]
-        print("| " + " | ".join(row) + " |")
-
-    print()
-    print(
-        "Each row shows the matrices and challenge used at that fold. Output to the "
-        "next level becomes the input shown on the next row. Each group has z, e, and "
-        "t segments. The complete relation has one shared r segment. The terminal fold uses only A and "
-        "sends the clear z, e, and t response shown in the terminal response section. "
-        "Proof groups with zero bytes are omitted. The terminal response bytes are not "
-        "part of the terminal fold byte total."
-    )
-    grind_rows = [
-        level
-        for level in proof_levels
-        if int(level.get("grind_nonce_val", 0)) != 0
-    ]
-    if grind_rows:
-        print()
-        print("#### Grinding retries")
-        print()
-        print("| Fold | Accepted nonce | Attempts |")
-        print("| --- | ---: | ---: |")
-        for level in grind_rows:
-            baseline = baseline_proof.get(int(level["level"]))
-            nonce = exact_choice(
-                fmt_count(float(level.get("grind_nonce_val", 0))),
-                fmt_count(float(baseline.get("grind_nonce_val", 0))) if baseline else None,
-            )
-            attempts = exact_choice(
-                fmt_count(float(level.get("grind_attempts", 0))),
-                fmt_count(float(baseline.get("grind_attempts", 0))) if baseline else None,
-            )
-            print(f"| L{level['level']} | {nonce} | {attempts} |")
-    elif proof_levels:
-        print()
-        print("No fold needed a grinding retry.")
-    else:
-        print()
-        print("Grinding was not measured because no proof fold data was emitted.")
-    print()
-    print("</details>")
 
 
 def validate_case_consistency(summary: dict[str, object]) -> None:

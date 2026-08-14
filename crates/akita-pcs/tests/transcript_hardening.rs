@@ -52,8 +52,7 @@ fn event_stream_equality_small() {
     run_on_large_stack(move || {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let layout = OneHotCfg::select_schedule_for_opening(
-            &akita_types::OpeningClaimsLayout::unit_one_hot(num_vars, 1, ONEHOT_K)
-                .expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout")
         .schedule()
@@ -308,8 +307,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
     init_rayon_pool();
     run_on_large_stack(move || {
         let layout = OneHotCfg::select_schedule_for_opening(
-            &akita_types::OpeningClaimsLayout::unit_one_hot(num_vars, 1, ONEHOT_K)
-                .expect("singleton opening batch"),
+            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
         .expect("layout")
         .schedule()

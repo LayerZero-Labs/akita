@@ -1,6 +1,6 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_k_for_num_vars, onehot_lagrange_opening, planned_payload_bytes, random_claim_point,
+    onehot_lagrange_opening, planned_payload_bytes, random_claim_point,
     report_proof_size_against_planner, run_verifier_timings,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
@@ -175,18 +175,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let pools = ProfileThreadPools::get();
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
-    let pre_key = PolynomialGroupLayout::unit_one_hot(
-        pre_num_vars,
-        PRE_POLYS_PER_GROUP,
-        onehot_k_for_num_vars(pre_num_vars),
-    );
+    let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
     let pre_descriptor =
         Cfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
-    let final_group = PolynomialGroupLayout::unit_one_hot(
-        final_num_vars,
-        final_num_polys,
-        onehot_k_for_num_vars(final_num_vars),
-    );
+    let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group,
         precommitteds: vec![pre_descriptor; PRE_GROUPS],

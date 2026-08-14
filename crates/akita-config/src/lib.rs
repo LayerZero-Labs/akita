@@ -613,7 +613,7 @@ mod fp128_policy_tests {
                     PolynomialGroupLayout::singleton(num_vars)
                 }
                 akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
-                    PolynomialGroupLayout::unit_one_hot(num_vars, 1, 256)
+                    PolynomialGroupLayout::new(num_vars, 1)
                 }
             };
             let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
@@ -679,7 +679,7 @@ mod fp128_policy_tests {
     #[test]
     fn fp128_generated_singleton_plans_resolve() {
         let dense_key = PolynomialGroupLayout::singleton(32);
-        let onehot_key = PolynomialGroupLayout::unit_one_hot(32, 1, 256);
+        let onehot_key = PolynomialGroupLayout::new(32, 1);
 
         let dense =
             fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(dense_key))
@@ -696,7 +696,7 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_adaptive_onehot_supports_batched_keys() {
-        let key = PolynomialGroupLayout::unit_one_hot(30, 4, 256);
+        let key = PolynomialGroupLayout::new(30, 4);
 
         let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
             .expect("adaptive batched onehot schedule")
@@ -713,7 +713,7 @@ mod independent_commitment_tests {
 
     #[test]
     fn independent_profile_comes_from_the_scalar_row() {
-        let group = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
+        let group = PolynomialGroupLayout::new(16, 1);
         group.validate().expect("group layout");
         let profile =
             fp128::OneHot::profile_without_precommitted_groups(group).expect("independent profile");

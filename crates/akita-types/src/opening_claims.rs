@@ -12,58 +12,11 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 
-/// Root-source representation that determines the first-fold witness law.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RootSourceProfile {
-    /// General dense field coefficients.
-    Dense,
-    /// At most one unit coefficient in every logical chunk of size `K`.
-    UnitOneHot { chunk_size: usize },
-}
-
-impl RootSourceProfile {
-    pub(crate) const fn tag(self) -> u8 {
-        match self {
-            Self::Dense => 0,
-            Self::UnitOneHot { .. } => 1,
-        }
-    }
-
-    /// Exact one-hot chunk size when this is a unit one-hot source.
-    #[must_use]
-    pub const fn onehot_chunk_size(self) -> Option<usize> {
-        match self {
-            Self::Dense => None,
-            Self::UnitOneHot { chunk_size } => Some(chunk_size),
-        }
-    }
-
-    pub(crate) fn validate(self, num_vars: usize) -> Result<(), AkitaError> {
-        let Self::UnitOneHot { chunk_size } = self else {
-            return Ok(());
-        };
-        let source_len = 1usize
-            .checked_shl(num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidSetup("opening source length overflow".into()))?;
-        if chunk_size == 0
-            || !chunk_size.is_power_of_two()
-            || !source_len.is_multiple_of(chunk_size)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "unit one-hot chunk size must be a nonzero power of two dividing the source length"
-                    .into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Per-group opening geometry and root-source representation.
+/// Per-group opening geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PolynomialGroupLayout {
     num_vars: usize,
     num_polynomials: usize,
-    source: RootSourceProfile,
 }
 
 impl PolynomialGroupLayout {
@@ -72,16 +25,6 @@ impl PolynomialGroupLayout {
         Self {
             num_vars,
             num_polynomials,
-            source: RootSourceProfile::Dense,
-        }
-    }
-
-    /// Build a unit one-hot group with its exact logical chunk size `K`.
-    pub const fn unit_one_hot(num_vars: usize, num_polynomials: usize, chunk_size: usize) -> Self {
-        Self {
-            num_vars,
-            num_polynomials,
-            source: RootSourceProfile::UnitOneHot { chunk_size },
         }
     }
 
@@ -100,11 +43,6 @@ impl PolynomialGroupLayout {
         self.num_polynomials
     }
 
-    /// Root-source representation used by the first fold.
-    pub const fn source(self) -> RootSourceProfile {
-        self.source
-    }
-
     /// Validate that the group carries at least one polynomial.
     pub fn validate(self) -> Result<(), AkitaError> {
         if self.num_polynomials == 0 {
@@ -112,7 +50,6 @@ impl PolynomialGroupLayout {
                 "opening group layouts must be nonempty".to_string(),
             ));
         }
-        self.source.validate(self.num_vars)?;
         Ok(())
     }
 }
@@ -129,19 +66,6 @@ impl OpeningClaimsLayout {
         Self::from_groups(vec![PolynomialGroupLayout::new(
             num_vars,
             num_total_polynomials,
-        )])
-    }
-
-    /// Build a one-group unit one-hot layout with exact chunk size `K`.
-    pub fn unit_one_hot(
-        num_vars: usize,
-        num_total_polynomials: usize,
-        chunk_size: usize,
-    ) -> Result<Self, AkitaError> {
-        Self::from_groups(vec![PolynomialGroupLayout::unit_one_hot(
-            num_vars,
-            num_total_polynomials,
-            chunk_size,
         )])
     }
 
@@ -301,8 +225,6 @@ impl OpeningClaimsLayout {
         for group in &self.groups {
             push_usize(&mut bytes, group.num_vars());
             push_usize(&mut bytes, group.num_polynomials());
-            bytes.push(group.source().tag());
-            push_usize(&mut bytes, group.source().onehot_chunk_size().unwrap_or(0));
         }
         blake2b_256(&bytes)
     }
@@ -322,11 +244,6 @@ impl OpeningClaimsLayout {
         for group in self.groups() {
             transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_vars());
             transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_polynomials());
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.source().tag());
-            transcript.append_serde(
-                ABSORB_BATCH_SHAPE,
-                &group.source().onehot_chunk_size().unwrap_or(0),
-            );
         }
         Ok(())
     }
@@ -852,21 +769,5 @@ mod tests {
         };
 
         assert_ne!(target(&openings), target(&tampered));
-    }
-
-    #[test]
-    fn opening_layout_identity_binds_exact_onehot_chunk_size() {
-        let dense = OpeningClaimsLayout::new(12, 1).unwrap();
-        let k16 = OpeningClaimsLayout::unit_one_hot(12, 1, 16).unwrap();
-        let k256 = OpeningClaimsLayout::unit_one_hot(12, 1, 256).unwrap();
-
-        assert_ne!(dense.opening_batch_digest(), k16.opening_batch_digest());
-        assert_ne!(k16.opening_batch_digest(), k256.opening_batch_digest());
-        assert_ne!(
-            crate::AkitaScheduleLookupKey::single(*k16.group_layout(0).unwrap())
-                .canonical_descriptor_bytes(),
-            crate::AkitaScheduleLookupKey::single(*k256.group_layout(0).unwrap())
-                .canonical_descriptor_bytes(),
-        );
     }
 }

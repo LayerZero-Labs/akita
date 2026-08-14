@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn schedule_warm_builds_terminal_cache_once_before_arithmetic() {
-        let group = PolynomialGroupLayout::unit_one_hot(15, 1, 256);
+        let group = PolynomialGroupLayout::new(15, 1);
         let schedule = OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
             .expect("adaptive schedule")
             .into_schedule();

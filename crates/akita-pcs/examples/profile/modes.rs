@@ -117,7 +117,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + Valid,
 {
     tracing::info!("{}", title);
-    let group = PolynomialGroupLayout::unit_one_hot(nv, num_polys, onehot_k_for_num_vars(nv));
+    let group = PolynomialGroupLayout::new(nv, num_polys);
     if num_polys == 1 {
         let layout = resolve_layout::<FF, Cfg>(group);
         let required_vars = layout.position_index_bits()
@@ -425,7 +425,7 @@ fn run_profile_onehot_fp128_with_cfg<
     );
     assert_singleton_mode(label, num_polys);
 
-    let group = PolynomialGroupLayout::unit_one_hot(nv, 1, onehot_k_for_num_vars(nv));
+    let group = PolynomialGroupLayout::new(nv, 1);
     let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
         .into_schedule();

@@ -1,7 +1,7 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_k_for_num_vars, onehot_lagrange_opening, planned_payload_bytes, prover_claims,
-    random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
+    onehot_lagrange_opening, planned_payload_bytes, prover_claims, random_claim_point,
+    report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
@@ -54,8 +54,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + AkitaSerialize
         + Valid,
 {
-    let group_layout =
-        PolynomialGroupLayout::unit_one_hot(nv, num_polys, onehot_k_for_num_vars(nv));
+    let group_layout = PolynomialGroupLayout::new(nv, num_polys);
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
             make_profile_onehot_poly::<FF>(

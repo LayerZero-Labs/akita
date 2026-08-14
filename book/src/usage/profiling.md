@@ -129,6 +129,19 @@ the exact energy of recursive source witnesses and response components. These
 operations can scan complete witness buffers, so traces from this mode do not
 measure normal prover performance.
 
+For each successful L2 fold, the report parser joins the measured response
+energy to that run's planned cap and fold level. It rejects missing
+measurements and cap violations. The machine-readable summary retains the
+measured energy, frozen cap, cap utilization, accepted nonce, and attempt
+count. This keeps empirical calibration tied to the exact schedule that
+produced the proof. It replaces detached literal fixtures in planner unit
+tests.
+
+The optional diagnostic events also carry exact incoming source energy and the
+challenge-scaled conditional mean. The standard report does not merge those
+multi-group source samples into the cap table. Analyze them as a separate
+calibration data set when evaluating the three percent source-model envelope.
+
 ## CI benchmark matrix
 
 Workflow: `.github/workflows/profile-bench.yml`.

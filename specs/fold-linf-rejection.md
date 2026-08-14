@@ -89,11 +89,18 @@ absorption and sampling for the proof's accepted nonce.
 `FoldLinfProtocolBinding` binds only the protocol-wide nonce contract:
 
 - the exclusive probe cap (`4096`);
-- the nonce wire width (`4` bytes);
-- the entropy charge for the nonce range (`12` bits per level).
+- the nonce wire width (`4` bytes).
 
 Nonce values outside the bound are rejected. Exhausting the bound returns a
 prover error; it does not create an unbounded loop or a verifier panic.
+
+Repeated nonce trials are accounted for by the adversary's total random-oracle
+query budget in the Fiat-Shamir reduction. There is no separate 12-bit
+soundness debit per fold. For a bad-challenge fraction `epsilon`, `q` nonce
+queries increase success to at most `q * epsilon`, while also costing `q`
+oracle queries. The same query factor applies if a prover varies other
+pre-challenge randomness. See
+[Polynomial commitments and binding](../book/src/foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
 For a multi-group fold, all groups share the same candidate nonce and must pass
 together. The `p = 1/8` calculation is a marginal, per-group sizing guarantee.

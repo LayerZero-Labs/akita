@@ -5,7 +5,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let key = akita_types::PolynomialGroupLayout::unit_one_hot(NV, GROUP_SIZE, BENCH_ONEHOT_K);
+    let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
     let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
@@ -93,10 +93,8 @@ fn profile_native_commit_group_allows_independent_groups() {
     // cover the largest standalone group rather than the sum of all groups.
     const SETUP_CAPACITY_SIZE: usize = PRE_B_SIZE;
 
-    let pre_a_key =
-        akita_types::PolynomialGroupLayout::unit_one_hot(NV, PRE_A_SIZE, BENCH_ONEHOT_K);
-    let pre_b_key =
-        akita_types::PolynomialGroupLayout::unit_one_hot(NV, PRE_B_SIZE, BENCH_ONEHOT_K);
+    let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
+    let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
     let pre_a_profile =
         OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
     let pre_b_profile =
@@ -156,12 +154,9 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const PRE_C_SIZE: usize = 1;
     const MAIN_SIZE: usize = 4;
 
-    let pre_a_key =
-        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, PRE_A_SIZE, BENCH_ONEHOT_K);
-    let pre_b_key =
-        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, PRE_B_SIZE, BENCH_ONEHOT_K);
-    let pre_c_key =
-        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, PRE_C_SIZE, BENCH_ONEHOT_K);
+    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
+    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
+    let pre_c_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
     let pre_a_frozen =
         OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
     let pre_b_frozen =
@@ -169,11 +164,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_c_frozen =
         OneHotCfg::profile_without_precommitted_groups(pre_c_key).expect("independent profile");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::unit_one_hot(
-            FINAL_NV,
-            MAIN_SIZE,
-            BENCH_ONEHOT_K,
-        ),
+        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
 
@@ -214,10 +205,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     const FINAL_SIZE: usize = 4;
     const SETUP_CAPACITY_SIZE: usize = FINAL_SIZE + 2 * GROUP_SIZE;
 
-    let pre_a_key =
-        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, GROUP_SIZE, BENCH_ONEHOT_K);
-    let pre_b_key =
-        akita_types::PolynomialGroupLayout::unit_one_hot(PRE_NV, GROUP_SIZE, BENCH_ONEHOT_K);
+    let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
+    let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_a_frozen =
         OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
     let pre_b_frozen =
@@ -264,11 +253,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     )
     .expect("precommit B");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::unit_one_hot(
-            FINAL_NV,
-            FINAL_SIZE,
-            BENCH_ONEHOT_K,
-        ),
+        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
     assert!(multi_group_key
@@ -363,7 +348,7 @@ fn commit_group_returns_frozen_exact_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
-    let key = akita_types::PolynomialGroupLayout::unit_one_hot(NV, GROUP_SIZE, BENCH_ONEHOT_K);
+    let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
     let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
         .checked_mul(ONEHOT_D)
@@ -459,11 +444,7 @@ where
     let mut pre_layouts = Vec::new();
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
     for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
-        let key = akita_types::PolynomialGroupLayout::unit_one_hot(
-            pre_num_vars,
-            num_polynomials,
-            BENCH_ONEHOT_K,
-        );
+        let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
         let profile =
             ProtocolCfg::profile_without_precommitted_groups(key).expect("independent profile");
         let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..num_polynomials)
@@ -494,11 +475,7 @@ where
     }
 
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::unit_one_hot(
-            final_num_vars,
-            final_size,
-            BENCH_ONEHOT_K,
-        ),
+        final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds: pre_frozen,
     };
     let opening_layout = multi_group_key
@@ -952,139 +929,5 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     .expect("batched onehot verify");
 }
 
-#[test]
-fn selective_l2_proof_rejects_transcript_mutations() {
-    const NV: usize = 30;
-    const BATCH_SIZE: usize = 4;
-    const TRANSCRIPT_LABEL: &[u8] = b"test/selective-l2-mutations";
-    type L2Cfg = OneHotCfg;
-    type L2Scheme = AkitaCommitmentScheme<L2Cfg>;
-
-    let layout = akita_batched_root_layout::<L2Cfg>(NV, BATCH_SIZE).expect("L2 root layout");
-    let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
-        .map(|index| debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_1200_0000 + index as u64))
-        .collect();
-    let poly_refs: Vec<&OneHotPoly<OneHotF, u8>> = polys.iter().collect();
-    let point = debug_random_point(NV);
-    let openings: Vec<OneHotF> = polys
-        .iter()
-        .map(|poly| {
-            opening_from_poly(
-                poly,
-                &point,
-                layout.d_a(),
-                layout.num_positions_per_block,
-                layout.num_live_blocks,
-            )
-        })
-        .collect();
-
-    let setup = L2Scheme::setup_prover(NV, BATCH_SIZE).expect("L2 setup");
-    let prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("prepared L2 setup");
-    let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
-        &prepared,
-        setup.expanded.as_ref(),
-    )
-    .expect("L2 stack");
-    let verifier_setup = L2Scheme::setup_verifier(&setup).expect("L2 verifier setup");
-    let akita_prover::CommitOutput {
-        committed_group: commitment,
-        hint,
-    } = L2Scheme::commit::<_, _>(
-        &setup,
-        &polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("L2 commitment");
-    let commitments = [commitment];
-    let prover_group = PolynomialGroupClaims::new(
-        point.clone(),
-        vec![OneHotF::zero(); BATCH_SIZE],
-        commitments[0].clone(),
-    )
-    .expect("L2 prover group");
-    let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-    let proof = L2Scheme::batched_prove::<_, _, _>(
-        &setup,
-        selected_prover_data::<L2Cfg, _>(
-            OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
-            vec![hint],
-            vec![&poly_refs],
-        )
-        .expect("L2 opening data"),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("L2 proof");
-
-    let verify = |candidate: &AkitaBatchedProof<OneHotF, OneHotF>| {
-        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            point.clone(),
-            openings.clone(),
-            &commitments[0],
-        )
-        .expect("L2 verifier group")])
-        .expect("L2 verifier claims");
-        let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-        L2Scheme::batched_verify(
-            candidate,
-            &verifier_setup,
-            &mut transcript,
-            selected_statement::<L2Cfg>(claims).expect("L2 verifier statement"),
-            BasisMode::Lagrange,
-        )
-    };
-    verify(&proof).expect("valid L2 proof");
-
-    let l2_index = proof
-        .recursive_folds
-        .iter()
-        .position(|fold| fold.stage1.norm_proof.is_some())
-        .expect("generated schedule must select one L2 fold");
-    let mut bad_norm = proof.clone();
-    bad_norm.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .response_l2_sq += 1;
-    assert!(verify(&bad_norm).is_err());
-
-    let mut over_cap = proof.clone();
-    over_cap.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .response_l2_sq = u128::MAX;
-    assert!(verify(&over_cap).is_err());
-
-    let mut bad_virtual = proof.clone();
-    bad_virtual.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .virtual_evaluations[0] += OneHotF::one();
-    assert!(verify(&bad_virtual).is_err());
-
-    let mut bad_sumcheck = proof.clone();
-    bad_sumcheck.recursive_folds[l2_index]
-        .stage1
-        .norm_proof
-        .as_mut()
-        .expect("L2 norm")
-        .sumcheck
-        .round_polys[0]
-        .coeffs_except_linear_term[0] += OneHotF::one();
-    assert!(verify(&bad_sumcheck).is_err());
-
-    let mut bad_nonce = proof;
-    bad_nonce.recursive_folds[l2_index].fold_grind_nonce += 1;
-    assert!(verify(&bad_nonce).is_err());
-}
+#[path = "onehot/selective_l2.rs"]
+mod selective_l2;

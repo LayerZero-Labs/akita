@@ -112,7 +112,7 @@ macro_rules! onehot_keys {
     ($(($num_vars:expr, $num_polynomials:expr)),* $(,)?) => {
         &[
             $(
-                PolynomialGroupLayout::unit_one_hot($num_vars, $num_polynomials, 256),
+                PolynomialGroupLayout::new($num_vars, $num_polynomials),
             )*
         ]
     };
@@ -332,13 +332,13 @@ fn fp128_onehot_group_batch_keys(
     // cell. Every other combined OneHot row is heterogeneous or multi-poly.
     keys.extend(single_pre_group_batch_keys::<fp128::OneHot>(
         preplans,
-        PolynomialGroupLayout::unit_one_hot(14, 1, 256),
-        PolynomialGroupLayout::unit_one_hot(16, 1, 256),
+        PolynomialGroupLayout::new(14, 1),
+        PolynomialGroupLayout::new(16, 1),
     )?);
     keys.extend(single_pre_group_batch_keys::<fp128::OneHot>(
         preplans,
-        PolynomialGroupLayout::unit_one_hot(14, 1, 256),
-        PolynomialGroupLayout::unit_one_hot(20, 1, 256),
+        PolynomialGroupLayout::new(14, 1),
+        PolynomialGroupLayout::new(20, 1),
     )?);
     Ok(sorted_group_batch_keys(keys))
 }
@@ -355,7 +355,7 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
     preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     type Cfg = fp128::OneHotMultiChunkW2R2;
-    let group = PolynomialGroupLayout::unit_one_hot(14, 1, 256);
+    let group = PolynomialGroupLayout::new(14, 1);
     let precommitted = planned_profile_without_precommitted_groups::<Cfg>(preplans, group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
@@ -396,8 +396,8 @@ fn fp32_onehot_group_batch_keys(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     single_pre_group_batch_keys::<fp32::OneHot>(
         preplans,
-        PolynomialGroupLayout::unit_one_hot(14, 1, 256),
-        PolynomialGroupLayout::unit_one_hot(20, 1, 256),
+        PolynomialGroupLayout::new(14, 1),
+        PolynomialGroupLayout::new(20, 1),
     )
 }
 
@@ -445,12 +445,12 @@ fn fp128_dense_group_batch_keys(
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    let precommitted_group = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
+    let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
         planned_profile_without_precommitted_groups::<BaseCfg>(preplans, precommitted_group)?;
     Ok(vec![(
         AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::unit_one_hot(32, 2, 256),
+            final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
         },
         vec![
@@ -463,7 +463,7 @@ fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 fn heterogeneous_onehot_catalog_key(
     preplans: &GenerationPreplans,
 ) -> Result<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), AkitaError> {
-    let onehot_group = PolynomialGroupLayout::unit_one_hot(14, 1, 256);
+    let onehot_group = PolynomialGroupLayout::new(14, 1);
     let dense_group = PolynomialGroupLayout::new(15, 2);
     let onehot_policy = honest_fold_policy_of::<fp128::OneHot>();
     let dense_policy = honest_fold_policy_of::<fp128::Dense>();
@@ -472,7 +472,7 @@ fn heterogeneous_onehot_catalog_key(
     let dense = planned_profile_without_precommitted_groups::<fp128::Dense>(preplans, dense_group)?;
     Ok((
         AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::unit_one_hot(16, 1, 256),
+            final_group: PolynomialGroupLayout::new(16, 1),
             precommitteds: vec![onehot, dense],
         },
         vec![onehot_policy, dense_policy],
@@ -482,41 +482,40 @@ fn heterogeneous_onehot_catalog_key(
 fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    let chunk_size = 256;
     let singleton_pre = planned_profile_without_precommitted_groups::<BaseCfg>(
         preplans,
-        PolynomialGroupLayout::unit_one_hot(14, 1, chunk_size),
+        PolynomialGroupLayout::new(14, 1),
     )?;
     let pair_pre = planned_profile_without_precommitted_groups::<BaseCfg>(
         preplans,
-        PolynomialGroupLayout::unit_one_hot(14, 2, chunk_size),
+        PolynomialGroupLayout::new(14, 2),
     )?;
     let policy = honest_fold_policy_of::<BaseCfg>();
     Ok(vec![
         (
             AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::unit_one_hot(20, 2, chunk_size),
+                final_group: PolynomialGroupLayout::new(20, 2),
                 precommitteds: vec![singleton_pre],
             },
             vec![policy],
         ),
         (
             AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::unit_one_hot(20, 4, chunk_size),
+                final_group: PolynomialGroupLayout::new(20, 4),
                 precommitteds: vec![singleton_pre, singleton_pre],
             },
             vec![policy, policy],
         ),
         (
             AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::unit_one_hot(20, 4, chunk_size),
+                final_group: PolynomialGroupLayout::new(20, 4),
                 precommitteds: vec![singleton_pre, singleton_pre, singleton_pre],
             },
             vec![policy, policy, policy],
         ),
         (
             AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::unit_one_hot(20, 1, chunk_size),
+                final_group: PolynomialGroupLayout::new(20, 1),
                 precommitteds: vec![pair_pre],
             },
             vec![policy],
@@ -732,7 +731,7 @@ mod tests {
 
     #[test]
     fn scalar_preplans_deduplicate_by_exact_producer_and_layout() {
-        let key = PolynomialGroupLayout::unit_one_hot(14, 1, 256);
+        let key = PolynomialGroupLayout::new(14, 1);
         let preplans = GenerationPreplans::default();
 
         let schedules = std::thread::scope(|scope| {

@@ -37,9 +37,10 @@ its exact protocol consequences. The planner MUST NOT reinterpret or reduce a
 policy result.
 
 The balanced signed digit policy uses the universal signed-sparse tail bound.
-The unit one-hot policy uses the exact one-coordinate moment generating
-function. Both policies retain the universal result as a completeness guard.
-Neither policy applies an empirical digit-boundary discount.
+The unit one-hot policy uses the exact physical source classes and a
+one-coordinate moment generating function. It falls back to the deterministic
+convolution envelope when the exact calculation is unavailable. Neither policy
+applies an empirical digit-boundary discount.
 
 Intermediate folds and terminal raw responses have different contracts.
 Intermediate folds are accepted through balanced digit decomposition, so their
@@ -173,8 +174,10 @@ wire-format change.
 
 The source norm MUST be computed from the selected inner basis and A ring
 dimension. Balanced sources use
-`FoldWitnessNorms::bounded(log_basis_inner, d_a)`; unit one-hot sources use their
-profile-owned sparse norm. The honest fold policy derives `num_digits_fold`
+`FoldWitnessNorms::bounded(log_basis_inner, d_a)`; unit one-hot sources use the
+sparse norm owned by their offline policy, including its exact source chunk
+size. The chunk size MUST NOT be copied into runtime group geometry. The honest
+fold policy derives `num_digits_fold`
 from that source norm and the selected response basis. The A-role SIS collision
 bound is then computed from the A ring dimension, response basis, selected fold
 digit depth, and challenge distribution. Planner pricing and runtime admission
@@ -287,10 +290,10 @@ deterministic ring-product envelope and the signed-sparse tail threshold. It
 does not multiply that threshold by an empirical constant before rounding to a
 digit depth.
 
-The unit one-hot policy computes its exact MGF threshold and takes the smaller
-digit depth of that result and the universal balanced-policy result. The
-universal path is both a fallback when the exact model is unavailable and a
-dominance guard when the generic bound is tighter.
+The unit one-hot policy computes an MGF threshold from kernel-faithful physical
+source classes and compares it with the deterministic convolution envelope.
+The smaller valid cap determines the digit depth. The deterministic envelope
+is the fallback when the exact MGF calculation is unavailable.
 
 ## Exact unit one-hot model
 
@@ -323,7 +326,7 @@ M_X(\lambda)
 \]
 
 For the shipping `D = 64` challenge with 31 coefficients of magnitude one and
-10 coefficients of magnitude two, the policy MUST use
+11 coefficients of magnitude two, the policy MUST use
 
 \[
 M_X(\lambda)
@@ -331,10 +334,10 @@ M_X(\lambda)
 1+
 \frac{31}{64}(\cosh\lambda-1)
 +
-\frac{10}{64}(\cosh2\lambda-1).
+\frac{11}{64}(\cosh2\lambda-1).
 \]
 
-The constants 31 and 10 are specific to `D = 64`. Other ring dimensions MUST
+The constants 31 and 11 are specific to `D = 64`. Other ring dimensions MUST
 derive their counts from the selected `SparseChallengeConfig`. They MUST NOT
 reuse the `D = 64` constants.
 

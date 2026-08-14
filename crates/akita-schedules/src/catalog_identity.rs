@@ -619,16 +619,6 @@ fn write_generated_partition(h: &mut Fnv64, value: GeneratedWitnessPartition) {
 fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
     h.write_u64(key.num_vars() as u64);
     h.write_u64(key.num_polynomials() as u64);
-    match key.source() {
-        akita_types::RootSourceProfile::Dense => {
-            h.write_u64(0);
-            h.write_u64(0);
-        }
-        akita_types::RootSourceProfile::UnitOneHot { chunk_size } => {
-            h.write_u64(1);
-            h.write_u64(chunk_size as u64);
-        }
-    }
 }
 
 fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupProfile) {

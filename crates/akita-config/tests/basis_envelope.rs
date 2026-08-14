@@ -18,7 +18,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
 
     for &nv in BASIS_ENVELOPE_NUM_VARS {
         let schedule = match Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::unit_one_hot(nv, 1, 256),
+            PolynomialGroupLayout::new(nv, 1),
         )) {
             Ok(row) => row.into_schedule(),
             Err(_) => continue,
@@ -50,11 +50,9 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                 num_positions_per_block: root.num_positions_per_block,
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
-                source: akita_types::RootSourceProfile::UnitOneHot { chunk_size: 256 },
                 witness_norms: honest_policy.witness_norms_for_inner_basis(
                     root.log_basis_inner,
                     root.d_a(),
-                    akita_types::RootSourceProfile::UnitOneHot { chunk_size: 256 },
                     nv,
                 ),
                 log_basis_response: root.log_basis_open,

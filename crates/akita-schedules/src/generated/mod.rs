@@ -212,12 +212,10 @@ pub fn generated_schedule_key_cmp(
     let left_main = (
         left.root.final_group.layout.num_vars(),
         left.root.final_group.layout.num_polynomials(),
-        source_sort_key(left.root.final_group.layout),
     );
     let right_main = (
         right.root.final_group.layout.num_vars(),
         right.root.final_group.layout.num_polynomials(),
-        source_sort_key(right.root.final_group.layout),
     );
     left_main
         .cmp(&right_main)
@@ -249,12 +247,10 @@ pub fn generated_schedule_key_cmp_runtime(
     let left_main = (
         generated.root.final_group.layout.num_vars(),
         generated.root.final_group.layout.num_polynomials(),
-        source_sort_key(generated.root.final_group.layout),
     );
     let right_main = (
         runtime.final_group.num_vars(),
         runtime.final_group.num_polynomials(),
-        source_sort_key(runtime.final_group),
     );
     left_main
         .cmp(&right_main)
@@ -289,12 +285,10 @@ pub fn runtime_schedule_key_cmp(
     let left_main = (
         left.final_group.num_vars(),
         left.final_group.num_polynomials(),
-        source_sort_key(left.final_group),
     );
     let right_main = (
         right.final_group.num_vars(),
         right.final_group.num_polynomials(),
-        source_sort_key(right.final_group),
     );
     left_main
         .cmp(&right_main)
@@ -305,13 +299,6 @@ pub fn runtime_schedule_key_cmp(
                 .map(precommitted_group_sort_key)
                 .cmp(right.precommitteds.iter().map(precommitted_group_sort_key))
         })
-}
-
-fn source_sort_key(layout: akita_types::PolynomialGroupLayout) -> (u8, usize) {
-    match layout.source() {
-        akita_types::RootSourceProfile::Dense => (0, 0),
-        akita_types::RootSourceProfile::UnitOneHot { chunk_size } => (1, chunk_size),
-    }
 }
 
 fn precommitted_group_sort_key(key: &akita_types::CommittedGroupProfile) -> Vec<u8> {

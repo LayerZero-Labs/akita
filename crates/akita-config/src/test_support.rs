@@ -38,18 +38,7 @@ pub fn akita_batched_root_layout<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let lookup_key = match Cfg::root_honest_fold_policy() {
-        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
-            PolynomialGroupLayout::new(num_vars, num_polynomials)
-        }
-        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
-            PolynomialGroupLayout::unit_one_hot(
-                num_vars,
-                num_polynomials,
-                crate::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE,
-            )
-        }
-    };
+    let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
     let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(lookup_key))?;
     let layout = schedule
         .schedule()

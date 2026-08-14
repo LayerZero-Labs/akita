@@ -289,7 +289,7 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 #[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
-    let opening_batch = OpeningClaimsLayout::unit_one_hot(32, 1, 256).expect("opening batch");
+    let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
     fp128::OneHotMultiChunk::select_schedule_for_opening(&opening_batch)
         .expect("W8R2 multi-chunk catalog row");
 }
@@ -318,8 +318,8 @@ fn fp128_onehot_mc() {
 // GROUP C — Batched commitment (multiple polynomials in a single group)
 //
 // Tests that the batch-commit path correctly handles >1 polynomials per group,
-// Homogeneous dense and one-hot groups round-trip. A mixed-source group is
-// rejected because source representation is commitment-group metadata.
+// Homogeneous dense and one-hot groups round-trip. A mixed-representation
+// group has the same public geometry and is therefore protocol equivalent.
 // ============================================================================
 
 #[test]
@@ -468,7 +468,7 @@ fn fp128_dense_batched() {
 }
 
 #[test]
-fn fp128_mixed_batched_rejects_mixed_sources() {
+fn fp128_mixed_batched_uses_source_free_group_geometry() {
     init_rayon_pool();
     run_on_large_stack(|| {
         const NV: usize = 17;
@@ -516,16 +516,19 @@ fn fp128_mixed_batched_rejects_mixed_sources() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let err = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+        let output = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
             &setup,
             &polys,
             &stack,
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
-        .expect_err("mixed source representations in one group must reject");
-        assert!(err
-            .to_string()
-            .contains("same root-source representation and one-hot chunk size"));
+        .expect("mixed source representations share one public geometry");
+        assert_eq!(
+            output.committed_group.profile.group,
+            opening_batch
+                .root_final_group_layout()
+                .expect("final group layout")
+        );
     });
 }
 
@@ -540,8 +543,7 @@ fn fp128_mixed_batched_rejects_mixed_sources() {
 #[test]
 fn fp128_onehot_oversized_setup() {
     fn run(setup_nv: usize, poly_nv: usize) {
-        let opening_batch = OpeningClaimsLayout::unit_one_hot(poly_nv, 1, ONEHOT_K)
-            .expect("singleton opening batch");
+        let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
         let layout = OneHotCfg::select_schedule_for_opening(&opening_batch)
             .expect("layout")
             .into_schedule()

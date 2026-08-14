@@ -2,10 +2,8 @@ use super::*;
 #[cfg(feature = "catalog-gen")]
 use akita_types::extension_opening_reduction_level_bytes;
 
-const TEST_ONEHOT_K: usize = 256;
-
 fn onehot_group(num_vars: usize, num_polynomials: usize) -> PolynomialGroupLayout {
-    PolynomialGroupLayout::unit_one_hot(num_vars, num_polynomials, TEST_ONEHOT_K)
+    PolynomialGroupLayout::new(num_vars, num_polynomials)
 }
 
 #[cfg(test)]

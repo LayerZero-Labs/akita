@@ -44,7 +44,10 @@ multiplicity is always `1`; multi-group roots derive those counts from
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
 - Ring-subfield norm bound.
-- One-hot chunk size.
+
+Source laws are separate planner-only values. For example, the one-hot policy
+owns its exact chunk size while runtime schedule keys retain only public group
+geometry.
 
 The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
 

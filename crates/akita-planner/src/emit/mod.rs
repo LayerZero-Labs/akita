@@ -322,19 +322,11 @@ fn generated_entry(
 }
 
 fn emit_key(key: PolynomialGroupLayout) -> String {
-    match key.source() {
-        akita_types::RootSourceProfile::Dense => format!(
-            "PolynomialGroupLayout::new({}, {})",
-            key.num_vars(),
-            key.num_polynomials(),
-        ),
-        akita_types::RootSourceProfile::UnitOneHot { chunk_size } => format!(
-            "PolynomialGroupLayout::unit_one_hot({}, {}, {})",
-            key.num_vars(),
-            key.num_polynomials(),
-            chunk_size,
-        ),
-    }
+    format!(
+        "PolynomialGroupLayout::new({}, {})",
+        key.num_vars(),
+        key.num_polynomials(),
+    )
 }
 
 fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
@@ -876,7 +868,7 @@ mod preplanned_scalar_tests {
             .iter()
             .find(|family| family.module_name == "fp128_onehot_multi_chunk_w2r2")
             .expect("known family");
-        let key = PolynomialGroupLayout::unit_one_hot(14, 1, 256);
+        let key = PolynomialGroupLayout::new(14, 1);
         let schedule = (family.regen)(key).expect("scalar schedule");
         REGEN_SCHEDULE.get_or_init(|| schedule.clone());
         let mut cached = wiring_emit_spec(family, PathBuf::from("generated"));

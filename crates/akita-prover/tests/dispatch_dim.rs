@@ -15,7 +15,7 @@ fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
             PolynomialGroupLayout::singleton(num_vars)
         }
         akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
-            PolynomialGroupLayout::unit_one_hot(num_vars, 1, 256)
+            PolynomialGroupLayout::new(num_vars, 1)
         }
     };
     Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(group))

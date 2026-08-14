@@ -27,7 +27,7 @@ fn heterogeneous_group_types() {
         // Derive the OneHot pre-commit ring_d from the row without prior
         // groups, so the polynomial matches what `commit` selects below.
         let pre_d = OneHotCfg::profile_without_precommitted_groups(
-            akita_types::PolynomialGroupLayout::unit_one_hot(ONEHOT_PRE_NV, 1, 256),
+            akita_types::PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
         )
         .expect("onehot pre profile without precommitted groups")
         .inner_commit_matrix

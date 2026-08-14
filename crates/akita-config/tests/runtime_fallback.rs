@@ -299,11 +299,11 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
     feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2"
 )))]
 fn grouped_recursive_catalog_rejects_without_recursive_feature() {
-    let precommitted_group = PolynomialGroupLayout::unit_one_hot(16, 1, 256);
+    let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let descriptor = fp128::OneHot::profile_without_precommitted_groups(precommitted_group)
         .expect("base OneHot precommit profile");
     let key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::unit_one_hot(32, 2, 256),
+        final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
     assert!(matches!(
@@ -348,7 +348,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 fn runtime_rejects_malformed_extension_geometry_without_panicking() {
     type Cfg = fp128::OneHot;
     let catalog = Cfg::schedule_catalog();
-    let key = PolynomialGroupLayout::unit_one_hot(14, 1, 256);
+    let key = PolynomialGroupLayout::new(14, 1);
     let reject = |mutate: fn(&mut PlannerPolicy)| {
         let mut policy = policy_of::<Cfg>();
         mutate(&mut policy);
@@ -464,16 +464,16 @@ fn committed_descriptor<Cfg: CommitmentConfig>(
 #[test]
 fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
     type Cfg = fp128::OneHot;
-    let onehot_256 = committed_descriptor::<Cfg>(PolynomialGroupLayout::unit_one_hot(14, 1, 256));
+    let onehot_256 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
     let dense = committed_descriptor::<fp128::Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::unit_one_hot(16, 1, 256),
+        final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![onehot_256, dense],
     };
 
     let precommitted_honest_fold_policies = vec![
         akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::new(Cfg::decomposition().field_bits(), 1),
+            akita_types::sis::UnitOneHotFoldPolicy::new(Cfg::decomposition().field_bits(), 1, 256),
         ),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
             akita_types::sis::BalancedSignedDigitFoldPolicy::universal(

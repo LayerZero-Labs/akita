@@ -75,7 +75,9 @@ The planner estimates the squared norm of the actual recursive witness. It
 applies the following rules.
 
 * A dense root uses the deterministic maximum squared digit energy for every
-  coefficient. A one-hot root uses the exact number of unit entries.
+  coefficient. A one-hot root maximizes the physical squared energy over every
+  hot position allowed by its policy-owned chunk contract. This follows the
+  tensor projection kernel and includes coefficient collisions.
 * The Z part uses the centered residues of a rounded normal variable. Its
   variance comes from the previous source energy and the challenge energy.
 * The E, T, and R parts use the centered field digit moment for every live
@@ -96,11 +98,12 @@ attempts, so the resulting exhaustion bound for one response is below
 
 The 1.03 factor covers approximations in the normal, field digit, challenge
 covariance, and finite mixing models. It is an empirical completeness margin,
-not a soundness claim. In fresh cross-profile validation proofs, aggregate
-source estimates were 0.18 percent below to 2.07 percent above measured source
-energy. Across 51 selected L2 responses in 13 profile cases, every proof passed
-both verifier modes. Frozen cap slack ranged from 0.08 to 10.47 percent, and
-responses took one to six attempts.
+not a soundness claim. Response-model diagnostics measure exact source and
+response energy in complete production proofs. The benchmark parser joins each
+measurement to the planned fold in the same run, rejects a successful run whose
+response exceeds its frozen cap, and records cap utilization and nonce attempts
+for every L2 fold. Historical measurements are evidence, not compiled unit
+test constants.
 
 The field digit model is exact for uniform power of two residues, apart from
 the negligible pseudo-Mersenne boundary. Recursive setup values can retain
@@ -133,3 +136,9 @@ Generated schedule identity includes the cap policy and the separate L2 table
 digest. Runtime expansion derives the route, cap, proof shape, and A rank from
 that identity. A mismatch between the preset policy and generated catalog is
 an error.
+
+Source type is not part of runtime schedule identity. Dense and one-hot
+presets own different offline policies and generated catalogs, but equivalent
+polynomial groups have the same runtime geometry. In particular, one-hot chunk
+size is an input to `UnitOneHotFoldPolicy`; it is not serialized in a
+commitment, proof, opening layout, or transcript.
