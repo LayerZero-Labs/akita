@@ -488,7 +488,7 @@ Risks to resolve first:
   - `crates/akita-prover/src/protocol/sumcheck/akita_stage2/{mod,lifecycle,round_flow,dense_terms}.rs`.
   - `crates/akita-verifier/src/stages/stage2.rs`.
 - Related specs and worktrees:
-  - `specs/y-ring-trace-internalization.md` (worktree `akita-y-ring-trace-internalization`): fused trace term.
+  - `specs/archive/2026-Q3/y-ring-trace-internalization.md` (historical): the unadopted `gamma^2` fused-trace design.
   - `specs/akita-polyops-cutover.md` (worktree `akita-polyops-cutover-spec`): witness/polynomial source boundary.
   - `STACK.md`, `specs/setup-layout-repack.md`: setup-claim offloading and conditional protocol shape.
 - Profiling: `AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 cargo run --release --example profile`.

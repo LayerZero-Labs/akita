@@ -21,6 +21,13 @@ The approved SIS security-policy frontier is
 quantum LGSA policy at a 128-bit target.
 
 Recent archived records include
+[`commitment-compression-cutover`](../../../specs/archive/2026-Q3/commitment-compression-cutover.md),
+[`relation-range-image-sumcheck`](../../../specs/archive/2026-Q3/relation-range-image-sumcheck.md),
+and the historical
+[`y-ring-trace-internalization`](../../../specs/archive/2026-Q3/y-ring-trace-internalization.md).
+Their durable compression, Stage 2, and EvaluationTrace descriptions now live
+in the Akita fold realization, sumcheck stages, and field-to-ring reduction
+chapters. Other recent archived records include
 [`group-local-opening-points`](../../../specs/archive/2026-Q3/group-local-opening-points.md),
 whose durable claim ownership and protocol dataflow now live in the architecture,
 verification, commitment API, and extension-opening chapters. The

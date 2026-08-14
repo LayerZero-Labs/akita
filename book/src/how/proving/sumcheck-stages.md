@@ -18,6 +18,29 @@ relation protocol in detail. Stage 3 is summarized at the end. The terminal
 fold, which runs none of these sumchecks, is covered in
 [The proving protocol](./proving.md).
 
+## Contents
+
+- [Stage 1: digit range check](#stage-1-digit-range-check)
+  - [What it certifies](#what-it-certifies)
+  - [The simplest sound design](#the-simplest-sound-design)
+  - [Reduce the degree with the range image](#reduce-the-degree-with-the-range-image)
+- [The complete Stage-1 protocol](#the-complete-stage-1-protocol)
+  - [Quartic leaves and product substages](#quartic-leaves-and-product-substages)
+  - [One product substage](#one-product-substage)
+  - [The final leaf](#the-final-leaf)
+  - [Domain and challenge order](#domain-and-challenge-order)
+  - [The verifier](#the-verifier)
+- [Stage 2: fused relation sumcheck](#stage-2-fused-relation-sumcheck)
+  - [Start with the ordinary ring relation](#start-with-the-ordinary-ring-relation)
+  - [Batch the matrix rows](#batch-the-matrix-rows)
+  - [Expand the ring elements into one flat witness](#expand-the-ring-elements-into-one-flat-witness)
+  - [Raw and compressed relation terms](#raw-and-compressed-relation-terms)
+  - [Add the range-image binding](#add-the-range-image-binding)
+  - [Add the opening claim consistency](#add-the-opening-claim-consistency)
+  - [The fused Stage-2 claim](#the-fused-stage-2-claim)
+  - [Sumcheck rounds and the final point](#sumcheck-rounds-and-the-final-point)
+- [Stage 3: recursive setup contribution](#stage-3-recursive-setup-contribution)
+
 ## Stage 1: digit range check
 
 ### What it certifies
@@ -157,7 +180,7 @@ $$
 Their product is $R_b$. Each $L_\ell$ is quartic except at basis $4$, where
 the only leaf is quadratic. Product substages prove how these leaves combine,
 using only arity-$2$ or arity-$4$ products. The topology is fixed by
-[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/stage1.rs#L179-L400):
+[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs):
 
 | Basis | Product substages | Final leaf |
 |---:|---|---|
@@ -258,8 +281,8 @@ At the root there is one parent with weight $1$ and claim $0$. Each product
 substage expands the current parents into their children; the fresh powers of
 $\gamma$ compress those child claims back into one claim for the next
 substage. The prover and verifier follow the same transcript order
-([`digit_range/mod.rs:230`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs#L230-L299),
-[`stage1.rs:167`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-verifier/src/stages/stage1.rs#L161-L252)).
+([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs),
+[`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 ### The final leaf
 
@@ -316,7 +339,7 @@ in general. The equality $S(x)=w(x)(w(x)+1)$ holds at Boolean vertices, but
 multilinear extension does not commute with the quadratic map away from those
 vertices. The proof therefore carries the independent
 `range_image_evaluation` field
-([`levels.rs:20`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/levels.rs#L20-L25)).
+([`levels.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/levels.rs)).
 
 ### Domain and challenge order
 
@@ -328,14 +351,14 @@ Ring switching supplies $\tau_0$ in column-then-ring order, while the flat
 table binds variables in increasing physical-address-bit order. The protocol
 reorders the point so that ring-slot coordinates come first, followed by
 column coordinates
-([`stage1.rs:19`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/stage1.rs#L19-L170)).
+([`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs)).
 
 ### The verifier
 
 The verifier replays the same product substages, derives the same interstage
 challenges and weights, checks each child-product claim, and closes the final
 leaf at `range_image_evaluation`
-([`stage1.rs:167`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-verifier/src/stages/stage1.rs#L161-L252)).
+([`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 Passing Stage 1 proves that the range-tree claims are internally consistent and
 reduces the final leaf to `range_image_evaluation`. It does **not** by itself
@@ -792,23 +815,6 @@ The random objects have separate jobs:
 
 In particular, $\alpha$, $\tau_1$, and $r_2$ are not coordinates of one larger
 point. They contract three different domains.
-
-### Implementation map
-
-The ordinary path builds the fold-consistency and $\mathbf A/\mathbf B/\mathbf
-D$ weights in
-[`relation_weights.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs).
-Compressed mode separately builds $C_{\mathrm{comp}}$ and the checked support
-for $B_{\mathrm{comp}}$ in
-[`compression_relation_weights.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/compression_relation_weights.rs).
-The prover merges their round polynomials in
-[`relation_range_image/`](https://github.com/LayerZero-Labs/akita/tree/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image),
-while the verifier reconstructs the same final expression in
-[`stage2.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage2.rs).
-
-The EvaluationTrace remains a separate virtual term in both modes. For a
-compact verifier-oriented description of the same final equation, see [The
-Stage 2 fused check](../verifying/stage2.md).
 
 ## Stage 3: recursive setup contribution
 

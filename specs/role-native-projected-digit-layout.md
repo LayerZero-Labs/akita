@@ -7,7 +7,7 @@
 | Revised | 2026-07-31 |
 | Status | active |
 | PR | #337 |
-| Supersedes | Projected-digit and outgoing-witness storage rules in `digit-innermost-layout.md`, `mixed-ring-dimension-per-level.md`, `distributed-setup-offloading.md`, and `relation-range-image-sumcheck.md` |
+| Supersedes | Projected-digit and outgoing-witness storage rules in `digit-innermost-layout.md`, `mixed-ring-dimension-per-level.md`, `distributed-setup-offloading.md`, and `archive/2026-Q3/relation-range-image-sumcheck.md` |
 | Superseded by | |
 | Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
 
@@ -595,5 +595,5 @@ The cutover **MUST** delete or evolve away:
 - [`digit-innermost-layout.md`](digit-innermost-layout.md)
 - [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md)
 - [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
-- [`relation-range-image-sumcheck.md`](relation-range-image-sumcheck.md)
+- [`relation-range-image-sumcheck.md`](archive/2026-Q3/relation-range-image-sumcheck.md)
 - [`setup-layout-repack.md`](setup-layout-repack.md)

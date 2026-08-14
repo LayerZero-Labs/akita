@@ -4,8 +4,18 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-06-05                     |
-| Status      | in review                      |
-| PR          | #154                           |
+| Revised     | 2026-08-13: current deviation recorded and design archived |
+| Status      | historical                     |
+| PR          | #154 (original design); #313 (current EvaluationTrace path) |
+| Book-chapter | book/src/how/proving/field-ring-reduction.md |
+
+> **Historical design record.** The implementation removed the on-wire
+> `y_ring`, but it did not adopt the separate `gamma^2` batching proposed
+> below. Current Akita assigns EvaluationTrace the virtual-row weight derived
+> from `tau1` and fuses that linear relation into Stage 2. The current protocol
+> is documented in the book chapter above and in
+> [`sumcheck-stages.md`](../../../book/src/how/proving/sumcheck-stages.md); the
+> remainder of this file records the superseded design discussion only.
 
 ## Summary
 
@@ -303,16 +313,16 @@ target.
 
 ## Evaluation
 
-### Acceptance Criteria
+### Historical disposition
 
-- [ ] `AkitaLevelProof`, `AkitaBatchedFoldRoot`, and `TerminalLevelProof` no longer carry a `y_ring` / `y_rings` field; all constructors, shapes (`level_proof_shape`, `TerminalLevelProofShape`), serialization, and `can_decode_vec` shape guards are updated.
-- [ ] `relation_claim_from_rows_extension` (and `relation_claim_from_rows`) no longer take `y_rings`; the public-output rows are removed from the `M` RHS layout in `generate_relation_rhs` and the verifier `RingRelationInstance` construction.
-- [ ] The verifier enforces `TraceOpen(sum_j b_j · e_folded_j) = opening` in non-EOR paths, and the scaled EOR final-claim variant above in EOR paths, via a fused stage-2 term batched as `trace_coeff = γ²`; it no longer calls `recover_ring_subfield_inner_product` / the standalone `internal_claims[0] == opening` check on on-wire `y_ring` (`recursive.rs:319-357`).
-- [ ] `level_proof_bytes` drops the `y_bytes` term; `crates/akita-types/src/proof_size.rs` tests and the planner DP scoring are updated; shipped schedule tables are regenerated and `generated_schedule_tables_match_key_planner` reflects the new (smaller) sizing.
-- [ ] Non-ZK and ZK e2e suites are green: `cargo nextest run --profile ci-non-zk` and `--profile ci-all-features`.
-- [ ] `cargo test -p akita-pcs --features logging-transcript --test transcript_hardening` green (event-stream equality after the `y_ring` absorb removal and `trace_coeff = γ²` derivation from post-witness `CHALLENGE_SUMCHECK_BATCH`).
-- [ ] A negative test: tampering the committed `e_hat` digits so that `sum_j b_j · e_folded_j` projects to the wrong subfield value is rejected (replaces the role of the current `y_ring` trace-mismatch rejection paths, e.g. `crates/akita-pcs/src/scheme/tests/batched.rs:419-421`).
-- [ ] Profile shows the expected per-level shrink: `AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 cargo run --release --example profile` reports `y_ring_bytes = 0` at every level and total proof size reduced by the predicted amount.
+- [x] The shipped proof no longer carries an on-wire `y_ring` / `y_rings` field.
+- [x] The physical public-output row was replaced by the field-valued
+  EvaluationTrace relation over the committed opening digits.
+- [x] The proposed `trace_coeff = gamma^2` rule was not adopted. The current
+  verifier uses the `tau1` weight of the virtual EvaluationTrace row.
+- [x] Proof sizing, schedules, end-to-end verification, and tampering coverage
+  now follow the current EvaluationTrace implementation rather than the
+  obsolete paths and commands listed in this design record.
 
 ### Testing Strategy
 

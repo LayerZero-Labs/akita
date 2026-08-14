@@ -1764,6 +1764,6 @@ construct and hard to audit.
 - [`specs/setup-offloading-planner.md`](setup-offloading-planner.md)
 - [`specs/multi-group-batching.md`](multi-group-batching.md)
 - [`specs/distributed-planner.md`](distributed-planner.md)
-- [`specs/commitment-compression-cutover.md`](commitment-compression-cutover.md)
+- [`commitment-compression-cutover.md`](archive/2026-Q3/commitment-compression-cutover.md)
 - [`specs/terminal-direct-ring-relations-cutover.md`](terminal-direct-ring-relations-cutover.md)
 - [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)
