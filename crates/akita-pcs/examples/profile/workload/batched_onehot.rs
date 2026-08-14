@@ -1,7 +1,7 @@
 use super::{
     assert_observed_proof_size, assert_profile_ntt_cache_did_not_grow, make_profile_onehot_poly,
-    onehot_lagrange_opening, planned_payload_bytes, prover_claims, random_claim_point,
-    report_proof_size_against_planner, run_verifier_timings, verifier_claims,
+    onehot_k_for_num_vars, onehot_lagrange_opening, planned_payload_bytes, prover_claims,
+    random_claim_point, report_proof_size_against_planner, run_verifier_timings, verifier_claims,
 };
 use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
@@ -54,6 +54,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + AkitaSerialize
         + Valid,
 {
+    let group_layout =
+        PolynomialGroupLayout::unit_one_hot(nv, num_polys, onehot_k_for_num_vars(nv));
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
             make_profile_onehot_poly::<FF>(
@@ -159,7 +161,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     };
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
     print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
-    let opening_batch = OpeningClaimsLayout::new(nv, num_polys).expect("same-point opening batch");
+    let opening_batch =
+        OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let schedule = Cfg::select_schedule_for_opening(&opening_batch)
         .expect("batched schedule")
         .into_schedule();
@@ -167,18 +170,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_proof_size_against_planner(
             label,
             &proof,
-            planned_payload_bytes::<Cfg>(plan, PolynomialGroupLayout::new(nv, num_polys)),
+            planned_payload_bytes::<Cfg>(plan, group_layout),
             "planned",
             setup_contribution_mode,
             plan,
         );
-        emit_runtime_schedule_summary(
-            label,
-            plan,
-            PolynomialGroupLayout::new(nv, num_polys),
-            Cfg::decomposition().field_bits(),
-        )
-        .expect("runtime schedule report geometry");
+        emit_runtime_schedule_summary(label, plan, group_layout, Cfg::decomposition().field_bits())
+            .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -189,7 +187,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_proof_size_against_planner(
             label,
             &proof,
-            planned_payload_bytes::<Cfg>(&schedule, PolynomialGroupLayout::new(nv, num_polys)),
+            planned_payload_bytes::<Cfg>(&schedule, group_layout),
             "runtime schedule",
             setup_contribution_mode,
             &schedule,
@@ -197,7 +195,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         emit_runtime_schedule_summary(
             label,
             &schedule,
-            PolynomialGroupLayout::new(nv, num_polys),
+            group_layout,
             Cfg::decomposition().field_bits(),
         )
         .expect("runtime schedule report geometry");
