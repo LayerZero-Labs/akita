@@ -206,7 +206,7 @@ impl UnitOneHotFoldPolicy {
             }
             max_groups
         };
-        Some(query.num_claims.checked_mul(max_groups_per_claim)?)
+        query.num_claims.checked_mul(max_groups_per_claim)
     }
 
     #[cfg(test)]
