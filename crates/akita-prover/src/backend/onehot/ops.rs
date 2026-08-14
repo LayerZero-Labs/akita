@@ -7,7 +7,8 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
     DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
     OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
@@ -358,6 +359,117 @@ where
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         OneHotPoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
+    }
+}
+
+impl<F, E, const D: usize, I>
+    SubringCoefficientPackingBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    I: OneHotIndex,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: OneHotBatchView<'_, F, D, I>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        for poly in source.polys {
+            plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
+        }
+        let point = plan.point;
+        let geometry = point.geometry();
+        if E::EXT_DEGREE != geometry.extension_degree() {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing field extension degree mismatch".into(),
+            ));
+        }
+        let expected_field_len = point.num_live_positions().checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidInput("coefficient-packing one-hot length overflow".into())
+        })?;
+        let output_len = point
+            .num_live_blocks()
+            .checked_mul(geometry.partial_base_field_width())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing output length overflow".into())
+            })?;
+        let stride = geometry.subring_embedding_stride();
+        let s = geometry.challenge_subring_dimension();
+
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                let actual_field_len =
+                    poly.indices
+                        .len()
+                        .checked_mul(poly.onehot_k)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("one-hot source length overflow".into())
+                        })?;
+                if actual_field_len != expected_field_len {
+                    return Err(AkitaError::InvalidSize {
+                        expected: expected_field_len,
+                        actual: actual_field_len,
+                    });
+                }
+                let mut coordinates = Vec::new();
+                coordinates.try_reserve_exact(output_len).map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "coefficient-packing one-hot output allocation failed".into(),
+                    )
+                })?;
+                coordinates.resize(output_len, F::zero());
+                for (chunk_index, hot_index) in poly.indices.iter().copied().enumerate() {
+                    let Some(hot_index) = hot_index else {
+                        continue;
+                    };
+                    let field_index = chunk_index
+                        .checked_mul(poly.onehot_k)
+                        .and_then(|base| base.checked_add(hot_index.as_usize()))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("one-hot source index overflow".into())
+                        })?;
+                    let position = field_index / D;
+                    let coefficient_index = field_index % D;
+                    let block_index = position / point.num_positions_per_block();
+                    let position_in_block = position % point.num_positions_per_block();
+                    let low_index = coefficient_index % stride;
+                    let subring_index = coefficient_index / stride;
+                    let value = point.position_weights()[position_in_block]
+                        * point.packing_weights()[low_index];
+                    let extension_coordinates = value.ext_coords();
+                    if extension_coordinates.len() != geometry.extension_degree() {
+                        return Err(AkitaError::InvalidSetup(
+                            "coefficient-packing extension encoding width mismatch".into(),
+                        ));
+                    }
+                    let block_offset = block_index
+                        .checked_mul(geometry.partial_base_field_width())
+                        .ok_or(AkitaError::InvalidProof)?;
+                    for (extension_coordinate, coordinate) in
+                        extension_coordinates.iter().copied().enumerate()
+                    {
+                        let local_index = extension_coordinate
+                            .checked_mul(s)
+                            .and_then(|base| base.checked_add(subring_index))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let output_index = block_offset
+                            .checked_add(local_index)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        *coordinates
+                            .get_mut(output_index)
+                            .ok_or(AkitaError::InvalidProof)? += coordinate;
+                    }
+                }
+                SubringCoefficientPackingPartials::new(
+                    geometry,
+                    point.num_live_blocks(),
+                    coordinates,
+                )
+            })
+            .collect()
     }
 }
 

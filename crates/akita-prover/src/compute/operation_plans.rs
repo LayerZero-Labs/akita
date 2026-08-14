@@ -1,7 +1,10 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{CommittedGroupParams, CommittedGroupProfile, SubfieldMultiplierOpeningPoint};
+use akita_types::{
+    CommittedGroupParams, CommittedGroupProfile, PreparedSubringCoefficientPackingPoint,
+    SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,
+};
 
 // ===========================================================================
 // Open, source-typed operation boundary
@@ -151,6 +154,80 @@ pub struct OpeningFoldOutput<F: FieldCore, const D: usize> {
     pub eval: CyclotomicRing<F, D>,
     /// Folded witness rows in ring form.
     pub folded: Vec<CyclotomicRing<F, D>>,
+}
+
+/// Checked scalar inputs for one coefficient-packing projection batch.
+///
+/// Source data stays in the representation-specific borrowed batch view. The
+/// output layout is fixed by `geometry` as
+/// `[claim][block][extension coordinate][subring coefficient]`.
+#[derive(Debug, Clone, Copy)]
+pub struct SubringCoefficientPackingPlan<'a, E: FieldCore> {
+    /// Canonically split public opening point.
+    pub point: &'a PreparedSubringCoefficientPackingPoint<E>,
+}
+
+impl<E: FieldCore> SubringCoefficientPackingPlan<'_, E> {
+    /// Validate the plan at a source kernel boundary.
+    pub fn validate<const D: usize>(&self, source_num_vars: usize) -> Result<(), AkitaError> {
+        if self.point.geometry().a_ring_dimension() != D
+            || self.point.source_num_vars() != source_num_vars
+        {
+            return Err(AkitaError::InvalidInput(
+                "coefficient-packing plan disagrees with source geometry or arity".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Canonical base-field coordinates for one claim's packed partials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubringCoefficientPackingPartials<F: FieldCore> {
+    geometry: SubringCoefficientPackingGeometry,
+    num_live_blocks: usize,
+    coordinates: Vec<F>,
+}
+
+impl<F: FieldCore> SubringCoefficientPackingPartials<F> {
+    /// Build a typed partial buffer after checking its exact physical width.
+    pub fn new(
+        geometry: SubringCoefficientPackingGeometry,
+        num_live_blocks: usize,
+        coordinates: Vec<F>,
+    ) -> Result<Self, AkitaError> {
+        let expected = num_live_blocks
+            .checked_mul(geometry.partial_base_field_width())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing partial length overflow".into())
+            })?;
+        if num_live_blocks == 0 || coordinates.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: coordinates.len(),
+            });
+        }
+        Ok(Self {
+            geometry,
+            num_live_blocks,
+            coordinates,
+        })
+    }
+
+    /// Checked packing geometry.
+    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
+        self.geometry
+    }
+
+    /// Number of live blocks represented by this claim.
+    pub const fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
+    }
+
+    /// Canonical `[block][extension coordinate][subring coefficient]` data.
+    pub fn coordinates(&self) -> &[F] {
+        &self.coordinates
+    }
 }
 
 /// Decompose + challenge-fold parameters for one opening.

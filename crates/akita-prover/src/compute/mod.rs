@@ -44,11 +44,12 @@ pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, Tenso
 pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
     BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
-    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootCommitKernel, SubringCoefficientPackingBatchKernel, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchRelationPlan,
+    RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 pub(crate) use plans::DenseCommitInput;
 pub use plans::RingSwitchRelationRows;

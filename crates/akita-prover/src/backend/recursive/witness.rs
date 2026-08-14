@@ -160,6 +160,7 @@ impl AsRef<[i8]> for RecursiveWitnessFlat {
 #[derive(Debug, Clone, Copy)]
 pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
     coeffs: &'a [[i8; D]],
+    live_coeff_len: usize,
     live_ring_elems: usize,
     padded_ring_elems: usize,
     known_balanced_log_basis: Option<u32>,
@@ -192,6 +193,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
 
         Ok(Self {
             coeffs,
+            live_coeff_len,
             live_ring_elems: live_coeff_len.div_ceil(D),
             padded_ring_elems: coeffs.len().next_power_of_two().max(1),
             known_balanced_log_basis,
@@ -509,7 +511,8 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
@@ -822,6 +825,68 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitnessView::tensor_packed_extension_sparse_linear_combination(&refs, coeffs)
+    }
+}
+
+impl<F, E, const D: usize>
+    SubringCoefficientPackingBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: SuffixWitnessBatchView<'_, F, D>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|witness| {
+                let view = witness.view::<F, D>()?;
+                let source_len =
+                    plan.point
+                        .num_live_positions()
+                        .checked_mul(D)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput(
+                                "coefficient-packing recursive source length overflow".into(),
+                            )
+                        })?;
+                plan.validate::<D>(view.num_vars())?;
+                if view.live_ring_elems != plan.point.num_live_positions() {
+                    return Err(AkitaError::InvalidSize {
+                        expected: plan.point.num_live_positions(),
+                        actual: view.live_ring_elems,
+                    });
+                }
+                let coordinates =
+                    crate::backend::coefficient_packing::partials_from_indexed_source::<F, E, D>(
+                        plan,
+                        view.num_vars(),
+                        source_len,
+                        |index| {
+                            if index >= view.live_coeff_len {
+                                return Ok(F::zero());
+                            }
+                            let ring_index = index / D;
+                            let coefficient_index = index % D;
+                            view.coeffs
+                                .get(ring_index)
+                                .and_then(|ring| ring.get(coefficient_index))
+                                .copied()
+                                .map(F::from_i8)
+                                .ok_or(AkitaError::InvalidProof)
+                        },
+                    )?;
+                SubringCoefficientPackingPartials::new(
+                    plan.point.geometry(),
+                    plan.point.num_live_blocks(),
+                    coordinates,
+                )
+            })
+            .collect()
     }
 }
 

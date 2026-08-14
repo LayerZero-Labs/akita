@@ -331,7 +331,7 @@ where
         .iter()
         .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))
         .ok_or(AkitaError::InvalidProof)?;
-    let expected_y_len = akita_types::relation_rhs_coeff_len(&rhs_layout)?;
+    let expected_y_len = akita_types::relation_rhs_coeff_len(rhs_layout)?;
     if y.coeff_len() != expected_y_len {
         return Err(AkitaError::InvalidSize {
             expected: expected_y_len,

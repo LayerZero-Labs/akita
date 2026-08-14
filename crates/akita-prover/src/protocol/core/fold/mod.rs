@@ -454,7 +454,7 @@ where
 
     let relation_rhs_layout = relation_geometry.rhs_layout();
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
-        &relation_rhs_layout,
+        relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
         prepared_fold.instance.rhs(),

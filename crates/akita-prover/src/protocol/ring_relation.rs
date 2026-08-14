@@ -24,6 +24,7 @@ use akita_types::{assemble_compressed_relation_rhs, assemble_relation_rhs, RingV
 use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{CommittedGroupParams, RingRelationInstance};
 
+use super::coefficient_packing::concatenate_group_d_inputs;
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::backend::RingSwitchRelationView;
@@ -72,30 +73,6 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
         }
     }
     Ok(e_hat)
-}
-
-fn concat_digit_blocks<'a>(
-    blocks: impl IntoIterator<Item = &'a DigitBlocks>,
-) -> Result<DigitBlocks, AkitaError> {
-    let mut blocks = blocks.into_iter();
-    let Some(first) = blocks.next() else {
-        return Err(AkitaError::InvalidInput(
-            "multi-group digit concatenation requires at least one group".to_string(),
-        ));
-    };
-    let stride = first.digit_stride();
-    let mut digits = Vec::new();
-    let mut block_sizes = Vec::new();
-    for block in std::iter::once(first).chain(blocks) {
-        if block.digit_stride() != stride {
-            return Err(AkitaError::InvalidInput(
-                "multi-group digit blocks have mixed ring dimensions".to_string(),
-            ));
-        }
-        digits.extend_from_slice(block.digits());
-        block_sizes.extend_from_slice(block.block_sizes());
-    }
-    DigitBlocks::new(digits, block_sizes, stride)
 }
 
 pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
@@ -552,11 +529,12 @@ impl RingRelationProver {
             offset = end;
         }
         let e_hat_concat = if lp.has_precommitted_groups() {
-            Some(concat_digit_blocks(
-                opening_batch
-                    .root_group_order()?
-                    .into_iter()
-                    .map(|group_index| &group_openings[group_index].e_hat),
+            Some(concatenate_group_d_inputs(
+                &opening_batch,
+                &group_openings
+                    .iter()
+                    .map(|group| &group.e_hat)
+                    .collect::<Vec<_>>(),
             )?)
         } else {
             None
@@ -612,7 +590,7 @@ impl RingRelationProver {
                 .collect::<Result<Vec<_>, _>>()?;
             let (compression, compression_report) = materialize_compression_witness(
                 ring_switch_ctx,
-                &relation_rhs_layout,
+                relation_rhs_layout,
                 retained_outer_sources,
                 &v,
             )
@@ -714,12 +692,12 @@ impl RingRelationProver {
                 .terminal
                 .coefficients();
             assemble_compressed_relation_rhs::<F>(
-                &relation_rhs_layout,
+                relation_rhs_layout,
                 &group_terminal_payloads,
                 opening_terminal_payload,
             )
         } else {
-            assemble_relation_rhs::<F>(&relation_rhs_layout, &v, &commitment_rows)
+            assemble_relation_rhs::<F>(relation_rhs_layout, &v, &commitment_rows)
         }
         .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 

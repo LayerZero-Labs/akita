@@ -920,7 +920,13 @@ impl CommittedGroupParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    pub(crate) fn group_params_geometry<'a>(
+    /// Resolve one group's structurally validated parameters without admitting
+    /// its opening method for execution.
+    ///
+    /// Construction code uses this boundary while a new opening method is
+    /// being prepared. Execution paths must use [`Self::group_params`], which
+    /// additionally enforces the currently supported method set.
+    pub fn group_params_geometry<'a>(
         &'a self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,

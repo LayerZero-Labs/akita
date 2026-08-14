@@ -2,7 +2,7 @@ use crate::backend::RootTensorProjectionPoly;
 use crate::compute::backend::ComputeBackendSetup;
 use crate::compute::operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchRelationPlan,
+    RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::compute::plans::RingSwitchRelationRows;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
@@ -176,4 +176,23 @@ where
         source: S,
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>;
+}
+
+/// Coefficient-packing projection over a borrowed same-shape source batch.
+pub trait SubringCoefficientPackingBatchKernel<S, F, E, const D: usize>:
+    ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    /// Return one canonical base-field partial buffer per claim.
+    ///
+    /// Every returned buffer uses
+    /// `[block][extension coordinate][subring coefficient]` order.
+    fn coefficient_packing_partials_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: S,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError>;
 }

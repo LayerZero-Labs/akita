@@ -15,7 +15,8 @@ use crate::backend::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitness
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
@@ -515,6 +516,84 @@ where
     }
 }
 
+impl<F, E, const D: usize>
+    SubringCoefficientPackingBatchKernel<RecursiveFoldBatchView<'_, F, D>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: RecursiveFoldBatchView<'_, F, D>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        let mut outputs = Vec::with_capacity(source.polys.len());
+        for poly in source.polys {
+            plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
+            match poly {
+                RecursiveFoldSource::SetupPrefix { expanded, slot } => {
+                    let rings = setup_prefix_rings::<F, D>(
+                        expanded.shared_matrix(),
+                        slot.id.natural_len,
+                        slot.id.n_prefix()?,
+                    )?;
+                    let (positions_per_block, live_blocks) =
+                        setup_prefix_fold_geometry::<D>(slot, rings.len())?;
+                    if rings.len() != plan.point.num_live_positions()
+                        || positions_per_block != plan.point.num_positions_per_block()
+                        || live_blocks != plan.point.num_live_blocks()
+                    {
+                        return Err(AkitaError::InvalidSetup(
+                            "setup-prefix source disagrees with coefficient-packing point".into(),
+                        ));
+                    }
+                    let source_len = rings.len().checked_mul(D).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "coefficient-packing setup-prefix length overflow".into(),
+                        )
+                    })?;
+                    let coordinates =
+                        crate::backend::coefficient_packing::partials_from_indexed_source::<F, E, D>(
+                            plan,
+                            RootPolyMeta::<F>::num_vars(*poly),
+                            source_len,
+                            |index| {
+                                let ring_index = index / D;
+                                let coefficient_index = index % D;
+                                rings
+                                    .get(ring_index)
+                                    .and_then(|ring| ring.coefficients().get(coefficient_index))
+                                    .copied()
+                                    .ok_or(AkitaError::InvalidProof)
+                            },
+                        )?;
+                    outputs.push(SubringCoefficientPackingPartials::new(
+                        plan.point.geometry(),
+                        plan.point.num_live_blocks(),
+                        coordinates,
+                    )?);
+                }
+                RecursiveFoldSource::Witness(witness) => {
+                    let witnesses = [witness.as_ref()];
+                    let batch =
+                        <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
+                    let mut partials = <CpuBackend as SubringCoefficientPackingBatchKernel<
+                        SuffixWitnessBatchView<'_, F, D>,
+                        F,
+                        E,
+                        D,
+                    >>::coefficient_packing_partials_batch(
+                        self, prepared, batch, plan
+                    )?;
+                    outputs.push(partials.pop().ok_or(AkitaError::InvalidProof)?);
+                }
+            }
+        }
+        Ok(outputs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,5 +688,106 @@ mod tests {
             balanced_ring_decompose_fold_partitioned::<F, D>(borrowed, &challenges, 4, 1, &params,),
             balanced_ring_decompose_fold_partitioned::<F, D>(&owned, &challenges, 4, 1, &params,)
         );
+    }
+
+    #[test]
+    fn setup_prefix_coefficient_packing_matches_copied_dense_oracle() {
+        use akita_types::{
+            coefficient_packing_partials, sample_akita_setup_seed, AkitaCommitmentHint,
+            AkitaSetupDescriptor, CommittedGroupParams, CommittedGroupProfile,
+            InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+            PreparedSubringCoefficientPackingPoint, SetupPrefixPublicCommitment, SetupPrefixSlotId,
+            SisModulusProfileId, SubringCoefficientPackingGeometry,
+        };
+
+        type F = Prime128OffsetA7F7;
+        const D: usize = 128;
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::production_for_ring_dim(D).unwrap(),
+        )
+        .with_decomp(4, 4, 2, 2, 2)
+        .unwrap();
+        let inner = &params.inner_commit_matrix;
+        params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner.sis_table_key().unwrap().table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            2,
+            D,
+        );
+        let outer = &params.outer_commit_matrix;
+        params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank(),
+            outer.input_width(),
+            3,
+            D,
+        );
+        let profile =
+            CommittedGroupProfile::from_params(PolynomialGroupLayout::singleton(9), &params);
+        let fields = (0..512)
+            .map(|index| F::from_i64((index % 17) as i64 - 8))
+            .collect::<Vec<_>>();
+        let expanded = Arc::new(
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 9,
+                    max_num_batched_polys: 1,
+                    num_field_elements: fields.len(),
+                    setup_seed: sample_akita_setup_seed(),
+                },
+                FlatMatrix::from_flat_data(fields.clone()),
+            ),
+        );
+        let slot = Arc::new(SetupPrefixSlot {
+            id: SetupPrefixSlotId {
+                natural_len: 400,
+                commitment_profile: profile,
+            },
+            commitment: SetupPrefixPublicCommitment { rows: Vec::new() },
+            hint: AkitaCommitmentHint::new(1, Vec::new()).unwrap(),
+        });
+        let geometry = SubringCoefficientPackingGeometry::try_new(1, D, 64).unwrap();
+        let public_point = (0..9)
+            .map(|index| F::from_u64((index + 2) as u64))
+            .collect::<Vec<_>>();
+        let point =
+            PreparedSubringCoefficientPackingPoint::new(geometry, 4, 4, 9, &public_point).unwrap();
+        let source = RecursiveFoldSource::setup_prefix(expanded, slot);
+        let sources = [&source];
+        let batch =
+            <RecursiveFoldSource<F> as RootTensorSource<F, D>>::tensor_batch(&sources).unwrap();
+        let got = <CpuBackend as SubringCoefficientPackingBatchKernel<
+            RecursiveFoldBatchView<'_, F, D>,
+            F,
+            F,
+            D,
+        >>::coefficient_packing_partials_batch(
+            &CpuBackend::DEFAULT,
+            None,
+            batch,
+            SubringCoefficientPackingPlan { point: &point },
+        )
+        .unwrap();
+        let expected = coefficient_packing_partials::<F, F>(
+            geometry,
+            4,
+            4,
+            &fields,
+            point.position_weights(),
+            point.packing_weights(),
+        )
+        .unwrap();
+        assert_eq!(got[0].coordinates(), expected);
     }
 }

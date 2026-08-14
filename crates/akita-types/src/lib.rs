@@ -175,7 +175,7 @@ pub use subring_coefficient_packing::{
     coefficient_packing_map, coefficient_packing_partials, coefficient_packing_scalar_opening,
     embed_subring_challenge_in_a_ring, fold_coefficient_packing_partials,
     multiply_a_ring_by_subring_challenge, CoefficientPackingFoldProduct,
-    SubringCoefficientPackingGeometry,
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{

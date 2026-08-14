@@ -2,11 +2,14 @@
 
 use super::poly::DensePoly;
 use super::views::{DenseBatchView, DenseView};
+use crate::backend::coefficient_packing::partials_from_indexed_source;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootCommitKernel, RootPolyMeta, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -181,5 +184,61 @@ where
         coeffs: &[E],
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
         DensePoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
+    }
+}
+
+impl<F, E, const D: usize> SubringCoefficientPackingBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
+    for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: DenseBatchView<'_, F, D>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                let rings = poly.ring_coeffs::<D>()?;
+                let source_len =
+                    plan.point
+                        .num_live_positions()
+                        .checked_mul(D)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput(
+                                "coefficient-packing dense source length overflow".into(),
+                            )
+                        })?;
+                if rings.len() != plan.point.num_live_positions() {
+                    return Err(AkitaError::InvalidSize {
+                        expected: plan.point.num_live_positions(),
+                        actual: rings.len(),
+                    });
+                }
+                let coordinates = partials_from_indexed_source::<F, E, D>(
+                    plan,
+                    RootPolyMeta::<F>::num_vars(*poly),
+                    source_len,
+                    |index| {
+                        let ring_index = index / D;
+                        let coefficient_index = index % D;
+                        rings
+                            .get(ring_index)
+                            .and_then(|ring| ring.coefficients().get(coefficient_index))
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)
+                    },
+                )?;
+                SubringCoefficientPackingPartials::new(
+                    plan.point.geometry(),
+                    plan.point.num_live_blocks(),
+                    coordinates,
+                )
+            })
+            .collect()
     }
 }
