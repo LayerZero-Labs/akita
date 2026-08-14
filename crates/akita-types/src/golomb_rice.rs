@@ -377,13 +377,13 @@ pub fn golomb_rice_coord_wire_bits(
 }
 
 /// Total standard Golomb wire bits for a coefficient vector.
-pub fn golomb_rice_total_wire_bits(
-    values: &[i64],
+pub fn golomb_rice_total_wire_bits<T: Copy + Into<i64>>(
+    values: &[T],
     rice_low_bits: u32,
     zigzag_w: u32,
 ) -> Result<usize, AkitaError> {
     values.iter().try_fold(0usize, |acc, &n| {
-        golomb_rice_coord_wire_bits(n, rice_low_bits, zigzag_w)?
+        golomb_rice_coord_wire_bits(n.into(), rice_low_bits, zigzag_w)?
             .checked_add(acc)
             .ok_or(AkitaError::InvalidSetup(
                 "golomb-rice total wire bits overflow".to_string(),
@@ -415,9 +415,12 @@ pub fn golomb_rice_l2_planner_payload_bytes(
 }
 
 /// Whether every coefficient lies in `[-cap, cap]`.
-pub fn golomb_rice_values_within_cap(values: &[i64], cap: u128) -> Result<(), AkitaError> {
+pub fn golomb_rice_values_within_cap<T: Copy + Into<i64>>(
+    values: &[T],
+    cap: u128,
+) -> Result<(), AkitaError> {
     for &n in values {
-        if i128::from(n).unsigned_abs() > cap {
+        if i128::from(n.into()).unsigned_abs() > cap {
             return Err(AkitaError::InvalidProof);
         }
     }

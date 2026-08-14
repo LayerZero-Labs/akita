@@ -233,22 +233,18 @@ where
                     )
                 }
             )?;
-            let centered = witness
-                .centered_coeffs_flat()
-                .iter()
-                .map(|&value| i64::from(value))
-                .collect::<Vec<_>>();
-            if golomb_rice_values_within_cap(&centered, admission_cap).is_err() {
+            let centered = witness.centered_coeffs_flat();
+            if golomb_rice_values_within_cap(centered, admission_cap).is_err() {
                 return Ok(None);
             }
             if response_l2_sq_cap.is_some_and(|cap| {
-                akita_types::sis::checked_centered_l2_sq(&centered).is_none_or(|norm| norm > cap)
+                akita_types::sis::checked_centered_l2_sq(centered).is_none_or(|norm| norm > cap)
             }) {
                 return Ok(None);
             }
             let zigzag_width = golomb_rice_zigzag_width(admission_cap);
             let wire_bits = golomb_rice_total_wire_bits(
-                &centered,
+                centered,
                 expected_group.z_rice_low_bits,
                 zigzag_width,
             )?;

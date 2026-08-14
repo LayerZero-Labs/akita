@@ -84,7 +84,9 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
         );
         let akita_types::InnerCommitSecurityRoute::L2 {
-            norm_proof_shape, ..
+            response_l2_sq_cap,
+            norm_proof_shape,
+            ..
         } = l2_step.params.witness.inner_commit_matrix.security_route()
         else {
             unreachable!("selected route checked above")
@@ -179,6 +181,15 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             )
         };
         verify(&proof).expect("verify serialized small-field L2 PCS proof");
+
+        let mut over_cap = proof.clone();
+        over_cap.recursive_folds[l2_index]
+            .stage1
+            .norm_proof
+            .as_mut()
+            .expect("L2 norm proof")
+            .response_l2_sq = response_l2_sq_cap + 1;
+        assert!(verify(&over_cap).is_err());
 
         let mut bad_subclaim = proof.clone();
         bad_subclaim.recursive_folds[l2_index]

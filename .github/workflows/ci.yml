@@ -63,6 +63,8 @@ jobs:
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
       - name: Clippy (no default features)
         run: cargo clippy --all --all-targets --release --no-default-features -- -D warnings
+      - name: Clippy (response model diagnostics)
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
