@@ -16,8 +16,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         lane_bits: usize,
         coefficient_bits: usize,
         relation_claim: E,
-        evaluation_trace: PreparedProverEvaluationTrace<E>,
-        trace_opening_claim: E,
+        linear_terms: PreparedProverLinearTerms<E>,
+        linear_opening_claim: E,
         additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     ) -> Result<Self, AkitaError> {
         let w_evals_compact = w_evals_compact.into();
@@ -73,7 +73,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 actual: relation_lane_weights.len(),
             });
         }
-        evaluation_trace.validate_len(witness_len)?;
+        linear_terms.validate_len(witness_len)?;
 
         // Self-consistency check: the materialized relation-weight table must
         // reproduce `relation_claim` (which is established independently by
@@ -101,12 +101,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             }
         }
 
-        let relation_trace_claim = relation_claim + trace_opening_claim;
+        let relation_linear_claim = relation_claim + linear_opening_claim;
         let additional_claim = additional_relation_terms
             .as_ref()
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
         let input_claim =
-            batching_coeff * range_image_evaluation + relation_trace_claim + additional_claim;
+            batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
         let use_two_round_prefix = can_use_stage2_two_round_prefix(coefficient_bits, b);
 
         Ok(Self {
@@ -119,11 +119,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             common_alpha_factor,
             relation_lane_weights,
             additional_relation_terms,
-            evaluation_trace,
+            linear_terms,
             live_lane_count,
             lane_bits,
             num_vars,
-            relation_trace_claim,
+            relation_linear_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
             compact_prefix_stage1_point: use_two_round_prefix.then(|| stage1_point.to_vec()),
@@ -160,12 +160,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
         let ordinary_relation =
             witness * self.common_alpha_factor[0] * self.relation_lane_weights[0];
-        let trace_claim = witness * self.evaluation_trace.final_value()?;
+        let linear_claim = witness * self.linear_terms.final_value()?;
         let additional = self
             .additional_relation_terms
             .as_ref()
             .map_or(Ok(E::zero()), |terms| terms.final_claim(witness))?;
-        Ok(virtual_claim + ordinary_relation + trace_claim + additional)
+        Ok(virtual_claim + ordinary_relation + linear_claim + additional)
     }
 
     pub(super) fn additional_round_polynomial(&self) -> Option<UniPoly<E>> {
@@ -331,7 +331,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 compact_witness,
                 &self.common_alpha_factor,
                 &self.relation_lane_weights,
-                &self.evaluation_trace,
+                &self.linear_terms,
                 &stage1_point,
                 self.b,
                 self.live_lane_count,
@@ -343,7 +343,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 &proof,
                 &stage1_point,
                 self.range_image_evaluation,
-                self.relation_trace_claim,
+                self.relation_linear_claim,
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");

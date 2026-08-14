@@ -9,7 +9,7 @@ use akita_field::{FieldCore, FromPrimitiveInt};
 use crate::{
     CommitmentRingDims, CommittedGroupParams, DigitRangePlan, FlatBooleanDomain,
     InnerCommitSecurityRoute, OpeningClaimsLayout, PhysicalL2NormProofShape,
-    RelationAddressGeometry, RelationWitnessGeometry, WitnessLayout,
+    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry, WitnessLayout,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -580,6 +580,45 @@ impl RelationRangeImagePlan {
     #[must_use]
     pub fn groups(&self) -> &[RelationRangeImageGroupPlan] {
         &self.groups
+    }
+
+    /// Canonical consistency-row index for one authenticated opening group.
+    pub fn consistency_row_index(&self, group_index: usize) -> Result<usize, AkitaError> {
+        self.relation_witness_geometry
+            .rhs_layout()
+            .row_families()?
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    RelationRowFamily::Consistency {
+                        group_index: row_group_index,
+                        ..
+                    } if *row_group_index == group_index
+                )
+            })
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Canonical trailing scalar-opening row after every physical relation row.
+    pub fn scalar_opening_row_index(&self) -> Result<usize, AkitaError> {
+        Ok(self
+            .relation_witness_geometry
+            .rhs_layout()
+            .row_families()?
+            .len())
+    }
+
+    /// Exact Boolean width of the authenticated relation-row point.
+    pub fn relation_row_index_num_vars(&self) -> Result<usize, AkitaError> {
+        let row_count = self
+            .scalar_opening_row_index()?
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation-row count overflow".into()))?;
+        let padded = row_count
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("relation-row index width overflow".into()))?;
+        Ok(padded.trailing_zeros() as usize)
     }
 }
 

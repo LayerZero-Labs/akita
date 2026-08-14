@@ -230,6 +230,12 @@ impl<F: FieldCore> SubringCoefficientPackingPartials<F> {
     }
 }
 
+impl<F: FieldCore> AsRef<[F]> for SubringCoefficientPackingPartials<F> {
+    fn as_ref(&self) -> &[F] {
+        self.coordinates()
+    }
+}
+
 /// Decompose + challenge-fold parameters for one opening.
 #[derive(Debug, Clone, Copy)]
 pub struct DecomposeFoldPlan<'a> {

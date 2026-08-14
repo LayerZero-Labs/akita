@@ -521,7 +521,7 @@ where
         AkitaError::InvalidInput(format!("compressed stage-1 replay failed: {error:?}"))
     })?;
     let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
-    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
+    let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_domain = rs.relation_address_geometry.digit_witness_domain();
     if trace_domain.live_len() != prepared.w_len {

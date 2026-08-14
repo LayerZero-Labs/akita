@@ -63,7 +63,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace_signed(
+                        self.accumulate_fused_relation_linear_signed(
                             &mut rel,
                             w0_i64,
                             dw_i64,
@@ -139,7 +139,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace_signed(
+                        self.accumulate_fused_relation_linear_signed(
                             &mut rel,
                             w0_i64,
                             dw_i64,
@@ -229,7 +229,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace(&mut rel, w0, dw, 2 * j, p0, p1);
+                        self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
                     }
 
                     let e_out = e_second[j_high];
@@ -285,7 +285,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace(&mut rel, w0, dw, 2 * j, p0, p1);
+                        self.accumulate_fused_relation_linear(&mut rel, w0, dw, 2 * j, p0, p1);
                     }
 
                     let e_out = e_second[j_high];

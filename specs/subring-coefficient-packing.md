@@ -545,6 +545,60 @@ produce the same flat coefficient weights for every shared A, B, and D scan.
 It MUST NOT strengthen the subring packing admission rule from `d_D | k s` to
 `d_D | s` to make the two layouts equal.
 
+### Stage 2 uses a sum of structured linear terms
+
+The current Stage 2 relation weights use one shared low coefficient factor.
+This works because every native ring contribution uses consecutive powers of
+`alpha` on that factor.
+
+Coefficient packing adds a different weight on the same `z_hat` coefficients.
+Write a physical A coefficient as
+
+```text
+p = a + k h j.
+```
+
+The native A and setup contribution uses
+
+```text
+alpha^(a + k h j).
+```
+
+The packing consistency contribution uses
+
+```text
+eq(r_pack, a) alpha^j.
+```
+
+For a general point and a general `alpha`, these two coefficient vectors are
+not scalar multiples of each other. One shared low coefficient factor therefore
+cannot represent their sum. Changing the coefficient order does not fix this.
+It only changes which of the two vectors fails to share the factor.
+
+Stage 2 MUST represent its linear weight as an ordered sum of structured terms.
+Each term remains factored into a short coefficient vector and sparse lane
+weights. The prover folds every term under the same sum check challenges. The
+verifier evaluates the same terms at the final point without constructing a
+full witness sized table.
+
+The ordinary native term keeps all A, B, D, setup, and quotient contributions.
+It also keeps the packed E and packing quotient contributions because their
+subring coefficients use consecutive powers of `alpha`. Each packing group adds
+one separate `z_hat` consistency term with the coefficient weights above. The
+scalar opening term for that group uses
+
+```text
+gamma_claim eq(r_B, block) beta_t eq(r_tail, j) G_open[digit]
+```
+
+on the packed E digit at `[claim][block][t][j]`. Here `beta_t` is the canonical
+extension basis element. This scalar opening is the claimed opening itself. It
+does not use the EvaluationTrace trace map or EOR.
+
+The protocol and its public types use the name sum of structured Stage 2 weight
+terms. Every contribution remains factored, and a grouped opening can have more
+than two terms, so a fixed term count would be misleading.
+
 ## Ring switching
 
 ### Two evaluations of each challenge

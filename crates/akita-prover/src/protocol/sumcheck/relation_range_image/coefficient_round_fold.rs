@@ -56,10 +56,10 @@ fn fold_lane_and_compute_next_round<
 
             let p0 = next_alpha_factor[left] * lane_weight;
             let p1 = next_alpha_factor[left + 1] * lane_weight;
-            let trace_index = lane * next_coeff_count + left;
+            let linear_index = lane * next_coeff_count + left;
             let (t0, t1) = prover
-                .evaluation_trace
-                .pair_from_flat_index(trace_index, next_coeff_count);
+                .linear_terms
+                .pair_from_flat_index(linear_index, next_coeff_count);
             accumulate_relation_coeffs(&mut rel, w0, dw, p0 + t0, p1 + t1);
         }
 

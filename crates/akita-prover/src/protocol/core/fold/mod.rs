@@ -6,7 +6,7 @@ use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeCommitBackendFor,
     RuntimeRingSwitchProveBackend,
 };
-use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
+use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
 use crate::protocol::sumcheck::DigitRangeProver;
 use crate::RecursiveWitnessFlat;
 use akita_algebra::offset_eq::{materialize_eq_tensor_left, OffsetEqWindow};
@@ -489,7 +489,7 @@ where
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
     let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
-    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
+    let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.evaluation_trace_claim;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
     let evaluation_trace_points = &prepared_fold.evaluation_trace_points;
@@ -515,7 +515,7 @@ where
         claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
         basis: prepared_fold.evaluation_trace_basis,
     })?;
-    let evaluation_trace = PreparedProverEvaluationTrace::new(
+    let linear_terms = PreparedProverLinearTerms::from_evaluation_trace(
         &semantic_trace,
         rs.relation_address_geometry
             .relation_coefficient_block_len(),
@@ -535,7 +535,7 @@ where
         relation_claim,
         binary_batching,
         physical_l2,
-        evaluation_trace,
+        linear_terms,
         trace_opening_claim,
         relation_range_image_plan,
     )
@@ -721,7 +721,7 @@ fn prove_stage2<F, E, T>(
     relation_claim: E,
     binary_batching: Option<E>,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
-    evaluation_trace: PreparedProverEvaluationTrace<E>,
+    linear_terms: PreparedProverLinearTerms<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
 ) -> Result<RelationRangeImageProveResult<E>, AkitaError>
@@ -808,7 +808,7 @@ where
         relation_lane_variable_count,
         relation_coefficient_variable_count,
         ordinary_relation_claim,
-        evaluation_trace,
+        linear_terms,
         trace_opening_claim,
         additional_relation_terms,
     )

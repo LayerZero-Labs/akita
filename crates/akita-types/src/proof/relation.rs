@@ -175,16 +175,9 @@ impl RelationRhsLayout {
         let row_count = row_count.checked_add(self.n_d).ok_or_else(|| {
             AkitaError::InvalidSetup("relation quotient row count overflow".into())
         })?;
-        let compression_group_indices = self
-            .compression
-            .as_ref()
-            .map(|compression| compression.group_indices.as_slice());
         let mut rows = Vec::with_capacity(row_count);
-        for (relation_group_index, group) in self.groups.iter().enumerate() {
-            let group_index = compression_group_indices
-                .and_then(|indices| indices.get(relation_group_index))
-                .copied()
-                .unwrap_or(relation_group_index);
+        for group in &self.groups {
+            let group_index = group.group_index;
             rows.push(RelationRowFamily::Consistency {
                 group_index,
                 opening_method: group.opening_method,
@@ -1203,15 +1196,8 @@ where
     Ok(claim)
 }
 
-/// Row-index weight for the trailing EvaluationTrace row: `eq(row_index, last)`.
-///
-/// Fold paths combine this with `relation_claim_from_layout_extension` as
-/// `relation_claim + weight * trace_eval_target` (and reuse `weight` for
-/// Stage-2 evaluation-trace row weight).
-pub fn evaluation_trace_row_weight<E: FieldCore>(
-    evaluation_trace_row: usize,
-    tau1: &[E],
-) -> Result<E, AkitaError> {
+/// Equality weight for one authenticated relation-row index.
+pub fn relation_row_weight<E: FieldCore>(relation_row: usize, tau1: &[E]) -> Result<E, AkitaError> {
     let num_vars = tau1.len();
     if num_vars >= usize::BITS as usize {
         return Err(AkitaError::InvalidSize {
@@ -1222,13 +1208,13 @@ pub fn evaluation_trace_row_weight<E: FieldCore>(
     let domain_size = 1usize
         .checked_shl(num_vars as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("tau1 row-index domain overflow".to_string()))?;
-    if evaluation_trace_row >= domain_size {
+    if relation_row >= domain_size {
         return Err(AkitaError::InvalidSize {
             expected: domain_size,
-            actual: evaluation_trace_row.saturating_add(1),
+            actual: relation_row.saturating_add(1),
         });
     }
-    Ok(eq_eval_at_index(tau1, evaluation_trace_row))
+    Ok(eq_eval_at_index(tau1, relation_row))
 }
 
 #[cfg(test)]

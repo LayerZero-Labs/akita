@@ -608,10 +608,9 @@ where
 
 /// Reconstruct one group's scalar opening from canonical partial coordinates.
 ///
-/// `partial_coordinates` uses
-/// `[claim][block][extension coordinate][subring coefficient]`. The three
-/// weight arrays apply the claim batch, block point, and subring-tail point,
-/// respectively.
+/// Each entry in `partial_coordinates_by_claim` uses
+/// `[block][extension coordinate][subring coefficient]`. The three weight
+/// arrays apply the claim batch, block point, and subring-tail point.
 ///
 /// # Errors
 ///
@@ -619,9 +618,8 @@ where
 /// degree, malformed coordinate or weight lengths, or overflow.
 pub fn coefficient_packing_scalar_opening<F, E>(
     geometry: SubringCoefficientPackingGeometry,
-    num_claims: usize,
     num_blocks: usize,
-    partial_coordinates: &[F],
+    partial_coordinates_by_claim: &[impl AsRef<[F]>],
     claim_weights: &[E],
     block_weights: &[E],
     tail_weights: &[E],
@@ -631,6 +629,7 @@ where
     E: ExtField<F>,
 {
     validate_extension_degree::<F, E>(geometry)?;
+    let num_claims = partial_coordinates_by_claim.len();
     if num_claims == 0 || num_blocks == 0 {
         return Err(AkitaError::InvalidInput(
             "subring packing scalar opening requires nonzero claims and blocks".into(),
@@ -643,26 +642,28 @@ where
         tail_weights.len(),
         geometry.challenge_subring_dimension(),
     )?;
-    let expected_partials = checked_product(
+    let expected_claim_partials = checked_product(
         "scalar opening partial",
-        &[num_claims, num_blocks, geometry.partial_base_field_width()],
+        &[num_blocks, geometry.partial_base_field_width()],
     )?;
-    require_len(
-        "scalar opening partial vector",
-        partial_coordinates.len(),
-        expected_partials,
-    )?;
+    for partial_coordinates in partial_coordinates_by_claim {
+        require_len(
+            "scalar opening claim partial vector",
+            partial_coordinates.as_ref().len(),
+            expected_claim_partials,
+        )?;
+    }
 
     let mut opening = E::zero();
-    for (claim_index, &claim_weight) in claim_weights.iter().enumerate() {
+    let mut coordinates = zero_vec::<F>("extension coefficient", geometry.extension_degree())?;
+    for (claim_index, (partial_coordinates, &claim_weight)) in partial_coordinates_by_claim
+        .iter()
+        .zip(claim_weights)
+        .enumerate()
+    {
+        let partial_coordinates = partial_coordinates.as_ref();
         for (block_index, &block_weight) in block_weights.iter().enumerate() {
-            let semantic_index = claim_index
-                .checked_mul(num_blocks)
-                .and_then(|index| index.checked_add(block_index))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("subring packing scalar opening index overflow".into())
-                })?;
-            let partial_offset = semantic_index
+            let partial_offset = block_index
                 .checked_mul(geometry.partial_base_field_width())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput(
@@ -670,8 +671,6 @@ where
                     )
                 })?;
             for (subring_coefficient_index, &tail_weight) in tail_weights.iter().enumerate() {
-                let mut coordinates =
-                    zero_vec::<F>("extension coefficient", geometry.extension_degree())?;
                 for (extension_coordinate, coordinate) in coordinates.iter_mut().enumerate() {
                     let local_index = geometry.partial_base_field_coordinate_index(
                         extension_coordinate,
@@ -685,7 +684,9 @@ where
                         })?;
                     *coordinate = *partial_coordinates.get(source_index).ok_or_else(|| {
                         AkitaError::InvalidInput(
-                            "subring packing scalar opening source is out of bounds".into(),
+                            format!(
+                                "subring packing scalar opening source for claim {claim_index} is out of bounds"
+                            ),
                         )
                     })?;
                 }

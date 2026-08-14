@@ -221,12 +221,11 @@ where
             &packing_weights,
         );
         assert_eq!(got, expected);
-        all_partials.extend(got);
+        all_partials.push(got);
     }
 
     let got = coefficient_packing_scalar_opening::<F, E>(
         geometry,
-        claim_weights.len(),
         num_blocks,
         &all_partials,
         &claim_weights,
@@ -482,15 +481,14 @@ fn malformed_reference_inputs_reject_without_panicking() {
     let num_claims = 2;
     let num_blocks = 2;
     let scalar_partials =
-        vec![F::one(); num_claims * num_blocks * geometry.partial_base_field_width()];
+        vec![vec![F::one(); num_blocks * geometry.partial_base_field_width()]; num_claims];
     let claim_weights = vec![E::one(); num_claims];
     let block_weights = vec![E::one(); num_blocks];
     let tail_weights = vec![E::one(); geometry.challenge_subring_dimension()];
     assert!(coefficient_packing_scalar_opening::<F, E>(
         geometry,
-        0,
         num_blocks,
-        &scalar_partials,
+        &Vec::<Vec<F>>::new(),
         &[],
         &block_weights,
         &tail_weights,
@@ -498,7 +496,6 @@ fn malformed_reference_inputs_reject_without_panicking() {
     .is_err());
     assert!(coefficient_packing_scalar_opening::<F, E>(
         geometry,
-        num_claims,
         0,
         &scalar_partials,
         &claim_weights,
@@ -506,15 +503,15 @@ fn malformed_reference_inputs_reject_without_panicking() {
         &tail_weights,
     )
     .is_err());
-    for malformed_partials in [
-        &scalar_partials[..scalar_partials.len() - 1],
-        &[scalar_partials.as_slice(), &[F::one()]].concat(),
+    for malformed_claim in [
+        scalar_partials[0][..scalar_partials[0].len() - 1].to_vec(),
+        [scalar_partials[0].as_slice(), &[F::one()]].concat(),
     ] {
+        let malformed_partials = [malformed_claim, scalar_partials[1].clone()];
         assert!(coefficient_packing_scalar_opening::<F, E>(
             geometry,
-            num_claims,
             num_blocks,
-            malformed_partials,
+            &malformed_partials,
             &claim_weights,
             &block_weights,
             &tail_weights,
@@ -527,7 +524,6 @@ fn malformed_reference_inputs_reject_without_panicking() {
     ] {
         assert!(coefficient_packing_scalar_opening::<F, E>(
             geometry,
-            num_claims,
             num_blocks,
             &scalar_partials,
             malformed_claim_weights,
@@ -542,7 +538,6 @@ fn malformed_reference_inputs_reject_without_panicking() {
     ] {
         assert!(coefficient_packing_scalar_opening::<F, E>(
             geometry,
-            num_claims,
             num_blocks,
             &scalar_partials,
             &claim_weights,
@@ -557,7 +552,6 @@ fn malformed_reference_inputs_reject_without_panicking() {
     ] {
         assert!(coefficient_packing_scalar_opening::<F, E>(
             geometry,
-            num_claims,
             num_blocks,
             &scalar_partials,
             &claim_weights,
@@ -568,7 +562,6 @@ fn malformed_reference_inputs_reject_without_panicking() {
     }
     assert!(coefficient_packing_scalar_opening::<F, F>(
         geometry,
-        num_claims,
         num_blocks,
         &scalar_partials,
         &[F::one(); 2],

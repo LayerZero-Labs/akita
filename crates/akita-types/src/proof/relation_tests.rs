@@ -305,18 +305,18 @@ fn rows_allow_group_a_larger_than_final_group_a() {
 }
 
 #[test]
-fn evaluation_trace_row_weight_uses_last_row() {
+fn relation_row_weight_uses_requested_row() {
     // total_row_count = 4 → 2 row-index vars; eq table length 4.
     let tau1 = [F::from_u64(2), F::from_u64(3)];
-    let weight = evaluation_trace_row_weight(3, &tau1).unwrap();
+    let weight = relation_row_weight(3, &tau1).unwrap();
     assert_eq!(weight, eq_eval_at_index(&tau1, 3));
     assert_ne!(weight, eq_eval_at_index(&tau1, 0));
 }
 
 #[test]
-fn evaluation_trace_row_weight_rejects_out_of_domain_index() {
+fn relation_row_weight_rejects_out_of_domain_index() {
     let tau1 = [F::from_u64(2), F::from_u64(3)];
-    assert!(evaluation_trace_row_weight(4, &tau1).is_err());
+    assert!(relation_row_weight(4, &tau1).is_err());
 }
 
 #[test]
@@ -360,7 +360,7 @@ fn fused_relation_claim_matches_full_logical_row_evaluation() {
         &RingVec::from_ring_elems(&u),
     )
     .unwrap();
-    let weight = evaluation_trace_row_weight(evaluation_trace_row, &lifted_tau1).unwrap();
+    let weight = relation_row_weight(evaluation_trace_row, &lifted_tau1).unwrap();
     let fused = quotient_claim + weight * trace_target;
 
     let alpha_pows = scalar_powers(E::lift_base(alpha), D);

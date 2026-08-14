@@ -64,12 +64,11 @@ pub use levels::{
 };
 pub use relation::{
     assemble_compressed_relation_rhs, assemble_relation_rhs,
-    compression_relation_claim_from_rhs_extension, evaluation_trace_row_weight,
-    generate_relation_rhs, relation_claim_from_compressed_rhs_extension,
-    relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_row_count,
-    RelationGroupRows, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
-    RelationWitnessGeometry,
+    compression_relation_claim_from_rhs_extension, generate_relation_rhs,
+    relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
+    relation_rhs_row_count, relation_row_weight, RelationGroupRows, RelationRhsLayout,
+    RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_range_image::{

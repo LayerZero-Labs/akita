@@ -38,7 +38,7 @@ use akita_types::{
     basis_weights, checked_table_len, derive_public_row_coefficients,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
-    proof::relation::evaluation_trace_row_weight, recover_ring_subfield_inner_product,
+    proof::relation::relation_row_weight, recover_ring_subfield_inner_product,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
     root_input_witness_len, root_tensor_projection_enabled, tensor_equality_factor_eval_at_point,
     tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
