@@ -4,9 +4,9 @@ use akita_field::AkitaError;
 
 use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
 use crate::{
-    CommittedGroupParams, CompressionChainPlan, FoldSchedule, InnerCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity, SetupPrefixSlotId,
-    SisModulusProfileId, TerminalCommittedGroupParams,
+    CommitmentSliceCount, CommittedGroupParams, CompressionChainPlan, FoldSchedule,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
+    SetupPrefixSlotId, SisModulusProfileId, TerminalCommittedGroupParams,
 };
 
 /// Compute the exact maximum reusable setup-matrix field prefix required by
@@ -156,7 +156,8 @@ pub fn accumulate_matrix_field_elements_for_level(
 ///
 /// Setup sizing and commit-time admission both price an independent
 /// commitment from this one definition, so provisioning can never fall short
-/// of what admission demands.
+/// of what admission demands. `outer_slice_count` expands only the logical B
+/// image compressed by F; the physical B matrix remains stored once.
 ///
 /// # Errors
 ///
@@ -164,6 +165,7 @@ pub fn accumulate_matrix_field_elements_for_level(
 pub fn commit_only_setup_field_elements(
     inner_commit_matrix: &InnerCommitMatrixParams,
     outer_commit_matrix: &OuterCommitMatrixParams,
+    outer_slice_count: CommitmentSliceCount,
 ) -> Result<usize, AkitaError> {
     let mut max_field_elements = 0;
     include_matrix_field_elements(
@@ -183,7 +185,7 @@ pub fn commit_only_setup_field_elements(
     include_compression_setup(
         &mut max_field_elements,
         outer_commit_matrix.sis_modulus_profile(),
-        outer_commit_matrix.output_rank(),
+        outer_slice_count.logical_output_rows(outer_commit_matrix.output_rank())?,
         outer_commit_matrix.ring_dimension(),
         "commit outer compression setup",
     )?;
@@ -202,7 +204,9 @@ fn accumulate_compression_matrix_field_elements_for_level(
     include_compression_setup(
         max_field_elements,
         params.outer_commit_matrix.sis_modulus_profile(),
-        params.outer_commit_matrix.output_rank(),
+        params
+            .outer_slice_count
+            .logical_output_rows(params.outer_commit_matrix.output_rank())?,
         params.role_dims().d_b(),
         "outer compression setup",
     )?;
@@ -210,7 +214,10 @@ fn accumulate_compression_matrix_field_elements_for_level(
         include_compression_setup(
             max_field_elements,
             group.layout.outer_commit_matrix.sis_modulus_profile(),
-            group.layout.outer_commit_matrix.output_rank(),
+            group
+                .layout
+                .outer_slice_count
+                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?,
             group.layout.outer_commit_matrix.ring_dimension(),
             "precommitted outer compression setup",
         )?;
@@ -266,7 +273,10 @@ pub fn setup_prefix_slot_field_elements(slot: &SetupPrefixSlotId) -> Result<usiz
     include_compression_setup(
         &mut max_field_elements,
         params.layout.outer_commit_matrix.sis_modulus_profile(),
-        params.layout.outer_commit_matrix.output_rank(),
+        params
+            .layout
+            .outer_slice_count
+            .logical_output_rows(params.layout.outer_commit_matrix.output_rank())?,
         params.layout.outer_commit_matrix.ring_dimension(),
         "setup-prefix outer compression setup",
     )?;
@@ -308,6 +318,50 @@ mod tests {
     use super::*;
     use crate::SisModulusProfileId;
     use akita_challenges::SparseChallengeConfig;
+
+    #[test]
+    fn commit_only_envelope_prices_complete_sliced_b_image() {
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            4,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(3),
+        );
+        params.outer_slice_count = CommitmentSliceCount::FOUR;
+        let params = params.with_decomp(1, 4, 1, 1, 1).expect("params");
+
+        let expected_compression = CompressionChainPlan::for_complete_source(
+            params.outer_commit_matrix.sis_modulus_profile(),
+            params
+                .outer_slice_count
+                .complete_source_coefficients(
+                    params.outer_commit_matrix.output_rank(),
+                    params.outer_commit_matrix.ring_dimension(),
+                )
+                .expect("complete sliced B source"),
+        )
+        .expect("sliced compression")
+        .max_setup_field_elements()
+        .expect("sliced compression setup");
+        let sliced = commit_only_setup_field_elements(
+            &params.inner_commit_matrix,
+            &params.outer_commit_matrix,
+            params.outer_slice_count,
+        )
+        .expect("sliced commit envelope");
+        let unsliced = commit_only_setup_field_elements(
+            &params.inner_commit_matrix,
+            &params.outer_commit_matrix,
+            CommitmentSliceCount::ONE,
+        )
+        .expect("unsliced commit envelope");
+
+        assert_eq!(sliced, expected_compression);
+        assert!(sliced > unsliced);
+    }
 
     #[test]
     fn compression_envelope_covers_maps_that_dominate_direct_matrices() {

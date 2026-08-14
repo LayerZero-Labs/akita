@@ -594,6 +594,7 @@ mod tests {
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
+                outer_slice_count: akita_types::CommitmentSliceCount::ONE,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
                 inner_commit_matrix,

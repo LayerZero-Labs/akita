@@ -1,6 +1,6 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::api::commitment::validate_commit_outer_input_nonempty;
+use crate::api::commitment::commit_outer_slices;
 use crate::backend::{DensePoly, DenseView};
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
@@ -94,6 +94,15 @@ where
 
     let n_b = level_params.layout.outer_commit_matrix.output_rank();
     let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
+    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+        level_params.layout.outer_slice_count,
+        level_params.layout.num_live_blocks,
+        1,
+        n_a,
+        level_params.layout.num_digits_outer,
+        D,
+        d_b,
+    )?;
     let raw_commitment =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
             let blocks = recomposed_inner_rows
@@ -105,19 +114,14 @@ where
                 level_params.layout.num_digits_outer,
                 level_params.layout.log_basis_outer,
             )?;
-            validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
-            let u = backend.digit_rows::<D_B>(
+            let u = commit_outer_slices::<F, _, D_B>(
+                backend,
                 prepared,
                 n_b,
-                decomposed_inner_rows.typed_planes::<D_B>()?,
+                std::iter::once(&decomposed_inner_rows),
+                &slice_geometry,
                 level_params.layout.log_basis_outer,
             )?;
-            if u.len() != n_b {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "setup prefix commit returned {} B rows, expected {n_b}",
-                    u.len(),
-                )));
-            }
             Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
         })?;
     let inner_coefficient_count = recomposed_inner_rows
@@ -157,10 +161,8 @@ where
         .last()
         .ok_or(AkitaError::InvalidProof)?
         .ring_dimension();
-    let commitment_payload = RingVec::from_coeffs_with_ring_dim(
-        output.terminal.coefficients().to_vec(),
-        terminal_ring_dim,
-    )?;
+    let commitment_payload =
+        RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
     let hint = AkitaCommitmentHint::singleton_with_outer_compression(
         RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
         &output.witness,

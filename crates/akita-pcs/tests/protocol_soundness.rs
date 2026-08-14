@@ -397,7 +397,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let point = random_point(NV);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &point, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &point, &layout, BasisMode::Lagrange))
             .collect();
 
         #[cfg(feature = "disk-persistence")]
@@ -559,7 +559,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let pt = random_point(nv);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout, BasisMode::Lagrange))
             .collect();
 
         #[cfg(feature = "disk-persistence")]
@@ -948,7 +948,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         let pt = random_point::<F>(NV);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout, BasisMode::Lagrange))
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).expect("setup");

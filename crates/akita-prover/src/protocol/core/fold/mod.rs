@@ -365,15 +365,20 @@ where
         stack.ring_switch(),
         lp,
     )
-    .map_err(|err| AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}")))?
-    .align_for_commitment_ring_dim(next_opening_ring_dim)?;
-    let committed_witness_len = logical_w.committed_coeff_len()?;
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
+    })?;
+    let committed_witness_len = akita_types::witness_commitment_domain_len(
+        logical_w.live_coeff_len(),
+        next_opening_ring_dim,
+    )?;
     if Some(logical_w.live_coeff_len()) != expected_output_witness_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled fold level {level} produced unexpected next-w length: expected={expected_output_witness_len:?}, actual={}",
             logical_w.live_coeff_len()
         )));
     }
+    let logical_w = logical_w.align_for_commitment_ring_dim(next_opening_ring_dim)?;
     let _span = tracing::info_span!("commit_w_level", level).entered();
     let next_commitment = match next_params {
         FoldSuccessorParams::Recursive(params) => {
@@ -382,7 +387,15 @@ where
                     "recursive successor requires outer-payload binding".into(),
                 ));
             }
-            crate::commit_w::<Cfg, C>(&params.witness, expanded, stack.commit(), &logical_w)?
+            crate::commit_w::<Cfg, C>(
+                &params.witness,
+                level
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?,
+                expanded,
+                stack.commit(),
+                &logical_w,
+            )?
         }
         FoldSuccessorParams::Terminal(params) => {
             if next_witness_binding

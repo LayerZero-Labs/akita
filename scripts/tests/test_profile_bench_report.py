@@ -326,11 +326,15 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(summary["num_setup_field_elements"], 4096)
 
     def test_planned_fold_level_parses_physical_geometry(self) -> None:
-        from scripts.profile_bench_report import extract_summary
+        from scripts.profile_bench_report import (
+            extract_summary,
+            planned_group_planner_value,
+        )
 
         log = (
             'INFO planned fold level label=onehot_fp128 level=0 d=64 d_a=64 d_b=32 d_d=16 '
-            'n_a=2 n_b=3 n_d=4 '
+            'n_a=2 n_b=3 n_d=4 b_slice_count=4 physical_b_input_width=192 '
+            'logical_b_rows=12 complete_b_compression_bytes=3072 '
             'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
             'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
             'num_positions_per_block=128 delta_commit=4 delta_open=5 '
@@ -349,6 +353,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "n_a": 2,
                 "n_b": 3,
                 "n_d": 4,
+                "b_slice_count": 4,
+                "physical_b_input_width": 192,
+                "logical_b_rows": 12,
+                "complete_b_compression_bytes": 3072,
                 "challenge_l1_mass": 8,
                 "log_basis_inner": 5,
                 "log_basis_outer": 5,
@@ -372,6 +380,48 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "level_bytes": 4096,
             },
         )
+        rendered = planned_group_planner_value(
+            {
+                **summary["planned_levels"][0],
+                "group": "final",
+                "group_role": "final",
+                "consumer_level": 0,
+                "witness_field_elements": 1024,
+                "num_digits_fold": 6,
+            }
+        )
+        self.assertIn("B slices: 4", rendered)
+        self.assertIn("Physical B cols: 192", rendered)
+        self.assertIn("Logical B rows: 12", rendered)
+        self.assertIn("Complete B compression: 3,072", rendered)
+
+        legacy_log = (
+            'INFO planned fold level label=onehot_fp128 level=0 d=64 '
+            'n_a=2 n_b=3 n_d=4 challenge_l1_mass=8 log_basis=5 '
+            'position_index_bits=7 block_index_bits=3 '
+            'num_live_ring_elements_per_claim=768 num_live_blocks=6 '
+            'block_index_domain_size=8 num_positions_per_block=128 '
+            'delta_commit=4 delta_open=5 delta_fold=6 '
+            'current_w_len=1024 next_w_len=2048 level_bytes=4096\n'
+        )
+        legacy = extract_summary(
+            legacy_log, mode="onehot_fp128", num_vars=24, num_polys=1
+        )["planned_levels"][0]
+        self.assertIsNone(legacy["physical_b_input_width"])
+        self.assertIsNone(legacy["complete_b_compression_bytes"])
+        legacy_rendered = planned_group_planner_value(
+            {
+                **legacy,
+                "group": "final",
+                "group_role": "final",
+                "consumer_level": 0,
+                "witness_field_elements": 1024,
+                "num_digits_fold": 6,
+            }
+        )
+        self.assertIn("Physical B cols: not reported", legacy_rendered)
+        self.assertIn("Complete B compression: not reported", legacy_rendered)
+        self.assertNotIn("Physical B cols: 0", legacy_rendered)
 
     def test_planned_fold_level_parses_typed_schedule_field_names(self) -> None:
         from scripts.profile_bench_report import extract_summary

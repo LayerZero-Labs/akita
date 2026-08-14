@@ -11,15 +11,16 @@ use std::{num::NonZeroUsize, sync::Arc};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    num_digits_inner_for_bound, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy,
-    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_inner_for_bound,
+    num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OuterCommitMatrixParams,
 };
 use akita_types::{
-    dyadic_block_ranges, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    active_setup_field_len, dyadic_block_ranges, padded_setup_prefix_len, CommitmentRingDims,
+    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedLevelParams,
 };
 #[cfg(test)]
 use akita_types::{
@@ -43,8 +44,9 @@ pub(crate) use akita_schedules::planner_support::{
 };
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
-    derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    recursive_split_search_domain, SetupPrefixSearchCache,
+    derive_ab_commitment_candidate, derive_candidate_level_params,
+    derive_candidate_level_params_split_frontier, recursive_split_search_domain,
+    AbCommitmentCandidateRequest, SetupPrefixSearchCache,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{
@@ -321,6 +323,40 @@ pub(crate) type RingChallengeConfigFn<'a> =
     &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>;
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
+
+/// For setup-primary planning, retain the smallest slice count that reaches
+/// the best local setup objective before witness sizing and suffix recursion.
+pub(crate) fn prune_locally_unprofitable_slices(
+    policy: &PlannerPolicy,
+    opening_layout: &OpeningClaimsLayout,
+    candidates: Vec<CommittedGroupParams>,
+) -> Result<Vec<CommittedGroupParams>, AkitaError> {
+    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayload
+        || candidates.len() <= 1
+    {
+        return Ok(candidates);
+    }
+    let mut best: Option<((usize, usize), CommittedGroupParams)> = None;
+    for params in candidates {
+        let setup_score = match policy.selection_policy {
+            crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+                level_setup_field_elements(&params)?
+            }
+            crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+                padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
+            }
+            crate::SelectionPolicyId::MinEstimatedProofPayload => unreachable!(),
+        };
+        let score = (setup_score, params.outer_slice_count.get());
+        if best
+            .as_ref()
+            .is_none_or(|(best_score, _)| score < *best_score)
+        {
+            best = Some((score, params));
+        }
+    }
+    Ok(best.map(|(_, params)| vec![params]).unwrap_or_default())
+}
 
 /// Combine exact physical width, challenge work, chunk evaluator work,
 /// and load imbalance when comparing `M` candidates. All terms count ring or

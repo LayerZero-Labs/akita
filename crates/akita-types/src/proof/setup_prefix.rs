@@ -8,8 +8,9 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    AkitaSetupSeed, CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    AkitaSetupSeed, CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroupParams,
+    CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -399,6 +400,8 @@ fn serialize_precommitted_level_params<W: Write>(
         .layout
         .num_live_blocks
         .serialize_with_mode(&mut writer, compress)?;
+    let outer_slice_count = params.layout.outer_slice_count.get();
+    outer_slice_count.serialize_with_mode(&mut writer, compress)?;
     params
         .layout
         .log_basis_inner
@@ -455,6 +458,9 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_positions_per_block =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let raw_slice_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let outer_slice_count = CommitmentSliceCount::try_new(raw_slice_count)
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
     let log_basis_inner = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let inner_commit_matrix: InnerCommitMatrixParams =
@@ -475,6 +481,7 @@ fn deserialize_precommitted_level_params<R: Read>(
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
+            outer_slice_count,
             log_basis_inner,
             num_digits_inner,
             inner_commit_matrix,
@@ -496,6 +503,7 @@ fn precommitted_level_params_serialized_size(
     params: &PrecommittedLevelParams,
     compress: Compress,
 ) -> usize {
+    let outer_slice_count = params.layout.outer_slice_count.get();
     params.layout.version.serialized_size(compress)
         + params.layout.group.num_vars().serialized_size(compress)
         + params
@@ -512,6 +520,7 @@ fn precommitted_level_params_serialized_size(
             .num_positions_per_block
             .serialized_size(compress)
         + params.layout.num_live_blocks.serialized_size(compress)
+        + outer_slice_count.serialized_size(compress)
         + params.layout.log_basis_inner.serialized_size(compress)
         + params.layout.num_digits_inner.serialized_size(compress)
         + commit_matrix_serialized_size(&params.layout.inner_commit_matrix, compress)
@@ -1203,20 +1212,14 @@ fn active_setup_projection_geometry(
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
         let group_role_dims = level_params.group_role_dims(opening_batch, group_index)?;
-        let (b_subcolumns, d_subcolumns) =
+        let (_, d_subcolumns) =
             crate::SetupProjectionGeometry::native_role_subcolumn_counts(group_role_dims)?;
         let a_cols = group_params
             .num_positions_per_block()
             .checked_mul(group_params.num_digits_inner())
             .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
 
-        let b_cols = group_layout
-            .num_polynomials()
-            .checked_mul(group_params.a_rows_len())
-            .and_then(|n| n.checked_mul(group_params.num_live_blocks()))
-            .and_then(|n| n.checked_mul(group_params.num_digits_outer()))
-            .and_then(|n| n.checked_mul(b_subcolumns))
-            .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
+        let b_cols = group_params.b_col_len();
 
         let d_active_cols = group_layout
             .num_polynomials()
@@ -1272,7 +1275,6 @@ pub fn setup_prefix_precommitted_params(
             "setup prefix A dimension must be a multiple of its B dimension".to_string(),
         ));
     }
-    let outer_projection_ratio = d_setup / d_outer;
     if n_prefix == 0 || !n_prefix.is_power_of_two() || !n_prefix.is_multiple_of(d_setup) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a nonzero power-of-two multiple of d_setup".to_string(),
@@ -1282,14 +1284,22 @@ pub fn setup_prefix_precommitted_params(
     let mut num_positions_per_block = 1usize;
     while num_positions_per_block <= ring_slots.max(1) {
         let num_live_blocks = ring_slots.div_ceil(num_positions_per_block);
+        if prefix_params.outer_slice_count.get() > num_live_blocks {
+            break;
+        }
         let inner_width = num_positions_per_block
             .checked_mul(prefix_params.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("prefix inner width overflow".to_string()))?;
-        let outer_width = num_live_blocks
-            .checked_mul(prefix_params.inner_commit_matrix.output_rank())
-            .and_then(|n| n.checked_mul(prefix_params.num_digits_outer))
-            .and_then(|n| n.checked_mul(outer_projection_ratio))
-            .ok_or_else(|| AkitaError::InvalidSetup("prefix outer width overflow".to_string()))?;
+        let outer_width = CommitmentSliceGeometry::try_new(
+            prefix_params.outer_slice_count,
+            num_live_blocks,
+            1,
+            prefix_params.inner_commit_matrix.output_rank(),
+            prefix_params.num_digits_outer,
+            d_setup,
+            d_outer,
+        )?
+        .physical_input_width();
         if inner_width <= prefix_params.inner_commit_matrix.input_width()
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
@@ -1324,6 +1334,7 @@ pub fn setup_prefix_precommitted_params(
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
+                    outer_slice_count: prefix_params.outer_slice_count,
                     log_basis_inner: prefix_params.log_basis_inner,
                     num_digits_inner: prefix_params.num_digits_inner,
                     inner_commit_matrix,

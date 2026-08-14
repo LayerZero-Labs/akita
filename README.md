@@ -11,7 +11,7 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, the schedule-search DP, and the offline table emitter. It sits *below* `akita-config`.
-- `akita-schedules` owns feature-gated generated schedule table wiring. The large family table modules are not checked in; generate them locally or in CI before compiling schedule-enabled crates.
+- `akita-schedules` stores the tracked generated schedule tables. Cargo features select which tables a build includes.
 - `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-schedules` (`select_schedule_for_key` delegates to strict generated-catalog resolution).
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
 - `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches generated schedule expansion transitively.
@@ -42,15 +42,18 @@ comments) are in [`docs/documentation.md`](docs/documentation.md).
 
 ## Generated Schedules
 
-Schedule-enabled builds require generated schedule family modules under
-`crates/akita-schedules/src/generated/`. They are intentionally ignored by Git
-because they are deterministic planner output. Generate them after checkout and
-before formatting, Clippy, tests, profile builds, or any other schedule-enabled
-Cargo task:
+Builds that use schedules read generated family modules from
+`crates/akita-schedules/src/generated/`. Git tracks these deterministic planner
+outputs. Ordinary builds, formatting, Clippy, tests, and profile jobs use them
+as checked in. Regenerate them after changing planner policy, candidate search,
+or generated catalog structure:
 
 ```bash
 scripts/generate-schedule-tables.sh
 ```
+
+The dedicated all-schedules drift job regenerates the complete catalog and
+rejects any byte difference from the tracked files.
 
 ## Lineage
 

@@ -1,3 +1,4 @@
+use super::physical_b::build_group_b_setup_tensors;
 use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorState};
 use super::*;
 use akita_algebra::{
@@ -12,6 +13,7 @@ use akita_field::fft::field_pow;
 struct GroupSetupIndexWeights<E> {
     projection_scales: [Option<Vec<E>>; 3],
     column_weights: [Vec<E>; 3],
+    physical_b_weights: Vec<E>,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -78,28 +80,33 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .groups
             .iter()
             .map(|group| -> Result<_, AkitaError> {
+                let column_weights = [
+                    self.materialize_role_tensor_weights(
+                        group.a_ratio,
+                        &group.a_tensors,
+                        group.z_cols,
+                        alpha,
+                    )?,
+                    self.materialize_role_tensor_weights(
+                        group.b_ratio,
+                        &group.physical_b.relation_tensors,
+                        group.physical_b.logical_input_width(),
+                        alpha,
+                    )?,
+                    self.materialize_role_tensor_weights(
+                        group.d_ratio,
+                        &group.d_tensors,
+                        group.d_col_range.len(),
+                        alpha,
+                    )?,
+                ];
+                let physical_b_weights = group
+                    .physical_b
+                    .contract_logical_column_weights(&column_weights[1])?;
                 Ok(GroupSetupIndexWeights {
                     projection_scales: self.group_projection_scales(group, alpha)?,
-                    column_weights: [
-                        self.materialize_role_tensor_weights(
-                            group.a_ratio,
-                            &group.a_tensors,
-                            group.z_cols,
-                            alpha,
-                        )?,
-                        self.materialize_role_tensor_weights(
-                            group.b_ratio,
-                            &group.b_tensors,
-                            group.t_cols,
-                            alpha,
-                        )?,
-                        self.materialize_role_tensor_weights(
-                            group.d_ratio,
-                            &group.d_tensors,
-                            group.d_col_range.len(),
-                            alpha,
-                        )?,
-                    ],
+                    column_weights,
+                    physical_b_weights,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -212,8 +219,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let [d_tensors, b_tensors, a_tensors] =
                 build_group_role_tensors(relation_geometry, group, witness_layout)?;
             group.d_tensors = d_tensors;
-            group.b_tensors = b_tensors;
+            group.physical_b.relation_tensors = b_tensors;
             group.a_tensors = a_tensors;
+            group.physical_b.setup_tensors =
+                build_group_b_setup_tensors(relation_geometry, group, witness_layout)?;
         }
         let mut batches = Vec::<ProjectedEqPairTensor<E>>::new();
         for group in &self.groups {
@@ -273,7 +282,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let mut weight = E::zero();
         for (group, weights) in self.groups.iter().zip(group_weights) {
             let scales = &weights.projection_scales;
-            let [z_eq, t_eq, e_eq] = &weights.column_weights;
+            let [z_eq, _t_eq, e_eq] = &weights.column_weights;
             let d_idx = setup_idx / group.d_ratio;
             let d_footprint = self
                 .d_rows
@@ -294,15 +303,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             }
 
             let b_idx = setup_idx / group.b_ratio;
-            let b_footprint = group
-                .n_b
-                .checked_mul(group.t_cols)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
+            let b_footprint = group.physical_b.physical_footprint()?;
             if b_idx < b_footprint {
-                let b_col = b_idx % group.t_cols;
-                let b_row = b_idx / group.t_cols;
-                let term =
-                    group.b_weights[b_row] * *t_eq.get(b_col).ok_or(AkitaError::InvalidProof)?;
+                let term = *weights
+                    .physical_b_weights
+                    .get(b_idx)
+                    .ok_or(AkitaError::InvalidProof)?;
                 weight += scales[1]
                     .as_ref()
                     .map_or(term, |scale| scale[setup_idx % group.b_ratio] * term);
@@ -357,15 +363,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         group: &SetupContributionGroupPlan<E>,
         batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ) -> Result<(), AkitaError> {
-        if group.n_b == 0 {
+        if group.physical_b.physical_rows == 0 {
             return Ok(());
         }
-        let lifted = group
-            .b_tensors
-            .iter()
-            .map(|tensor| lift_role_tensor(tensor, 0, group.t_cols, &group.b_weights))
-            .collect::<Result<Vec<_>, _>>()?;
-        for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
+        let tensors = if group.physical_b.geometry().slice_count().is_sliced() {
+            group.physical_b.setup_tensors.clone()
+        } else {
+            compact_affine_unit_families(group.physical_b.setup_tensors.clone(), group.num_claims)?
+        };
+        for tensor in tensors {
             push_projected_tensor(batches, group.b_ratio, tensor)?;
         }
         Ok(())
@@ -504,7 +510,7 @@ fn build_group_role_tensors<E: FieldCore>(
                 ],
             )?);
 
-            if group.n_b != 0 {
+            if group.physical_b.logical_rows()? != 0 {
                 let b_setup_column = claim
                     .checked_mul(group.num_live_blocks)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
@@ -765,22 +771,6 @@ fn push_projected_tensor<E: FieldCore>(
         }),
     }
     Ok(())
-}
-
-fn checked_mul(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
-}
-
-fn divide_aligned(
-    value: usize,
-    divisor: usize,
-    context: &'static str,
-) -> Result<usize, AkitaError> {
-    value
-        .checked_div(divisor)
-        .filter(|_| divisor != 0 && value.is_multiple_of(divisor))
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }
 
 #[cfg(test)]

@@ -713,6 +713,7 @@ mod tests {
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
                 num_live_blocks: n_prefix / d_setup,
+                outer_slice_count: crate::CommitmentSliceCount::ONE,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
                 inner_commit_matrix,

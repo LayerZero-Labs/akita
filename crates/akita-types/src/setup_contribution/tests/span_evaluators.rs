@@ -18,6 +18,7 @@ fn projected_setup_weight_reference(
     plan: &SetupContributionPlan<F>,
     rho: &[F],
     required: usize,
+    physical_b_override: Option<&[F]>,
     a_ratio: usize,
     b_ratio: usize,
     d_ratio: usize,
@@ -25,11 +26,21 @@ fn projected_setup_weight_reference(
     b_scales: &[F],
     d_scales: &[F],
 ) -> F {
+    let materialized_b = plan
+        .groups
+        .iter()
+        .map(|group| {
+            group
+                .physical_b
+                .contract_logical_column_weights(&group.direct_scan_weights.as_ref().unwrap().t)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     let mut acc = F::zero();
     for base_idx in 0..required {
         let mut weight = F::zero();
-        for group in &plan.groups {
-            let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
+        for (group_index, group) in plan.groups.iter().enumerate() {
+            let (e_eq_slice, _t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
             let d_idx = base_idx / d_ratio;
             if d_idx < plan.d_rows * plan.d_physical_cols {
                 let d_col = d_idx % plan.d_physical_cols;
@@ -41,10 +52,9 @@ fn projected_setup_weight_reference(
                 }
             }
             let b_idx = base_idx / b_ratio;
-            if b_idx < group.n_b * group.t_cols {
-                let b_col = b_idx % group.t_cols;
-                let b_row = b_idx / group.t_cols;
-                weight += b_scales[base_idx % b_ratio] * group.b_weights[b_row] * t_eq_slice[b_col];
+            if b_idx < group.physical_b.physical_footprint().unwrap() {
+                let physical_b = physical_b_override.unwrap_or(&materialized_b[group_index]);
+                weight += b_scales[base_idx % b_ratio] * physical_b[b_idx];
             }
             let a_idx = base_idx / a_ratio;
             if a_idx < group.n_a * group.z_cols {
@@ -83,6 +93,40 @@ fn assert_fixture_setup_index_mle_matches_dense(
         structured_weight_fixture_with_outgoing(8, ownership_widths, role_dims, outgoing_ring_dim);
     let rho = rho_for_required(plan.required());
     assert_span_mle_matches_dense(&plan, &rho, alpha);
+}
+
+fn naive_sliced_physical_b_weights(group: &SetupContributionGroupPlan<F>) -> Vec<F> {
+    let (_, logical_t, _) = group.column_eq_slices().unwrap();
+    let slice_count = group.physical_b.geometry().slice_count().get();
+    let physical_rows = group.physical_b.physical_rows();
+    let physical_cols = group.physical_b.physical_input_width();
+    let max_blocks_per_slice = group.num_live_blocks.div_ceil(slice_count);
+    let per_block = physical_cols / (group.num_claims * max_blocks_per_slice);
+    let mut expected = vec![F::zero(); physical_rows * physical_cols];
+    for slice_index in 0..slice_count {
+        let slice_start = slice_index * group.num_live_blocks / slice_count;
+        let slice_end = (slice_index + 1) * group.num_live_blocks / slice_count;
+        for row in 0..physical_rows {
+            // Logical B rows are slice-major by specification. Keep this
+            // oracle independent of production row-coordinate helpers.
+            let row_weight =
+                group.physical_b.logical_row_weights()[slice_index * physical_rows + row];
+            for claim in 0..group.num_claims {
+                for block in slice_start..slice_end {
+                    let local_block = block - slice_start;
+                    for offset in 0..per_block {
+                        let physical_col =
+                            (claim * max_blocks_per_slice + local_block) * per_block + offset;
+                        let logical_col =
+                            (claim * group.num_live_blocks + block) * per_block + offset;
+                        expected[row * physical_cols + physical_col] +=
+                            row_weight * logical_t[logical_col];
+                    }
+                }
+            }
+        }
+    }
+    expected
 }
 
 pub(super) fn structured_slice_reference(
@@ -234,6 +278,86 @@ fn span_setup_index_mle_matches_dense_multi_chunk() {
 }
 
 #[test]
+fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
+    let role_dims = CommitmentRingDims {
+        inner: 128,
+        outer: 64,
+        opening: 64,
+    };
+    let setup_ring_dim = 64;
+    for slice_count in [2, 4, 8].map(|count| crate::CommitmentSliceCount::try_new(count).unwrap()) {
+        let (_, _, _, plan, _, _, _) = structured_weight_fixture_with_slices(
+            11,
+            &[3, 5, 3],
+            role_dims,
+            setup_ring_dim,
+            slice_count,
+        );
+        let group = &plan.groups[0];
+        let expected = naive_sliced_physical_b_weights(group);
+        let direct = group.direct_scan_weights.as_ref().unwrap();
+        assert_eq!(
+            group
+                .physical_b
+                .contract_logical_column_weights(&direct.t)
+                .unwrap(),
+            expected
+        );
+
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: plan.required() * role_dims.d_a(),
+                setup_seed: [0u8; 32].into(),
+            },
+            FlatMatrix::from_flat_data(
+                (0..plan.required() * role_dims.d_a())
+                    .map(|index| test_scalar(1_201 + index as u128))
+                    .collect(),
+            ),
+        );
+        let alpha = test_scalar(3);
+        let alpha_pows_a = scalar_powers(alpha, role_dims.d_a());
+        let alpha_pows_b = scalar_powers(alpha, role_dims.d_b());
+        let alpha_pows_d = scalar_powers(alpha, role_dims.d_d());
+        assert_eq!(
+            plan.evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+                .unwrap(),
+            plan.evaluate_direct_by_rows::<F>(
+                &setup,
+                &alpha_pows_a,
+                &alpha_pows_b,
+                &alpha_pows_d,
+                role_dims.d_a(),
+            )
+            .unwrap(),
+            "factorized direct B scan mismatch for S={}",
+            slice_count.get(),
+        );
+
+        let rho = rho_for_required(plan.required());
+        assert_eq!(
+            plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
+            projected_setup_weight_reference(
+                &plan,
+                &rho,
+                plan.required(),
+                Some(&expected),
+                role_dims.d_a() / setup_ring_dim,
+                role_dims.d_b() / setup_ring_dim,
+                role_dims.d_d() / setup_ring_dim,
+                &projection_scales(alpha, setup_ring_dim, role_dims.d_a()),
+                &projection_scales(alpha, setup_ring_dim, role_dims.d_b()),
+                &projection_scales(alpha, setup_ring_dim, role_dims.d_d()),
+            ),
+            "structured sliced B tensor mismatch for S={}",
+            slice_count.get(),
+        );
+    }
+}
+
+#[test]
 fn uniform_setup_index_mle_matches_single_chunk_plan() {
     assert_fixture_setup_index_mle_matches_dense(&[8], CommitmentRingDims::uniform(TEST_D), TEST_D);
 }
@@ -301,6 +425,7 @@ fn span_setup_index_mle_applies_mixed_role_projection_lanes() {
             &plan,
             &rho,
             plan.required(),
+            None,
             role_dims.d_a() / setup_ring_dim,
             role_dims.d_b() / setup_ring_dim,
             role_dims.d_d() / setup_ring_dim,

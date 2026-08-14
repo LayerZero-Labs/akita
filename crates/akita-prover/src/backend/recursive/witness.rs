@@ -29,6 +29,7 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecursiveWitnessFlat {
     digits: Arc<[i8]>,
+    live_coeff_len: usize,
     commitment_digits: Option<Arc<[i8]>>,
     commitment_ring_dim: Option<usize>,
     known_balanced_log_basis: Option<u32>,
@@ -36,8 +37,10 @@ pub struct RecursiveWitnessFlat {
 
 impl RecursiveWitnessFlat {
     pub fn from_i8_digits(digits: Vec<i8>) -> Self {
+        let live_coeff_len = digits.len();
         Self {
             digits: digits.into(),
+            live_coeff_len,
             commitment_digits: None,
             commitment_ring_dim: None,
             known_balanced_log_basis: None,
@@ -58,9 +61,29 @@ impl RecursiveWitnessFlat {
         }
         Ok(Self {
             digits: digits.into(),
+            live_coeff_len: expected,
             commitment_digits: None,
             commitment_ring_dim: None,
             known_balanced_log_basis: Some(log_basis),
+        })
+    }
+
+    pub(crate) fn from_packed_i8_digits(
+        digits: Vec<i8>,
+        live_coeff_len: usize,
+    ) -> Result<Self, AkitaError> {
+        if live_coeff_len > digits.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: digits.len(),
+                actual: live_coeff_len,
+            });
+        }
+        Ok(Self {
+            digits: digits.into(),
+            live_coeff_len,
+            commitment_digits: None,
+            commitment_ring_dim: None,
+            known_balanced_log_basis: None,
         })
     }
 
@@ -96,7 +119,7 @@ impl RecursiveWitnessFlat {
     }
 
     pub fn live_coeff_len(&self) -> usize {
-        self.digits.len()
+        self.live_coeff_len
     }
 
     pub(crate) fn committed_coeff_len(&self) -> Result<usize, AkitaError> {
@@ -121,7 +144,7 @@ impl RecursiveWitnessFlat {
         };
         SuffixWitnessView::from_recursive_witness(
             digits,
-            self.digits.len(),
+            self.live_coeff_len,
             self.known_balanced_log_basis,
         )
     }
@@ -492,8 +515,8 @@ use crate::compute::{
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
 
-fn padded_ring_elems_for_digits<const D: usize>(digits: &[i8]) -> usize {
-    digits.len().div_ceil(D).next_power_of_two().max(1)
+fn padded_ring_elems_for_live_len<const D: usize>(live_coeff_len: usize) -> usize {
+    live_coeff_len.div_ceil(D).next_power_of_two().max(1)
 }
 
 /// Same-point batch view over several [`RecursiveWitnessFlat`] suffix witnesses.
@@ -508,7 +531,7 @@ where
     F: FieldCore,
 {
     fn num_ring_elems(&self) -> usize {
-        padded_ring_elems_for_digits::<D>(&self.digits)
+        padded_ring_elems_for_live_len::<D>(self.live_coeff_len)
     }
 }
 
@@ -539,11 +562,11 @@ where
     F: FieldCore,
 {
     fn num_ring_elems(&self) -> usize {
-        self.digits.len().max(1)
+        self.live_coeff_len.max(1)
     }
 
     fn num_vars(&self) -> usize {
-        let coeff_count = self.digits.len().next_power_of_two().max(1);
+        let coeff_count = self.live_coeff_len.next_power_of_two().max(1);
         coeff_count.trailing_zeros() as usize
     }
 }
@@ -830,6 +853,21 @@ mod tests {
         assert_eq!(view.live_ring_elems, 70);
         assert!(view.coeffs.len() >= view.live_ring_elems);
         assert_eq!(view.num_live_blocks(10).expect("live blocks"), 7);
+    }
+
+    #[test]
+    fn tensor_view_uses_commitment_domain_after_commitment_padding() {
+        const D: usize = 64;
+        let witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 70 * D])
+            .align_for_commitment_ring_dim(D)
+            .expect("commitment alignment");
+
+        let committed: SuffixWitnessView<'_, F, D> = witness.commit_view().expect("commit view");
+        let tensor: SuffixWitnessView<'_, F, D> = witness.tensor_view().expect("tensor view");
+
+        assert_eq!(committed.coeffs.len(), tensor.coeffs.len());
+        assert_eq!(tensor.live_ring_elems, 70);
+        assert_eq!(tensor.num_vars(), 13);
     }
 
     #[test]

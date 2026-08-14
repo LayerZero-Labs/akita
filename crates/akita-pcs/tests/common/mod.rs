@@ -262,22 +262,11 @@ where
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
 }
 
-pub(super) fn opening_from_poly<'a, const D: usize, P>(
-    poly: &'a P,
-    point: &[F],
-    layout: &(impl LevelParamsLike + ?Sized),
-) -> F
-where
-    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
-    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
-{
-    opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
-}
-
 pub(super) fn opening_from_poly_for_layout<'a, P>(
     poly: &'a P,
     point: &[F],
     layout: &(impl LevelParamsLike + ?Sized),
+    basis_mode: BasisMode,
 ) -> F
 where
     P: RootOpeningSource<F, 64>
@@ -291,9 +280,9 @@ where
         + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
 {
     match layout.inner_commit_matrix_params().ring_dimension() {
-        64 => opening_from_poly::<64, _>(poly, point, layout),
-        128 => opening_from_poly::<128, _>(poly, point, layout),
-        256 => opening_from_poly::<256, _>(poly, point, layout),
+        64 => opening_from_poly_with_basis::<64, _>(poly, point, layout, basis_mode),
+        128 => opening_from_poly_with_basis::<128, _>(poly, point, layout, basis_mode),
+        256 => opening_from_poly_with_basis::<256, _>(poly, point, layout, basis_mode),
         dimension => panic!("unsupported test opening ring dimension D={dimension}"),
     }
 }

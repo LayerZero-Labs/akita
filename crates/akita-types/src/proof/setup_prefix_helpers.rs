@@ -52,14 +52,11 @@ pub(super) fn setup_prefix_compression_plan(
     params: &PrecommittedLevelParams,
 ) -> Result<CompressionChainPlan, SerializationError> {
     let matrix = &params.layout.outer_commit_matrix;
-    let source_coefficients = matrix
-        .output_rank()
-        .checked_mul(matrix.ring_dimension())
-        .ok_or_else(|| {
-            SerializationError::InvalidData(
-                "setup prefix compression source length overflow".into(),
-            )
-        })?;
+    let source_coefficients = params
+        .layout
+        .outer_slice_count
+        .complete_source_coefficients(matrix.output_rank(), matrix.ring_dimension())
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
     CompressionChainPlan::for_complete_source(
         matrix.sis_table_key().modulus_profile,
         source_coefficients,

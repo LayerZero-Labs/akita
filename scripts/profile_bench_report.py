@@ -928,6 +928,20 @@ def extract_summary(
                     "n_a": int(kvs["n_a"]),
                     "n_b": int(kvs["n_b"]),
                     "n_d": int(kvs["n_d"]),
+                    "b_slice_count": int(kvs.get("b_slice_count", "1")),
+                    "physical_b_input_width": (
+                        int(kvs["physical_b_input_width"])
+                        if "physical_b_input_width" in kvs
+                        else None
+                    ),
+                    "logical_b_rows": int(
+                        kvs.get("logical_b_rows", kvs["n_b"])
+                    ),
+                    "complete_b_compression_bytes": (
+                        int(kvs["complete_b_compression_bytes"])
+                        if "complete_b_compression_bytes" in kvs
+                        else None
+                    ),
                     "log_basis_inner": int(kvs["log_basis_inner"]),
                     "log_basis_outer": int(kvs["log_basis_outer"]),
                     "log_basis_open": int(kvs["log_basis_open"]),
@@ -1009,6 +1023,18 @@ def extract_summary(
                 "n_a": int(kvs["n_a"]),
                 "n_b": int(kvs["n_b"]),
                 "n_d": int(kvs["n_d"]),
+                "b_slice_count": int(kvs.get("b_slice_count", "1")),
+                "physical_b_input_width": (
+                    int(kvs["physical_b_input_width"])
+                    if "physical_b_input_width" in kvs
+                    else None
+                ),
+                "logical_b_rows": int(kvs.get("logical_b_rows", kvs["n_b"])),
+                "complete_b_compression_bytes": (
+                    int(kvs["complete_b_compression_bytes"])
+                    if "complete_b_compression_bytes" in kvs
+                    else None
+                ),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
                 "log_basis_inner": int(kvs.get("log_basis_inner") or kvs["log_basis"]),
                 "log_basis_outer": int(kvs.get("log_basis_outer") or kvs["log_basis"]),
@@ -2406,11 +2432,25 @@ def planned_group_key(group: dict[str, object]) -> tuple[str, str, int]:
 
 
 def planned_group_planner_value(group: dict[str, object]) -> str:
+    def optional_count(field: str) -> str:
+        value = group.get(field)
+        return "not reported" if value is None else fmt_count(float(value))
+
+    def optional_bytes(field: str) -> str:
+        value = group.get(field)
+        return "not reported" if value is None else fmt_bytes(int(value))
+
     matrix = (
         f"Rings A/B/D: {fmt_count(float(group['d_a']))} / "
         f"{fmt_count(float(group['d_b']))} / {fmt_count(float(group['d_d']))}<br>"
         f"Rows A/B/D: {fmt_count(float(group['n_a']))} / "
         f"{fmt_count(float(group['n_b']))} / {fmt_count(float(group['n_d']))}"
+    )
+    slicing = (
+        f"B slices: {fmt_count(float(group.get('b_slice_count', 1)))}<br>"
+        f"Physical B cols: {optional_count('physical_b_input_width')}<br>"
+        f"Logical B rows: {fmt_count(float(group.get('logical_b_rows', group['n_b'])))}<br>"
+        f"Complete B compression: {optional_bytes('complete_b_compression_bytes')}"
     )
     decomposition = (
         f"Basis bits A/B/D: {fmt_count(float(group['log_basis_inner']))} / "
@@ -2425,6 +2465,7 @@ def planned_group_planner_value(group: dict[str, object]) -> str:
         planned_group_label(group),
         [
             f"<em>Matrix geometry</em><br>{matrix}",
+            f"<br><em>B slicing</em><br>{slicing}",
             f"<br><em>Decomposition</em><br>{decomposition}",
             f"<br><em>Challenge</em><br>L1 mass: {fmt_count(float(group['challenge_l1_mass']))}",
         ],

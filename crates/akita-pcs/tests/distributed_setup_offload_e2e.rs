@@ -93,6 +93,7 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let precommit_footprint = akita_types::commit_only_setup_field_elements(
         &frozen_precommit.inner_commit_matrix,
         &frozen_precommit.outer_commit_matrix,
+        frozen_precommit.outer_slice_count,
     )
     .expect("frozen precommit footprint");
     assert_eq!(setup_for_two.num_field_elements, precommit_footprint);
