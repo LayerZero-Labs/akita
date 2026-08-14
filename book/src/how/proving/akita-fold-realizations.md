@@ -602,8 +602,8 @@ sumcheck rather than as another physical ring row.
 
 The physical equations above are congruences in cyclotomic rings, whereas
 sumcheck needs exact field identities. In the raw basic case, every row uses
-the common ring $R_D$ (freya: use might since we will consider mixed rings in the advanced relations). Compressed mode introduces several native rings:
-compressed mode retains those scheduled ordinary dimensions and adds two
+the common ring $R_D$. Compressed mode retains those scheduled ordinary
+dimensions and adds two
 compression-only dimensions: the $\mathbf F_1$ and $\mathbf H_1$ rows lie in
 $R_{d_1}$, while the $\mathbf F_2$ and $\mathbf H_2$ rows lie in $R_{d_2}$.
 There is therefore no single denominator $X^D+1$ that applies to every row in
