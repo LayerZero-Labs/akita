@@ -91,7 +91,7 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
                             z_coords: 64,
                             e_field_elems: 64,
                             t_field_elems: 64,
-                            z_admission_linf_cap: 1,
+                            z_linf_cap: Some(1),
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],

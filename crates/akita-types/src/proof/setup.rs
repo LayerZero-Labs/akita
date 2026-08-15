@@ -713,6 +713,7 @@ mod tests {
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
                 num_live_blocks: n_prefix / d_setup,
+                outer_slice_count: crate::CommitmentSliceCount::ONE,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
                 inner_commit_matrix,
@@ -754,8 +755,6 @@ mod tests {
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
             id: crate::setup_prefix_slot_id(d_setup - 1, commitment_params),
-            natural_len: d_setup - 1,
-            padded_len: d_setup,
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
             },

@@ -30,6 +30,7 @@ dependencies = [
  "akita-serialization",
  "num-traits",
  "rand_core 0.6.4",
+ "serde",
  "thiserror",
 ]
 

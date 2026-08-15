@@ -26,7 +26,7 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
-# small-field profiles by name (see crt-ntt-prime-profiles, remove-fp16).
+# small-field profiles by name (see remove-fp16).
 dead_patterns=(
   'akita-scheme'
   'akita-cfg'
@@ -65,6 +65,41 @@ dead_patterns=(
   'FoldWitnessLinfCapPolicy'
   'BoundedL1Norm'
   'akita-challenges/src/tensor\.rs'
+  'CommitmentProver'
+  'CommitmentWithHint'
+  'CommittedGroupWithHint'
+  'FinalCommittedGroupWithHint'
+  'batched_commit'
+  'commit_group\b'
+  'commit_final_group'
+  'commit_with_params'
+  'batched_commit_with_params'
+  'get_params_for_prove'
+  'get_params_for_batched_commitment'
+  'runtime_schedule\b'
+  'committed_group_profile'
+  'resolve_generated_precommitted_group_profile'
+  'resolve_group_batch_schedule'
+  'plan_standalone_precommit'
+  'StandalonePrecommitPlan'
+  'StandalonePrecommitCandidate'
+  'prepare_batched_commit_inputs'
+  'padded_scalar_batch_num_vars'
+  'validate_scalar_point_matches_poly_arity'
+  'emit_precommitted_profiles_module'
+  'prior_group_profiles'
+  'PriorGroupProfiles'
+  'PriorGroupContext'
+  'NoPriorGroups'
+  'WithPriorGroups'
+  'scheduler_without_prior_groups'
+  'scheduler_with_prior_groups'
+  'explicit_without_prior_groups'
+  'explicit_with_prior_groups'
+  'profile_without_prior_groups'
+  'sole_profile'
+  '_precommitted\.rs'
+  'api/scheme\.rs'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
@@ -75,17 +110,15 @@ live_specs=(
   specs/setup-offloading-planner.md
   specs/eor-streamed-prover.md
   specs/packed-sumcheck.md
-  specs/schedule-catalog-ownership.md
   specs/planner-incidence-generalization.md
   specs/multi-group-batching.md
   specs/akita-pcs-crate-decomposition.md
   specs/akita-field-refactor.md
-  specs/crt-ntt-prime-profiles.md
   specs/eor-sumcheck-prover-acceleration.md
   specs/cross-repo-field-microbench.md
 )
 # Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:
-# specs/akita-compute-backend-metal.md, specs/transcript-immediate-fixes.md
+# specs/akita-compute-backend-metal.md
 
 missing_live=()
 for f in "${live_specs[@]}"; do
@@ -110,16 +143,34 @@ else
   search_paths=(specs)
 fi
 
+# A spec whose header declares it a historical snapshot documents an
+# implementation as it landed, so pre-cutover names in it are the record, not a
+# stale reference. Same convention as scripts/check-doc-dead-symbols.sh.
+is_historical_snapshot() {
+  head -n 12 "$1" | grep -qiE 'historical (snapshot|spec|design record)'
+}
+
 matches=""
 if [[ "$scope" == "live" ]]; then
   for f in "${search_paths[@]}"; do
-    hit="$(rg -n "$pattern" "$f" 2>/dev/null || true)"
+    if is_historical_snapshot "$f"; then
+      continue
+    fi
+    hit="$(rg -n --with-filename "$pattern" "$f" 2>/dev/null || true)"
     if [[ -n "$hit" ]]; then
       matches+="$hit"$'\n'
     fi
   done
 else
-  matches="$(rg -n --glob '!specs/archive/**' --glob '!specs/PRUNING.md' "$pattern" specs 2>/dev/null || true)"
+  for f in $(rg -l --glob '!specs/archive/**' --glob '!specs/PRUNING.md' "$pattern" specs 2>/dev/null || true); do
+    if is_historical_snapshot "$f"; then
+      continue
+    fi
+    hit="$(rg -n --with-filename "$pattern" "$f" 2>/dev/null || true)"
+    if [[ -n "$hit" ]]; then
+      matches+="$hit"$'\n'
+    fi
+  done
 fi
 
 if [[ -n "$matches" ]]; then

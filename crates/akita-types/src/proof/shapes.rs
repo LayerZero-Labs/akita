@@ -102,12 +102,25 @@ pub struct LevelProofShape {
     pub opening_payload_coeffs: usize,
     /// Stage-1 tree stage shapes in root-to-leaf order.
     pub stage1_stages: Vec<AkitaStage1StageShape>,
+    /// Shape of the optional schedule-selected physical norm payload.
+    pub stage1_norm: Option<PhysicalL2NormProofWireShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck_proof: SumcheckProofShape,
     /// Shape of the optional stage-3 setup product-sumcheck payload.
     pub stage3_sumcheck: Option<SetupProductSumcheckShape>,
     /// Shape-selected outgoing witness binding.
     pub next_witness_binding: NextWitnessBindingShape,
+}
+
+/// Headerless wire shape of [`PhysicalL2NormProof`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhysicalL2NormProofWireShape {
+    /// Number of blockwise limb claims; zero for direct mode.
+    pub subclaims: usize,
+    /// Number of final response/limb virtual evaluations.
+    pub virtual_evaluations: usize,
+    /// General final-leaf sumcheck shape.
+    pub sumcheck: SumcheckProofShape,
 }
 
 /// Shape descriptor for deserializing an [`AkitaBatchedProof`] without
@@ -158,6 +171,14 @@ pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
                 child_claims: stage.child_claims.len(),
             })
             .collect(),
+        stage1_norm: stage1
+            .norm_proof
+            .as_ref()
+            .map(|proof| PhysicalL2NormProofWireShape {
+                subclaims: proof.subclaims.len(),
+                virtual_evaluations: proof.virtual_evaluations.len(),
+                sumcheck: sumcheck_shape(&proof.sumcheck),
+            }),
         stage2_sumcheck_proof: sumcheck_shape(&stage2.sumcheck_proof),
         stage3_sumcheck: stage3_sumcheck_proof.map(SetupSumcheckProof::shape),
         next_witness_binding: match &stage2.next_witness_binding {
@@ -260,6 +281,68 @@ impl AkitaDeserialize for AkitaStage1StageShape {
     }
 }
 
+impl Valid for PhysicalL2NormProofWireShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.subclaims)?;
+        checked_shape_len(self.virtual_evaluations)?;
+        if self.virtual_evaluations == 0 {
+            return Err(SerializationError::InvalidData(
+                "L2 norm proof shape requires a virtual evaluation".into(),
+            ));
+        }
+        checked_shape_sequence_len(self.sumcheck.len())?;
+        for &degree in &self.sumcheck {
+            checked_shape_len(degree)?;
+        }
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for PhysicalL2NormProofWireShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.subclaims.serialize_with_mode(&mut writer, compress)?;
+        self.virtual_evaluations
+            .serialize_with_mode(&mut writer, compress)?;
+        self.sumcheck.serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.subclaims.serialized_size(compress)
+            + self.virtual_evaluations.serialized_size(compress)
+            + self.sumcheck.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for PhysicalL2NormProofWireShape {
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let out = Self {
+            subclaims: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            virtual_evaluations: usize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            sumcheck: deserialize_shape_vec(&mut reader, compress, validate)?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
 impl Valid for LevelProofShape {
     fn check(&self) -> Result<(), SerializationError> {
         if let Some(reduction) = &self.extension_opening_reduction {
@@ -268,6 +351,9 @@ impl Valid for LevelProofShape {
         checked_shape_len(self.opening_payload_coeffs)?;
         checked_shape_sequence_len(self.stage1_stages.len())?;
         self.stage1_stages.check()?;
+        if let Some(shape) = &self.stage1_norm {
+            shape.check()?;
+        }
         checked_shape_sequence_len(self.stage2_sumcheck_proof.len())?;
         for &degree in &self.stage2_sumcheck_proof {
             checked_shape_len(degree)?;
@@ -303,6 +389,12 @@ impl AkitaSerialize for LevelProofShape {
             .serialize_with_mode(&mut writer, compress)?;
         self.stage1_stages
             .serialize_with_mode(&mut writer, compress)?;
+        self.stage1_norm
+            .is_some()
+            .serialize_with_mode(&mut writer, compress)?;
+        if let Some(stage1_norm) = &self.stage1_norm {
+            stage1_norm.serialize_with_mode(&mut writer, compress)?;
+        }
         self.stage2_sumcheck_proof
             .serialize_with_mode(&mut writer, compress)?;
         self.stage3_sumcheck
@@ -337,6 +429,11 @@ impl AkitaSerialize for LevelProofShape {
         reduction_size
             + self.opening_payload_coeffs.serialized_size(compress)
             + self.stage1_stages.serialized_size(compress)
+            + true.serialized_size(compress)
+            + self
+                .stage1_norm
+                .as_ref()
+                .map_or(0, |shape| shape.serialized_size(compress))
             + self.stage2_sumcheck_proof.serialized_size(compress)
             + true.serialized_size(compress)
             + self
@@ -373,6 +470,17 @@ impl AkitaDeserialize for LevelProofShape {
         let opening_payload_coeffs =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let stage1_stages = deserialize_shape_vec(&mut reader, compress, validate)?;
+        let has_stage1_norm = bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage1_norm = if has_stage1_norm {
+            Some(PhysicalL2NormProofWireShape::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)
+        } else {
+            None
+        };
         let stage2_sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
         let has_stage3_sumcheck =
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -399,6 +507,7 @@ impl AkitaDeserialize for LevelProofShape {
             extension_opening_reduction,
             opening_payload_coeffs,
             stage1_stages,
+            stage1_norm,
             stage2_sumcheck_proof: stage2_sumcheck,
             stage3_sumcheck,
             next_witness_binding,

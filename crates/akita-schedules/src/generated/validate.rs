@@ -23,9 +23,6 @@ pub fn validate_generated_schedule_table(
         let key = entry.to_runtime_lookup_key();
         validate_generated_schedule_entry(entry, &key, policy, ring_challenge_config)?;
     }
-    for row in catalog.precommitted_profiles {
-        row.expand_to_committed_profile(policy)?;
-    }
     Ok(())
 }
 

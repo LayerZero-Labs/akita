@@ -51,13 +51,19 @@ fn event_stream_equality_small() {
     init_rayon_pool();
     run_on_large_stack(move || {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
-        let layout = OneHotCfg::get_params_for_batched_commitment(
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(
             &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
-        .expect("layout");
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
-        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_for_layout(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -68,8 +74,16 @@ fn event_stream_equality_small() {
         )
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-        let (commitment, hint) =
-            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = Scheme::commit(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -292,13 +306,19 @@ impl ProofTamper {
 fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::get_params_for_batched_commitment(
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(
             &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
-        .expect("layout");
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
-        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_for_layout(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -309,8 +329,16 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         )
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-        let (commitment, hint) =
-            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = Scheme::commit(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -375,10 +403,6 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
-        let layout = OneHotCfg::get_params_for_batched_commitment(
-            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
-        )
-        .expect("layout");
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
@@ -390,8 +414,16 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let (commitment, hint) =
-            Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = Scheme::commit(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
 
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");

@@ -12,14 +12,16 @@ to track current behavior; update the owning book chapter instead.
 
 | Spec | Final status | Book chapter | Archived |
 |------|--------------|--------------|----------|
-| `2026-Q3/y-ring-trace-internalization.md` | historical | `book/src/how/proving/field-ring-reduction.md` | 2026-Q3 |
 | `2026-Q3/commitment-compression-cutover.md` | archived | `book/src/how/proving/akita-fold-realizations.md` | 2026-Q3 |
 | `2026-Q3/relation-range-image-sumcheck.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |
 | `2026-Q3/pr375-prover-streaming-and-onehot-unification.md` | archived | `book/src/how/optimizations.md` | 2026-Q3 |
+| `2026-Q3/weak-binding-norm-fix.md` | superseded | `book/src/how/security.md` | 2026-Q3 |
 | `2026-Q3/profile-bench-coverage-matrix.md` | archived | `book/src/usage/profiling.md` | 2026-Q3 |
 | `2026-Q3/multi-group-batching-legacy.md` | historical | _(superseded API record)_ | 2026-Q3 |
 | `2026-Q3/group-local-opening-points.md` | archived | `book/src/how/architecture.md` | 2026-Q3 |
 | `2026-Q3/digit-range-pipeline-refactor.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |
+| `2026-Q3/full-setup-prefix-compact-tail-weights.md` | archived | `book/src/how/verifying/setup_contribution.md` | 2026-Q3 |
+| `2026-Q3/setup-prefix-ladder.md` | superseded | `book/src/how/verifying/setup_contribution.md` | 2026-Q3 |
 | `2026-Q2/w-to-e-notation.md` | archived | `book/src/foundations/glossary.md` | 2026-Q2 |
 | `2026-Q2/planner-refactor.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
 | `2026-Q2/planner-owns-schedule-expansion.md` | archived | `book/src/how/configuration.md` | 2026-Q2 |
@@ -28,7 +30,6 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q2/akita-zk-commitment-hiding.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
 | `2026-Q2/akita-zk-sumcheck-hiding-plain.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
 | `2026-Q2/akita-zk-v-hiding.md` | archived | `book/src/roadmap/zero-knowledge.md` | 2026-Q2 |
-| `2026-Q2/l2-msis-opnorm-folded-witness.md` | historical | _(cancelled; no book fold)_ | 2026-Q2 |
 | `2026-Q2/akita-sis-consolidation.md` | superseded | `book/src/how/security.md` | 2026-Q2 |
 | `2026-Q2/sis-euclidean-estimator.md` | superseded | `book/src/how/security.md` | 2026-Q2 |
 | `2026-Q2/sis-infinity-estimator-implementation-plan.md` | superseded | _(slice plan superseded by cutover spec)_ | 2026-Q2 |

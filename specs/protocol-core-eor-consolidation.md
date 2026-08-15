@@ -293,7 +293,7 @@ record.
 
 ## References
 
-- `specs/core-protocol-naming-cleanup.md`
+- `specs/archive/2026-Q2/w-to-e-notation.md`
 - `specs/eor-streamed-prover.md`
 - `specs/tail-wire-encoding.md`
 - `crates/akita-prover/src/backend/field_reduction.rs`

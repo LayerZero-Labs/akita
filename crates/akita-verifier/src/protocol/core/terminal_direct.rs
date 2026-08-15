@@ -151,7 +151,10 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
-    if group_layout.z_admission_linf_cap > params.certified_response_linf_cap(sparse)? {
+    if params
+        .validate_terminal_linf_cap(sparse, group_layout.z_linf_cap)
+        .is_err()
+    {
         return Err(AkitaError::InvalidProof);
     }
     dispatch_for_field!(
@@ -183,6 +186,11 @@ where
                     AkitaError::InvalidInput(format!("terminal z decode failed: {error:?}"))
                 })?
             };
+            if params.response_l2_sq_cap().is_some_and(|cap| {
+                akita_types::sis::checked_centered_l2_sq(&z_values).is_none_or(|norm| norm > cap)
+            }) {
+                return Err(AkitaError::InvalidProof);
+            }
             let z_centered = {
                 let _span = tracing::info_span!(
                     "terminal_direct_decode_z_rings",

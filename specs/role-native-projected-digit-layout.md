@@ -327,7 +327,8 @@ After the final Z/E/T unit, the witness contains one shared R tail. Relation
 rows use the canonical order
 
 ```text
-[consistency_g | A_g | B_g | B_inner_g] for each relation-order group
+[consistency_g | A_g | B_g] for each relation-order group, with B rows in
+slice-major then physical-row order
 [shared D rows]
 ```
 

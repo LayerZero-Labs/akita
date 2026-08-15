@@ -13,22 +13,22 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
+use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
-    GeneratedPrecommittedProfile, GeneratedSetupPrefixInput, GeneratedTerminalFold,
+    GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    min_secure_rank, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    projected_role_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    SisTableKey,
+    decomposed_s_block_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_inner,
+    num_digits_open, num_digits_setup_prefix_commit, projected_role_ring_count,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommittedGroupParams,
-    CommittedGroupProfile, DecompositionParams, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
-    TerminalCommittedGroupParams,
+    shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommitmentSliceCount,
+    CommitmentSliceGeometry, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedLevelParams, TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -101,6 +101,13 @@ impl GeneratedSetupPrefixInput {
         let num_positions_per_block =
             generated_count(geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
+        let outer_slice_count =
+            CommitmentSliceCount::try_new(self.commitment.outer_slice_count as usize)?;
+        outer_slice_count.validate_for_commitment(
+            0,
+            akita_types::CommitmentPayloadMode::Compressed,
+            num_live_blocks,
+        )?;
         let n_prefix = num_live_ring_elements_per_claim
             .checked_mul(d_a)
             .ok_or_else(|| {
@@ -156,7 +163,6 @@ impl GeneratedSetupPrefixInput {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -177,10 +183,16 @@ impl GeneratedSetupPrefixInput {
             log_basis_open,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let native_outer_width = decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, 1)
-            .ok_or_else(|| no_layout("B"))?;
-        let outer_width = projected_role_ring_count(d_a, d_b, native_outer_width)
-            .ok_or_else(|| no_layout("B"))?;
+        let outer_width = CommitmentSliceGeometry::try_new(
+            outer_slice_count,
+            num_live_blocks,
+            1,
+            n_a,
+            num_digits_outer,
+            d_a,
+            d_b,
+        )?
+        .physical_input_width();
         let n_b = secure_rank(
             "setup-prefix b",
             sis_key(
@@ -215,6 +227,7 @@ impl GeneratedSetupPrefixInput {
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
+            outer_slice_count,
             log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
             num_digits_inner,
             inner_commit_matrix,
@@ -230,98 +243,6 @@ impl GeneratedSetupPrefixInput {
             num_digits_open: num_digits_open_val,
             num_digits_fold,
         })
-    }
-}
-
-impl GeneratedPrecommittedProfile {
-    /// Expand this compact generated standalone precommit descriptor into its
-    /// canonical runtime profile.
-    pub fn expand_to_committed_profile(
-        self,
-        policy: &PlannerPolicy,
-    ) -> Result<CommittedGroupProfile, AkitaError> {
-        self.group.validate()?;
-        let geometry = self.commitment.geometry;
-        let num_live_ring_elements_per_claim = generated_count(
-            geometry.live_ring_elements_per_claim,
-            "live ring-element count",
-        )?;
-        let num_positions_per_block =
-            generated_count(geometry.positions_per_block, "positions per block")?;
-        let num_live_blocks = generated_count(geometry.live_blocks, "live block count")?;
-        let d_a = self.commitment.inner_commit_matrix.ring_dimension as usize;
-        let d_b = self.commitment.outer_commit_matrix.ring_dimension as usize;
-        validate_role_dims(CommitmentRingDims {
-            inner: d_a,
-            outer: d_b,
-            opening: d_b,
-        })?;
-        if self.commitment.outer_commit_matrix.slice_count != 1 {
-            return Err(AkitaError::InvalidSetup(
-                "generated precommit B matrix must use one slice".to_string(),
-            ));
-        }
-        let num_digits_inner = generated_count(self.num_digits_inner as u64, "inner digit depth")?;
-        let num_digits_outer = generated_count(self.num_digits_outer as u64, "outer digit depth")?;
-        if num_digits_inner == 0 || num_digits_outer == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "generated precommit digit depths must be nonzero".to_string(),
-            ));
-        }
-        let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated precommit A width overflow".to_string())
-            })?;
-        let n_a = generated_count(self.inner_output_rank as u64, "A output rank")?;
-        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            n_a,
-            inner_width,
-            self.inner_coeff_linf_bound,
-            d_a,
-        )?;
-        let native_outer_width = decomposed_t_ring_count(
-            n_a,
-            num_digits_outer,
-            num_live_blocks,
-            self.group.num_polynomials(),
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("generated precommit native B width overflow".to_string())
-        })?;
-        let outer_width =
-            projected_role_ring_count(d_a, d_b, native_outer_width).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "generated precommit projected B width overflow".to_string(),
-                )
-            })?;
-        let n_b = generated_count(self.outer_output_rank as u64, "B output rank")?;
-        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            n_b,
-            outer_width,
-            self.outer_coeff_linf_bound,
-            d_b,
-        )?;
-        let profile = CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
-            group: self.group,
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
-            num_digits_inner,
-            inner_commit_matrix,
-            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
-            num_digits_outer,
-            outer_commit_matrix,
-        };
-        profile.validate_frozen_precommit(policy.decomposition.field_bits())?;
-        Ok(profile)
     }
 }
 
@@ -366,6 +287,7 @@ impl GeneratedCommittedGroup {
         fold_level: usize,
         exact_num_digits_inner: Option<u32>,
         generated_num_digits_fold: u32,
+        response_l2_sq_cap: Option<u128>,
         input_witness_len: usize,
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -390,6 +312,8 @@ impl GeneratedCommittedGroup {
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
+        let outer_slice_count = CommitmentSliceCount::try_new(self.outer_slice_count as usize)?;
+        outer_slice_count.validate_for_commitment(fold_level, payload_mode, num_live_blocks)?;
         let block_index_bits = num_live_blocks
             .checked_next_power_of_two()
             .map_or(0, |domain| domain.trailing_zeros() as usize);
@@ -445,7 +369,12 @@ impl GeneratedCommittedGroup {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
-        let ring_challenge_cfg = ring_challenge_config(ring_d)?;
+        let ring_challenge_cfg = if response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(ring_d)
+                .unwrap_or(ring_challenge_config(ring_d)?)
+        } else {
+            ring_challenge_config(ring_d)?
+        };
         let num_digits_inner = if let Some(num_digits_inner) = exact_num_digits_inner {
             usize::try_from(num_digits_inner).map_err(|_| {
                 AkitaError::InvalidSetup(
@@ -478,10 +407,9 @@ impl GeneratedCommittedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
-        let n_a = secure_rank(
+        let linf_n_a = secure_rank(
             "a",
             sis_key(
                 policy,
@@ -491,6 +419,54 @@ impl GeneratedCommittedGroup {
             ),
             inner_width,
         )?;
+        let inner_commit_matrix = if let Some(response_l2_sq_cap) = response_l2_sq_cap {
+            let fold_basis = 1usize
+                .checked_shl(log_basis_open)
+                .ok_or_else(|| AkitaError::InvalidSetup("generated L2 basis overflow".into()))?;
+            let matrix = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
+                    fold_level,
+                    num_claims,
+                    num_chunks: policy.chunks_at_level(fold_level),
+                    inner_width,
+                    ring_dimension: ring_d,
+                    fold_basis,
+                    fold_digit_count: num_digits_fold,
+                    fold_challenge_config: &ring_challenge_cfg,
+                    response_l2_sq_cap: Some(response_l2_sq_cap),
+                    norm_proof_shape: None,
+                },
+            )?
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated L2 route is not admitted by the calibrated response model".into(),
+                )
+            })?;
+            if !matches!(
+                matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: canonical_cap,
+                    ..
+                } if canonical_cap == response_l2_sq_cap
+            ) {
+                return Err(AkitaError::InvalidSetup(
+                    "generated L2 cap disagrees with canonical candidate policy".into(),
+                ));
+            }
+            matrix
+        } else {
+            InnerCommitMatrixParams::try_new(
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                linf_n_a,
+                inner_width,
+                a_bucket,
+                ring_d,
+            )?
+        };
+        let n_a = inner_commit_matrix.output_rank();
 
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
@@ -500,12 +476,16 @@ impl GeneratedCommittedGroup {
             log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let native_outer_width =
-            decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, num_claims)
-                .ok_or_else(|| no_layout("B"))?;
-        let outer_width =
-            projected_role_ring_count(dimensions.d_a(), dimensions.d_b(), native_outer_width)
-                .ok_or_else(|| no_layout("B"))?;
+        let outer_width = CommitmentSliceGeometry::try_new(
+            outer_slice_count,
+            num_live_blocks,
+            num_claims,
+            n_a,
+            num_digits_outer,
+            dimensions.d_a(),
+            dimensions.d_b(),
+        )?
+        .physical_input_width();
 
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
@@ -586,15 +566,7 @@ impl GeneratedCommittedGroup {
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::try_new(
-                sis_policy,
-                policy.sis_table_digest,
-                sis_modulus_profile,
-                n_a,
-                inner_width,
-                a_bucket,
-                ring_d,
-            )?,
+            inner_commit_matrix,
             outer_commit_matrix: OuterCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
@@ -616,6 +588,7 @@ impl GeneratedCommittedGroup {
             num_live_ring_elements_per_claim,
             num_live_blocks,
             num_positions_per_block,
+            outer_slice_count,
             fold_challenge_config: ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
@@ -667,6 +640,12 @@ impl GeneratedCommittedGroup {
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
+        let outer_slice_count = CommitmentSliceCount::try_new(self.outer_slice_count as usize)?;
+        outer_slice_count.validate_for_commitment(
+            0,
+            akita_types::CommitmentPayloadMode::Compressed,
+            num_live_blocks,
+        )?;
         let block_index_bits = num_live_blocks
             .checked_next_power_of_two()
             .map_or(0, |domain| domain.trailing_zeros() as usize);
@@ -722,7 +701,6 @@ impl GeneratedCommittedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -744,12 +722,16 @@ impl GeneratedCommittedGroup {
             log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let native_outer_width =
-            decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, main_num_polys)
-                .ok_or_else(|| no_layout("B"))?;
-        let outer_width =
-            projected_role_ring_count(dimensions.d_a(), dimensions.d_b(), native_outer_width)
-                .ok_or_else(|| no_layout("B"))?;
+        let outer_width = CommitmentSliceGeometry::try_new(
+            outer_slice_count,
+            num_live_blocks,
+            main_num_polys,
+            n_a,
+            num_digits_outer,
+            dimensions.d_a(),
+            dimensions.d_b(),
+        )?
+        .physical_input_width();
 
         let native_main_d_width =
             decomposed_w_ring_count(num_digits_open_val, num_live_blocks, main_num_polys)
@@ -831,6 +813,7 @@ impl GeneratedCommittedGroup {
                 })?,
             num_live_blocks,
             num_positions_per_block,
+            outer_slice_count,
             fold_challenge_config: ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
@@ -849,7 +832,7 @@ impl GeneratedTerminalFold {
         &self,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        _fold_level: usize,
+        fold_level: usize,
         input_witness_len: usize,
     ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
@@ -891,38 +874,108 @@ impl GeneratedTerminalFold {
                 "generated terminal inner digit depth must be nonzero".into(),
             ));
         }
+        let fold_digit_count = usize::try_from(self.fold_digit_count).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated terminal fold digit count does not fit the target platform".into(),
+            )
+        })?;
+        if self.fold_log_basis == 0 || fold_digit_count == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal fold basis and digit count must be nonzero".into(),
+            ));
+        }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal A width overflow".to_string()))?;
-        let sparse = ring_challenge_config(ring_dimension)?;
+        let sparse = if self.response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no certified operator-norm challenge".into(),
+                )
+            })?
+        } else {
+            ring_challenge_config(ring_dimension)?
+        };
         let output_rank = usize::try_from(self.inner_output_rank).map_err(|_| {
             AkitaError::InvalidSetup(
                 "generated terminal inner rank does not fit the target platform".into(),
             )
         })?;
-        if output_rank == 0 || self.inner_coeff_linf_bound == 0 {
+        if output_rank == 0
+            || (self.response_l2_sq_cap.is_none() && self.inner_coeff_linf_bound == 0)
+        {
             return Err(AkitaError::InvalidSetup(
                 "generated terminal matrix contract must be nonzero".into(),
             ));
         }
-        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            output_rank,
-            inner_width,
-            self.inner_coeff_linf_bound,
-            ring_dimension,
-        )?;
+        let inner_commit_matrix = if let Some(response_l2_sq_cap) = self.response_l2_sq_cap {
+            let fold_basis = 1usize
+                .checked_shl(self.fold_log_basis)
+                .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
+            let matrix = selective_l2_inner_matrix(
+                policy,
+                SelectiveL2CandidateGeometry {
+                    fold_level,
+                    num_claims: 1,
+                    num_chunks: 1,
+                    inner_width,
+                    ring_dimension,
+                    fold_basis,
+                    fold_digit_count,
+                    fold_challenge_config: &sparse,
+                    response_l2_sq_cap: Some(response_l2_sq_cap),
+                    norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
+                        physical_response_len: inner_width.checked_mul(ring_dimension).ok_or_else(
+                            || {
+                                AkitaError::InvalidSetup(
+                                    "terminal L2 response length overflow".into(),
+                                )
+                            },
+                        )?,
+                    }),
+                },
+            )?
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no canonical source model".into(),
+                )
+            })?;
+            let cap_matches = matches!(
+                matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap: cap,
+                    ..
+                } if cap == response_l2_sq_cap
+            );
+            if matrix.output_rank() != output_rank || !cap_matches {
+                return Err(AkitaError::InvalidSetup(
+                    "generated terminal L2 matrix disagrees with its canonical source model".into(),
+                ));
+            }
+            matrix
+        } else {
+            InnerCommitMatrixParams::try_new(
+                policy.sis_security_policy,
+                policy.sis_table_digest,
+                policy.sis_modulus_profile,
+                output_rank,
+                inner_width,
+                self.inner_coeff_linf_bound,
+                ring_dimension,
+            )?
+        };
         let terminal = TerminalCommittedGroupParams {
             log_basis_inner,
+            fold_log_basis: self.fold_log_basis,
+            fold_digit_count,
             inner_commit_matrix,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
             num_digits_inner,
         };
-        if self.z_admission_linf_cap == 0
-            || self.z_admission_linf_cap > terminal.certified_response_linf_cap(&sparse)?
+        if terminal
+            .validate_terminal_linf_cap(&sparse, self.z_linf_cap)
+            .is_err()
             || self.z_rice_low_bits >= 64
             || self.z_payload_bytes == 0
         {
@@ -968,6 +1021,7 @@ mod tests {
     fn recursive_fp128_policy() -> PlannerPolicy {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+            selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -985,7 +1039,7 @@ mod tests {
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
             sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
-            ring_subfield_norm_bound: 1,
+            sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
             claim_ext_degree: 1,
             chal_ext_degree: 1,
             inner_basis_range: (3, 16),
@@ -1013,8 +1067,8 @@ mod tests {
                 outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
                     ring_dimension: 64,
                     log_basis: 3,
-                    slice_count: 1,
                 },
+                outer_slice_count: 1,
             },
         };
         let requested_dimensions = RefCell::new(Vec::new());
@@ -1039,5 +1093,39 @@ mod tests {
             SparseChallengeConfig::production_for_ring_dim(128)
                 .expect("production D128 challenge config")
         );
+    }
+
+    #[test]
+    fn setup_prefix_expansion_accepts_slicing_independent_of_fold_level() {
+        let input = GeneratedSetupPrefixInput {
+            natural_len: 1 << 16,
+            num_digits_fold: 4,
+            commitment: GeneratedCommittedGroup {
+                geometry: crate::generated::GeneratedBlockGeometry {
+                    live_ring_elements_per_claim: 512,
+                    positions_per_block: 32,
+                    live_blocks: 16,
+                },
+                inner_commit_matrix: crate::generated::GeneratedInnerCommitMatrix {
+                    ring_dimension: 128,
+                    log_basis: 3,
+                },
+                outer_commit_matrix: crate::generated::GeneratedOuterCommitMatrix {
+                    ring_dimension: 64,
+                    log_basis: 3,
+                },
+                outer_slice_count: 2,
+            },
+        };
+        let ring_challenge_config = |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        };
+
+        let expanded = input
+            .expand_to_precommitted_group(&recursive_fp128_policy(), &ring_challenge_config, 3)
+            .expect("setup-prefix precommitment may use slicing at any consumer level");
+        assert_eq!(expanded.layout.outer_slice_count, CommitmentSliceCount::TWO);
     }
 }

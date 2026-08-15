@@ -1,10 +1,10 @@
 //! Contract test for downstream-style custom root commit sources.
 //!
-//! Proves that `batched_commit_with_params` accepts a polynomial type that is
-//! not one of Akita's built-in root representations, with only
-//! [`RootCommitSource`] on `P` and a downstream-owned backend implementing
-//! [`RootCommitKernel`] for a local commit view (orphan-rule-safe: the backend
-//! type is local to this test crate).
+//! Proves that the unified explicit-parameter `commit` accepts a polynomial
+//! type that is not one of Akita's built-in root representations, with a
+//! downstream-owned backend implementing the root commit/tensor capabilities
+//! for local views (orphan-rule-safe: the backend type is local to this test
+//! crate).
 
 #![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
@@ -13,17 +13,21 @@ use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_prover::backend::DenseView;
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
+};
+use akita_prover::backend::{DenseView, RootTensorProjectionView};
 use akita_prover::compute::{
     CommitInnerPlan, CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
-    DigitRowsComputeBackend, OperationCtx, RootCommitKernel, RootCommitSource, RootPolyShape,
+    DigitRowsComputeBackend, RootCommitKernel, RootCommitSource, RootPolyShape, RootTensorSource,
+    TensorPackedWitness, TensorProjectionKernel,
 };
 use akita_prover::{
-    batched_commit_with_params, commit_with_params, AkitaProverSetup, CpuBackend, CpuPreparedSetup,
-    DensePoly,
+    AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext,
+    RootTensorProjectionPoly, UniformProverStack,
 };
-use akita_types::{NttCacheKey, OpeningClaimsLayout};
+use akita_types::{FpExtEncoding, NttCacheKey, OpeningClaimsLayout};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Cfg = fp64::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
@@ -31,6 +35,8 @@ const D: usize = Cfg::D;
 // The folded-only protocol requires at least two folds. `nv=8` was a
 // root-direct fixture; `nv=14` is the first supported adaptive fp64 singleton.
 const CONTRACT_NUM_VARS: usize = 14;
+static COMMIT_KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
+static TENSOR_KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.
 ///
@@ -55,6 +61,12 @@ impl ContractRootPoly {
 /// Local commit view owned by the downstream test crate.
 #[derive(Debug, Clone, Copy)]
 struct ContractCommitView<'a> {
+    poly: &'a ContractRootPoly,
+}
+
+/// Local tensor view owned by the downstream test crate.
+#[derive(Debug, Clone, Copy)]
+struct ContractTensorView<'a> {
     poly: &'a ContractRootPoly,
 }
 
@@ -86,6 +98,26 @@ impl<const DD: usize> RootCommitSource<F, DD> for ContractRootPoly {
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         Ok(ContractCommitView { poly: self })
+    }
+}
+
+impl<const DD: usize> RootTensorSource<F, DD> for ContractRootPoly {
+    type TensorView<'a>
+        = ContractTensorView<'a>
+    where
+        Self: 'a;
+
+    type TensorBatchView<'a>
+        = ()
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        Ok(ContractTensorView { poly: self })
+    }
+
+    fn tensor_batch<'a>(_polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        Ok(())
     }
 }
 
@@ -166,6 +198,7 @@ where
         sources: Vec<ContractCommitView<'_>>,
         plan: CommitInnerPlan,
     ) -> Result<Vec<akita_prover::CommitInnerWitness<F>>, AkitaError> {
+        COMMIT_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
         let dense_sources = sources
             .into_iter()
             .map(|source| RootCommitSource::<F, DD>::commit_view(&source.poly.dense))
@@ -179,110 +212,147 @@ where
     }
 }
 
-fn assert_commit_source_only<P>(_poly: &P)
+impl<const DD: usize> RootCommitKernel<RootTensorProjectionView<'_, F, DD>, F, DD>
+    for ContractCommitBackend
 where
-    P: RootCommitSource<F, D>,
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
 {
+    fn commit_inner_group(
+        &self,
+        prepared: &Self::PreparedSetup,
+        sources: Vec<RootTensorProjectionView<'_, F, DD>>,
+        plan: CommitInnerPlan,
+    ) -> Result<Vec<akita_prover::CommitInnerWitness<F>>, AkitaError> {
+        COMMIT_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
+        <CpuBackend as RootCommitKernel<RootTensorProjectionView<'_, F, DD>, F, DD>>::commit_inner_group(
+            &CpuBackend::DEFAULT,
+            prepared,
+            sources,
+            plan,
+        )
+    }
+}
+
+impl<E, const DD: usize> TensorProjectionKernel<ContractTensorView<'_>, F, E, DD>
+    for ContractCommitBackend
+where
+    E: ExtField<F>,
+{
+    fn column_partials(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: ContractTensorView<'_>,
+        logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<F>,
+    {
+        TENSOR_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
+        let dense = RootTensorSource::<F, DD>::tensor_view(&source.poly.dense)?;
+        <CpuBackend as TensorProjectionKernel<DenseView<'_, F, DD>, F, E, DD>>::column_partials(
+            &CpuBackend::DEFAULT,
+            prepared,
+            dense,
+            logical_point,
+        )
+    }
+
+    fn packed_witness(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: ContractTensorView<'_>,
+    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+        TENSOR_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
+        let dense = RootTensorSource::<F, DD>::tensor_view(&source.poly.dense)?;
+        <CpuBackend as TensorProjectionKernel<DenseView<'_, F, DD>, F, E, DD>>::packed_witness(
+            &CpuBackend::DEFAULT,
+            prepared,
+            dense,
+        )
+    }
+
+    fn root_projection(
+        &self,
+        prepared: Option<&Self::PreparedSetup>,
+        source: ContractTensorView<'_>,
+    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
+    where
+        E: FpExtEncoding<F>,
+    {
+        TENSOR_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
+        let dense = RootTensorSource::<F, DD>::tensor_view(&source.poly.dense)?;
+        <CpuBackend as TensorProjectionKernel<DenseView<'_, F, DD>, F, E, DD>>::root_projection(
+            &CpuBackend::DEFAULT,
+            prepared,
+            dense,
+        )
+    }
 }
 
 #[test]
-fn custom_commit_source_runs_commit_with_params() {
+fn custom_commit_source_runs_unified_explicit_commit() {
+    COMMIT_KERNEL_CALLS.store(0, Ordering::Relaxed);
+    TENSOR_KERNEL_CALLS.store(0, Ordering::Relaxed);
     let len = 1usize << CONTRACT_NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract =
         ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
-    assert_commit_source_only(&contract);
-
     let dense =
         DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
+    let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
 
     let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
-    let prepared = ContractCommitBackend
-        .prepare_setup(&setup)
-        .expect("prepared");
+    let contract_backend = ContractCommitBackend;
+    let prepared = contract_backend.prepare_setup(&setup).expect("prepared");
     let expanded = setup.expanded.as_ref();
-    let contract_ctx =
-        OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
+    let contract_stack = UniformProverStack::uniform(&contract_backend, &prepared, expanded)
+        .expect("contract stack");
 
-    let (contract_commitment, contract_hint) = commit_with_params::<F, ContractRootPoly, _>(
+    let contract_output = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
-        &contract_ctx,
-        &params,
+        &contract_stack,
+        GroupContext::explicit_without_precommitted_groups(&params),
     )
     .expect("contract commit");
 
     let cpu_prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("cpu prepared");
-    let cpu_ctx =
-        OperationCtx::new(&CpuBackend::DEFAULT, &cpu_prepared, expanded).expect("cpu ctx");
-    let (dense_commitment, dense_hint) = commit_with_params::<F, DensePoly<F>, CpuBackend>(
+    let cpu_stack = UniformProverStack::uniform(&CpuBackend::DEFAULT, &cpu_prepared, expanded)
+        .expect("cpu stack");
+    let dense_output = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,
-        &cpu_ctx,
-        &params,
+        &cpu_stack,
+        GroupContext::explicit_without_precommitted_groups(&params),
     )
     .expect("dense oracle commit");
 
     assert_eq!(
-        contract_commitment.rows().count(),
-        dense_commitment.rows().count()
+        contract_output.committed_group,
+        dense_output.committed_group
     );
-    assert_eq!(contract_hint, dense_hint);
-}
+    assert_eq!(contract_output.hint, dense_output.hint);
+    assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(TENSOR_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 
-#[test]
-fn custom_commit_source_runs_batched_commit_with_params() {
-    let len = 1usize << CONTRACT_NUM_VARS;
-    let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
-    let contract =
-        ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
-    assert_commit_source_only(&contract);
-    let dense =
-        DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
-    let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
-
-    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
-        .expect("setup");
-    let prepared = ContractCommitBackend
-        .prepare_setup(&setup)
-        .expect("prepared");
-    let expanded = setup.expanded.as_ref();
-    let contract_ctx =
-        OperationCtx::new(&ContractCommitBackend, &prepared, expanded).expect("contract ctx");
-
-    let (contract_commitment, contract_hint) =
-        batched_commit_with_params::<F, ContractRootPoly, ContractCommitBackend>(
-            std::slice::from_ref(&contract),
-            expanded,
-            &contract_ctx,
-            &params,
-        )
-        .expect("contract batched commit");
-
-    let cpu_prepared = CpuBackend::DEFAULT
-        .prepare_setup(&setup)
-        .expect("cpu prepared");
-    let cpu_ctx =
-        OperationCtx::new(&CpuBackend::DEFAULT, &cpu_prepared, expanded).expect("cpu ctx");
-    let (dense_commitment, dense_hint) = batched_commit_with_params::<F, DensePoly<F>, CpuBackend>(
-        std::slice::from_ref(&dense),
+    let mut malformed_params = params.clone();
+    malformed_params.num_digits_inner += 1;
+    let error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
+        std::slice::from_ref(&contract),
         expanded,
-        &cpu_ctx,
-        &params,
+        &contract_stack,
+        GroupContext::explicit_without_precommitted_groups(&malformed_params),
     )
-    .expect("dense batched commit");
-
-    assert_eq!(
-        contract_commitment.rows().count(),
-        dense_commitment.rows().count()
-    );
-    assert_eq!(contract_hint, dense_hint);
+    .expect_err("malformed explicit params must reject before arithmetic");
+    assert!(matches!(error, AkitaError::InvalidSetup(_)));
+    assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(TENSOR_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 }

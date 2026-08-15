@@ -813,7 +813,7 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 
 - `specs/crt-ntt-accumulation-safety.md` — original exact chunking and
   reconstruction contract (PR #134).
-- `specs/crt-ntt-prime-profiles.md` — production base-prime choices and SIMD
+- `book/src/foundations/ntt-crt.md` — production base-prime choices and CRT
   profile history.
 - `specs/terminal-direct-ring-relations-cutover.md` — direct terminal relation
   and predecessor-bound `t` semantics.

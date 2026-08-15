@@ -17,18 +17,6 @@ pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM: u32 = 1;
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 
-/// Minimum retained fraction of `t*` when snapping `δ_fold` downward after tail sizing.
-/// Retain `1/2` of `t*` (at most 50% reduction vs the tail cap).
-///
-/// The balanced signed-digit policy applies this value to every supported
-/// field other than Fp32.
-pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 1;
-pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
-
-/// Minimum retained fraction of `t*` for the Fp32 fold-l∞ policy.
-pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 3;
-pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 4;
-
 /// Rational ceiling for `ln(2)` used to bound natural logarithms without floats.
 const LN2_CEIL_NUM: u128 = 71;
 const LN2_CEIL_DEN: u128 = 100;

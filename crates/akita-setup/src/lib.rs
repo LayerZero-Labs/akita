@@ -154,26 +154,27 @@ fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
     // `digest_effective_schedule`. Akita is still in development, so the cache
     // flat-v2 namespace; the digest prevents incompatible schedules from
     // aliasing within that namespace.
-    let raw_schedule =
-        match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
-            Ok(schedule) => {
-                let digest = digest_effective_schedule(&schedule);
-                let mut hex = String::with_capacity(digest.len() * 2);
-                for byte in digest {
-                    let _ = write!(hex, "{byte:02x}");
-                }
-                format!(
-                    "planner_flat_v2_nv{}_batch{}_{hex}",
-                    schedule_lookup_key.num_vars(),
-                    schedule_lookup_key.num_polynomials(),
-                )
+    let raw_schedule = match Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+        schedule_lookup_key,
+    )) {
+        Ok(schedule) => {
+            let digest = digest_effective_schedule(schedule.schedule());
+            let mut hex = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                let _ = write!(hex, "{byte:02x}");
             }
-            Err(_) => format!(
-                "miss_nv{}_batch{}",
+            format!(
+                "planner_flat_v2_nv{}_batch{}_{hex}",
                 schedule_lookup_key.num_vars(),
                 schedule_lookup_key.num_polynomials(),
-            ),
-        };
+            )
+        }
+        Err(_) => format!(
+            "miss_nv{}_batch{}",
+            schedule_lookup_key.num_vars(),
+            schedule_lookup_key.num_polynomials(),
+        ),
+    };
     let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -770,6 +771,7 @@ mod tests {
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
+                        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
                         log_basis_inner: 1,
                         num_digits_inner: 1,
                         inner_commit_matrix,
@@ -832,8 +834,6 @@ mod tests {
                     .prefix_slots
                     .insert(SetupPrefixSlot {
                         id,
-                        natural_len: 1,
-                        padded_len: TEST_D,
                         commitment: SetupPrefixPublicCommitment {
                             rows: vec![commitment_row; commitment_rows],
                         },
@@ -1026,11 +1026,17 @@ mod tests {
 
                 let disk_setup = load_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
 
-                let lp = Cfg::get_params_for_batched_commitment(
+                let lp = Cfg::resolve_catalog_row_for_opening(
                     &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )
-                .unwrap();
+                .unwrap()
+                .schedule()
+                .root
+                .params
+                .final_group
+                .commitment
+                .clone();
                 let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
@@ -1057,11 +1063,32 @@ mod tests {
                             TEST_D,
                         >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
                         .unwrap();
+                    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+                        lp.outer_slice_count,
+                        lp.num_live_blocks,
+                        1,
+                        n_a,
+                        lp.num_digits_outer,
+                        TEST_D,
+                        TEST_D,
+                    )
+                    .unwrap();
+                    let block_width = slice_geometry.ring_elements_per_block_per_polynomial();
+                    let range = slice_geometry
+                        .block_ranges()
+                        .iter()
+                        .max_by_key(|range| range.len())
+                        .unwrap();
+                    let plane_start = range.start * block_width;
+                    let plane_end = range.end * block_width;
+                    let mut slice_digits =
+                        digits.typed_planes::<TEST_D>().unwrap()[plane_start..plane_end].to_vec();
+                    slice_digits.resize(slice_geometry.physical_input_width(), [0i8; TEST_D]);
                     CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer_commit_matrix.output_rank(),
-                            digits.typed_planes::<TEST_D>().unwrap(),
+                            &slice_digits,
                             lp.log_basis_outer,
                         )
                         .unwrap()

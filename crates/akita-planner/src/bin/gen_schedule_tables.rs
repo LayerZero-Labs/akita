@@ -1,9 +1,13 @@
 //! Generate schedule tables using the offline DP planner.
 
+use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
-    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, ALL_GENERATED_FAMILIES,
+    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
+    ALL_GENERATED_FAMILIES,
 };
-use akita_planner::{publish_generated_outputs, render_generated_outputs, EmitSpec};
+use akita_planner::{
+    publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
+};
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 use std::env;
 use std::fs;
@@ -18,6 +22,7 @@ struct ExplicitRows {
 struct ParsedArgs {
     base_dir: PathBuf,
     wiring_only: bool,
+    check_catalog: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
 }
@@ -41,7 +46,8 @@ fn generator_command() -> &'static str {
 
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
-     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [family_module_name ...] \
+     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
+     [family_module_name ...] \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
      [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
@@ -115,6 +121,7 @@ fn parse_args() -> Result<ParsedArgs, String> {
     }
     let base_dir = PathBuf::from(&raw_args[0]);
     let mut wiring_only = false;
+    let mut check_catalog = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
     let mut i = 1;
@@ -122,6 +129,10 @@ fn parse_args() -> Result<ParsedArgs, String> {
         match raw_args[i].as_str() {
             "--wiring-only" => {
                 wiring_only = true;
+                i += 1;
+            }
+            "--check-catalog" => {
+                check_catalog = true;
                 i += 1;
             }
             "--final-group" => {
@@ -195,12 +206,44 @@ fn parse_args() -> Result<ParsedArgs, String> {
     if wiring_only && family_filter.is_some() {
         return Err("--wiring-only does not accept family filters or explicit rows".to_string());
     }
+    if check_catalog && (wiring_only || explicit_rows.final_group.is_some()) {
+        return Err("--check-catalog requires ordinary generated rows".to_string());
+    }
+    if check_catalog && !cfg!(feature = "catalog-check") {
+        return Err("--check-catalog requires the `catalog-check` feature".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
+        check_catalog,
         family_filter,
         explicit_rows,
     })
+}
+
+fn validate_materialized_catalog(
+    spec: &EmitSpec,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<(), String> {
+    let family = family_by_name(spec.module_name)
+        .ok_or_else(|| format!("unknown generated family: {}", spec.module_name))?;
+    if (family.schedule_catalog)().is_none() {
+        return Err(format!(
+            "{}: compiled catalog is unavailable; build with all schedule features",
+            spec.module_name
+        ));
+    }
+    for (key, expected) in entries {
+        let actual = (family.resolve_catalog_row_for_key)(key.clone())
+            .map_err(|error| format!("{}: resolve {key:?}: {error}", spec.module_name))?;
+        if actual != *expected {
+            return Err(format!(
+                "{}: compiled catalog row {key:?} disagrees with the planner",
+                spec.module_name
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn resolved_output_path(path: &Path) -> Result<PathBuf, String> {
@@ -312,12 +355,6 @@ fn push_unique_name(names: &mut Vec<String>, name: &str) {
     }
 }
 
-fn push_unique_profile(profiles: &mut Vec<CommittedGroupProfile>, profile: CommittedGroupProfile) {
-    if !profiles.contains(&profile) {
-        profiles.push(profile);
-    }
-}
-
 fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: PolynomialGroupLayout) {
     if !layouts.contains(&layout) {
         layouts.push(layout);
@@ -340,6 +377,7 @@ fn push_unique_group_batch_key(
 }
 
 fn expand_precommitted_choices(
+    preplans: &GenerationPreplans,
     groups: &[ExplicitGroup],
 ) -> Result<
     Vec<
@@ -359,7 +397,7 @@ fn expand_precommitted_choices(
                 .layouts()
                 .into_iter()
                 .map(|layout| {
-                    (precommitted_family.explicit_precommitted_group)(layout)
+                    (precommitted_family.explicit_precommitted_group)(preplans, layout)
                         .map_err(|e| format!("{}: explicit precommitted group: {e}", group.family))
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -395,12 +433,13 @@ fn push_precommitted_combinations(
 
 fn emit_spec_with_overrides(
     family: &GeneratedFamily,
+    preplans: &GenerationPreplans,
     base_dir: PathBuf,
     explicit_rows: &ExplicitRows,
     generator_command: &'static str,
 ) -> Result<EmitSpec, String> {
     if !explicit_rows.has_family(family) {
-        return emit_spec_for_family(family, base_dir, generator_command)
+        return emit_spec_for_family(family, preplans, base_dir, generator_command)
             .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
     }
 
@@ -416,7 +455,6 @@ fn emit_spec_with_overrides(
         .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
     spec.keys.clear();
     spec.group_batch_keys.clear();
-    spec.precommitted_profiles.clear();
     let final_layouts = final_group.layouts();
 
     if explicit_rows.precommitted_groups.is_empty() {
@@ -428,7 +466,8 @@ fn emit_spec_with_overrides(
         return Ok(spec);
     }
 
-    let precommitted_choices = expand_precommitted_choices(&explicit_rows.precommitted_groups)?;
+    let precommitted_choices =
+        expand_precommitted_choices(preplans, &explicit_rows.precommitted_groups)?;
     let mut precommitted_combinations = Vec::new();
     push_precommitted_combinations(
         &precommitted_choices,
@@ -439,9 +478,6 @@ fn emit_spec_with_overrides(
     );
 
     for (precommitteds, precommitted_honest_fold_policies) in precommitted_combinations {
-        for profile in &precommitteds {
-            push_unique_profile(&mut spec.precommitted_profiles, *profile);
-        }
         for final_layout in &final_layouts {
             push_unique_group_batch_key(
                 &mut spec.group_batch_keys,
@@ -455,8 +491,6 @@ fn emit_spec_with_overrides(
             );
         }
     }
-    spec.precommitted_profiles
-        .sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
     Ok(spec)
 }
 
@@ -478,21 +512,35 @@ fn main() -> Result<(), String> {
         Vec::new()
     } else {
         let generator_command = generator_command();
-        let mut specs = Vec::with_capacity(families_to_write.len());
-        for (index, family) in families_to_write.iter().enumerate() {
+        let preplans = GenerationPreplans::default();
+        let indexed_families = families_to_write
+            .iter()
+            .enumerate()
+            .map(|(index, family)| (index, *family))
+            .collect::<Vec<_>>();
+        let family_count = indexed_families.len();
+        let workers = offline_planning_worker_count(family_count);
+        let mut specs = bounded_parallel_filter_map(&indexed_families, workers, |item| {
+            let (index, family) = *item;
             eprintln!(
                 "planning schedule family {}/{}: {}",
                 index + 1,
-                families_to_write.len(),
+                family_count,
                 family.module_name
             );
-            specs.push(emit_spec_with_overrides(
+            emit_spec_with_overrides(
                 family,
+                &preplans,
                 args.base_dir.clone(),
                 &args.explicit_rows,
                 generator_command,
-            )?);
+            )
+            .map(Some)
+        })?;
+        for (family, spec) in families_to_write.iter().zip(&mut specs) {
+            preplans.attach_to_spec(family, spec);
         }
+        drop(preplans);
         specs
     };
 
@@ -509,10 +557,18 @@ fn main() -> Result<(), String> {
         println!("skipped missing {}", mod_path.display());
         None
     };
-    let outputs = render_generated_outputs(
+    let check_catalog = args.check_catalog;
+    let outputs = render_generated_outputs_with_validation(
         &specs,
         &sorted_unique_specs(&wiring_specs),
         mod_path.as_deref(),
+        |spec, entries| {
+            if check_catalog {
+                validate_materialized_catalog(spec, entries)
+            } else {
+                Ok(())
+            }
+        },
     )?;
     for destination in publish_generated_outputs(outputs)? {
         println!("wrote {}", destination.display());
@@ -534,16 +590,21 @@ mod tests {
 
         let spec = emit_spec_with_overrides(
             family,
+            &GenerationPreplans::default(),
             PathBuf::from("generated"),
             &explicit_rows,
             "generator command",
         )
         .expect("explicit emit spec");
 
-        assert_eq!(spec.keys, vec![PolynomialGroupLayout::singleton(14)]);
+        assert_eq!(spec.keys, vec![PolynomialGroupLayout::new(14, 1)]);
         assert!(spec.group_batch_keys.is_empty());
-        assert!(spec.precommitted_profiles.is_empty());
         assert_eq!(spec.generator_command, "generator command");
+    }
+
+    #[test]
+    fn explicit_group_rejects_source_metadata() {
+        assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
     }
 
     #[test]

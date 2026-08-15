@@ -12,6 +12,7 @@ pub(crate) mod fp64;
 mod native_algebra;
 mod native_capability;
 pub(crate) mod pseudo_mersenne;
+mod serde_support;
 pub(crate) mod util;
 
 pub use fp128::{

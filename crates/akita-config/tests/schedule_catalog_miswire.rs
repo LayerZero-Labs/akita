@@ -4,16 +4,16 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
-use akita_schedules::resolve_schedule;
-use akita_types::PolynomialGroupLayout;
+use akita_schedules::resolve_generated_catalog_row_for_key;
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 #[test]
 fn miswired_catalog_rejects_before_lookup() {
     let wrong_catalog = akita_schedules::fp128_onehot_table();
     let key = PolynomialGroupLayout::new(28, 1);
 
-    let err = resolve_schedule(
-        key,
+    let err = resolve_generated_catalog_row_for_key(
+        &AkitaScheduleLookupKey::single(key),
         &policy_of::<fp128::Dense>(),
         fp128::Dense::ring_challenge_config,
         Some(wrong_catalog),

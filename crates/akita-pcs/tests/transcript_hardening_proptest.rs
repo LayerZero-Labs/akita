@@ -29,8 +29,9 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     let total_claims = batch_shape(shape_index);
     let opening_batch =
         OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
-    let layout =
-        DenseCfg::get_params_for_batched_commitment(&opening_batch).expect("batched commit layout");
+    let layout = DenseCfg::resolve_catalog_row_for_opening(&opening_batch)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("batched commit layout");
 
     let polys: Vec<DensePoly<F>> = (0..total_claims)
         .map(|poly_idx| make_dense_poly(num_vars, seed.wrapping_add(poly_idx as u64)))
@@ -54,8 +55,16 @@ fn logged_dense_round_trip(num_vars: usize, shape_index: usize, basis_mode: Basi
     .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
 
-    let (commitment, hint) =
-        Scheme::batched_commit(&setup, &polys, &stack).expect("batched commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("commit");
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
     let proof = Scheme::batched_prove(

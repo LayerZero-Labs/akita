@@ -1,6 +1,7 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
-use crate::{AkitaStage1Proof, AkitaStage1StageShape};
+use crate::proof::PhysicalL2NormProofWireShape;
+use crate::{AkitaStage1Proof, AkitaStage1StageShape, InnerCommitSecurityRoute};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{append_ext_field, labels, Transcript};
 
@@ -284,6 +285,41 @@ impl DigitRangePlan {
             .collect()
     }
 
+    /// Derive the headerless Stage 1 wire shape from the scheduled A route.
+    pub fn proof_shapes_for_route(
+        self,
+        rounds: usize,
+        route: InnerCommitSecurityRoute,
+    ) -> Result<
+        (
+            Vec<AkitaStage1StageShape>,
+            Option<PhysicalL2NormProofWireShape>,
+        ),
+        AkitaError,
+    > {
+        match route {
+            InnerCommitSecurityRoute::Linf(_) => Ok((self.stage_shapes(rounds), None)),
+            InnerCommitSecurityRoute::L2 {
+                norm_proof_shape, ..
+            } => {
+                norm_proof_shape.validate()?;
+                Ok((
+                    self.stage_shapes(rounds)
+                        .into_iter()
+                        .take(self.product_stage_arities().len())
+                        .collect(),
+                    Some(PhysicalL2NormProofWireShape {
+                        subclaims: norm_proof_shape.subclaim_count().ok_or_else(|| {
+                            AkitaError::InvalidSetup("L2 norm subclaim count overflow".into())
+                        })?,
+                        virtual_evaluations: norm_proof_shape.virtual_evaluation_count(),
+                        sumcheck: vec![self.leaf_degree() + 1; rounds],
+                    }),
+                ))
+            }
+        }
+    }
+
     /// Validate the complete in-memory range-proof shape without allocation.
     ///
     /// # Errors
@@ -429,6 +465,10 @@ fn poly_coeffs_from_roots<E: FieldCore>(roots: &[E]) -> Vec<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        InnerCommitSecurityRoute, PhysicalL2NormProofShape, SisL2TableDigest, SisL2TableKey,
+        SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, SisTableKey,
+    };
     use akita_field::Prime128Offset275;
 
     type F = Prime128Offset275;
@@ -522,5 +562,41 @@ mod tests {
             DigitRangeEqualityPoint::from_column_then_ring_challenges(&transcript_point[..4], 2, 2)
                 .unwrap();
         assert!(short_point.validate_domain(domain).is_err());
+    }
+
+    #[test]
+    fn route_authority_derives_exact_headerless_stage1_shapes() {
+        let plan = DigitRangePlan::new(64).unwrap();
+        let linf = InnerCommitSecurityRoute::Linf(SisTableKey {
+            policy: SisSecurityPolicyId::Quantum128BitADPS16,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            role: crate::SisMatrixRole::Inner,
+            ring_dimension: 64,
+            coeff_linf_bound: 1,
+        });
+        let (linf_stages, linf_norm) = plan.proof_shapes_for_route(7, linf).unwrap();
+        assert_eq!(linf_stages, plan.stage_shapes(7));
+        assert!(linf_norm.is_none());
+
+        let l2 = InnerCommitSecurityRoute::L2 {
+            table_key: SisL2TableKey {
+                policy: SisSecurityPolicyId::Quantum128BitADPS16,
+                table_digest: SisL2TableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                ring_dimension: 64,
+                collision_l2_sq: 1,
+            },
+            response_l2_sq_cap: 1,
+            norm_proof_shape: PhysicalL2NormProofShape::Direct {
+                physical_response_len: 64,
+            },
+        };
+        let (l2_stages, l2_norm) = plan.proof_shapes_for_route(7, l2).unwrap();
+        assert_eq!(l2_stages.len(), plan.product_stage_arities().len());
+        let l2_norm = l2_norm.expect("L2 wire shape");
+        assert_eq!(l2_norm.subclaims, 0);
+        assert_eq!(l2_norm.virtual_evaluations, 1);
+        assert_eq!(l2_norm.sumcheck, vec![plan.leaf_degree() + 1; 7]);
     }
 }

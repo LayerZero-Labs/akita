@@ -124,6 +124,27 @@ chunk partition refines every coarser partition.
 Each commitment group owns a fold challenge with `F` independent sparse
 coefficients, one for every live block.
 
+## B slices and chunks
+
+B slicing uses the same proportional block ranges as witness chunking. For
+slice `i` of `S`, the range is
+
+```text
+[floor(i * F / S), floor((i + 1) * F / S))
+```
+
+Unlike chunks, B slices must be nonempty, so `S <= F`. Both `S` and the witness
+chunk count are powers of two. One partition therefore refines the other. The
+intersection of a B slice and a witness chunk is either empty or exactly one
+range of the finer partition. The protocol selects `S` and the chunk count
+independently. It does not create a product partition.
+
+Slicing does not change the opening point, block indices, or fold challenge
+coordinates. It only changes how the existing block-ordered T input is sent
+through B. Relation B rows are ordered by slice and then by physical B row.
+Shorter slices keep the same physical column order. Each polynomial-major
+segment gets its own zero suffix before the next polynomial segment begins.
+
 ## Validation boundary
 
 Malformed dimensions, overflowing sizes, invalid powers of two, and block or

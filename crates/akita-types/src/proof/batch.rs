@@ -366,41 +366,6 @@ where
     commitment.append_to_transcript(ABSORB_COMMITMENT, ring_dim, transcript)
 }
 
-/// Largest natural arity across polynomials in a scalar batched commit/prove call.
-///
-/// Matches `prepare_batched_commit_inputs`, which selects the root layout from
-/// the maximum `num_vars` across the bundled polynomials.
-///
-/// # Errors
-///
-/// Returns an error if `poly_num_vars` is empty.
-pub fn padded_scalar_batch_num_vars(
-    poly_num_vars: impl IntoIterator<Item = usize>,
-) -> Result<usize, AkitaError> {
-    poly_num_vars.into_iter().max().ok_or_else(|| {
-        AkitaError::InvalidInput(
-            "batched opening batch requires at least one polynomial".to_string(),
-        )
-    })
-}
-
-/// Opening point length must match the padded batch domain selected at commit time.
-///
-/// # Errors
-///
-/// Returns an error when `point_len` and `padded_num_vars` differ.
-pub fn validate_scalar_point_matches_poly_arity(
-    point_len: usize,
-    padded_num_vars: usize,
-) -> Result<(), AkitaError> {
-    if point_len != padded_num_vars {
-        return Err(AkitaError::InvalidInput(format!(
-            "opening point length {point_len} does not match padded batch domain {padded_num_vars}"
-        )));
-    }
-    Ok(())
-}
-
 /// Validate common batched prove/verify input shape constraints.
 ///
 /// # Errors
@@ -684,7 +649,7 @@ where
 /// Return whether root tensor projection can represent this extension width /
 /// ring shape. Shared by the typed gate and the planner-facing width twin.
 #[inline]
-pub(crate) fn root_tensor_projection_enabled_for_width(
+pub fn root_tensor_projection_enabled_for_width(
     width: usize,
     ring_d: usize,
     num_vars: usize,
@@ -929,26 +894,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn padded_scalar_batch_num_vars_uses_max_poly_arity() {
-        assert_eq!(
-            padded_scalar_batch_num_vars([12, 20, 18]).expect("nonempty"),
-            20
-        );
-    }
-
-    #[test]
-    fn validate_scalar_point_matches_poly_arity_rejects_shorter_point() {
-        let err = validate_scalar_point_matches_poly_arity(18, 20)
-            .expect_err("shorter point must reject");
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
-    }
-
-    #[test]
-    fn validate_scalar_point_matches_poly_arity_accepts_match() {
-        validate_scalar_point_matches_poly_arity(20, 20)
-            .expect("matching point length should validate");
     }
 }

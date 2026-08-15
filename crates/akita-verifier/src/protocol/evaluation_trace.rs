@@ -758,8 +758,14 @@ mod tests {
 
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
-        let level_params =
-            Cfg::get_params_for_batched_commitment(&opening_batch).expect("level parameters");
+        let level_params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
+            .expect("level parameters")
+            .schedule()
+            .root
+            .params
+            .final_group
+            .commitment
+            .clone();
         let witness_layout = WitnessLayout::new(
             &level_params,
             &opening_batch,
@@ -783,8 +789,8 @@ mod tests {
         let group_params = level_params
             .group_params(&opening_batch, 0)
             .expect("group parameters");
-        let alpha_variables = D.trailing_zeros() as usize;
-        let base_outer_point = vec![F::zero(); NUM_VARIABLES - alpha_variables];
+        let base_outer_point =
+            vec![F::zero(); group_params.position_index_bits() + group_params.block_index_bits()];
         let ring_opening_point = ring_opening_point_from_field(
             &base_outer_point,
             group_params.num_positions_per_block(),
@@ -793,13 +799,23 @@ mod tests {
         )
         .expect("ring opening point");
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-        let prepared_points = vec![PreparedOpeningPoint::from_parts(
-            (0..NUM_VARIABLES)
-                .map(|index| E::from_u64(17 + 2 * index as u64))
-                .collect(),
-            ring_multiplier_point,
-            CyclotomicRing::<F, D>::one(),
-        )];
+        let padded_point = (0..NUM_VARIABLES)
+            .map(|index| E::from_u64(17 + 2 * index as u64))
+            .collect();
+        let prepared_point = akita_types::dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            F,
+            group_params.inner_commit_matrix_params().ring_dimension(),
+            |D_G| {
+                Ok::<_, akita_field::AkitaError>(PreparedOpeningPoint::from_parts(
+                    padded_point,
+                    ring_multiplier_point,
+                    CyclotomicRing::<F, D_G>::one(),
+                ))
+            }
+        )
+        .expect("prepared opening point");
+        let prepared_points = vec![prepared_point];
         let claim_coefficients = vec![E::from_u64(41), E::from_u64(43)];
         let inputs = || EvaluationTraceInputs {
             digit_witness_domain: plan.digit_witness_domain(),

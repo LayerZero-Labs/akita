@@ -554,6 +554,7 @@ mod tests {
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
+                outer_slice_count: akita_types::CommitmentSliceCount::ONE,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
                 inner_commit_matrix,
@@ -645,8 +646,6 @@ mod tests {
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.clone(),
-                natural_len: 1,
-                padded_len: PREFIX_D,
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![RingVec::from_coeffs(vec![
                         TestF::zero();

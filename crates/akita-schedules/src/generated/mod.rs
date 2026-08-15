@@ -1,7 +1,5 @@
 #![allow(missing_docs)]
 
-pub const MAX_COMMIT_MATRIX_SLICES: u32 = 16;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedBlockGeometry {
     pub live_ring_elements_per_claim: u64,
@@ -19,14 +17,12 @@ pub struct GeneratedInnerCommitMatrix {
 pub struct GeneratedOuterCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    pub slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedOpenCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    pub slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +30,7 @@ pub struct GeneratedCommittedGroup {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
     pub outer_commit_matrix: GeneratedOuterCommitMatrix,
+    pub outer_slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +45,6 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
-    pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +73,7 @@ pub struct GeneratedRecursiveFold {
     pub payload_mode: akita_types::CommitmentPayloadMode,
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
+    pub response_l2_sq_cap: Option<u128>,
     pub open_commit_matrix: GeneratedOpenCommitMatrix,
     pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
     pub witness_partition: GeneratedWitnessPartition,
@@ -87,23 +84,14 @@ pub struct GeneratedTerminalFold {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
     pub num_digits_inner: u32,
+    pub fold_log_basis: u32,
+    pub fold_digit_count: u32,
     pub inner_output_rank: u32,
     pub inner_coeff_linf_bound: u128,
-    pub z_admission_linf_cap: u128,
+    pub response_l2_sq_cap: Option<u128>,
+    pub z_linf_cap: Option<u128>,
     pub z_rice_low_bits: u32,
     pub z_payload_bytes: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedPrecommittedProfile {
-    pub group: akita_types::PolynomialGroupLayout,
-    pub commitment: GeneratedCommittedGroup,
-    pub num_digits_inner: u32,
-    pub inner_output_rank: u32,
-    pub inner_coeff_linf_bound: u128,
-    pub num_digits_outer: u32,
-    pub outer_output_rank: u32,
-    pub outer_coeff_linf_bound: u128,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +121,7 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
     pub protocol_epoch: u32,
     pub cost_model: crate::PlannerCostModelId,
+    pub selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     pub selection_policy: crate::SelectionPolicyId,
     pub recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     pub setup_field_budget: Option<usize>,
@@ -140,10 +129,10 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
+    pub sis_l2_table_digest: akita_types::SisL2TableDigest,
     pub uniform_ring_dimension: usize,
     pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
-    pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub inner_basis_range: (u32, u32),
@@ -165,7 +154,6 @@ pub struct GeneratedScheduleCatalogIdentity {
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
     pub entries: &'static [GeneratedFoldScheduleEntry],
-    pub precommitted_profiles: &'static [GeneratedPrecommittedProfile],
     pub identity: GeneratedScheduleCatalogIdentity,
 }
 
@@ -174,13 +162,14 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId, SisSecurityPolicyId,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
+    SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{
     CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
     PolynomialGroupLayout,
 };
-pub use akita_types::{SisModulusProfileId, SisTableDigest};
+pub use akita_types::{SisL2TableDigest, SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
 /// Returns true when `entries` are ordered for [`table_entry`] binary search.
@@ -384,57 +373,31 @@ pub(crate) fn validate_certified_bases(
 pub mod fp128_dense;
 #[cfg(feature = "fp128-dense-multi-chunk")]
 pub mod fp128_dense_multi_chunk;
-#[cfg(feature = "fp128-dense-multi-chunk")]
-pub mod fp128_dense_multi_chunk_precommitted;
-#[cfg(feature = "fp128-dense")]
-pub mod fp128_dense_precommitted;
 #[cfg(feature = "fp128-onehot")]
 pub mod fp128_onehot;
 #[cfg(feature = "fp128-onehot-multi-chunk")]
 pub mod fp128_onehot_multi_chunk;
-#[cfg(feature = "fp128-onehot-multi-chunk")]
-pub mod fp128_onehot_multi_chunk_precommitted;
 #[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
 pub mod fp128_onehot_multi_chunk_w2r2;
-#[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
-pub mod fp128_onehot_multi_chunk_w2r2_precommitted;
 #[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
 pub mod fp128_onehot_multi_chunk_w4r2;
-#[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
-pub mod fp128_onehot_multi_chunk_w4r2_precommitted;
-#[cfg(feature = "fp128-onehot")]
-pub mod fp128_onehot_precommitted;
 #[cfg(feature = "fp128-onehot-recursive")]
 pub mod fp128_onehot_recursive;
 #[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
 pub mod fp128_onehot_recursive_multi_chunk_w8r2;
-#[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
-pub mod fp128_onehot_recursive_multi_chunk_w8r2_precommitted;
-#[cfg(feature = "fp128-onehot-recursive")]
-pub mod fp128_onehot_recursive_precommitted;
 #[cfg(feature = "fp32-dense")]
 pub mod fp32_dense;
-#[cfg(feature = "fp32-dense")]
-pub mod fp32_dense_precommitted;
 #[cfg(feature = "fp32-onehot")]
 pub mod fp32_onehot;
-#[cfg(feature = "fp32-onehot")]
-pub mod fp32_onehot_precommitted;
 #[cfg(feature = "fp64-dense")]
 pub mod fp64_dense;
-#[cfg(feature = "fp64-dense")]
-pub mod fp64_dense_precommitted;
 #[cfg(feature = "fp64-onehot")]
 pub mod fp64_onehot;
-#[cfg(feature = "fp64-onehot")]
-pub mod fp64_onehot_precommitted;
 
 #[cfg(feature = "fp128-dense")]
 pub fn fp128_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_dense::FP128_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp128_dense_precommitted::FP128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_dense::CATALOG_IDENTITY,
     }
 }
@@ -443,7 +406,6 @@ pub fn fp128_dense_table() -> GeneratedScheduleTable {
 pub fn fp128_dense_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_dense_multi_chunk::FP128_DENSE_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_dense_multi_chunk_precommitted::FP128_DENSE_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_dense_multi_chunk::CATALOG_IDENTITY,
     }
 }
@@ -452,8 +414,6 @@ pub fn fp128_dense_multi_chunk_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot::FP128_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp128_onehot_precommitted::FP128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot::CATALOG_IDENTITY,
     }
 }
@@ -462,7 +422,6 @@ pub fn fp128_onehot_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_multi_chunk::FP128_ONEHOT_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_onehot_multi_chunk_precommitted::FP128_ONEHOT_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_multi_chunk::CATALOG_IDENTITY,
     }
 }
@@ -471,7 +430,6 @@ pub fn fp128_onehot_multi_chunk_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_multi_chunk_w2r2::FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
-        precommitted_profiles: fp128_onehot_multi_chunk_w2r2_precommitted::FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
     }
 }
@@ -480,7 +438,6 @@ pub fn fp128_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_multi_chunk_w4r2::FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
-        precommitted_profiles: fp128_onehot_multi_chunk_w4r2_precommitted::FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
     }
 }
@@ -489,7 +446,6 @@ pub fn fp128_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_recursive_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES,
-        precommitted_profiles: fp128_onehot_recursive_precommitted::FP128_ONEHOT_RECURSIVE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_recursive::CATALOG_IDENTITY,
     }
 }
@@ -498,7 +454,6 @@ pub fn fp128_onehot_recursive_table() -> GeneratedScheduleTable {
 pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_onehot_recursive_multi_chunk_w8r2::FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
-        precommitted_profiles: fp128_onehot_recursive_multi_chunk_w8r2_precommitted::FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp128_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
     }
 }
@@ -507,7 +462,6 @@ pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable
 pub fn fp32_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp32_dense::FP32_DENSE_SCHEDULES,
-        precommitted_profiles: fp32_dense_precommitted::FP32_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp32_dense::CATALOG_IDENTITY,
     }
 }
@@ -516,8 +470,6 @@ pub fn fp32_dense_table() -> GeneratedScheduleTable {
 pub fn fp32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp32_onehot::FP32_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp32_onehot_precommitted::FP32_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp32_onehot::CATALOG_IDENTITY,
     }
 }
@@ -526,7 +478,6 @@ pub fn fp32_onehot_table() -> GeneratedScheduleTable {
 pub fn fp64_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp64_dense::FP64_DENSE_SCHEDULES,
-        precommitted_profiles: fp64_dense_precommitted::FP64_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp64_dense::CATALOG_IDENTITY,
     }
 }
@@ -535,8 +486,6 @@ pub fn fp64_dense_table() -> GeneratedScheduleTable {
 pub fn fp64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp64_onehot::FP64_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp64_onehot_precommitted::FP64_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
         identity: fp64_onehot::CATALOG_IDENTITY,
     }
 }
@@ -557,6 +506,7 @@ mod mixed_dimension_key_tests {
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 8,
             num_live_blocks: 4,
+            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             log_basis_inner: 4,
             num_digits_inner: 2,
             inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(

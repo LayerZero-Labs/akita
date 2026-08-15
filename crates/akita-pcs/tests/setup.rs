@@ -113,8 +113,12 @@ where
 
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
-    let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
-    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
+    let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
+    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .expect("schedule")
+        .into_schedule();
     let root_d = layout.d_a();
 
     let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
@@ -172,9 +176,16 @@ where
         .expect_err("one-field-short verifier setup must reject");
     }
 
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("commit");
 
     let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
@@ -220,8 +231,12 @@ where
 
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
-    let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
-    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
+    let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
+    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .expect("schedule")
+        .into_schedule();
     let root_d = layout.d_a();
     let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
@@ -277,9 +292,16 @@ where
         verifier_capacity.num_field_elements
     );
 
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, usize>; 1] = [&poly];
     let commitments = [commitment];
@@ -394,8 +416,16 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
-        .expect("batched commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
@@ -484,8 +514,16 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
-        .expect("batched onehot commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];

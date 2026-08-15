@@ -104,6 +104,9 @@ def main() -> int:
         ),
         "lattice_estimator_remote": estimator_remote_url(estimator_path),
         "lattice_estimator_sha": estimator_git_sha(estimator_path),
+        "reduction_model": "ADPS16 quantum",
+        "norm": "Euclidean",
+        "collision_key": "complete scalar collision squared L2 norm",
         "golden_ranks": GOLDEN_RANKS,
         "work_items": [
             {"family": family, "d": d, "collision": collision}

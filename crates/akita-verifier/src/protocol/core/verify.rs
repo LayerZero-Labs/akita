@@ -135,6 +135,7 @@ pub(crate) fn verify<F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: OpeningClaims<'_, E, &Commitment<F>>,
+    opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
@@ -165,6 +166,7 @@ where
         setup,
         transcript,
         &claims,
+        opening_batch,
         basis,
         &root_step.params.final_group.commitment,
         first_recursive_params.map(|step| &step.params),
@@ -240,7 +242,9 @@ where
     claims
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
-    let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
+    let opening_batch = claims
+        .committed_layout()
+        .map_err(|_| AkitaError::InvalidProof)?;
     let (final_group, precommitteds) = claims
         .groups()
         .split_last()
@@ -263,10 +267,12 @@ where
             .validate_frozen_precommit(Cfg::decomposition().field_bits())
             .map_err(|_| AkitaError::InvalidProof)?;
         let source_coefficients = descriptor
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
-            .ok_or(AkitaError::InvalidProof)?;
+            .outer_slice_count
+            .complete_source_coefficients(
+                descriptor.outer_commit_matrix.output_rank(),
+                descriptor.outer_commit_matrix.ring_dimension(),
+            )
+            .map_err(|_| AkitaError::InvalidProof)?;
         let plan = akita_types::CompressionChainPlan::for_complete_source(
             descriptor
                 .outer_commit_matrix
@@ -302,10 +308,11 @@ where
     }
     let schedule = resolved.schedule();
     let root_params = &schedule.root_fold().params;
-    let expected_final_descriptor = akita_types::CommittedGroupProfile::from_params(
+    let expected_final_descriptor = akita_types::CommittedGroupProfile::try_from_params(
         final_descriptor.group,
         &root_params.final_group.commitment,
-    );
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
     if final_descriptor != expected_final_descriptor
         || root_params.precommitted_groups.len() != precommitteds.len()
         || root_params
@@ -361,10 +368,16 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
-    verify::<Cfg::Field, Cfg::ExtField, T>(proof, setup, transcript, raw_claims, basis, schedule)
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}"))
-        })
+    verify::<Cfg::Field, Cfg::ExtField, T>(
+        proof,
+        setup,
+        transcript,
+        raw_claims,
+        &opening_batch,
+        basis,
+        schedule,
+    )
+    .map_err(|error| AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}")))
 }
 
 #[cfg(test)]

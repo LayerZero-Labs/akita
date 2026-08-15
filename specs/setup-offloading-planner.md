@@ -10,6 +10,15 @@
 | Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection policy remains active |
 | Book-chapter  | book/src/roadmap/verifier-offloading.md    |
 
+> **Commit-API update (2026-08-10).** The public commitment flow is one
+> `AkitaCommitmentScheme::commit` entry point taking a `GroupContext`:
+> `scheduler_without_precommitted_groups()` for each independent prior commitment and
+> `scheduler_with_precommitted_groups` for the grouped final commitment. A recursive
+> companion catalog ships no row without precommitted groups at a precommit layout, so
+> the caller precommits under the base `Cfg` and proves the grouped root under
+> `RecursiveCommitmentConfig<Cfg>`. The recursive planning and setup-offloading
+> contracts in this document are unchanged.
+
 ## Revision authority
 
 The public-matrix derivation, setup-capacity unit, and NTT-cache contracts in
@@ -42,7 +51,7 @@ requires the successor to prove two openings together: its newly committed
 folded witness and the setup-prefix commitment selected by the preceding fold.
 
 This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
-generated `CommittedGroupProfile` and `commit_group` flow specified in
+generated `CommittedGroupProfile` and the independent-commit flow specified in
 [`multi-group-batching.md`](multi-group-batching.md); the earlier conservative
 config adapter has been removed. The ordinary `Cfg` resolves a direct-only
 schedule. Selecting the recursion adapter activates setup-aware planning for
@@ -334,11 +343,12 @@ The base config's `schedule_catalog()` remains the direct table.
 `RecursiveCommitmentConfig<Cfg>` exposes the separate recursive companion
 catalog for both selected scalar and grouped keys.
 
-Its `runtime_schedule` routing is:
+Its `resolve_catalog_row_for_key` routing is:
 
 ```text
+validate the SIS modulus profile
 validate recursive D64/non-chunked policy
-resolve_group_batch_schedule(
+resolve_generated_catalog_row_for_key(
     key,
     recursion-enabled policy_of<RecursiveCommitmentConfig<Cfg>>,
     recursive_multi_group_schedule_catalog,
@@ -1249,8 +1259,8 @@ Update the statuses of related specs when their deferred work is completed.
 
 - `STACK.md`
 - `specs/setup-layout-repack.md`
-- `specs/setup-prefix-ladder.md`
-- `specs/batched-stage3-setup-opening.md`
+- `specs/archive/2026-Q3/setup-prefix-ladder.md`
+- `specs/archive/2026-Q3/group-local-opening-points.md`
 - `specs/setup-product-sumcheck.md`
 - `specs/multi-group-batching.md`
 - `specs/planner-incidence-generalization.md`

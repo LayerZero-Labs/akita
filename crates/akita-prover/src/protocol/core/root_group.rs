@@ -20,6 +20,8 @@ pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
 pub(crate) trait RootProverGroupMeta<F: FieldCore> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
+    #[cfg(feature = "response-model-diagnostics")]
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128>;
 }
 
 pub(crate) trait RootProverGroupOpening<F, E, B>: RootProverGroupMeta<F>
@@ -47,7 +49,7 @@ where
         challenges: &Challenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::protocol::fold_grind::FoldGrindGroupOutput<F>, AkitaError>;
+    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError>;
 }
 
 pub(crate) trait RootProverGroupTensor<F, E, B>: RootProverGroupMeta<F>
@@ -107,6 +109,14 @@ where
             ));
         }
         Ok(num_vars)
+    }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
+        self.polynomial_refs().iter().try_fold(0u128, |sum, poly| {
+            crate::compute::RootPolyMeta::<F>::exact_integer_coeff_l2_sq(*poly)
+                .and_then(|energy| sum.checked_add(energy))
+        })
     }
 }
 
@@ -174,7 +184,7 @@ where
         challenges: &Challenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::protocol::fold_grind::FoldGrindGroupOutput<F>, AkitaError> {
+    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError> {
         let ring_dimension = params.inner_commit_matrix_params().ring_dimension();
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -192,7 +202,7 @@ where
                         root_params,
                         params,
                     )?;
-                Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldGrindGroupOutput {
+                Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldProbeOutput {
                     witness,
                     coefficients,
                     challenges: challenges.clone(),

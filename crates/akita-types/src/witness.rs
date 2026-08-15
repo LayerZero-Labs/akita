@@ -648,9 +648,23 @@ impl WitnessLayout {
                 h_quotient_row,
             });
         }
+        // Extension-field tensor packing carries a grouped root witness into
+        // the successor A ring. Mixed native group dimensions can leave the
+        // relation suffix aligned only to the smaller common block, so make
+        // the declared logical witness include the zero padding that packing
+        // would otherwise add implicitly.
+        let successor_a_alignment = if num_groups > 1 {
+            group_geometry
+                .iter()
+                .map(|(_, _, role_dims, _, _)| role_dims.d_a())
+                .max()
+                .ok_or_else(|| AkitaError::InvalidSetup("witness groups are empty".into()))?
+        } else {
+            relation_coefficient_block
+        };
         let aligned_witness_end = checked_align_up(
             cursor,
-            relation_coefficient_block,
+            successor_a_alignment,
             "compression witness suffix alignment overflow",
         )?;
         if aligned_witness_end != cursor {

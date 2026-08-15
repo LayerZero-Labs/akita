@@ -11,12 +11,9 @@ fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
             continue;
         }
         let module_name = spec.module_name;
-        let precommitted_module_name = precommitted_profiles_module_name(spec);
         let feat = spec.schedule_feature;
         writeln!(declarations, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
         writeln!(declarations, "pub mod {module_name};").map_err(|e| e.to_string())?;
-        writeln!(declarations, "#[cfg(feature = \"{feat}\")]").map_err(|e| e.to_string())?;
-        writeln!(declarations, "pub mod {precommitted_module_name};").map_err(|e| e.to_string())?;
         accessors.push_str(&emit_table_accessor(spec)?);
         accessors.push('\n');
     }
@@ -33,12 +30,10 @@ fn emit_table_accessor(spec: &EmitSpec) -> Result<String, String> {
     let fn_name = table_fn_name(spec.module_name);
     let feat = spec.schedule_feature;
     let module_name = spec.module_name;
-    let precommitted_module_name = precommitted_profiles_module_name(spec);
     let const_name = spec.const_name;
-    let precommitted_profiles_const = precommitted_profiles_const_name(spec);
     Ok(format!(
         "#[cfg(feature = \"{feat}\")]\n\
-         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        precommitted_profiles: {precommitted_module_name}::{precommitted_profiles_const},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
+         pub fn {fn_name}() -> GeneratedScheduleTable {{\n    GeneratedScheduleTable {{\n        entries: {module_name}::{const_name},\n        identity: {module_name}::CATALOG_IDENTITY,\n    }}\n}}\n"
     ))
 }
 
@@ -76,22 +71,17 @@ pub struct GeneratedOutput {
     pub(super) body: String,
 }
 
-fn render_family_outputs(spec: &EmitSpec) -> Result<[GeneratedOutput; 2], String> {
-    Ok([
-        GeneratedOutput {
-            destination: spec.output_dir.join(format!("{}.rs", spec.module_name)),
-            body: emit_family_module(spec)?,
-        },
-        GeneratedOutput {
-            destination: spec
-                .output_dir
-                .join(format!("{}.rs", precommitted_profiles_module_name(spec))),
-            body: emit_precommitted_profiles_module(spec)?,
-        },
-    ])
+fn render_family_output(
+    spec: &EmitSpec,
+    materialized: Vec<MaterializedEntry>,
+) -> Result<GeneratedOutput, String> {
+    Ok(GeneratedOutput {
+        destination: spec.output_dir.join(format!("{}.rs", spec.module_name)),
+        body: emit_family_module_from_entries(spec, materialized)?,
+    })
 }
 
-/// Render every family module, precommit registry, and optional wiring update.
+/// Render every family module and optional wiring update.
 ///
 /// No destination is modified unless the complete batch renders successfully
 /// and is later passed to [`publish_generated_outputs`].
@@ -100,10 +90,27 @@ pub fn render_generated_outputs(
     wiring_specs: &[EmitSpec],
     mod_path: Option<&Path>,
 ) -> Result<Vec<GeneratedOutput>, String> {
-    let workers = schedule_generation_worker_count(specs.len());
-    let rendered =
-        bounded_parallel_filter_map(specs, workers, |spec| render_family_outputs(spec).map(Some))?;
-    let mut outputs = rendered.into_iter().flatten().collect::<Vec<_>>();
+    render_generated_outputs_with_validation(specs, wiring_specs, mod_path, |_, _| Ok(()))
+}
+
+/// Render every family after validating the exact schedules materialized by
+/// the shared planning queue. This lets CI compare compiled catalog rows and
+/// generated source without running the planner twice.
+pub fn render_generated_outputs_with_validation(
+    specs: &[EmitSpec],
+    wiring_specs: &[EmitSpec],
+    mod_path: Option<&Path>,
+    validate: impl Fn(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
+) -> Result<Vec<GeneratedOutput>, String> {
+    let materialized = materialized_entries_for_specs(specs)?;
+    for (spec, entries) in specs.iter().zip(&materialized) {
+        validate(spec, entries)?;
+    }
+    let mut outputs = specs
+        .iter()
+        .zip(materialized)
+        .map(|(spec, entries)| render_family_output(spec, entries))
+        .collect::<Result<Vec<_>, _>>()?;
     if let Some(mod_path) = mod_path {
         let mod_src = fs::read_to_string(mod_path)
             .map_err(|error| format!("read {}: {error}", mod_path.display()))?;

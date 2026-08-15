@@ -1,7 +1,7 @@
 //! Fold-challenge preview drawing for prover-side Fiat–Shamir grinding.
 
-use crate::sampler::{SignedSparseScratch, XofCursor, MAX_STACK_RING_DIM};
-use crate::{Challenges, SparseChallengeConfig};
+use crate::sampler::{XofCursor, MAX_STACK_RING_DIM};
+use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::{FoldChallengeSeedPreview, Transcript, FOLD_CHALLENGE_SEED_LEN};
@@ -51,6 +51,28 @@ pub trait FoldDraw {
         cfg: &SparseChallengeConfig,
         grind_nonce: u32,
     ) -> Result<Challenges, AkitaError> {
+        self.draw_folding_challenges_with_rejection(
+            ring_d,
+            group_index,
+            num_live_blocks,
+            num_claims,
+            cfg,
+            grind_nonce,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_folding_challenges_with_rejection(
+        &mut self,
+        ring_d: usize,
+        group_index: usize,
+        num_live_blocks: usize,
+        num_claims: usize,
+        cfg: &SparseChallengeConfig,
+        grind_nonce: u32,
+        rejection: Option<OperatorNormRejection>,
+    ) -> Result<Challenges, AkitaError> {
         if ring_d > MAX_STACK_RING_DIM {
             return Err(AkitaError::InvalidInput(format!(
                 "ring dimension {ring_d} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
@@ -59,6 +81,11 @@ pub trait FoldDraw {
         cfg.validate_dyn(ring_d).map_err(|e| {
             AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}"))
         })?;
+        if let Some(rejection) = rejection {
+            rejection
+                .validate(ring_d, cfg)
+                .map_err(|error| AkitaError::InvalidInput(error.into()))?;
+        }
         if num_live_blocks == 0 || num_claims == 0 {
             return Err(AkitaError::InvalidInput(
                 "fold challenges require positive num_live_blocks and claims".to_string(),
@@ -76,9 +103,18 @@ pub trait FoldDraw {
         absorb_buf.extend_from_slice(&(ring_d as u64).to_le_bytes());
         absorb_buf.extend_from_slice(&domain_sep);
         absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
+        if let Some(rejection) = rejection {
+            absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
+        }
         let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
         let mut cursor = XofCursor::from_seed(&seed);
-        let challenges = SignedSparseScratch::sample_challenges(&mut cursor, ring_d, total, cfg)?;
+        let challenges = crate::sampler::sample_challenges_from_xof_cursor(
+            &mut cursor,
+            ring_d,
+            total,
+            cfg,
+            rejection,
+        )?;
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }

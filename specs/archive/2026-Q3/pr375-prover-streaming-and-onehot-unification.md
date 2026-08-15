@@ -1238,7 +1238,7 @@ Pause for review before downstream integration validation.
 - [Jolt modular Akita prover PR 1732](https://github.com/a16z/jolt/pull/1732)
 - [SumChecker review](https://github.com/LayerZero-Labs/akita/pull/375#issuecomment-5227378132)
 - [`specs/akita-polyops-cutover.md`](../../akita-polyops-cutover.md)
-- [`specs/small-field-prover-opening-optimization.md`](../../small-field-prover-opening-optimization.md)
+- `specs/small-field-prover-opening-optimization.md` (deleted in the 2026-Q3 stale-spec pass)
 - [`docs/compute-backends.md`](../../../docs/compute-backends.md)
 - [`docs/documentation.md`](../../../docs/documentation.md)
 - [`book/src/how/optimizations.md`](../../../book/src/how/optimizations.md)

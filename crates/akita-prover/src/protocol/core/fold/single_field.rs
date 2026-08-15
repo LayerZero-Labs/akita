@@ -53,8 +53,7 @@ where
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = block_claims
-        .opening_claims()
-        .layout()
+        .opening_layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let protocol_points = prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
     finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {

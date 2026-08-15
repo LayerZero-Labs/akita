@@ -18,10 +18,8 @@ use akita_field::{AkitaError, FieldCore};
 use akita_types::RingVec;
 
 pub use api::{
-    batched_commit, batched_commit_with_params, commit, commit_final_group, commit_group,
-    commit_setup_prefix, commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs,
-    AkitaProverSetup, CommitmentProver, CommitmentWithHint, CommittedGroupWithHint,
-    FinalCommittedGroupWithHint, PreparedGroupProveOps, PreparedProverGroup,
+    commit, commit_setup_prefix, prepare_commit_inputs, AkitaProverSetup, CommitOutput,
+    GroupContext, PreparedGroupProveOps, PreparedProverGroup,
 };
 
 pub use backend::{
@@ -108,6 +106,33 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
             centered_max,
             ring_dim: D,
         }
+    }
+
+    pub(crate) fn from_owned_flat_parts<const D: usize>(
+        z_folded_rings: RingVec<F>,
+        centered_coeffs_flat: Vec<i32>,
+    ) -> Result<Self, AkitaError> {
+        let (centered_rows, remainder) = centered_coeffs_flat.as_chunks::<D>();
+        if remainder.is_empty()
+            && z_folded_rings.ring_dim() == D
+            && z_folded_rings.count() == centered_rows.len()
+        {
+            let (centered_min, centered_max) = centered_coefficient_bounds(centered_rows);
+            return Ok(Self {
+                z_folded_rings,
+                centered_coeffs_flat,
+                centered_min,
+                centered_max,
+                ring_dim: D,
+            });
+        }
+        Err(AkitaError::InvalidInput(
+            "owned decompose fold buffers have inconsistent ring geometry".into(),
+        ))
+    }
+
+    pub(crate) fn into_owned_flat_parts(self) -> (RingVec<F>, Vec<i32>) {
+        (self.z_folded_rings, self.centered_coeffs_flat)
     }
 
     /// Stored ring dimension (coefficients per ring element).

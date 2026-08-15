@@ -407,7 +407,10 @@ mod tests {
     fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
         lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
             lp.inner_commit_matrix.security_policy(),
-            lp.inner_commit_matrix.sis_table_key().table_digest,
+            lp.inner_commit_matrix
+                .sis_table_key()
+                .expect("test matrix is L infinity")
+                .table_digest,
             lp.inner_commit_matrix.sis_modulus_profile(),
             lp.inner_commit_matrix.output_rank(),
             lp.inner_commit_matrix.input_width(),
@@ -739,7 +742,7 @@ mod tests {
         .expect("multi-group precommit params");
         certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
-            layout: CommittedGroupProfile::from_params(
+            layout: CommittedGroupProfile::from_params_unchecked_for_test(
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),

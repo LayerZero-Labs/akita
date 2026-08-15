@@ -103,47 +103,46 @@ fn concat_digit_blocks<'a>(
 pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F>>,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-    let Some((first, rest)) = witnesses.split_first() else {
+    let mut witnesses = witnesses.into_iter();
+    let Some(first) = witnesses.next() else {
         return Err(AkitaError::InvalidInput(
             "batched decompose_fold requires at least one witness".to_string(),
         ));
     };
     first.ensure_ring_dim::<D>()?;
     let row_count = first.row_count();
-    let mut z_folded_rings = first.z_folded_rings_trusted::<D>().to_vec();
-    let mut centered_coeffs = first.centered_coeffs_owned::<D>();
+    let (z_folded_rings, mut centered_coeffs) = first.into_owned_flat_parts();
+    let mut z_folded_coeffs = z_folded_rings.into_coeffs();
 
-    for witness in rest {
+    for witness in witnesses {
         witness.ensure_ring_dim::<D>()?;
         if witness.row_count() != row_count {
             return Err(AkitaError::InvalidInput(
                 "batched decompose_fold witness length mismatch".to_string(),
             ));
         }
-        for (dst, src) in z_folded_rings
+        for (dst, src) in z_folded_coeffs
             .iter_mut()
-            .zip(witness.z_folded_rings_trusted::<D>())
+            .zip(witness.z_folded_rings.coeffs())
         {
             *dst += *src;
         }
         for (dst, src) in centered_coeffs
             .iter_mut()
-            .zip(witness.centered_coeffs_trusted::<D>())
+            .zip(witness.centered_coeffs_flat())
         {
-            for k in 0..D {
-                dst[k] = dst[k].checked_add(src[k]).ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "batched decompose_fold centered coefficient overflow".to_string(),
-                    )
-                })?;
-            }
+            *dst = dst.checked_add(*src).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "batched decompose_fold centered coefficient overflow".to_string(),
+                )
+            })?;
         }
     }
 
-    Ok(DecomposeFoldWitness::from_parts(
-        z_folded_rings,
+    DecomposeFoldWitness::from_owned_flat_parts::<D>(
+        akita_types::RingVec::from_coeffs_with_ring_dim(z_folded_coeffs, D)?,
         centered_coeffs,
-    ))
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -380,7 +379,7 @@ impl RingRelationProver {
         validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
-        let opening_batch = block_claims.opening_claims().layout()?;
+        let opening_batch = block_claims.opening_layout()?;
         let num_groups = block_claims.opening_claims().num_groups();
         let group_ring_multiplier_points = group_ring_multiplier_points.into_vec();
         if group_ring_multiplier_points.len() != num_groups {
@@ -691,7 +690,8 @@ impl RingRelationProver {
         }
         drop(fold_grind_span);
 
-        // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
+        // Relation rhs spans roles (consistency | [A | B]* | D), with each
+        // B group expanded in slice-major then physical-row order.
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();

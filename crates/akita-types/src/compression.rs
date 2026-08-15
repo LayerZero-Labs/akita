@@ -612,6 +612,12 @@ impl<F: FieldCore + CanonicalField> CompressionTerminalPayload<F> {
     pub fn coefficients(&self) -> &[F] {
         &self.coefficients
     }
+
+    /// Consume the terminal payload and return its coefficient storage.
+    #[must_use]
+    pub fn into_coefficients(self) -> Vec<F> {
+        self.coefficients
+    }
 }
 
 #[cfg(test)]
@@ -698,6 +704,7 @@ mod tests {
                 dimensions
             );
             assert_eq!(plan.policy(), COMPRESSION_POLICY);
+            assert_eq!(plan.source_bytes(), MAX_COMPRESSION_INPUT_BYTES);
             assert_eq!(plan.terminal_coefficients() * field_bytes, 128);
             assert_eq!(
                 plan.max_setup_field_elements().unwrap(),
@@ -714,6 +721,7 @@ mod tests {
                 MAX_COMPRESSION_INPUT_BYTES / field_bytes + 1
             )
             .is_err());
+            assert!(CompressionChainPlan::try_for_complete_source(profile, usize::MAX).is_err());
         }
     }
 

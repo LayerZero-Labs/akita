@@ -1,6 +1,6 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::api::commitment::validate_commit_outer_input_nonempty;
+use crate::api::commitment::commit_outer_slices;
 use crate::backend::{DensePoly, DenseView};
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
@@ -94,6 +94,15 @@ where
 
     let n_b = level_params.layout.outer_commit_matrix.output_rank();
     let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
+    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+        level_params.layout.outer_slice_count,
+        level_params.layout.num_live_blocks,
+        1,
+        n_a,
+        level_params.layout.num_digits_outer,
+        D,
+        d_b,
+    )?;
     let raw_commitment =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
             let blocks = recomposed_inner_rows
@@ -105,19 +114,14 @@ where
                 level_params.layout.num_digits_outer,
                 level_params.layout.log_basis_outer,
             )?;
-            validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
-            let u = backend.digit_rows::<D_B>(
+            let u = commit_outer_slices::<F, _, D_B>(
+                backend,
                 prepared,
                 n_b,
-                decomposed_inner_rows.typed_planes::<D_B>()?,
+                std::iter::once(&decomposed_inner_rows),
+                &slice_geometry,
                 level_params.layout.log_basis_outer,
             )?;
-            if u.len() != n_b {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "setup prefix commit returned {} B rows, expected {n_b}",
-                    u.len(),
-                )));
-            }
             Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
         })?;
     let inner_coefficient_count = recomposed_inner_rows
@@ -157,10 +161,8 @@ where
         .last()
         .ok_or(AkitaError::InvalidProof)?
         .ring_dimension();
-    let commitment_payload = RingVec::from_coeffs_with_ring_dim(
-        output.terminal.coefficients().to_vec(),
-        terminal_ring_dim,
-    )?;
+    let commitment_payload =
+        RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
     let hint = AkitaCommitmentHint::singleton_with_outer_compression(
         RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
         &output.witness,
@@ -169,8 +171,6 @@ where
     let id = setup_prefix_slot_id(natural_len, level_params.clone());
     Ok(SetupPrefixSlot {
         id,
-        natural_len,
-        padded_len: n_prefix,
         commitment: SetupPrefixPublicCommitment {
             rows: vec![commitment_payload],
         },
@@ -214,21 +214,53 @@ mod tests {
     use akita_field::Prime128OffsetA7F7 as F;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
-        OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId,
+        InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
+        SisModulusProfileId, SisTableKey,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
+        let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             ring_dimension,
             3,
             2,
             3,
             2,
-            SparseChallengeConfig::pm1_only(3),
+            SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+                .expect("production challenge"),
         )
         .with_decomp(4, 3, 2, 2, 2)
-        .expect("level params")
+        .expect("level params");
+        let inner = params.inner_commit_matrix;
+        params.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: inner.security_policy(),
+                table_digest: inner
+                    .sis_table_key()
+                    .expect("L infinity test matrix")
+                    .table_digest,
+                modulus_profile: inner.sis_modulus_profile(),
+                role: akita_types::sis::SisMatrixRole::Inner,
+                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                coeff_linf_bound: 131_071,
+            },
+            inner.input_width(),
+        )
+        .expect("audited inner matrix");
+        let outer = params.outer_commit_matrix;
+        params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: outer.security_policy(),
+                table_digest: outer.sis_table_key().table_digest,
+                modulus_profile: outer.sis_modulus_profile(),
+                role: akita_types::sis::SisMatrixRole::Outer,
+                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                coeff_linf_bound: 3,
+            },
+            outer.input_width(),
+        )
+        .expect("audited outer matrix");
+        params
     }
 
     fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
@@ -371,8 +403,8 @@ mod tests {
             natural_len,
         )
         .expect("commit prefix");
-        assert_eq!(slot.natural_len, natural_len);
-        assert_eq!(slot.padded_len, n_prefix);
+        assert_eq!(slot.id.natural_len, natural_len);
+        assert_eq!(slot.id.n_prefix().expect("full prefix len"), n_prefix);
         setup.prefix_slots.insert(slot).expect("insert");
         assert_eq!(setup.prefix_slots.len(), 1);
     }

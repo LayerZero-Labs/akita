@@ -7,7 +7,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout,
+    FoldSchedule, OpeningScheduleSelection,
 };
 
 use crate::audit::audit_resolved_schedule;
@@ -102,19 +102,19 @@ impl ResolvedScheduleRow {
 fn profiles_for_entry(
     entry: &GeneratedFoldScheduleEntry,
     schedule: &FoldSchedule,
-) -> CommittedGroupBatchProfile {
-    CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params(
+) -> Result<CommittedGroupBatchProfile, AkitaError> {
+    Ok(CommittedGroupBatchProfile {
+        final_group: CommittedGroupProfile::try_from_params(
             entry.root.final_group.layout,
             &schedule.root.params.final_group.commitment,
-        ),
+        )?,
         precommitteds: entry
             .root
             .precommitted_groups
             .iter()
             .map(|group| group.descriptor)
             .collect(),
-    }
+    })
 }
 
 fn materialize_catalog_rows_uncached(
@@ -127,7 +127,7 @@ fn materialize_catalog_rows_uncached(
     for entry in table.entries {
         let key = entry.to_runtime_lookup_key();
         let schedule = schedule_from_entry(entry, &key, policy, ring_challenge_config)?;
-        let profiles = profiles_for_entry(entry, &schedule);
+        let profiles = profiles_for_entry(entry, &schedule)?;
         let row_digest = schedule_row_digest(&profiles, &schedule)?;
         digests.push(row_digest);
         rows.push((row_digest, profiles, schedule));
@@ -225,7 +225,7 @@ pub fn resolve_generated_schedule_selection(
     })
 }
 
-fn select_generated_schedule_row_matching(
+fn resolve_generated_catalog_row_matching(
     key: &AkitaScheduleLookupKey,
     exact_profiles: Option<&CommittedGroupBatchProfile>,
     policy: &PlannerPolicy,
@@ -296,12 +296,12 @@ fn select_generated_schedule_row_matching(
     })
 }
 
-/// Select the generated row matching a prover/planner lookup request.
+/// Resolve the generated row matching a runtime catalog lookup request.
 ///
 /// This is the pre-commit counterpart of
 /// [`resolve_generated_schedule_selection`]: it returns the same resolved
 /// handle so the caller can retain its public selection for proving.
-pub fn select_generated_schedule_row(
+pub fn resolve_generated_catalog_row_for_key(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -315,11 +315,11 @@ pub fn select_generated_schedule_row(
             key
         ))
     })?;
-    select_generated_schedule_row_matching(key, None, policy, &ring_challenge_config, table)
+    resolve_generated_catalog_row_matching(key, None, policy, &ring_challenge_config, table)
 }
 
-/// Select the canonical generated row matching exact committed profiles.
-pub fn select_generated_schedule_row_for_profiles(
+/// Resolve the canonical generated row matching exact committed profiles.
+pub fn resolve_generated_catalog_row_for_profiles(
     key: &AkitaScheduleLookupKey,
     profiles: &CommittedGroupBatchProfile,
     policy: &PlannerPolicy,
@@ -335,83 +335,12 @@ pub fn select_generated_schedule_row_for_profiles(
             key
         ))
     })?;
-    select_generated_schedule_row_matching(
+    resolve_generated_catalog_row_matching(
         key,
         Some(profiles),
         policy,
         &ring_challenge_config,
         table,
-    )
-}
-
-/// Resolve a generated standalone precommit descriptor for one group.
-///
-/// This is intentionally descriptor-only: final grouped schedule resolution is
-/// responsible for expanding frozen profiles into per-root opening metadata.
-pub fn resolve_generated_precommitted_group_profile(
-    key: &PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    catalog: Option<GeneratedScheduleTable>,
-) -> Result<CommittedGroupProfile, AkitaError> {
-    key.validate()?;
-    validate_policy(policy)?;
-    let table = catalog.ok_or_else(|| {
-        AkitaError::UnsupportedSchedule(format!(
-            "precommit profile catalog is not enabled for request {:?}",
-            key
-        ))
-    })?;
-    validate_catalog_identity(&table, policy, &ring_challenge_config)?;
-
-    let mut selected = None;
-    for &row in table.precommitted_profiles {
-        let profile = row.expand_to_committed_profile(policy)?;
-        if profile.group != *key {
-            continue;
-        }
-        if selected.is_some_and(|existing| existing != profile) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "precommit profile catalog contains multiple descriptors for {:?}",
-                key
-            )));
-        }
-        selected = Some(profile);
-    }
-    selected.ok_or_else(|| {
-        AkitaError::UnsupportedSchedule(format!(
-            "no generated precommit profile for request {:?}",
-            key
-        ))
-    })
-}
-
-/// Resolve a runtime schedule using only the enabled generated catalog.
-///
-/// A missing catalog or missing row is unsupported input. This function never
-/// invokes planner search.
-pub fn resolve_group_batch_schedule(
-    key: &AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    catalog: Option<GeneratedScheduleTable>,
-) -> Result<FoldSchedule, AkitaError> {
-    select_generated_schedule_row(key, policy, ring_challenge_config, catalog)
-        .map(ResolvedScheduleRow::into_schedule)
-}
-
-/// Resolve a scalar-root runtime schedule using only the enabled generated catalog.
-pub fn resolve_schedule(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    catalog: Option<GeneratedScheduleTable>,
-) -> Result<FoldSchedule, AkitaError> {
-    resolve_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        policy,
-        ring_challenge_config,
-        catalog,
     )
 }
 

@@ -1,4 +1,25 @@
 use super::*;
+use std::sync::Arc;
+
+struct PackedDLayout<'a, E> {
+    active_col_start: usize,
+    active_cols: usize,
+    physical_cols: usize,
+    row_weights: &'a [E],
+    ratio: usize,
+}
+
+struct PackedBLayout<'a, E> {
+    segments: &'a [PhysicalBWeightSegment<E>],
+    physical_footprint: usize,
+    ratio: usize,
+}
+
+struct PackedALayout<'a, E> {
+    cols: usize,
+    row_weights: &'a [E],
+    ratio: usize,
+}
 
 /// Target scan-job size. At fp128/D64 this is 2 MiB of contiguous setup data,
 /// large enough to amortize scheduling while exposing hundreds of root jobs.
@@ -14,22 +35,33 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         b_ratio: usize,
         d_ratio: usize,
     ) -> Result<(), AkitaError> {
-        let (e_eq_slice, _, _) = self.require_column_eq_slices()?;
+        let weights = self.direct_scan_weights.as_ref().ok_or_else(|| {
+            AkitaError::InvalidSetup("direct setup scan weights are missing".into())
+        })?;
+        if d_weights.len() != d_rows {
+            return Err(AkitaError::InvalidSize {
+                expected: d_rows,
+                actual: d_weights.len(),
+            });
+        }
         let (required, segments) = build_packed_segments(
-            self.d_col_range.start,
-            e_eq_slice.len(),
-            self.t_cols,
-            self.z_cols,
-            self.n_a,
-            self.n_b,
-            &self.a_row_weights,
-            &self.b_weights,
-            d_weights,
-            d_rows,
-            d_physical_cols,
-            a_ratio,
-            b_ratio,
-            d_ratio,
+            PackedDLayout {
+                active_col_start: self.d_col_range.start,
+                active_cols: weights.e.len(),
+                physical_cols: d_physical_cols,
+                row_weights: d_weights,
+                ratio: d_ratio,
+            },
+            PackedBLayout {
+                segments: self.physical_b.weight_segments(),
+                physical_footprint: self.physical_b.physical_footprint()?,
+                ratio: b_ratio,
+            },
+            PackedALayout {
+                cols: self.z_cols,
+                row_weights: &self.a_row_weights,
+                ratio: a_ratio,
+            },
         )?;
         self.required = required;
         self.segments = segments.into();
@@ -37,24 +69,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_packed_segments<E: FieldCore>(
-    d_col_start: usize,
-    e_eq_len: usize,
-    t_cols: usize,
-    z_cols: usize,
-    n_a: usize,
-    n_b: usize,
-    a_row_weights: &[E],
-    b_weights: &[E],
-    d_weights: &[E],
-    d_rows: usize,
-    d_physical_cols: usize,
-    a_ratio: usize,
-    b_ratio: usize,
-    d_ratio: usize,
+fn build_packed_segments<E: FieldCore>(
+    d: PackedDLayout<'_, E>,
+    b: PackedBLayout<'_, E>,
+    a: PackedALayout<'_, E>,
 ) -> Result<(usize, Vec<GroupSetupSegment<E>>), AkitaError> {
-    if [a_ratio, b_ratio, d_ratio]
+    if [a.ratio, b.ratio, d.ratio]
         .into_iter()
         .any(|ratio| !ratio.is_power_of_two())
     {
@@ -62,44 +82,31 @@ pub(super) fn build_packed_segments<E: FieldCore>(
             "setup projection ratios must be powers of two".into(),
         ));
     }
-    if d_weights.len() != d_rows {
-        return Err(AkitaError::InvalidSize {
-            expected: d_rows,
-            actual: d_weights.len(),
-        });
-    }
-    if a_row_weights.len() != n_a {
-        return Err(AkitaError::InvalidSize {
-            expected: n_a,
-            actual: a_row_weights.len(),
-        });
-    }
-    if b_weights.len() != n_b {
-        return Err(AkitaError::InvalidSize {
-            expected: n_b,
-            actual: b_weights.len(),
-        });
-    }
-    let e_end = d_col_start
-        .checked_add(e_eq_len)
+    let e_end = d
+        .active_col_start
+        .checked_add(d.active_cols)
         .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
-    if e_end > d_physical_cols {
+    if e_end > d.physical_cols {
         return Err(AkitaError::InvalidSetup(
             "setup D weights exceed physical D width".into(),
         ));
     }
 
-    let d_required = d_rows
-        .checked_mul(d_physical_cols)
-        .and_then(|len| len.checked_mul(d_ratio))
+    let d_required = d
+        .row_weights
+        .len()
+        .checked_mul(d.physical_cols)
+        .and_then(|len| len.checked_mul(d.ratio))
         .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
-    let b_required = n_b
-        .checked_mul(t_cols)
-        .and_then(|len| len.checked_mul(b_ratio))
+    let b_required = b
+        .physical_footprint
+        .checked_mul(b.ratio)
         .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
-    let a_required = n_a
-        .checked_mul(z_cols)
-        .and_then(|len| len.checked_mul(a_ratio))
+    let a_required = a
+        .row_weights
+        .len()
+        .checked_mul(a.cols)
+        .and_then(|len| len.checked_mul(a.ratio))
         .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?;
     let required = d_required.max(b_required).max(a_required);
 
@@ -108,14 +115,24 @@ pub(super) fn build_packed_segments<E: FieldCore>(
     endpoints.push(required);
     push_group_d_boundaries(
         &mut endpoints,
-        d_rows,
-        d_physical_cols,
-        d_col_start,
-        e_eq_len,
-        d_ratio,
+        d.row_weights.len(),
+        d.physical_cols,
+        d.active_col_start,
+        d.active_cols,
+        d.ratio,
     )?;
-    push_projected_role_boundaries(&mut endpoints, n_b, t_cols, b_ratio, "B")?;
-    push_projected_role_boundaries(&mut endpoints, n_a, z_cols, a_ratio, "A")?;
+    for segment in b.segments {
+        endpoints.push(segment.physical_start.checked_mul(b.ratio).ok_or_else(|| {
+            AkitaError::InvalidSetup("packed B segment boundary overflow".into())
+        })?);
+        let end = segment
+            .physical_start
+            .checked_add(segment.len)
+            .and_then(|end| end.checked_mul(b.ratio))
+            .ok_or_else(|| AkitaError::InvalidSetup("packed B segment extent overflow".into()))?;
+        endpoints.push(end);
+    }
+    push_projected_role_boundaries(&mut endpoints, a.row_weights.len(), a.cols, a.ratio, "A")?;
     endpoints.sort_unstable();
     endpoints.dedup();
 
@@ -127,33 +144,41 @@ pub(super) fn build_packed_segments<E: FieldCore>(
                 return None;
             }
 
-            let d_idx = lo / d_ratio;
-            let has_d = if d_physical_cols == 0 || e_eq_len == 0 || lo >= d_required {
+            let d_idx = lo / d.ratio;
+            let has_d = if d.physical_cols == 0 || d.active_cols == 0 || lo >= d_required {
                 false
             } else {
-                let d_col = d_idx % d_physical_cols;
-                d_col >= d_col_start && d_col < e_end
+                let d_col = d_idx % d.physical_cols;
+                d_col >= d.active_col_start && d_col < e_end
             };
-            let d_row = if has_d { d_idx / d_physical_cols } else { 0 };
+            let d_row = if has_d { d_idx / d.physical_cols } else { 0 };
             let d_start_abs = if has_d {
-                d_row * d_physical_cols + d_col_start
+                d_row * d.physical_cols + d.active_col_start
             } else {
                 0
             };
-            let d_weight = if has_d { d_weights[d_row] } else { E::zero() };
+            let d_weight = if has_d {
+                d.row_weights[d_row]
+            } else {
+                E::zero()
+            };
 
-            let b_idx = lo / b_ratio;
-            let has_b = t_cols != 0 && lo < b_required;
-            let b_row = if has_b { b_idx / t_cols } else { 0 };
-            let b_start_abs = if has_b { b_row * t_cols } else { 0 };
-            let b_weight = if has_b { b_weights[b_row] } else { E::zero() };
+            let b_idx = lo / b.ratio;
+            let b_segment = b.segments.iter().find(|segment| {
+                b_idx >= segment.physical_start
+                    && b_idx < segment.physical_start.saturating_add(segment.len)
+            });
+            let has_b = b_segment.is_some();
+            let b_start_abs = b_segment.map_or(0, |segment| segment.physical_start);
+            let b_terms =
+                b_segment.map_or_else(|| Arc::from([]), |segment| Arc::clone(&segment.terms));
 
-            let a_idx = lo / a_ratio;
-            let has_a = z_cols != 0 && lo < a_required;
-            let a_row = if has_a { a_idx / z_cols } else { 0 };
-            let a_start_abs = if has_a { a_row * z_cols } else { 0 };
+            let a_idx = lo / a.ratio;
+            let has_a = a.cols != 0 && lo < a_required;
+            let a_row = if has_a { a_idx / a.cols } else { 0 };
+            let a_start_abs = if has_a { a_row * a.cols } else { 0 };
             let a_row_weight = if has_a {
-                a_row_weights[a_row]
+                a.row_weights[a_row]
             } else {
                 E::zero()
             };
@@ -170,7 +195,7 @@ pub(super) fn build_packed_segments<E: FieldCore>(
                 d_weight,
                 has_b,
                 b_start_abs,
-                b_weight,
+                b_terms,
                 has_a,
                 a_start_abs,
                 a_row_weight,

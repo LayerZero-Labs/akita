@@ -16,7 +16,6 @@ use akita_field::{
     PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::ProverOpeningData;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
     RuntimeCommitBackendFor,
@@ -24,9 +23,8 @@ use akita_prover::{
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    dispatch_for_field, BasisMode, CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding,
-    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, PolynomialGroupLayout,
-    SetupContributionMode,
+    dispatch_for_field, BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -39,7 +37,7 @@ fn materialize_schedule_setup_prefix_slots<F, B>(
     schedule: &FoldSchedule,
 ) -> Result<(), akita_field::AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField + 'static,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
     B: RuntimeCommitBackendFor<F, DensePoly<F>>,
 {
     for slot_id in schedule
@@ -179,7 +177,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
     let pre_descriptor =
-        akita_config::committed_group_profile::<ProofCfg>(&pre_key).expect("precommit profile");
+        Cfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group,
@@ -188,8 +186,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let opening_layout = multi_group_key
         .opening_layout()
         .expect("multi-group layout");
-    let schedule =
-        ProofCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+    let schedule = ProofCfg::resolve_catalog_row_for_key(&multi_group_key)
+        .expect("multi-group runtime schedule")
+        .into_schedule();
     let pre_points = (0..PRE_GROUPS)
         .map(|_| random_claim_point::<FF, Cfg::ExtField>(pre_num_vars, &mut point_rng))
         .collect::<Vec<_>>();
@@ -261,9 +260,16 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .iter()
                 .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
                 .collect::<Vec<_>>();
-            let (commitment, hint) =
-                AkitaCommitmentScheme::<ProofCfg>::commit_group(&setup, &polys, &stack)
-                    .expect("precommit");
+            let akita_prover::CommitOutput {
+                committed_group: commitment,
+                hint,
+            } = AkitaCommitmentScheme::<Cfg>::commit(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("precommit");
             pre_keys.push(pre_key);
             pre_commitments.push(commitment);
             pre_hints.push(hint);
@@ -285,14 +291,19 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .iter()
             .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
             .collect::<Vec<_>>();
-        let (final_commitment, final_hint, _selection) =
-            AkitaCommitmentScheme::<ProofCfg>::commit_final_group(
-                &setup,
-                &final_polys,
-                &stack,
-                pre_commitments.iter().map(|group| group.profile).collect(),
-            )
-            .expect("final multi-group commitment");
+        let precommitteds =
+            akita_types::PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
+                .expect("nonempty precommitted groups");
+        let akita_prover::CommitOutput {
+            committed_group: final_commitment,
+            hint: final_hint,
+        } = AkitaCommitmentScheme::<ProofCfg>::commit(
+            &setup,
+            &final_polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .expect("final multi-group commitment");
         report_timing(label, "commit", t_commit.elapsed().as_secs_f64());
 
         let pre_refs_by_group = pre_polys_by_group
@@ -327,16 +338,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         prover_polys.push(final_refs.as_slice());
         let mut prover_hints = pre_hints;
         prover_hints.push(final_hint);
-        let selection = ProofCfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-            final_group: *final_commitment.profile(),
-            precommitteds: pre_commitments
-                .iter()
-                .map(|commitment| *commitment.profile())
-                .collect(),
-        })
-        .expect("select multi-group generated schedule row")
-        .selection();
-
         let t_prove = Instant::now();
         let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
         tracing::info!(
@@ -345,17 +346,17 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
+        let prover_data =
+            akita_prover::SelectedProverOpeningData::from_committed_claims::<ProofCfg>(
+                OpeningClaims::from_groups(prover_groups).expect("prover claims"),
+                prover_hints,
+                prover_polys,
+            )
+            .expect("multi-group prover data");
+        let selection = prover_data.selection();
         let proof = AkitaCommitmentScheme::<ProofCfg>::batched_prove::<_, _, _>(
             &setup,
-            (
-                selection,
-                ProverOpeningData::new(
-                    OpeningClaims::from_groups(prover_groups).expect("prover claims"),
-                    prover_hints,
-                    prover_polys,
-                )
-                .expect("multi-group prover data"),
-            ),
+            prover_data,
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -400,7 +401,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         &schedule,
         final_group,
         Cfg::decomposition().field_bits(),
-    );
+    )
+    .expect("runtime schedule report geometry");
     emit_proof_tail_report::<FF, Cfg::ExtField>(
         label,
         &proof,

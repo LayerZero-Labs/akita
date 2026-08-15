@@ -9,7 +9,7 @@ use crate::{
     error::{EstimatorError, Result},
     math::log2_biguint,
     params::SisParameters,
-    reduction::{bdgl16_log2_cost, beta as beta_from_delta, delta, validate_euclidean_reduction},
+    reduction::{adps16_log2_cost, beta as beta_from_delta, delta, validate_euclidean_reduction},
 };
 
 /// Evaluate the lattice-estimator Euclidean SIS path for the configured model.
@@ -57,7 +57,9 @@ pub fn cost_euclidean(params: &SisParameters, config: &EstimateConfig) -> Result
     let predicate = reduction_possible && lower_bound_met;
     let cost = if predicate {
         match config.red_cost_model {
-            ReductionCostModel::Bdgl16 => CostValue::finite_log2(bdgl16_log2_cost(beta, d)),
+            ReductionCostModel::Adps16 { mode } => {
+                CostValue::finite_log2(adps16_log2_cost(beta, mode))
+            }
             _ => unreachable!("validated above"),
         }
     } else {
@@ -111,6 +113,7 @@ fn length_bound_exceeds_euclidean_lower_bound(params: &SisParameters, d: u64, lo
 #[cfg(test)]
 mod tests {
     use crate::{
+        config::Adps16Mode,
         params::{akita_q32, Bound, SisNorm},
         EstimateConfig,
     };
@@ -130,7 +133,9 @@ mod tests {
         let cost = cost_euclidean(
             &params,
             &EstimateConfig {
-                red_cost_model: ReductionCostModel::Bdgl16,
+                red_cost_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Quantum,
+                },
                 lattice_dimension: Some(40),
                 ..EstimateConfig::default()
             },
@@ -153,11 +158,41 @@ mod tests {
         let cost = cost_euclidean(
             &params,
             &EstimateConfig {
-                red_cost_model: ReductionCostModel::Bdgl16,
+                red_cost_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Quantum,
+                },
                 ..EstimateConfig::default()
             },
         )
         .unwrap();
         assert_eq!(cost.rop, CostValue::Infinity);
+    }
+
+    #[test]
+    fn euclidean_quantum_cost_uses_adps16_exponent() {
+        let params = SisParameters::try_new(
+            16,
+            BigUint::from(1u32) << 20usize,
+            Some(64),
+            Bound::from_u64(1024),
+            SisNorm::Euclidean,
+        )
+        .unwrap();
+        let cost = cost_euclidean(
+            &params,
+            &EstimateConfig {
+                red_cost_model: ReductionCostModel::Adps16 {
+                    mode: Adps16Mode::Quantum,
+                },
+                lattice_dimension: Some(64),
+                ..EstimateConfig::default()
+            },
+        )
+        .unwrap();
+        let beta = cost.beta.expect("Euclidean estimate has a BKZ block size");
+        assert_eq!(
+            cost.rop,
+            CostValue::finite_log2(adps16_log2_cost(beta, Adps16Mode::Quantum))
+        );
     }
 }

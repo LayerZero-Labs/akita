@@ -109,6 +109,39 @@ AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   --features profile-onehot-fp128 --example profile
 ```
 
+## Response model calibration
+
+Normal profile builds do not scan complete witnesses to measure source and
+response energies. Broad tracing filters such as `trace` do not enable those
+scans.
+
+Enable the extra measurements only when collecting response model data:
+
+```bash
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
+  cargo run --release --no-default-features \
+  --features parallel,profile-onehot-fp128,response-model-diagnostics \
+  --example profile
+```
+
+This feature adds `fold_response_model` events to the trace. It also measures
+the exact energy of recursive source witnesses and response components. These
+operations can scan complete witness buffers, so traces from this mode do not
+measure normal prover performance.
+
+For each successful L2 fold, the report parser joins the measured response
+energy to that run's planned cap and fold level. It rejects missing
+measurements and cap violations. The machine-readable summary retains the
+measured energy, frozen cap, cap utilization, accepted nonce, and attempt
+count. This keeps empirical calibration tied to the exact schedule that
+produced the proof. It replaces detached literal fixtures in planner unit
+tests.
+
+The optional diagnostic events also carry exact incoming source energy and the
+challenge-scaled conditional mean. The standard report does not merge those
+multi-group source samples into the cap table. Analyze them as a separate
+calibration data set when evaluating the three percent source-model envelope.
+
 ## CI benchmark matrix
 
 Workflow: `.github/workflows/profile-bench.yml`.
@@ -181,7 +214,8 @@ labels omit those selected dimensions.
 
 Each measured sample performs these operations:
 
-1. Generate deterministic witnesses and opening points.
+1. Prepare the public statement by generating deterministic witnesses and
+   opening points and computing the expected opening.
 2. Expand and prepare setup.
 3. Commit to the polynomials.
 4. Produce and serialize a complete proof.
@@ -189,6 +223,25 @@ Each measured sample performs these operations:
 6. Build verifier setup once.
 7. Verify the claimed openings with the configured multi-threaded pool.
 8. Verify the same proof and claims again with one thread.
+
+Dense runs expose the first step as `statement_prepare` in runtime logs and
+Perfetto. Its child spans split out evaluation generation and expected-opening
+computation. This is profile-harness work, not a PCS benchmark phase, so the CI
+report deliberately excludes it and begins at setup. The Perfetto root span
+includes statement preparation and both verifier runs, so protocol comparisons
+should use the named phase spans instead of root wall time.
+
+For extension-valued dense points, expected-opening preparation uses the same
+checked split-tensor contraction primitive as the dense backend. It streams the
+base evaluation table through split equality weights instead of allocating a
+full extension-field copy of the table.
+
+Small-field dense commits begin with the Hachi root tensor projection required
+by the extension-to-ring reduction. Perfetto reports it as
+`dense_tensor_root_projection` inside the commit span, including the table
+length, ring dimension, extension degree, and output-ring count. The projection
+maps independent base-coordinate chunks directly into ψ-packed rings; it does
+not materialize an intermediate extension-field table.
 
 Dense profile witnesses use an index-derived SplitMix64 stream. This keeps the
 input deterministic while allowing every evaluation to be generated in
@@ -214,14 +267,15 @@ witness or setup input, relation geometry, and proof components. Multi group
 rows repeat those blocks for each precommitment, final group, and setup offload
 instead of joining unrelated values in one line.
 
-The phase table labels the existing verifier time as multi-threaded and adds a
-separate single-threaded verifier column. Both runs use the same proof, claims,
-and verifier setup. The multi-threaded run comes first so comparisons with
-older merge bases preserve the old measurement order. Profile CI sets both
-configured thread counts to the runner CPU count and rejects a runner with
-fewer than two CPUs. The single-threaded timing always uses one dedicated Rayon
-worker. Every profile Rayon pool uses a 64 MiB worker stack. Without the
-`parallel` feature, both verifier labels measure the same sequential execution.
+The phase table begins at PCS setup and excludes statement preparation. It
+labels the existing verifier time as multi-threaded and adds a separate
+single-threaded verifier column. Both runs use the same proof, claims, and
+verifier setup. The multi-threaded run comes first so comparisons with older
+merge bases preserve the old measurement order. Profile CI sets both configured
+thread counts to the runner CPU count and rejects a runner with fewer than two
+CPUs. The single-threaded timing always uses one dedicated Rayon worker. Every
+profile Rayon pool uses a 64 MiB worker stack. Without the `parallel` feature,
+both verifier labels measure the same sequential execution.
 
 Pull request runs compare the head with its merge base. The two binaries run
 interleaved on the same runner. User-facing report text must say merge base, not

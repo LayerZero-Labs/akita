@@ -336,11 +336,11 @@ mod tests {
     }
 
     #[test]
-    fn complete_batch_publishes_family_registry_and_wiring_together() {
+    fn complete_batch_publishes_every_output_together() {
         let dir = test_dir("success");
         fs::create_dir_all(&dir).expect("create test directory");
         let family = dir.join("family.rs");
-        let registry = dir.join("family_precommitted.rs");
+        let registry = dir.join("family_multi_chunk.rs");
         let wiring = dir.join("mod.rs");
         for path in [&family, &registry, &wiring] {
             fs::write(path, "pub const OLD: usize = 1;\n").expect("write old fixture");

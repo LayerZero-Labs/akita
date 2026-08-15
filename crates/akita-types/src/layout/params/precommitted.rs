@@ -42,8 +42,6 @@ pub struct PrecommittedGroupAdmissionPolicy {
     pub sis_table_digest: SisTableDigest,
     /// Modulus family required for both frozen matrices.
     pub sis_modulus_profile: SisModulusProfileId,
-    /// Subfield norm factor used in the A-role bound.
-    pub ring_subfield_norm_bound: u32,
 }
 
 impl PartialEq for PrecommittedLevelParams {
@@ -126,10 +124,15 @@ impl PrecommittedLevelParams {
             log_basis_open,
             &fold_challenge_config,
             num_digits_fold,
-            policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".into()))?;
-        if required_a_bound > layout.inner_commit_matrix.coeff_linf_bound() {
+        let declared_a_bound = layout
+            .inner_commit_matrix
+            .coeff_linf_bound()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".into())
+            })?;
+        if required_a_bound > declared_a_bound {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A bound does not cover the certified opening basis".into(),
             ));
@@ -213,16 +216,16 @@ impl PrecommittedLevelParams {
                     .to_string(),
             ));
         }
-        let outer_projection_ratio = inner_ring_dimension / outer_ring_dimension;
-        let expected_b_width = self
-            .layout
-            .inner_commit_matrix
-            .output_rank()
-            .checked_mul(self.layout.num_digits_outer)
-            .and_then(|width| width.checked_mul(self.layout.num_live_blocks))
-            .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
-            .and_then(|width| width.checked_mul(outer_projection_ratio))
-            .ok_or_else(|| AkitaError::InvalidSetup("precommitted B width overflow".to_string()))?;
+        let expected_b_width = crate::CommitmentSliceGeometry::try_new(
+            self.layout.outer_slice_count,
+            self.layout.num_live_blocks,
+            self.layout.group.num_polynomials(),
+            self.layout.inner_commit_matrix.output_rank(),
+            self.layout.num_digits_outer,
+            inner_ring_dimension,
+            outer_ring_dimension,
+        )?
+        .physical_input_width();
         if self.layout.inner_commit_matrix.input_width() != expected_a_width
             || self.layout.outer_commit_matrix.input_width() != expected_b_width
         {
@@ -291,6 +294,11 @@ pub trait LevelParamsLike {
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
     fn b_rows_len(&self) -> usize;
+    fn outer_slice_count(&self) -> crate::CommitmentSliceCount;
+    fn logical_b_rows_len(&self) -> Result<usize, AkitaError> {
+        self.outer_slice_count()
+            .logical_output_rows(self.b_rows_len())
+    }
     fn b_col_len(&self) -> usize;
     fn num_live_ring_elements_per_claim(&self) -> usize;
     fn num_positions_per_block(&self) -> usize;
@@ -322,6 +330,10 @@ impl LevelParamsLike for CommittedGroupParams {
 
     fn b_rows_len(&self) -> usize {
         self.outer_commit_matrix.output_rank()
+    }
+
+    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
+        self.outer_slice_count
     }
 
     fn b_col_len(&self) -> usize {
@@ -396,6 +408,10 @@ impl LevelParamsLike for PrecommittedLevelParams {
 
     fn b_rows_len(&self) -> usize {
         self.layout.outer_commit_matrix.output_rank()
+    }
+
+    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
+        self.layout.outer_slice_count
     }
 
     fn b_col_len(&self) -> usize {

@@ -10,6 +10,7 @@ pub struct CompressionChainPlan {
     field_bits: usize,
     field_bytes: usize,
     source_coefficients: usize,
+    source_bytes: usize,
     maps: [CompressionMapPlan; COMPRESSION_MAP_COUNT],
 }
 
@@ -74,6 +75,7 @@ impl CompressionChainPlan {
             field_bits,
             field_bytes,
             source_coefficients,
+            source_bytes,
             maps,
         })
     }
@@ -185,6 +187,12 @@ impl CompressionChainPlan {
     #[must_use]
     pub fn source_coefficients(&self) -> usize {
         self.source_coefficients
+    }
+
+    /// Canonical byte length of the complete source image.
+    #[must_use]
+    pub fn source_bytes(&self) -> usize {
+        self.source_bytes
     }
 
     /// Ordered checked map plans.

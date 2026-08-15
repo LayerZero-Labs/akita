@@ -17,8 +17,9 @@
 
 pub use akita_schedules::{
     ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId,
-    SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
+    SelectiveL2ResponseModelId, SisModulusProfileId, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod emit;
@@ -26,19 +27,20 @@ pub mod emit;
 pub mod generated_families;
 mod planner;
 mod policy;
+mod response_model;
 pub mod schedule_params;
 
 pub use akita_schedules::{
     catalog_entries_sorted_for_lookup, estimate_proof_bytes, expected_catalog_identity,
-    identity_digest, key_digest, policy_digest, resolve_group_batch_schedule, resolve_schedule,
-    ring_challenge_config_digest, runtime_schedule_key_cmp, schedule_from_entry,
-    validate_catalog_identity, validate_generated_schedule_entry,
-    validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
+    identity_digest, key_digest, policy_digest, ring_challenge_config_digest,
+    runtime_schedule_key_cmp, schedule_from_entry, validate_catalog_identity,
+    validate_generated_schedule_entry, validate_generated_schedule_table,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
-pub use emit::{publish_generated_outputs, render_generated_outputs, EmitSpec, GeneratedOutput};
+pub use emit::{
+    publish_generated_outputs, render_generated_outputs, render_generated_outputs_with_validation,
+    EmitSpec, GeneratedOutput,
+};
 pub use planner::find_schedule;
 pub use policy::InnerBasisSource;
-pub use schedule_params::{
-    plan_standalone_precommit, suffix_opening_layout, StandalonePrecommitCandidate,
-    StandalonePrecommitPlan,
-};
+pub use schedule_params::suffix_opening_layout;
