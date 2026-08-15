@@ -153,7 +153,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
     let openings = [opening];
-    let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+    let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
         final_group: *commitments[0].profile(),
         precommitteds: Vec::new(),
     })
@@ -260,7 +260,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
     nv: usize,
 ) {
-    let layout = Cfg::select_schedule_for_opening(
+    let layout = Cfg::resolve_catalog_row_for_opening(
         &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )
     .expect("benchmark layout")
@@ -337,7 +337,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     let poly_refs: [&OneHotPoly<F>; 1] = [&onehot_poly];
     let commitments = [commitment];
     let openings = [opening];
-    let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+    let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
         final_group: *commitments[0].profile(),
         precommitteds: Vec::new(),
     })

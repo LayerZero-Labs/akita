@@ -50,6 +50,43 @@ fn euclidean_width_goldens_match_current_l2_table_replay() {
     }
 }
 
+#[test]
+fn euclidean_width_goldens_match_checked_in_l2_table() {
+    use akita_types::sis::{
+        min_secure_l2_rank, sis_l2_table_key_for_collision_sq, SisL2TableDigest,
+        SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY,
+    };
+
+    for row in parse_rows() {
+        let profile = match row.family {
+            AkitaModulusProfileId::Q32Offset99 => SisModulusProfileId::Q32Offset99,
+            AkitaModulusProfileId::Q64Offset59 => SisModulusProfileId::Q64Offset59,
+            AkitaModulusProfileId::Q128OffsetA7F7 => SisModulusProfileId::Q128OffsetA7F7,
+        };
+        let key = sis_l2_table_key_for_collision_sq(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            profile,
+            row.d,
+            row.collision_l2_sq,
+        )
+        .unwrap_or_else(|| panic!("missing checked-in L2 table key for {row:?}"));
+        let secure_rank = min_secure_l2_rank(key, row.max_width)
+            .unwrap_or_else(|| panic!("golden width is unsupported for {row:?}"));
+        assert!(
+            secure_rank <= row.rank as usize,
+            "golden width exceeds the checked-in rank boundary for {row:?}"
+        );
+        if row.max_width < row.search_cap {
+            let next_rank = min_secure_l2_rank(key, row.max_width + 1);
+            assert!(
+                next_rank.is_none_or(|rank| rank > row.rank as usize),
+                "checked-in rank boundary exceeds the independent golden for {row:?}"
+            );
+        }
+    }
+}
+
 fn parse_rows() -> Vec<GoldenRow> {
     let mut lines = GOLDEN_CSV.lines();
     let header = lines.next().unwrap();

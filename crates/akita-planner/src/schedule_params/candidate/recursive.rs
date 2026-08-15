@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Clone, Copy)]
 struct RecursiveCandidateContext<'a> {
     policy: &'a PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
@@ -10,12 +11,19 @@ struct RecursiveCandidateContext<'a> {
     log_basis_inner: u32,
     log_basis_open: u32,
     fold_level: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 }
 
-#[derive(Clone, Copy)]
-struct RecursiveSplitChoice {
-    block_index_bits: usize,
-    outer_slice_count: akita_types::CommitmentSliceCount,
+#[derive(Clone)]
+struct RecursiveCandidateCore {
+    num_ring_elems: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+    num_digits_inner: usize,
+    num_digits_open: usize,
+    num_digits_fold: usize,
+    inner_commit_matrix: InnerCommitMatrixParams,
+    open_commit_matrix: OpenCommitMatrixParams,
 }
 
 impl RecursiveCandidateContext<'_> {
@@ -23,12 +31,11 @@ impl RecursiveCandidateContext<'_> {
     /// and split. Setup certification uses the maximum current length in each
     /// `ceil(log2(ring_elems))` bucket, which dominates every shorter member
     /// for the same split.
-    fn base_candidate(
+    fn candidate_core(
         &self,
-        choice: RecursiveSplitChoice,
-    ) -> Result<Option<CommittedGroupParams>, AkitaError> {
+        block_index_bits: usize,
+    ) -> Result<Option<RecursiveCandidateCore>, AkitaError> {
         let policy = self.policy;
-        let payload_mode = self.payload_mode;
         let ring_challenge_cfg = self.ring_challenge_cfg;
         let dimensions = self.dimensions;
         let search = self.search;
@@ -36,11 +43,8 @@ impl RecursiveCandidateContext<'_> {
         let log_basis_inner = self.log_basis_inner;
         let log_basis_open = self.log_basis_open;
         let fold_level = self.fold_level;
-        let block_index_bits = choice.block_index_bits;
-        let outer_slice_count = choice.outer_slice_count;
         let num_ring_elems = search.num_ring_elems;
         let reduced_vars = search.reduced_vars;
-        let current_witness_len = search.current_witness_len;
         if reduced_vars <= 2
             || reduced_vars >= 53
             || block_index_bits == 0
@@ -48,7 +52,7 @@ impl RecursiveCandidateContext<'_> {
         {
             return Ok(None);
         }
-        let num_chunks = crate::policy::chunks_at_level(policy, fold_level);
+        let num_chunks = policy.chunks_at_level(fold_level);
         let num_positions_per_block = 1usize
             .checked_shl((reduced_vars - block_index_bits) as u32)
             .ok_or_else(|| {
@@ -66,47 +70,42 @@ impl RecursiveCandidateContext<'_> {
             return Ok(None);
         };
         let d_a = dimensions.d_a();
-        let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+        let fold_policy = BalancedSignedDigitFoldPolicy::universal(
             policy.decomposition.field_bits(),
             FoldWitnessNorms::bounded(log_basis_inner, d_a),
         );
-        let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-            policy,
-            fold_policy: &fold_policy,
-            ring_challenge_cfg,
-            dimensions,
-            payload_mode,
-            num_claims: 1,
-            num_live_blocks,
-            num_chunks,
-            outer_slice_count,
-            witness_norms: FoldWitnessNorms::bounded(log_basis_inner, d_a),
-            log_basis_open,
-            width_s,
-            num_digits_outer: delta_open,
-        })?
+        let num_fold_coeffs = width_s
+            .checked_mul(d_a)
+            .and_then(|count| count.checked_mul(num_chunks))
+            .ok_or_else(|| AkitaError::InvalidSetup("fold response width overflow".into()))?;
+        let modeled_linf_cap = self.source_moment.and_then(|moment| {
+            moment.response_linf_cap(
+                ring_challenge_cfg.challenge_l2_sq_max(),
+                num_live_blocks,
+                num_chunks,
+                num_fold_coeffs,
+                d_a,
+            )
+        });
+        let Some(inner_candidate) =
+            derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
+                policy,
+                fold_policy: &fold_policy,
+                ring_challenge_cfg,
+                dimensions,
+                num_claims: 1,
+                num_live_ring_elements_per_claim: num_ring_elems,
+                num_live_blocks,
+                num_positions_per_block,
+                num_chunks,
+                witness_norms: FoldWitnessNorms::bounded(log_basis_inner, d_a),
+                log_basis_open,
+                width_s,
+                modeled_linf_cap,
+            })?
         else {
             return Ok(None);
         };
-        let num_digits_fold = ab_candidate.num_digits_fold;
-        let inner_commit_matrix = ab_candidate.inner_commit_matrix;
-        let outer_commit_matrix = ab_candidate.outer_commit_matrix;
-        let physical_witness_len = akita_schedules::planner_support::grouped_segment_rings(
-            1,
-            num_live_blocks,
-            num_chunks,
-            num_positions_per_block,
-            inner_commit_matrix.output_rank(),
-            delta_commit,
-            delta_open,
-            delta_open,
-            num_digits_fold,
-        )?
-        .checked_mul(d_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness body overflow".into()))?;
-        if physical_witness_len >= current_witness_len {
-            return Ok(None);
-        }
         let Some(native_width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1) else {
             return Ok(None);
         };
@@ -125,28 +124,85 @@ impl RecursiveCandidateContext<'_> {
         else {
             return Ok(None);
         };
-        let params = CommittedGroupParams {
-            payload_mode,
-            log_basis_inner,
-            log_basis_outer: log_basis_open,
-            log_basis_open,
-            inner_commit_matrix,
-            outer_commit_matrix,
-            open_commit_matrix,
-            num_live_ring_elements_per_claim: num_ring_elems,
+        Ok(Some(RecursiveCandidateCore {
+            num_ring_elems,
             num_positions_per_block,
             num_live_blocks,
-            outer_slice_count,
-            fold_challenge_config: *ring_challenge_cfg,
             num_digits_inner: delta_commit,
-            num_digits_outer: delta_open,
             num_digits_open: delta_open,
-            num_digits_fold,
-            witness_chunk: crate::policy::witness_chunk_at_level(policy, fold_level),
-            precommitted_groups: Vec::new(),
-            setup_prefix: None,
-        };
-        Ok(Some(params))
+            num_digits_fold: inner_candidate.num_digits_fold,
+            inner_commit_matrix: inner_candidate.inner_commit_matrix,
+            open_commit_matrix,
+        }))
+    }
+
+    fn candidates_from_core(
+        &self,
+        core: &RecursiveCandidateCore,
+    ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
+        let d_a = self.dimensions.d_a();
+        let physical_witness_len = akita_schedules::planner_support::grouped_segment_rings(
+            1,
+            core.num_live_blocks,
+            self.search.num_chunks,
+            core.num_positions_per_block,
+            core.inner_commit_matrix.output_rank(),
+            core.num_digits_inner,
+            core.num_digits_open,
+            core.num_digits_open,
+            core.num_digits_fold,
+        )?
+        .checked_mul(d_a)
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive witness body overflow".into()))?;
+        if physical_witness_len >= self.search.current_witness_len {
+            return Ok(Vec::new());
+        }
+        let mut candidates = Vec::new();
+        for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+            if outer_slice_count
+                .validate_for_commitment(self.fold_level, self.payload_mode, core.num_live_blocks)
+                .is_err()
+            {
+                continue;
+            }
+            let Some(outer_commit_matrix) =
+                derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
+                    policy: self.policy,
+                    dimensions: self.dimensions,
+                    payload_mode: self.payload_mode,
+                    num_claims: 1,
+                    num_live_blocks: core.num_live_blocks,
+                    outer_slice_count,
+                    log_basis_open: self.log_basis_open,
+                    num_digits_outer: core.num_digits_open,
+                    inner_output_rank: core.inner_commit_matrix.output_rank(),
+                })?
+            else {
+                continue;
+            };
+            candidates.push(CommittedGroupParams {
+                payload_mode: self.payload_mode,
+                log_basis_inner: self.log_basis_inner,
+                log_basis_outer: self.log_basis_open,
+                log_basis_open: self.log_basis_open,
+                inner_commit_matrix: core.inner_commit_matrix,
+                outer_commit_matrix,
+                open_commit_matrix: core.open_commit_matrix,
+                num_live_ring_elements_per_claim: core.num_ring_elems,
+                num_positions_per_block: core.num_positions_per_block,
+                num_live_blocks: core.num_live_blocks,
+                outer_slice_count,
+                fold_challenge_config: *self.ring_challenge_cfg,
+                num_digits_inner: core.num_digits_inner,
+                num_digits_outer: core.num_digits_open,
+                num_digits_open: core.num_digits_open,
+                num_digits_fold: core.num_digits_fold,
+                witness_chunk: crate::policy::witness_chunk_at_level(self.policy, self.fold_level),
+                precommitted_groups: Vec::new(),
+                setup_prefix: None,
+            });
+        }
+        Ok(candidates)
     }
 }
 
@@ -307,7 +363,7 @@ fn prepare_recursive_level_search(
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
 ) -> Result<Option<RecursiveLevelSearch>, AkitaError> {
-    let num_chunks = crate::policy::chunks_at_level(policy, fold_level);
+    let num_chunks = policy.chunks_at_level(fold_level);
     dimensions.validate_role_projection()?;
     let d_a = dimensions.d_a();
     if current_witness_len == 0 {
@@ -464,34 +520,17 @@ impl RecursiveCandidateContext<'_> {
             ) {
                 continue;
             }
-            let num_positions_per_block = 1usize
-                .checked_shl((search.reduced_vars - r) as u32)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("recursive position count overflow".into())
-                })?;
-            let num_live_blocks = search.num_ring_elems.div_ceil(num_positions_per_block);
+            let Some(core) = self.candidate_core(r)? else {
+                continue;
+            };
+            let base_slice_candidates = self.candidates_from_core(&core)?;
             for setup_prefix in &search.setup_prefixes {
                 let mut slice_candidates = Vec::new();
-                for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
-                    if outer_slice_count
-                        .validate_for_commitment(
-                            self.fold_level,
-                            self.payload_mode,
-                            num_live_blocks,
-                        )
-                        .is_err()
-                    {
-                        continue;
-                    }
-                    let Some(base_candidate) = self.base_candidate(RecursiveSplitChoice {
-                        block_index_bits: r,
-                        outer_slice_count,
-                    })?
-                    else {
-                        continue;
-                    };
-                    let candidate_params =
-                        attach_recursive_setup_prefix(setup_prefix.as_ref(), base_candidate)?;
+                for base_candidate in &base_slice_candidates {
+                    let candidate_params = attach_recursive_setup_prefix(
+                        setup_prefix.as_ref(),
+                        base_candidate.clone(),
+                    )?;
                     if !candidate_params.compression_sources_supported()? {
                         continue;
                     }
@@ -515,8 +554,214 @@ impl RecursiveCandidateContext<'_> {
     }
 }
 
+fn best_linf_candidate(
+    context: &RecursiveCandidateContext<'_>,
+) -> Result<Option<(usize, CommittedGroupParams, usize)>, AkitaError> {
+    // Larger `r` wins exact score ties inside the policy-selected domain.
+    let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
+    let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
+    context.walk_splits(
+        |_, bounds| {
+            best_score
+                .get()
+                .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
+        },
+        |score, r, candidate_params, next_witness_len| {
+            if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
+                recursive_candidate_order_key(score, r)
+                    < recursive_candidate_order_key(*best_score, *best_r)
+            }) {
+                best_score.set(Some(score));
+                best = Some((score, r, candidate_params, next_witness_len));
+            }
+        },
+    )?;
+
+    Ok(best.and_then(|(_, r, params, next)| {
+        (next < context.search.current_witness_len).then_some((r, params, next))
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_selective_l2_candidates(
+    candidates: &mut Vec<(CommittedGroupParams, usize)>,
+    best_modeled: Option<&(usize, CommittedGroupParams, usize)>,
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    dimensions: CommitmentRingDims,
+    search: &RecursiveLevelSearch,
+    source: crate::InnerBasisSource,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    fold_level: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
+) -> Result<(), AkitaError> {
+    if !policy.selective_l2_response_model_enabled() {
+        return Ok(());
+    }
+    let (Some((block_index_bits, _, _)), Some(source_moment)) = (best_modeled, source_moment)
+    else {
+        return Ok(());
+    };
+    let Some(l2_challenge) = akita_challenges::selective_l2_challenge_config(dimensions.d_a())
+    else {
+        return Ok(());
+    };
+    let fold_basis = 1usize
+        .checked_shl(log_basis_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("L2 fold basis overflow".into()))?;
+    let response_l2_sq_cap = source_moment.response_l2_sq_cap(l2_challenge.challenge_l2_sq_max());
+    let l2_context = RecursiveCandidateContext {
+        policy,
+        payload_mode,
+        ring_challenge_cfg: &l2_challenge,
+        dimensions,
+        search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        source_moment: Some(source_moment),
+    };
+    let Some(mut l2_core) = l2_context.candidate_core(*block_index_bits)? else {
+        return Ok(());
+    };
+    let linf_slices = l2_context.candidates_from_core(&l2_core)?;
+    if linf_slices.is_empty() {
+        return Ok(());
+    }
+    let linf_rank = l2_core.inner_commit_matrix.output_rank();
+    let Some(inner_commit_matrix) = selective_l2_inner_matrix(
+        policy,
+        SelectiveL2CandidateGeometry {
+            fold_level,
+            num_claims: 1,
+            num_chunks: search.num_chunks,
+            inner_width: l2_core.inner_commit_matrix.input_width(),
+            ring_dimension: dimensions.d_a(),
+            fold_basis,
+            fold_digit_count: l2_core.num_digits_fold,
+            fold_challenge_config: &l2_challenge,
+            response_l2_sq_cap,
+            norm_proof_shape: None,
+        },
+    )?
+    else {
+        return Ok(());
+    };
+    if inner_commit_matrix.output_rank() >= linf_rank {
+        return Ok(());
+    }
+    l2_core.inner_commit_matrix = inner_commit_matrix;
+    let mut base_slices = l2_context.candidates_from_core(&l2_core)?;
+    base_slices.retain(|candidate| {
+        linf_slices
+            .iter()
+            .any(|linf| linf.outer_slice_count == candidate.outer_slice_count)
+    });
+    for setup_prefix in &search.setup_prefixes {
+        let mut sliced = Vec::new();
+        for base_params in &base_slices {
+            let params = attach_recursive_setup_prefix(setup_prefix.as_ref(), base_params.clone())?;
+            if params.compression_sources_supported()? {
+                sliced.push(params);
+            }
+        }
+        for params in crate::schedule_params::prune_locally_unprofitable_slices(
+            policy,
+            &search.opening_layout,
+            sliced,
+        )? {
+            let Some((_, params, next_witness_len)) =
+                finalize_recursive_level_candidate(policy, search, params)?
+            else {
+                continue;
+            };
+            if next_witness_len < search.current_witness_len {
+                candidates.push((params, next_witness_len));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params(
+    setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
+    current_witness_len: usize,
+    source: crate::InnerBasisSource,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    fold_level: usize,
+    incoming_setup_prefix: Option<usize>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    let Some(search) = prepare_recursive_level_search(
+        setup_prefix_cache,
+        policy,
+        ring_challenge_cfg,
+        dimensions,
+        current_witness_len,
+        log_basis_open,
+        fold_level,
+        incoming_setup_prefix,
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    let modeled_context = RecursiveCandidateContext {
+        policy,
+        payload_mode,
+        ring_challenge_cfg,
+        dimensions,
+        search: &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        source_moment,
+    };
+    let best_modeled = best_linf_candidate(&modeled_context)?;
+    let mut candidates: Vec<_> = best_modeled
+        .as_ref()
+        .map(|(_, params, next)| (params.clone(), *next))
+        .into_iter()
+        .collect();
+    if source_moment.is_some() {
+        let universal_context = RecursiveCandidateContext {
+            source_moment: None,
+            ..modeled_context
+        };
+        if let Some((_, params, next)) = best_linf_candidate(&universal_context)? {
+            let universal = (params, next);
+            if !candidates.contains(&universal) {
+                candidates.push(universal);
+            }
+        }
+    }
+    append_selective_l2_candidates(
+        &mut candidates,
+        best_modeled.as_ref(),
+        policy,
+        payload_mode,
+        dimensions,
+        &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        source_moment,
+    )?;
+    Ok(candidates)
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_linf_candidate_level_params(
     setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
     policy: &PlannerPolicy,
     payload_mode: akita_types::CommitmentPayloadMode,
@@ -542,10 +787,6 @@ pub(crate) fn derive_candidate_level_params(
     else {
         return Ok(None);
     };
-
-    // Larger `r` wins exact score ties inside the policy-selected domain.
-    let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
-    let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
     let context = RecursiveCandidateContext {
         policy,
         payload_mode,
@@ -556,41 +797,12 @@ pub(crate) fn derive_candidate_level_params(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        source_moment: None,
     };
-    context.walk_splits(
-        |_, bounds| {
-            best_score
-                .get()
-                .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0))
-        },
-        |score, r, candidate_params, next_witness_len| {
-            if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
-                recursive_candidate_order_key(score, r)
-                    < recursive_candidate_order_key(*best_score, *best_r)
-            }) {
-                best_score.set(Some(score));
-                best = Some((score, r, candidate_params, next_witness_len));
-            }
-        },
-    )?;
-
-    let Some((_, _, candidate_params, next_witness_len)) = best else {
-        return Ok(None);
-    };
-
-    if next_witness_len >= current_witness_len {
-        return Ok(None);
-    }
-
-    Ok(Some((candidate_params, next_witness_len)))
+    Ok(best_linf_candidate(&context)?.map(|(_, params, next)| (params, next)))
 }
 
 /// Derive the candidate frontier over recursive splits.
-///
-/// This is exhaustive through [`EXHAUSTIVE_SPLIT_VARIABLE_LIMIT`] reduced
-/// variables and intentionally bounded above that threshold. Large states use
-/// [`recursive_split_search_domain`] to keep catalog generation
-/// tractable.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params_split_frontier(
     setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
@@ -604,6 +816,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     log_basis_open: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(
         setup_prefix_cache,
@@ -618,8 +831,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     else {
         return Ok(Vec::new());
     };
-    let mut candidates = Vec::new();
-    let context = RecursiveCandidateContext {
+    let modeled_context = RecursiveCandidateContext {
         policy,
         payload_mode,
         ring_challenge_cfg,
@@ -629,18 +841,74 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
         log_basis_inner,
         log_basis_open,
         fold_level,
+        source_moment,
     };
-    context.walk_splits(
-        |_, bounds| {
-            bounds
-                .witness_body
-                .is_none_or(|bound| bound < current_witness_len)
-        },
-        |_, _, params, next_witness_len| {
-            if next_witness_len < current_witness_len {
-                candidates.push((params, next_witness_len));
-            }
-        },
+    let mut candidates = Vec::new();
+    let mut best_modeled_with_score: Option<(
+        LayoutCandidateScore,
+        usize,
+        CommittedGroupParams,
+        usize,
+    )> = None;
+    let best_modeled_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
+    for (source_index, candidate_source_moment) in [source_moment, None].into_iter().enumerate() {
+        if candidate_source_moment.is_none() && source_moment.is_none() && !candidates.is_empty() {
+            break;
+        }
+        let context = RecursiveCandidateContext {
+            source_moment: candidate_source_moment,
+            ..modeled_context
+        };
+        context.walk_splits(
+            |_, bounds| {
+                let frontier_admits = bounds
+                    .witness_body
+                    .is_none_or(|bound| bound < current_witness_len);
+                if source_index != 0 {
+                    return frontier_admits;
+                }
+                let best_search_admits = best_modeled_score
+                    .get()
+                    .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0));
+                frontier_admits || best_search_admits
+            },
+            |score, r, params, next_witness_len| {
+                if source_index == 0
+                    && best_modeled_with_score
+                        .as_ref()
+                        .is_none_or(|(best_score, best_r, _, _)| {
+                            recursive_candidate_order_key(score, r)
+                                < recursive_candidate_order_key(*best_score, *best_r)
+                        })
+                {
+                    best_modeled_score.set(Some(score));
+                    best_modeled_with_score = Some((score, r, params.clone(), next_witness_len));
+                }
+                if next_witness_len < current_witness_len
+                    && !candidates.contains(&(params.clone(), next_witness_len))
+                {
+                    candidates.push((params, next_witness_len));
+                }
+            },
+        )?;
+        if source_moment.is_none() {
+            break;
+        }
+    }
+    let best_modeled = best_modeled_with_score
+        .and_then(|(_, r, params, next)| (next < current_witness_len).then_some((r, params, next)));
+    append_selective_l2_candidates(
+        &mut candidates,
+        best_modeled.as_ref(),
+        policy,
+        payload_mode,
+        dimensions,
+        &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        source_moment,
     )?;
     Ok(candidates)
 }

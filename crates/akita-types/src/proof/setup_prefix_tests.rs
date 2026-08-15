@@ -163,11 +163,17 @@ fn active_setup_field_len_includes_mixed_role_subcolumns() {
     let inner = &lp.inner_commit_matrix;
     lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound().max(1),
+        inner
+            .coeff_linf_bound()
+            .expect("L infinity test matrix")
+            .max(1),
         128,
     );
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
@@ -199,7 +205,10 @@ fn retarget_group_role_dims(
     params.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
             policy: inner.security_policy(),
-            table_digest: inner.sis_table_key().table_digest,
+            table_digest: inner
+                .sis_table_key()
+                .expect("L infinity test matrix")
+                .table_digest,
             modulus_profile: inner.sis_modulus_profile(),
             role: crate::sis::SisMatrixRole::Inner,
             ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
@@ -234,7 +243,10 @@ fn retarget_group_role_dims_wide(
     params.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
             policy: inner.security_policy(),
-            table_digest: inner.sis_table_key().table_digest,
+            table_digest: inner
+                .sis_table_key()
+                .expect("L infinity test matrix")
+                .table_digest,
             modulus_profile: inner.sis_modulus_profile(),
             role: crate::sis::SisMatrixRole::Inner,
             ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
@@ -263,7 +275,7 @@ fn precommitted_group(
     group: PolynomialGroupLayout,
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params(group, params),
+        layout: CommittedGroupProfile::from_params_unchecked_for_test(group, params),
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,

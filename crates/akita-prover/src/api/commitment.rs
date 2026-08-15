@@ -298,8 +298,8 @@ where
             num_vars, setup.seed.max_num_vars
         )));
     }
-
-    OpeningClaimsLayout::new(num_vars, polys.len())
+    let group = akita_types::PolynomialGroupLayout::new(num_vars, polys.len());
+    OpeningClaimsLayout::from_groups(vec![group])
 }
 
 #[cfg(test)]
@@ -457,14 +457,11 @@ where
     Ok((commitment, hint))
 }
 
-fn validate_explicit_context<F>(
+fn validate_explicit_context(
     group_layout: akita_types::PolynomialGroupLayout,
     precommitted_groups: PrecommittedGroupContext<'_>,
     params: &CommittedGroupParams,
-) -> Result<CommittedGroupProfile, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
+) -> Result<CommittedGroupProfile, AkitaError> {
     match precommitted_groups {
         PrecommittedGroupContext::NoPrecommittedGroups => {
             params.require_scalar_level("explicit commitment")?;
@@ -503,10 +500,7 @@ where
         }
     }
 
-    let profile = CommittedGroupProfile::from_params(group_layout, params);
-    profile.validate(F::modulus_bits())?;
-    profile.validate_root_geometry()?;
-    Ok(profile)
+    CommittedGroupProfile::try_from_params(group_layout, params)
 }
 
 /// Commit one homogeneous polynomial group in its complete parameter context.
@@ -547,18 +541,15 @@ where
     let scheduled_row;
     let (params, profile): (&CommittedGroupParams, CommittedGroupProfile) =
         if let GroupParameterSource::Explicit(params) = context.parameter_source {
-            let profile = validate_explicit_context::<Cfg::Field>(
-                group_layout,
-                context.precommitted_groups,
-                params,
-            )?;
+            let profile =
+                validate_explicit_context(group_layout, context.precommitted_groups, params)?;
             (params, profile)
         } else {
             let key = AkitaScheduleLookupKey {
                 final_group: group_layout,
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };
-            scheduled_row = Cfg::select_schedule_for_key(&key)?;
+            scheduled_row = Cfg::resolve_catalog_row_for_key(&key)?;
 
             // A group with precommitted groups is the final group of the batch this
             // row opens, so the setup must carry the row's whole schedule. A

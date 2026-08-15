@@ -57,31 +57,70 @@ struct SetupPrefixCandidateContext<'a> {
 }
 
 impl SetupPrefixCandidateContext<'_> {
-    fn derive(
+    fn derive_inner(
         &self,
         split: SetupPrefixSplit,
-        outer_slice_count: akita_types::CommitmentSliceCount,
-    ) -> Result<Option<SetupPrefixFrontierEntry>, AkitaError> {
+    ) -> Result<Option<InnerCommitmentCandidate>, AkitaError> {
         let d_a = self.dimensions.d_a();
-        let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+        let fold_policy = BalancedSignedDigitFoldPolicy::universal(
             self.policy.decomposition.field_bits(),
             FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
         );
-        let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+        let Some(num_fold_coeffs) = split
+            .width_s
+            .checked_mul(d_a)
+            .and_then(|count| count.checked_mul(self.num_chunks))
+        else {
+            return Ok(None);
+        };
+        let prefix_moment = crate::response_model::uniform_field_source_moment(
+            self.n_prefix,
+            self.policy.decomposition.field_bits(),
+            split.log_basis_inner,
+            split.num_digits_inner,
+        )?;
+        let modeled_linf_cap = prefix_moment.response_linf_cap(
+            self.ring_challenge_cfg.challenge_l2_sq_max(),
+            split.num_live_blocks,
+            self.num_chunks,
+            num_fold_coeffs,
+            d_a,
+        );
+        derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
             policy: self.policy,
             fold_policy: &fold_policy,
             ring_challenge_cfg: self.ring_challenge_cfg,
             dimensions: self.dimensions,
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+            num_live_ring_elements_per_claim: self.ring_slots,
             num_live_blocks: split.num_live_blocks,
+            num_positions_per_block: split.num_positions_per_block,
             num_chunks: self.num_chunks,
-            outer_slice_count,
             witness_norms: FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
             log_basis_open: self.log_basis_open,
             width_s: split.width_s,
-            num_digits_outer: self.num_digits_outer,
-        })?
+            modeled_linf_cap,
+        })
+    }
+
+    fn derive_for_slice(
+        &self,
+        split: SetupPrefixSplit,
+        inner_candidate: &InnerCommitmentCandidate,
+        outer_slice_count: akita_types::CommitmentSliceCount,
+    ) -> Result<Option<SetupPrefixFrontierEntry>, AkitaError> {
+        let Some(outer_commit_matrix) =
+            derive_outer_commitment_candidate(OuterCommitmentCandidateRequest {
+                policy: self.policy,
+                dimensions: self.dimensions,
+                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                num_claims: 1,
+                num_live_blocks: split.num_live_blocks,
+                outer_slice_count,
+                log_basis_open: self.log_basis_open,
+                num_digits_outer: self.num_digits_outer,
+                inner_output_rank: inner_candidate.inner_commit_matrix.output_rank(),
+            })?
         else {
             return Ok(None);
         };
@@ -94,17 +133,17 @@ impl SetupPrefixCandidateContext<'_> {
             outer_slice_count,
             log_basis_inner: split.log_basis_inner,
             num_digits_inner: split.num_digits_inner,
-            inner_commit_matrix: ab_candidate.inner_commit_matrix,
+            inner_commit_matrix: inner_candidate.inner_commit_matrix,
             log_basis_outer: self.log_basis_open,
             num_digits_outer: self.num_digits_outer,
-            outer_commit_matrix: ab_candidate.outer_commit_matrix,
+            outer_commit_matrix,
         };
         let params = PrecommittedLevelParams {
             layout,
             log_basis_open: self.log_basis_open,
             fold_challenge_config: *self.ring_challenge_cfg,
             num_digits_open: self.num_digits_open,
-            num_digits_fold: ab_candidate.num_digits_fold,
+            num_digits_fold: inner_candidate.num_digits_fold,
         };
         let physical_width = akita_schedules::planner_support::grouped_segment_rings(
             1,
@@ -260,8 +299,16 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 num_positions_per_block,
                 width_s,
             };
+            let Some(inner_candidate) = candidate_context.derive_inner(split)? else {
+                continue;
+            };
             for outer_slice_count in setup_prefix_slice_counts(num_live_blocks) {
-                let Some(entry) = candidate_context.derive(split, outer_slice_count)? else {
+                let Some(entry) = candidate_context.derive_for_slice(
+                    split,
+                    &inner_candidate,
+                    outer_slice_count,
+                )?
+                else {
                     continue;
                 };
                 crate::schedule_params::pareto::insert(

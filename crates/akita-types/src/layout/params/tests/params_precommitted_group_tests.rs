@@ -136,7 +136,6 @@ fn precommit_admission_fixture() -> (
         sis_security_policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: crate::SisTableDigest::CURRENT,
         sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-        ring_subfield_norm_bound: 1,
     };
     let num_digits_fold = 2;
     let a_bound = crate::sis::rounded_up_role_a_inf_norm(
@@ -147,7 +146,6 @@ fn precommit_admission_fixture() -> (
         3,
         &challenge,
         num_digits_fold,
-        policy.ring_subfield_norm_bound,
     )
     .expect("A admission bound");
     let b_bound = crate::sis::rounded_up_collision_inf_norm(
@@ -263,12 +261,12 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
     let lower_a_bound = crate::sis::COEFF_LINF_BUCKETS
         .iter()
         .copied()
-        .rfind(|&bound| bound < inner.coeff_linf_bound())
+        .rfind(|&bound| bound < inner.coeff_linf_bound().expect("L infinity test matrix"))
         .expect("lower supported A bound");
     low_a.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
             coeff_linf_bound: lower_a_bound,
-            ..inner.sis_table_key()
+            ..inner.sis_table_key().expect("L infinity test matrix")
         },
         inner.input_width(),
     )
@@ -318,11 +316,14 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
     let inner = &precommitted.layout.inner_commit_matrix;
     precommitted.layout.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().expect("L infinity test matrix"),
         128,
     );
     let outer = &precommitted.layout.outer_commit_matrix;
@@ -361,6 +362,10 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         lp.output_witness_len_for_field_bits(128, &batch)
             .expect("policy-bound output witness length"),
         witness_layout.live_coeff_len()
+    );
+    assert!(
+        witness_layout.live_coeff_len().is_multiple_of(128),
+        "the grouped witness must include padding for the widest successor A carrier"
     );
     assert!(witness_layout
         .units_for_group(0)
@@ -434,7 +439,10 @@ fn address_oracle_precommit(
         outer.coeff_linf_bound(),
         d_b,
     );
-    let layout = CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, claims), &lp);
+    let layout = CommittedGroupProfile::from_params_unchecked_for_test(
+        PolynomialGroupLayout::new(4, claims),
+        &lp,
+    );
     PrecommittedLevelParams {
         layout,
         log_basis_open: lp.log_basis_open,

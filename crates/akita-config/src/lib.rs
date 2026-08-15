@@ -2,7 +2,7 @@
 //! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
 //! Production selectors resolve a schedule row for a cataloged lookup key via
-//! [`CommitmentConfig::select_schedule_for_key`]. Runtime
+//! [`CommitmentConfig::resolve_catalog_row_for_key`]. Runtime
 //! resolution is strict: missing generated catalog rows reject instead of
 //! invoking planner search.
 
@@ -39,7 +39,6 @@ macro_rules! impl_multi_chunk_companion {
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
-
             fn decomposition() -> akita_types::DecompositionParams {
                 <$base as $crate::CommitmentConfig>::decomposition()
             }
@@ -53,9 +52,6 @@ macro_rules! impl_multi_chunk_companion {
             }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
-            }
-            fn ring_subfield_embedding_norm_bound() -> u32 {
-                <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
             }
             fn setup_matrix_capacity(
                 max_num_vars: usize,
@@ -118,6 +114,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selective_l2_response_model:
+            akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
         selection_policy: Cfg::selection_policy(),
         recursive_split_search_policy:
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
@@ -130,7 +128,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_types::sis::SisTableDigest::CURRENT,
-        ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+        sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         inner_basis_range: Cfg::inner_basis_range(),
@@ -236,21 +234,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         }
     }
 
-    /// Infinity-norm expansion introduced when claim-field coordinates are
-    /// embedded into the ring subfield via `psi`.
-    ///
-    /// For the base-field path (`K=1`), `psi` is ordinary coefficient packing.
-    /// For the current small-field ring-subfield embeddings (`K>1`), one input
-    /// coefficient can contribute through paired ring lanes, so SIS A-role
-    /// collision pricing uses a conservative factor of two.
-    fn ring_subfield_embedding_norm_bound() -> u32 {
-        if Self::EXT_DEGREE == 1 {
-            1
-        } else {
-            2
-        }
-    }
-
     /// Packed capacity envelope for the shared setup matrix.
     ///
     /// # Errors
@@ -327,13 +310,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         None
     }
 
-    /// Select the exact generated row for `key`.
+    /// Resolve the exact generated catalog row for `key`.
     ///
     /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
     /// empty `precommitteds` vector. Grouped roots supply frozen precommit
     /// layouts in `precommitteds`.
     ///
-    /// Delegates to [`akita_schedules::select_generated_schedule_row`] with this
+    /// Delegates to [`akita_schedules::resolve_generated_catalog_row_for_key`] with this
     /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
     /// and expands the compact entry. A missing catalog row is unsupported.
     ///
@@ -341,11 +324,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Propagates expansion / SIS-bucket failures or unsupported catalog
     /// requests. Never panics — this is verifier-reachable.
-    fn select_schedule_for_key(
+    fn resolve_catalog_row_for_key(
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
         Self::validate_sis_modulus_profile()?;
-        akita_schedules::select_generated_schedule_row(
+        akita_schedules::resolve_generated_catalog_row_for_key(
             key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
@@ -353,20 +336,20 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Select the exact row without precommitted groups for an opening layout.
+    /// Resolve the exact row without precommitted groups for an opening layout.
     ///
     /// A layout carrying precommitted groups has no single row: grouped selection
     /// needs the exact committed descriptors, so it goes through
-    /// [`Self::select_schedule_for_key`] instead.
+    /// [`Self::resolve_catalog_row_for_key`] instead.
     ///
     /// # Errors
     ///
     /// Returns an error for a malformed or grouped layout, and propagates
     /// unsupported catalog requests.
-    fn select_schedule_for_opening(
+    fn resolve_catalog_row_for_opening(
         layout: &OpeningClaimsLayout,
     ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-        Self::select_schedule_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
+        Self::resolve_catalog_row_for_key(&proof_optimized::proof_optimized_schedule_key(layout)?)
     }
 
     /// Frozen profile this config commits a group with when it has no precommitted groups.
@@ -383,22 +366,22 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn profile_without_precommitted_groups(
         group: akita_types::PolynomialGroupLayout,
     ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
-        let layout = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-        Ok(Self::select_schedule_for_opening(&layout)?
+        let layout = OpeningClaimsLayout::from_groups(vec![group])?;
+        Ok(Self::resolve_catalog_row_for_opening(&layout)?
             .profiles()
             .final_group)
     }
 
-    /// Select the generated row accepted for exact committed profiles.
+    /// Resolve the generated row accepted for exact committed profiles.
     ///
     /// This is an honest-prover operation. Verification must instead resolve
     /// the explicit public selection through [`Self::resolve_schedule_selection`].
-    fn select_schedule_for_profiles(
+    fn resolve_catalog_row_for_profiles(
         profiles: &akita_types::CommittedGroupBatchProfile,
     ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
         Self::validate_sis_modulus_profile()?;
         profiles.validate(Self::decomposition().field_bits())?;
-        akita_schedules::select_generated_schedule_row_for_profiles(
+        akita_schedules::resolve_generated_catalog_row_for_profiles(
             &AkitaScheduleLookupKey {
                 final_group: profiles.final_group.group,
                 precommitteds: profiles.precommitteds.clone(),
@@ -482,7 +465,7 @@ mod tests {
 
         fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
             akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                     32,
                     akita_types::sis::FoldWitnessNorms::bounded(8, Self::D),
                 ),
@@ -537,7 +520,7 @@ mod tests {
 
 #[cfg(test)]
 mod sis_schedule_width_audit {
-    use akita_types::sis::min_secure_rank;
+    use akita_types::sis::{min_secure_l2_rank, min_secure_rank, InnerCommitSecurityRoute};
 
     pub(super) fn assert_schedule_stays_within_audited_sis_widths(
         schedule: &akita_types::FoldSchedule,
@@ -554,10 +537,13 @@ mod sis_schedule_width_audit {
         {
             let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
 
-            let a_rank = min_secure_rank(
-                lp.inner_commit_matrix.sis_table_key(),
-                u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
-            )
+            let width = u64::try_from(lp.inner_width()).expect("inner width should fit in u64");
+            let a_rank = match lp.inner_commit_matrix.security_route() {
+                InnerCommitSecurityRoute::Linf(key) => min_secure_rank(key, width),
+                InnerCommitSecurityRoute::L2 { table_key, .. } => {
+                    min_secure_l2_rank(table_key, width)
+                }
+            }
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
@@ -624,17 +610,24 @@ mod fp128_policy_tests {
         num_vars_values: &[usize],
     ) {
         for &num_vars in num_vars_values {
-            let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-                PolynomialGroupLayout::singleton(num_vars),
-            ))
-            .unwrap()
-            .into_schedule();
+            let group = match Cfg::root_honest_fold_policy() {
+                akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+                    PolynomialGroupLayout::singleton(num_vars)
+                }
+                akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
+                    PolynomialGroupLayout::new(num_vars, 1)
+                }
+            };
+            let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+                .unwrap()
+                .into_schedule();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
         }
     }
 
-    /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
-    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
+    /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus each catalog maximum.
+    const CI_DENSE_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44];
+    const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
     fn fp128_onehot_uses_adaptive_schedule_policy() {
@@ -666,55 +659,38 @@ mod fp128_policy_tests {
 
     #[test]
     fn current_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(CI_SIS_WIDTH_NUM_VARS);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
+            CI_DENSE_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
     fn current_adaptive_dense_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(CI_SIS_WIDTH_NUM_VARS);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::Dense>(
+            CI_DENSE_SIS_WIDTH_NUM_VARS,
+        );
     }
 
     #[test]
     fn current_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::OneHot>(CI_SIS_WIDTH_NUM_VARS);
-    }
-
-    #[test]
-    fn small_field_sis_pricing_includes_psi_norm_bound() {
-        use super::proof_optimized::{fp128, fp32};
-
-        type SmallCfg = fp32::OneHot;
-        assert_eq!(
-            <fp128::Dense as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
-            1
-        );
-        assert_eq!(
-            <SmallCfg as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
-            2
-        );
-
-        let opening_batch = OpeningClaimsLayout::new(28, 1).expect("singleton opening batch");
-        let schedule = SmallCfg::select_schedule_for_opening(&opening_batch)
-            .expect("small-field schedule")
-            .into_schedule();
-        let root_params = &schedule.root.params.final_group.commitment;
-        assert!(
-            root_params.inner_commit_matrix.coeff_linf_bound()
-                >= root_params.outer_commit_matrix.coeff_linf_bound() * 2,
-            "A-role L-infinity bound should include the psi norm bound"
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::OneHot>(
+            CI_ONEHOT_SIS_WIDTH_NUM_VARS,
         );
     }
 
     #[test]
     fn fp128_generated_singleton_plans_resolve() {
-        let key = PolynomialGroupLayout::singleton(32);
+        let dense_key = PolynomialGroupLayout::singleton(32);
+        let onehot_key = PolynomialGroupLayout::new(32, 1);
 
-        let dense = fp128::Dense::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
-            .expect("adaptive dense schedule")
-            .into_schedule();
-        let onehot = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
-            .expect("adaptive onehot schedule")
-            .into_schedule();
+        let dense =
+            fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(dense_key))
+                .expect("adaptive dense schedule")
+                .into_schedule();
+        let onehot =
+            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(onehot_key))
+                .expect("adaptive onehot schedule")
+                .into_schedule();
 
         assert_eq!(dense.initial_witness_len(), 1usize << 32);
         assert_eq!(onehot.initial_witness_len(), 1usize << 32);
@@ -724,9 +700,10 @@ mod fp128_policy_tests {
     fn fp128_adaptive_onehot_supports_batched_keys() {
         let key = PolynomialGroupLayout::new(30, 4);
 
-        let schedule = fp128::OneHot::select_schedule_for_key(&AkitaScheduleLookupKey::single(key))
-            .expect("adaptive batched onehot schedule")
-            .into_schedule();
+        let schedule =
+            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key))
+                .expect("adaptive batched onehot schedule")
+                .into_schedule();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
     }
@@ -754,7 +731,7 @@ mod fp128_policy_tests {
     fn row_admission_rederives_root_and_terminal_transitions() {
         let opening_batch = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row =
-            fp128::OneHot::select_schedule_for_opening(&opening_batch).expect("generated row");
+            fp128::OneHot::resolve_catalog_row_for_opening(&opening_batch).expect("generated row");
 
         let root_input_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
             schedule.root.input_witness_len /= 2;
@@ -787,7 +764,7 @@ mod fp128_policy_tests {
         let row = (14..=50)
             .find_map(|num_vars| {
                 let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
-                let row = fp128::OneHot::select_schedule_for_opening(&layout).ok()?;
+                let row = fp128::OneHot::resolve_catalog_row_for_opening(&layout).ok()?;
                 (!row.schedule().recursive_folds.is_empty()).then_some(row)
             })
             .expect("recursive generated row");

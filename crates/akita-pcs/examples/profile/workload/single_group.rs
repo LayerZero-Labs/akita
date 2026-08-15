@@ -50,6 +50,7 @@ fn run_prove<
     poly: &P,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
+    group_layout: PolynomialGroupLayout,
     plan: Option<&FoldSchedule>,
     // When `false`, skip the planner proof-size upper-bound assertion. That
     // guard validates shipped-catalog schedules against the offline planner
@@ -107,7 +108,7 @@ fn run_prove<
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let commitments = [commitment];
-        let selection = Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+        let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
             precommitteds: Vec::new(),
         })
@@ -140,19 +141,14 @@ fn run_prove<
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(plan, PolynomialGroupLayout::singleton(pt.len())),
+                planned_payload_bytes::<Cfg>(plan, group_layout),
                 "planned",
                 setup_contribution_mode,
                 plan,
             );
         }
-        emit_runtime_schedule_summary(
-            label,
-            plan,
-            PolynomialGroupLayout::singleton(pt.len()),
-            Cfg::decomposition().field_bits(),
-        )
-        .expect("runtime schedule report geometry");
+        emit_runtime_schedule_summary(label, plan, group_layout, Cfg::decomposition().field_bits())
+            .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -160,16 +156,16 @@ fn run_prove<
             Cfg::decomposition().field_bits(),
         );
     } else {
-        let opening_batch =
-            OpeningClaimsLayout::new(pt.len(), 1).expect("same-point opening batch");
-        let schedule = Cfg::select_schedule_for_opening(&opening_batch)
+        let opening_batch = OpeningClaimsLayout::from_root_groups(&[], group_layout)
+            .expect("same-point opening batch");
+        let schedule = Cfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("runtime schedule")
             .into_schedule();
         if validate_against_planner {
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(&schedule, PolynomialGroupLayout::singleton(pt.len())),
+                planned_payload_bytes::<Cfg>(&schedule, group_layout),
                 "runtime schedule",
                 setup_contribution_mode,
                 &schedule,
@@ -178,7 +174,7 @@ fn run_prove<
         emit_runtime_schedule_summary(
             label,
             &schedule,
-            PolynomialGroupLayout::singleton(pt.len()),
+            group_layout,
             Cfg::decomposition().field_bits(),
         )
         .expect("runtime schedule report geometry");
@@ -193,8 +189,8 @@ fn run_prove<
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
         if let Some(schedule) = plan {
-            let opening_layout =
-                OpeningClaimsLayout::new(pt.len(), 1).expect("singleton opening layout");
+            let opening_layout = OpeningClaimsLayout::from_root_groups(&[], group_layout)
+                .expect("singleton opening layout");
             AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
                 setup,
                 schedule,
@@ -212,7 +208,7 @@ fn run_prove<
     );
     let prepare = || {
         verifier_claims(
-            Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+            Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
                 final_group: *commitments[0].profile(),
                 precommitteds: Vec::new(),
             })
@@ -370,6 +366,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         &poly,
         &original_pt,
         opening,
+        PolynomialGroupLayout::singleton(nv),
         plan,
         validate_against_planner,
     );
@@ -457,6 +454,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         &onehot_poly,
         &pt,
         opening,
+        PolynomialGroupLayout::new(nv, 1),
         plan,
         validate_against_planner,
     );

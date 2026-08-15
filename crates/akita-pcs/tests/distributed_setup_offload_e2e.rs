@@ -46,7 +46,7 @@ fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
 fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     let key = w8r2_profiling_key();
     let root_layout = key.opening_layout().expect("root layout");
-    let schedule = W8R2Cfg::select_schedule_for_key(&key).expect("W8R2 schedule");
+    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&key).expect("W8R2 schedule");
     assert_w8r2_profile_shape(schedule.schedule());
     let prover = setup_matrix_capacity_for_schedule(schedule.schedule()).expect("prover capacity");
     let verifier = verifier_setup_matrix_capacity_for_schedule(schedule.schedule(), &root_layout)

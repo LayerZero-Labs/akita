@@ -380,7 +380,7 @@ impl RingRelationProver {
         validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
-        let opening_batch = block_claims.opening_claims().layout()?;
+        let opening_batch = block_claims.opening_layout()?;
         let num_groups = block_claims.opening_claims().num_groups();
         let group_ring_multiplier_points = group_ring_multiplier_points.into_vec();
         if group_ring_multiplier_points.len() != num_groups {

@@ -184,7 +184,6 @@ Fold each, then `git mv` to `specs/archive/`:
 | `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
 | `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
 | `terminal-fold-cutover.md` | `how/recursion.md` |
-| `weak-binding-norm-fix.md` (committed-fold section) | `how/security.md` |
 | `security-hardening.md` | `how/verification.md` |
 | `remove-fp16.md` | `foundations/rings-and-fields.md` |
 | `crt-ntt-accumulation-safety.md`, `avx-simd-port.md` | `how/optimizations.md` |

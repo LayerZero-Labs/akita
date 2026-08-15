@@ -28,7 +28,9 @@ use akita_schedules::generated::{
     GeneratedTerminalFold, GeneratedWitnessPartition,
 };
 pub use publish::publish_generated_outputs;
-pub use render::{render_generated_outputs, GeneratedOutput};
+pub use render::{
+    render_generated_outputs, render_generated_outputs_with_validation, GeneratedOutput,
+};
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -200,28 +202,6 @@ fn generated_entry(
         .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
             descriptor,
             num_digits_fold: group.commitment.num_digits_fold as u32,
-            commitment: GeneratedCommittedGroup {
-                geometry: GeneratedBlockGeometry {
-                    live_ring_elements_per_claim: group
-                        .commitment
-                        .layout
-                        .num_live_ring_elements_per_claim
-                        as u64,
-                    positions_per_block: group.commitment.layout.num_positions_per_block as u64,
-                    live_blocks: group.commitment.layout.num_live_blocks as u64,
-                },
-                inner_commit_matrix: GeneratedInnerCommitMatrix {
-                    ring_dimension: group.commitment.layout.inner_commit_matrix.ring_dimension()
-                        as u32,
-                    log_basis: group.commitment.layout.log_basis_inner,
-                },
-                outer_commit_matrix: GeneratedOuterCommitMatrix {
-                    ring_dimension: group.commitment.layout.outer_commit_matrix.ring_dimension()
-                        as u32,
-                    log_basis: group.commitment.layout.log_basis_outer,
-                },
-                outer_slice_count: group.commitment.layout.outer_slice_count.get() as u32,
-            },
         })
         .collect::<Vec<_>>();
     let recursive_folds = schedule
@@ -231,6 +211,12 @@ fn generated_entry(
             payload_mode: step.params.witness.payload_mode,
             witness: committed_group(&step.params.witness),
             num_digits_fold: step.params.witness.num_digits_fold as u32,
+            response_l2_sq_cap: match step.params.witness.inner_commit_matrix.security_route() {
+                akita_types::InnerCommitSecurityRoute::Linf(_) => None,
+                akita_types::InnerCommitSecurityRoute::L2 {
+                    response_l2_sq_cap, ..
+                } => Some(response_l2_sq_cap),
+            },
             open_commit_matrix: open_matrix_params(
                 &step.params.open_commit_matrix,
                 step.params.witness.log_basis_open,
@@ -292,6 +278,8 @@ fn generated_entry(
                 log_basis: schedule.terminal.params.witness.log_basis_inner,
             },
             num_digits_inner: schedule.terminal.params.witness.num_digits_inner as u32,
+            fold_log_basis: schedule.terminal.params.witness.fold_log_basis,
+            fold_digit_count: schedule.terminal.params.witness.fold_digit_count as u32,
             inner_output_rank: schedule
                 .terminal
                 .params
@@ -303,8 +291,10 @@ fn generated_entry(
                 .params
                 .witness
                 .inner_commit_matrix
-                .coeff_linf_bound(),
-            z_admission_linf_cap: terminal_group.z_admission_linf_cap,
+                .coeff_linf_bound()
+                .unwrap_or(0),
+            response_l2_sq_cap: schedule.terminal.params.witness.response_l2_sq_cap(),
+            z_linf_cap: terminal_group.z_linf_cap,
             z_rice_low_bits: terminal_group.z_rice_low_bits,
             z_payload_bytes: terminal_group.z_payload_bytes as u64,
         },
@@ -339,7 +329,10 @@ fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
             "InnerCommitMatrixParams",
             layout.inner_commit_matrix.output_rank(),
             layout.inner_commit_matrix.input_width(),
-            layout.inner_commit_matrix.sis_table_key(),
+            layout
+                .inner_commit_matrix
+                .sis_table_key()
+                .expect("validated precommitted matrix is L infinity"),
         ),
         layout.log_basis_outer,
         layout.num_digits_outer,
@@ -453,10 +446,9 @@ fn emit_schedule_entry(
         for group in entry.root.precommitted_groups {
             writeln!(
                 out,
-                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, commitment: {} }},",
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {} }},",
                 emit_precommitted_group_key(&group.descriptor),
                 group.num_digits_fold,
-                emit_committed_group(group.commitment),
             )
             .map_err(|e| e.to_string())?;
         }
@@ -482,10 +474,14 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, response_l2_sq_cap: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
                 emit_payload_mode(fold.payload_mode),
                 emit_committed_group(fold.witness),
                 fold.num_digits_fold,
+                fold.response_l2_sq_cap.map_or_else(
+                    || "None".to_string(),
+                    |cap| format!("Some({cap})"),
+                ),
                 emit_open_matrix(fold.open_commit_matrix),
                 emit_setup_prefix(fold.incoming_setup_prefix),
                 emit_partition(fold.witness_partition),
@@ -496,14 +492,23 @@ fn emit_schedule_entry(
     }
     writeln!(
         out,
-        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, fold_log_basis: {}, fold_digit_count: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
         emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
         entry.terminal.num_digits_inner,
+        entry.terminal.fold_log_basis,
+        entry.terminal.fold_digit_count,
         entry.terminal.inner_output_rank,
         entry.terminal.inner_coeff_linf_bound,
-        entry.terminal.z_admission_linf_cap,
+        entry.terminal.response_l2_sq_cap.map_or_else(
+            || "None".to_string(),
+            |cap| format!("Some({cap})"),
+        ),
+        entry.terminal.z_linf_cap.map_or_else(
+            || "None".to_string(),
+            |cap| format!("Some({cap})"),
+        ),
         entry.terminal.z_rice_low_bits,
         entry.terminal.z_payload_bytes,
     )
@@ -599,6 +604,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    family_name: \"{family_name}\",\n",
             "    protocol_epoch: {protocol_epoch},\n",
             "    cost_model: PlannerCostModelId::{cost_model},\n",
+            "    selective_l2_response_model: SelectiveL2ResponseModelId::{selective_l2_response_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
             "    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::{recursive_split_search_policy},\n",
             "    setup_field_budget: {setup_field_budget},\n",
@@ -606,10 +612,10 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    sis_modulus_profile: {sis_modulus_profile},\n",
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
+            "    sis_l2_table_digest: SisL2TableDigest({sis_l2_table_digest}),\n",
             "    uniform_ring_dimension: {uniform_ring_dimension},\n",
             "    setup_prefix_inner_ring_dimension: {setup_prefix_inner_ring_dimension},\n",
             "    decomposition: {decomposition},\n",
-            "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    inner_basis_range: ({inner_basis_min}, {inner_basis_max}),\n",
@@ -629,6 +635,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         family_name = identity.family_name,
         protocol_epoch = identity.protocol_epoch,
         cost_model = identity.cost_model.name(),
+        selective_l2_response_model = identity.selective_l2_response_model.name(),
         selection_policy = identity.selection_policy.name(),
         recursive_split_search_policy = identity.recursive_split_search_policy.name(),
         setup_field_budget = match identity.setup_field_budget {
@@ -639,10 +646,10 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
         sis_security_policy = identity.sis_security_policy.name(),
         sis_table_digest = format_bytes(identity.sis_table_digest.0),
+        sis_l2_table_digest = format_bytes(identity.sis_l2_table_digest.0),
         uniform_ring_dimension = identity.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension = identity.setup_prefix_inner_ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
-        ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
         claim_ext_degree = identity.claim_ext_degree,
         chal_ext_degree = identity.chal_ext_degree,
         inner_basis_min = identity.inner_basis_range.0,
@@ -670,7 +677,7 @@ struct IndexedPlanningRequest {
     request: PlanningRequest,
 }
 
-pub(super) type MaterializedEntry = (AkitaScheduleLookupKey, FoldSchedule);
+pub type MaterializedEntry = (AkitaScheduleLookupKey, FoldSchedule);
 
 pub(super) fn materialized_entries_for_specs(
     specs: &[EmitSpec],
@@ -778,7 +785,7 @@ pub(super) fn emit_family_module_from_entries(
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
-         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
+         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

@@ -33,6 +33,7 @@ graphs differ:
 ```bash
 cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
 cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
+cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics,transcript-blake2b -- -D warnings
 cargo clippy -p akita-field --all-targets --release --features jolt-compat -- -D warnings
 ```
 
@@ -87,6 +88,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - `parallel` — Rayon parallelization (default)
 - `disk-persistence` — disk-backed persistence for some commitment flows
 - `logging-transcript` — `LoggingTranscript` schedule events and smell checks
+- `response-model-diagnostics` — expensive source and response energy measurements for model calibration
 
 Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 

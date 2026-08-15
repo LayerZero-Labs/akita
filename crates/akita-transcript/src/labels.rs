@@ -37,6 +37,12 @@ pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"ak/a/scr";
 pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
 /// Absorb the stage-1 final `range_image_evaluation` before the batching challenge.
 pub const ABSORB_RANGE_IMAGE_EVALUATION: &[u8] = b"ak/a/scs";
+/// Absorb the exact public integer square sum on an L2-selected fold.
+pub const ABSORB_L2_NORM_INTEGER: &[u8] = b"ak/a/l2n";
+/// Absorb one canonical blockwise limb inner-product claim.
+pub const ABSORB_L2_NORM_SUBCLAIM: &[u8] = b"ak/a/l2s";
+/// Absorb one final Stage-1 physical response or limb evaluation.
+pub const ABSORB_L2_VIRTUAL_EVALUATION: &[u8] = b"ak/a/l2v";
 /// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
 pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
@@ -47,6 +53,12 @@ pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"ak/c/scb";
 pub const CHALLENGE_EOR_CLAIM_BATCH: &[u8] = b"ak/c/ecb";
 /// Absorb the individual EOR terminal claims before application batching.
 pub const ABSORB_EOR_FINAL_CLAIM: &[u8] = b"ak/a/efc";
+/// Challenge batching canonical blockwise L2 norm subclaims.
+pub const CHALLENGE_L2_NORM_BATCH: &[u8] = b"ak/c/l2b";
+/// Challenge merging the range and norm identities in the final Stage-1 leaf.
+pub const CHALLENGE_L2_NORM_MERGE: &[u8] = b"ak/c/l2m";
+/// Challenge batching Stage-2 bindings of L2 virtual evaluations.
+pub const CHALLENGE_L2_VIRTUAL_BATCH: &[u8] = b"ak/c/l2v";
 /// Challenge batching the support-restricted negative-binary compression check.
 pub const CHALLENGE_COMPRESSION_BINARY: &[u8] = b"ak/c/cb";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
@@ -102,11 +114,17 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SUMCHECK_ROUND,
     CHALLENGE_SUMCHECK_ROUND,
     ABSORB_RANGE_IMAGE_EVALUATION,
+    ABSORB_L2_NORM_INTEGER,
+    ABSORB_L2_NORM_SUBCLAIM,
+    ABSORB_L2_VIRTUAL_EVALUATION,
     ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_EOR_CLAIM_BATCH,
     ABSORB_EOR_FINAL_CLAIM,
+    CHALLENGE_L2_NORM_BATCH,
+    CHALLENGE_L2_NORM_MERGE,
+    CHALLENGE_L2_VIRTUAL_BATCH,
     CHALLENGE_COMPRESSION_BINARY,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
     ABSORB_STOP_CONDITION,

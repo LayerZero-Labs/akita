@@ -269,7 +269,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
             .terminal
             .input_witness_len
             .is_multiple_of(terminal_d)
-        || terminal.inner_commit_matrix.sis_table_key().ring_dimension as usize != terminal_d
+        || terminal.inner_commit_matrix.ring_dimension() != terminal_d
     {
         return Err(AkitaError::InvalidSetup(
             "terminal inner ring dimension is inconsistent with witness length".to_string(),
@@ -280,7 +280,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
 
 pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result<(), AkitaError> {
     let dims = lp.role_dims();
-    let a_ring = lp.inner_commit_matrix.sis_table_key().ring_dimension as usize;
+    let a_ring = lp.inner_commit_matrix.ring_dimension();
     let b_ring = lp.outer_commit_matrix.sis_table_key().ring_dimension as usize;
     let d_ring = lp.open_commit_matrix.sis_table_key().ring_dimension as usize;
     if a_ring != dims.inner {

@@ -301,7 +301,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let dense =
         DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::select_schedule_for_opening(&opening_batch)
+    let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .map(|row| row.schedule().root.params.final_group.commitment.clone())
         .expect("layout");
 

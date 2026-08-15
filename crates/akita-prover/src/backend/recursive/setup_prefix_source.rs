@@ -76,6 +76,16 @@ impl<F: FieldCore> RootPolyMeta<F> for RecursiveFoldSource<F> {
             Self::Witness(witness) => RootPolyMeta::<F>::num_vars(witness.as_ref()),
         }
     }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
+        match self {
+            Self::SetupPrefix { .. } => None,
+            Self::Witness(witness) => {
+                RootPolyMeta::<F>::exact_integer_coeff_l2_sq(witness.as_ref())
+            }
+        }
+    }
 }
 
 impl<F: FieldCore, const D: usize> RootPolyShape<F, D> for RecursiveFoldSource<F> {

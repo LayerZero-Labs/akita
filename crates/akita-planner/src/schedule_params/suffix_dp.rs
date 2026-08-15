@@ -6,7 +6,7 @@ use std::{
 
 use akita_field::AkitaError;
 use akita_types::{
-    active_setup_field_len, level_proof_bytes, terminal_response_bytes,
+    active_setup_field_len, level_proof_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
@@ -242,12 +242,14 @@ fn price_level_candidate_with_children(
     {
         let field_bits = policy.decomposition.field_bits();
         if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
+            policy,
             state.current_witness_len,
             candidate_params,
             field_bits,
             ctx.key,
             state.level,
             None,
+            state.source_moment,
         )? {
             let level_proof_size = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
                 .checked_add(eor_bytes)
@@ -355,6 +357,7 @@ pub(crate) fn derive_selected_suffix_schedule(
         level,
         current_witness_len,
         current_lb,
+        source_moment,
         incoming_setup_prefix,
         dimension_ceiling,
         payload_phase,
@@ -373,6 +376,14 @@ pub(crate) fn derive_selected_suffix_schedule(
         // searches and could turn one catalog row into millions of redundant
         // recomputations.
         return Ok(empty_suffix_result());
+    }
+    if policy.selective_l2_response_model_enabled()
+        && !(level_zero_is_root && level == 0)
+        && source_moment.is_none()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "recursive suffix is missing its response source moment".into(),
+        ));
     }
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (level_zero_is_root && level == 0);
@@ -440,6 +451,31 @@ pub(crate) fn derive_selected_suffix_schedule(
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
     let (min_open_basis, max_open_basis) =
         crate::policy::log_basis_search_range_at_level(policy, level);
+    let mut dimension_work = Vec::new();
+    for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
+        let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+            policy.challenge_field_bits()?,
+            policy.claim_ext_degree,
+            level,
+            eor_key,
+            current_witness_len,
+            dimensions.d_a(),
+        )?
+        else {
+            continue;
+        };
+        let ring_challenge_cfg = if root_level_key.is_some()
+            && dimensions == CommitmentRingDims::uniform(policy.uniform_ring_dimension)
+        {
+            *default_ring_challenge_cfg
+        } else {
+            let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
+                continue;
+            };
+            config
+        };
+        dimension_work.push((dimensions, eor_bytes, ring_challenge_cfg));
+    }
     // Every opening basis contributes to one state frontier. In particular,
     // terminal-direct candidates have no first fold and therefore share the
     // `None` key; they must be compared by the canonical objective instead of
@@ -464,28 +500,7 @@ pub(crate) fn derive_selected_suffix_schedule(
 
         for inner_lb in min_inner_basis..=max_inner_basis {
             if let Some(root_key) = root_level_key {
-                for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
-                    let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
-                        policy.challenge_field_bits()?,
-                        policy.claim_ext_degree,
-                        level,
-                        eor_key,
-                        current_witness_len,
-                        dimensions.d_a(),
-                    )?
-                    else {
-                        continue;
-                    };
-                    let ring_challenge_cfg = if dimensions
-                        == CommitmentRingDims::uniform(policy.uniform_ring_dimension)
-                    {
-                        *default_ring_challenge_cfg
-                    } else {
-                        let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
-                            continue;
-                        };
-                        config
-                    };
+                for &(dimensions, eor_bytes, ring_challenge_cfg) in &dimension_work {
                     let dimension_candidates = root_level_candidates_for_basis(
                         root_key,
                         root_honest_fold_policy.ok_or_else(|| {
@@ -512,21 +527,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                     );
                 }
             } else {
-                for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
-                    let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
-                        policy.challenge_field_bits()?,
-                        policy.claim_ext_degree,
-                        level,
-                        eor_key,
-                        current_witness_len,
-                        dimensions.d_a(),
-                    )?
-                    else {
-                        continue;
-                    };
-                    let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
-                        continue;
-                    };
+                for &(dimensions, eor_bytes, ring_challenge_cfg) in &dimension_work {
                     for &mode in
                         payload_phase.candidate_modes(level, incoming_setup_prefix.is_some())
                     {
@@ -551,6 +552,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                                 open_lb,
                                 level,
                                 incoming_setup_prefix,
+                                source_moment,
                             )?
                         } else {
                             derive_candidate_level_params(
@@ -565,9 +567,8 @@ pub(crate) fn derive_selected_suffix_schedule(
                                 open_lb,
                                 level,
                                 incoming_setup_prefix,
+                                source_moment,
                             )?
-                            .into_iter()
-                            .collect()
                         };
                         candidates.extend(level_candidates.into_iter().map(
                             |(params, next_witness_len)| (params, next_witness_len, eor_bytes),
@@ -576,12 +577,63 @@ pub(crate) fn derive_selected_suffix_schedule(
                 }
             }
         }
-        let candidates = prune::level_candidates(current_opening_layout, candidates)?;
+        let mut candidates_with_source = Vec::with_capacity(candidates.len());
+        for (candidate_params, next_witness_len, eor_bytes) in candidates {
+            let next_source_moment = if policy.selective_l2_response_model_enabled() {
+                let source_groups = if root_level_key.is_some() {
+                    crate::response_model::root_group_source_moments(
+                        &candidate_params,
+                        current_opening_layout,
+                        root_honest_fold_policy.ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "root batch is missing its response source policy".into(),
+                            )
+                        })?,
+                        precommitted_honest_fold_policies,
+                        policy.decomposition.field_bits(),
+                    )?
+                } else if let Some(natural_prefix_len) = incoming_setup_prefix {
+                    let prefix_params = candidate_params.group_params(current_opening_layout, 0)?;
+                    let prefix_moment = crate::response_model::uniform_field_source_moment(
+                        natural_prefix_len,
+                        policy.decomposition.field_bits(),
+                        prefix_params.log_basis_inner(),
+                        prefix_params.num_digits_inner(),
+                    )?;
+                    vec![
+                        prefix_moment,
+                        source_moment.ok_or_else(|| {
+                            AkitaError::InvalidSetup("recursive response source is missing".into())
+                        })?,
+                    ]
+                } else {
+                    vec![source_moment.ok_or_else(|| {
+                        AkitaError::InvalidSetup("recursive response source is missing".into())
+                    })?]
+                };
+                Some(crate::response_model::next_source_moment(
+                    &candidate_params,
+                    current_opening_layout,
+                    &source_groups,
+                    policy.decomposition.field_bits(),
+                    policy.claim_ext_degree,
+                )?)
+            } else {
+                None
+            };
+            candidates_with_source.push((
+                candidate_params,
+                next_witness_len,
+                eor_bytes,
+                next_source_moment,
+            ));
+        }
+        let candidates = prune::level_candidates(current_opening_layout, candidates_with_source)?;
         if candidates.is_empty() {
             continue;
         }
 
-        for (candidate_params, next_witness_len, eor_bytes) in candidates {
+        for (candidate_params, next_witness_len, eor_bytes, next_source_moment) in candidates {
             if let Some(natural_prefix_len) = incoming_setup_prefix {
                 let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
                 if !offloaded_witness_contracts(
@@ -613,6 +665,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                         level: level + 1,
                         current_witness_len: next_witness_len,
                         current_lb: open_lb,
+                        source_moment: next_source_moment,
                         incoming_setup_prefix: None,
                         dimension_ceiling: candidate_params.role_dims(),
                         payload_phase: payload_phase.after(candidate_params.payload_mode),
@@ -635,6 +688,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                         level: level + 1,
                         current_witness_len: next_witness_len,
                         current_lb: open_lb,
+                        source_moment: next_source_moment,
                         incoming_setup_prefix: Some(natural_len),
                         dimension_ceiling: candidate_params.role_dims(),
                         payload_phase,

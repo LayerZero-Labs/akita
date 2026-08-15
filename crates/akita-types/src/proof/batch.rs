@@ -649,7 +649,7 @@ where
 /// Return whether root tensor projection can represent this extension width /
 /// ring shape. Shared by the typed gate and the planner-facing width twin.
 #[inline]
-pub(crate) fn root_tensor_projection_enabled_for_width(
+pub fn root_tensor_projection_enabled_for_width(
     width: usize,
     ring_d: usize,
     num_vars: usize,

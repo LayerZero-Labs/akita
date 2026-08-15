@@ -41,8 +41,27 @@ impl CommittedGroupProfile {
     /// Current committed-profile format.
     pub const VERSION: u8 = 2;
 
-    /// Build frozen group metadata from the concrete commit params.
-    pub fn from_params(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
+    /// Build and validate frozen group metadata from concrete root commitment parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the matrices, decomposition, slicing, or exact root
+    /// geometry cannot describe a standalone commitment for `group`.
+    pub fn try_from_params(
+        group: PolynomialGroupLayout,
+        params: &CommittedGroupParams,
+    ) -> Result<Self, AkitaError> {
+        let profile = Self::from_params_fields(group, params);
+        profile.validate_frozen_precommit(
+            profile
+                .inner_commit_matrix
+                .sis_modulus_profile()
+                .field_bits(),
+        )?;
+        Ok(profile)
+    }
+
+    fn from_params_fields(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
         Self {
             version: Self::VERSION,
             group,
@@ -57,6 +76,14 @@ impl CommittedGroupProfile {
             num_digits_outer: params.num_digits_outer,
             outer_commit_matrix: params.outer_commit_matrix,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_params_unchecked_for_test(
+        group: PolynomialGroupLayout,
+        params: &CommittedGroupParams,
+    ) -> Self {
+        Self::from_params_fields(group, params)
     }
 
     /// Canonical versioned bytes used for catalog and schedule-key identity.

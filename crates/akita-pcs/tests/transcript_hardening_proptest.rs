@@ -29,7 +29,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
     let (num_vars, total_claims) = batch_case(shape_index);
     let opening_batch =
         OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
-    let layout = DenseCfg::select_schedule_for_opening(&opening_batch)
+    let layout = DenseCfg::resolve_catalog_row_for_opening(&opening_batch)
         .map(|row| row.schedule().root.params.final_group.commitment.clone())
         .expect("batched commit layout");
 

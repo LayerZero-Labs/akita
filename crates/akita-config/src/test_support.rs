@@ -4,7 +4,7 @@
 //! Everything in this module is gated behind the `test-support` Cargo
 //! feature, which production builds never enable. Production callers size
 //! their per-poly inputs through
-//! [`CommitmentConfig::select_schedule_for_opening`] directly and never
+//! [`CommitmentConfig::resolve_catalog_row_for_opening`] directly and never
 //! need this module.
 //!
 use akita_field::AkitaError;
@@ -18,14 +18,14 @@ use crate::CommitmentConfig;
 /// First reads the runtime schedule. When the schedule is a root fold it
 /// returns that root layout; for a direct-only schedule it derives the batched
 /// root commit layout
-/// `Cfg::select_schedule_for_opening` derives for the same
+/// `Cfg::resolve_catalog_row_for_opening` derives for the same
 /// `num_polynomials` (so the fallback layout is sized for the requested batch,
 /// not a singleton).
 ///
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
 /// inputs (e.g. `OneHotPoly`) so the `num_positions_per_block` / `num_live_blocks` line up with
 /// what `Scheme::commit` will use under the batched layout. Production
-/// callers always go through `Cfg::select_schedule_for_opening(&opening_batch).map(|row| row.schedule().root.params.final_group.commitment.clone())`
+/// callers always go through `Cfg::resolve_catalog_row_for_opening(&opening_batch).map(|row| row.schedule().root.params.final_group.commitment.clone())`
 /// instead.
 ///
 /// # Errors
@@ -39,7 +39,7 @@ where
     Cfg: CommitmentConfig,
 {
     let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
-    let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(lookup_key))?;
+    let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(lookup_key))?;
     let layout = schedule
         .schedule()
         .root

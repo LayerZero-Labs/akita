@@ -3,6 +3,26 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
+fn synthetic_profile(
+    group: PolynomialGroupLayout,
+    params: &CommittedGroupParams,
+) -> CommittedGroupProfile {
+    CommittedGroupProfile {
+        version: CommittedGroupProfile::VERSION,
+        group,
+        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+        num_positions_per_block: params.num_positions_per_block,
+        num_live_blocks: params.num_live_blocks,
+        outer_slice_count: params.outer_slice_count,
+        log_basis_inner: params.log_basis_inner,
+        num_digits_inner: params.num_digits_inner,
+        inner_commit_matrix: params.inner_commit_matrix,
+        log_basis_outer: params.log_basis_outer,
+        num_digits_outer: params.num_digits_outer,
+        outer_commit_matrix: params.outer_commit_matrix,
+    }
+}
+
 fn grouped_level_params() -> CommittedGroupParams {
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let mut params = CommittedGroupParams::params_only(
@@ -28,7 +48,7 @@ fn grouped_level_params() -> CommittedGroupParams {
     .with_decomp(2, 2, 2, 2, 2)
     .expect("precommitted params");
     params.precommitted_groups = vec![PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params(PolynomialGroupLayout::new(6, 1), &precommitted),
+        layout: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
         log_basis_open: precommitted.log_basis_open,
         fold_challenge_config: precommitted.fold_challenge_config,
         num_digits_open: precommitted.num_digits_open,
@@ -97,6 +117,62 @@ fn recursive_split_policy_controls_the_shared_search_domain() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+    use akita_types::InnerCommitSecurityRoute;
+
+    let policy = policy_of::<OneHot>();
+    let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
+    let candidates = derive_candidate_level_params(
+        None,
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        &challenge,
+        CommitmentRingDims::uniform(64),
+        948_672,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        4,
+        4,
+        3,
+        None,
+        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+    )
+    .expect("modeled late-fold candidates");
+    let linf = candidates
+        .iter()
+        .filter(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::Linf(_)
+            )
+        })
+        .count();
+    let l2 = candidates
+        .iter()
+        .filter(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+        })
+        .count();
+    assert_eq!(linf, 1);
+    assert!(l2 > 0);
+    let l2_block_index_bits = candidates
+        .iter()
+        .filter_map(|(params, _)| {
+            matches!(
+                params.inner_commit_matrix.security_route(),
+                InnerCommitSecurityRoute::L2 { .. }
+            )
+            .then_some(params.block_index_bits())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(l2_block_index_bits.len(), 1);
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
@@ -132,51 +208,6 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn shared_ab_derivation_forwards_the_exact_slice_count() {
-    use std::cell::Cell;
-
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
-
-    struct RecordingPolicy<'a>(&'a Cell<Option<(usize, usize)>>);
-
-    impl HonestFoldPolicy for RecordingPolicy<'_> {
-        fn num_digits_fold(&self, query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-            self.0
-                .set(Some((query.outer_slice_count.get(), query.num_fold_coeffs)));
-            Err(AkitaError::InvalidSetup("stop after query capture".into()))
-        }
-    }
-
-    let policy = policy_of::<OneHot>();
-    let challenge = SparseChallengeConfig::pm1_only(3);
-    for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
-        let seen = Cell::new(None);
-        let fold_policy = RecordingPolicy(&seen);
-        assert!(
-            derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-                policy: &policy,
-                fold_policy: &fold_policy,
-                ring_challenge_cfg: &challenge,
-                dimensions: CommitmentRingDims::uniform(64),
-                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-                num_claims: 1,
-                num_live_blocks: 8,
-                num_chunks: 1,
-                outer_slice_count,
-                witness_norms: FoldWitnessNorms::bounded(3, 64),
-                log_basis_open: 3,
-                width_s: 8,
-                num_digits_outer: 2,
-            })
-            .unwrap()
-            .is_none()
-        );
-        assert_eq!(seen.get(), Some((outer_slice_count.get(), 512)));
-    }
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
 fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot};
 
@@ -198,13 +229,16 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions,
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+            num_live_ring_elements_per_claim: 64,
             num_live_blocks: 8,
+            num_positions_per_block: 8,
             num_chunks: 1,
             outer_slice_count,
             witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
             log_basis_open: 3,
             width_s,
             num_digits_outer: 2,
+            modeled_linf_cap: None,
         })
         .unwrap()
     };
@@ -238,13 +272,16 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+            num_live_ring_elements_per_claim: 64,
             num_live_blocks: 8,
+            num_positions_per_block: 8,
             num_chunks: 1,
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::bounded(3, 64),
             log_basis_open: 3,
             width_s: usize::MAX,
             num_digits_outer: 2,
+            modeled_linf_cap: None,
         })
         .is_err()
     );
@@ -265,13 +302,16 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+            num_live_ring_elements_per_claim: 64,
             num_live_blocks: 8,
+            num_positions_per_block: 8,
             num_chunks: 1,
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::bounded(3, 64),
             log_basis_open: 3,
             width_s: 8,
             num_digits_outer: 2,
+            modeled_linf_cap: None,
         })
         .unwrap()
         .is_none()
@@ -303,13 +343,16 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         dimensions,
         payload_mode: akita_types::CommitmentPayloadMode::Raw,
         num_claims,
+        num_live_ring_elements_per_claim: 64,
         num_live_blocks: 8,
+        num_positions_per_block: 8,
         num_chunks: 1,
         outer_slice_count: akita_types::CommitmentSliceCount::ONE,
         witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
         log_basis_open: 3,
         width_s,
         num_digits_outer: 2,
+        modeled_linf_cap: None,
     })
     .unwrap()
     .expect("raw candidate has certified minimum A/B ranks");

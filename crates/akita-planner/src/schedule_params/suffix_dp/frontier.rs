@@ -30,6 +30,9 @@ pub(super) fn consider_child_suffixes<'a>(
     projection: FrontierProjection,
     frontier: &mut ProjectedFrontier,
 ) -> Result<(), AkitaError> {
+    let parent_cost = FirstFoldKey {
+        descriptor: Some(edge.candidate_params.canonical_descriptor_bytes()),
+    };
     for suffix in child_candidates {
         let Some(candidate) = child_choice(edge, suffix)? else {
             continue;
@@ -41,7 +44,7 @@ pub(super) fn consider_child_suffixes<'a>(
         }) {
             continue;
         }
-        frontier.consider_pending(edge.policy, candidate, projection)?;
+        frontier.consider_pending(edge.policy, &parent_cost, candidate, projection)?;
     }
     Ok(())
 }
@@ -165,14 +168,17 @@ impl ProjectedFrontier {
     fn consider_pending(
         &mut self,
         policy: &PlannerPolicy,
+        parent_cost: &FirstFoldKey,
         pending: PendingScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
-        let parent_cost = FirstFoldKey {
-            descriptor: Some(pending.first_fold.params.canonical_descriptor_bytes()),
-        };
-        if self.could_improve(policy, &parent_cost, pending.metrics(), projection) {
-            self.consider(policy, parent_cost, pending.into_candidate(), projection)?;
+        if self.could_improve(policy, parent_cost, pending.metrics(), projection) {
+            self.consider(
+                policy,
+                parent_cost.clone(),
+                pending.into_candidate(),
+                projection,
+            )?;
         }
         Ok(())
     }

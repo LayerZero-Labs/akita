@@ -45,7 +45,6 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
-    pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +73,7 @@ pub struct GeneratedRecursiveFold {
     pub payload_mode: akita_types::CommitmentPayloadMode,
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
+    pub response_l2_sq_cap: Option<u128>,
     pub open_commit_matrix: GeneratedOpenCommitMatrix,
     pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
     pub witness_partition: GeneratedWitnessPartition,
@@ -84,9 +84,12 @@ pub struct GeneratedTerminalFold {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
     pub num_digits_inner: u32,
+    pub fold_log_basis: u32,
+    pub fold_digit_count: u32,
     pub inner_output_rank: u32,
     pub inner_coeff_linf_bound: u128,
-    pub z_admission_linf_cap: u128,
+    pub response_l2_sq_cap: Option<u128>,
+    pub z_linf_cap: Option<u128>,
     pub z_rice_low_bits: u32,
     pub z_payload_bytes: u64,
 }
@@ -118,6 +121,7 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
     pub protocol_epoch: u32,
     pub cost_model: crate::PlannerCostModelId,
+    pub selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     pub selection_policy: crate::SelectionPolicyId,
     pub recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     pub setup_field_budget: Option<usize>,
@@ -125,10 +129,10 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
+    pub sis_l2_table_digest: akita_types::SisL2TableDigest,
     pub uniform_ring_dimension: usize,
     pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
-    pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub inner_basis_range: (u32, u32),
@@ -158,13 +162,14 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId, SisSecurityPolicyId,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
+    SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{
     CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
     PolynomialGroupLayout,
 };
-pub use akita_types::{SisModulusProfileId, SisTableDigest};
+pub use akita_types::{SisL2TableDigest, SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
 /// Returns true when `entries` are ordered for [`table_entry`] binary search.

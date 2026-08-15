@@ -90,7 +90,22 @@ pub fn render_generated_outputs(
     wiring_specs: &[EmitSpec],
     mod_path: Option<&Path>,
 ) -> Result<Vec<GeneratedOutput>, String> {
+    render_generated_outputs_with_validation(specs, wiring_specs, mod_path, |_, _| Ok(()))
+}
+
+/// Render every family after validating the exact schedules materialized by
+/// the shared planning queue. This lets CI compare compiled catalog rows and
+/// generated source without running the planner twice.
+pub fn render_generated_outputs_with_validation(
+    specs: &[EmitSpec],
+    wiring_specs: &[EmitSpec],
+    mod_path: Option<&Path>,
+    validate: impl Fn(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
+) -> Result<Vec<GeneratedOutput>, String> {
     let materialized = materialized_entries_for_specs(specs)?;
+    for (spec, entries) in specs.iter().zip(&materialized) {
+        validate(spec, entries)?;
+    }
     let mut outputs = specs
         .iter()
         .zip(materialized)

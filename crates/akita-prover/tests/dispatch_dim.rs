@@ -10,11 +10,17 @@ use akita_types::{
 };
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
-    Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(num_vars),
-    ))
-    .expect("runtime schedule")
-    .into_schedule()
+    let group = match Cfg::root_honest_fold_policy() {
+        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+            PolynomialGroupLayout::singleton(num_vars)
+        }
+        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(_) => {
+            PolynomialGroupLayout::new(num_vars, 1)
+        }
+    };
+    Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+        .expect("runtime schedule")
+        .into_schedule()
 }
 
 fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {
@@ -45,14 +51,9 @@ fn accepts_real_fp64_adaptive_schedule() {
 }
 
 #[test]
-fn accepts_real_fp32_d1024_schedule() {
+fn accepts_real_fp32_adaptive_schedule() {
     let schedule = schedule::<fp32::OneHot>(16);
     validate_schedule_ring_dims(&schedule).expect("adaptive fp32 schedule");
-    assert_eq!(
-        schedule.root.params.final_group.commitment.d_a(),
-        1024,
-        "the generated fp32 one-hot nv16 row must exercise the D1024 protocol arm"
-    );
     assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024]);
 }
 

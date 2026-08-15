@@ -11,10 +11,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_inner_for_bound,
-    num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
-    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_for_linf_cap,
+    num_digits_inner_for_bound, num_digits_open, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy,
+    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OuterCommitMatrixParams,
 };
 use akita_types::{
@@ -24,8 +24,7 @@ use akita_types::{
 };
 #[cfg(test)]
 use akita_types::{
-    level_proof_bytes, try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey,
-    PlannedFoldSchedule,
+    level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
 };
 
 use crate::{InnerBasisSource, PlannerPolicy};
@@ -43,6 +42,8 @@ pub(crate) use akita_schedules::planner_support::{
     CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
+#[cfg(test)]
+pub(crate) use candidate::derive_linf_candidate_level_params;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_candidate_level_params,
     derive_candidate_level_params_split_frontier, recursive_split_search_domain,
@@ -307,15 +308,32 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
         }
         .canonical_descriptor_bytes());
     }
-    Ok(materialize_candidate_schedule(
+    let mut folds = choice.folds.to_vec();
+    let carrier_prefix_len = folds.len().min(2);
+    let carrier_payload_modes = folds
+        .iter()
+        .take(carrier_prefix_len)
+        .map(|fold| fold.params.payload_mode)
+        .collect::<Vec<_>>();
+    for fold in folds.iter_mut().take(carrier_prefix_len) {
+        Arc::make_mut(&mut fold.params).payload_mode =
+            akita_types::CommitmentPayloadMode::Compressed;
+    }
+    let mut bytes = materialize_candidate_schedule(
         choice.total_bytes,
         choice.setup_field_elements,
         choice.first_direct_setup_field_len.map(NonZeroUsize::get),
-        choice.folds.to_vec(),
+        folds,
         choice.terminal.as_ref().clone(),
     )?
     .schedule
-    .canonical_descriptor_bytes())
+    .canonical_descriptor_bytes();
+    let mut prefix = Vec::with_capacity(carrier_prefix_len + 1);
+    prefix.push(carrier_prefix_len as u8);
+    prefix.extend(carrier_payload_modes.into_iter().map(|mode| mode.tag()));
+    prefix.append(&mut bytes);
+    let bytes = prefix;
+    Ok(bytes)
 }
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
@@ -399,7 +417,3 @@ mod adaptive_dimension_tests;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/adaptive_search.rs"]
 mod adaptive_search_tests;
-
-#[cfg(all(test, feature = "catalog-gen"))]
-#[path = "test/recursive_setup.rs"]
-mod recursive_setup_tests;

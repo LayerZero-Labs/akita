@@ -606,13 +606,16 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     /// Frozen standalone commitment identity and certified bounds.
     pub descriptor: CommittedGroupProfile,
-    pub commitment: GeneratedCommittedGroup,
+    /// Root-fold digit depth for the frozen group.
+    pub num_digits_fold: u32,
 }
 ```
 
 The precommitted descriptor is part of the schedule lookup key because the
-commitment already exists. Expansion rederives its matrix dimensions, input
-widths, bounds, and root-opening geometry and requires descriptor equality.
+commitment already exists. It is the single source of truth for the frozen
+matrix dimensions, input widths, bounds, decomposition, and slice count.
+Expansion admits that descriptor into the grouped root at the row's shared
+opening basis and never duplicates or replaces its frozen commitment geometry.
 
 ### Witness partitioning
 

@@ -3,14 +3,18 @@ use akita_field::{parallel::*, AkitaError, FieldCore};
 const EXACT_PREFIX_SEQUENTIAL_LEN: usize = 1 << 12;
 
 /// Explicit prefix of a power-of-two table followed by one implicit default value.
-pub(super) struct ExactPrefixTable<T: Copy> {
+pub(in crate::protocol::sumcheck) struct ExactPrefixTable<T: Copy> {
     domain_len: usize,
     explicit: Vec<T>,
     default: T,
 }
 
 impl<T: Copy> ExactPrefixTable<T> {
-    pub(super) fn new(domain_len: usize, explicit: Vec<T>, default: T) -> Result<Self, AkitaError> {
+    pub(in crate::protocol::sumcheck) fn new(
+        domain_len: usize,
+        explicit: Vec<T>,
+        default: T,
+    ) -> Result<Self, AkitaError> {
         if domain_len == 0 || !domain_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
                 "exact-prefix domain length must be a nonzero power of two; got {domain_len}"
@@ -29,24 +33,24 @@ impl<T: Copy> ExactPrefixTable<T> {
         })
     }
 
-    pub(super) fn domain_len(&self) -> usize {
+    pub(in crate::protocol::sumcheck) fn domain_len(&self) -> usize {
         self.domain_len
     }
 
-    pub(super) fn explicit_len(&self) -> usize {
+    pub(in crate::protocol::sumcheck) fn explicit_len(&self) -> usize {
         self.explicit.len()
     }
 
-    pub(super) fn default_value(&self) -> T {
+    pub(in crate::protocol::sumcheck) fn default_value(&self) -> T {
         self.default
     }
 
     #[inline(always)]
-    pub(super) fn value_or_default(&self, index: usize) -> T {
+    pub(in crate::protocol::sumcheck) fn value_or_default(&self, index: usize) -> T {
         self.explicit.get(index).copied().unwrap_or(self.default)
     }
 
-    pub(super) fn fold_in_place(
+    pub(in crate::protocol::sumcheck) fn fold_in_place(
         &mut self,
         fold_pair: impl Fn(T, T) -> T + Sync,
     ) -> Result<(), AkitaError>
@@ -98,7 +102,7 @@ impl<T: Copy> ExactPrefixTable<T> {
         Ok(())
     }
 
-    pub(super) fn final_value(&self) -> Option<T> {
+    pub(in crate::protocol::sumcheck) fn final_value(&self) -> Option<T> {
         (self.domain_len == 1).then(|| self.value_or_default(0))
     }
 }

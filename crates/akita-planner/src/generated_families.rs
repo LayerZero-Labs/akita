@@ -108,6 +108,16 @@ type ExplicitPrecommittedGroupGenerator =
         PolynomialGroupLayout,
     ) -> Result<(CommittedGroupProfile, HonestFoldPolicySpec), AkitaError>;
 
+macro_rules! onehot_keys {
+    ($(($num_vars:expr, $num_polynomials:expr)),* $(,)?) => {
+        &[
+            $(
+                PolynomialGroupLayout::new($num_vars, $num_polynomials),
+            )*
+        ]
+    };
+}
+
 const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::new(15, 2),
@@ -120,47 +130,38 @@ const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(30),
     PolynomialGroupLayout::singleton(32),
     PolynomialGroupLayout::singleton(44),
-    PolynomialGroupLayout::singleton(50),
 ];
 
-const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(12),
-    PolynomialGroupLayout::singleton(14),
-    PolynomialGroupLayout::new(14, 2),
-    PolynomialGroupLayout::singleton(15),
-    PolynomialGroupLayout::new(15, 4),
-    PolynomialGroupLayout::singleton(16),
-    PolynomialGroupLayout::new(16, 2),
-    PolynomialGroupLayout::singleton(18),
-    PolynomialGroupLayout::singleton(20),
-    PolynomialGroupLayout::new(20, 2),
-    PolynomialGroupLayout::new(20, 4),
-    PolynomialGroupLayout::singleton(28),
-    PolynomialGroupLayout::singleton(30),
-    PolynomialGroupLayout::new(30, 4),
-    PolynomialGroupLayout::singleton(32),
-    PolynomialGroupLayout::new(32, 4),
-    PolynomialGroupLayout::singleton(36),
-    PolynomialGroupLayout::singleton(40),
-    PolynomialGroupLayout::singleton(44),
-    PolynomialGroupLayout::singleton(50),
+const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
+    (12, 1),
+    (14, 1),
+    (14, 2),
+    (15, 1),
+    (15, 4),
+    (16, 1),
+    (16, 2),
+    (18, 1),
+    (20, 1),
+    (20, 2),
+    (20, 4),
+    (28, 1),
+    (30, 1),
+    (30, 4),
+    (32, 1),
+    (32, 4),
+    (36, 1),
+    (40, 1),
+    (44, 1),
+    (50, 1),
 ];
 
-const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(16),
-    PolynomialGroupLayout::singleton(32),
-];
+const FP128_ONEHOT_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] = onehot_keys![(16, 1), (32, 1)];
 
-const FP128_ONEHOT_RECURSIVE_KEYS: &[PolynomialGroupLayout] =
-    &[PolynomialGroupLayout::singleton(36)];
+const FP128_ONEHOT_RECURSIVE_KEYS: &[PolynomialGroupLayout] = onehot_keys![(36, 1)];
 
-const FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(14),
-    PolynomialGroupLayout::singleton(32),
-];
+const FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS: &[PolynomialGroupLayout] = onehot_keys![(14, 1), (32, 1)];
 
-const FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] =
-    &[PolynomialGroupLayout::singleton(32)];
+const FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] = onehot_keys![(32, 1)];
 
 const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(16)];
@@ -170,14 +171,8 @@ const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(26),
 ];
 
-const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(14),
-    PolynomialGroupLayout::singleton(16),
-    PolynomialGroupLayout::new(16, 2),
-    PolynomialGroupLayout::singleton(20),
-    PolynomialGroupLayout::singleton(28),
-    PolynomialGroupLayout::singleton(30),
-];
+const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
+    onehot_keys![(14, 1), (16, 1), (16, 2), (20, 1), (28, 1), (30, 1)];
 
 const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
@@ -189,10 +184,7 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(26),
 ];
 
-const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = &[
-    PolynomialGroupLayout::singleton(28),
-    PolynomialGroupLayout::singleton(30),
-];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1)];
 
 /// One generated schedule-table family.
 ///
@@ -220,7 +212,7 @@ pub struct GeneratedFamily {
     /// Grouped-root keys enumerated for this generated family.
     pub group_batch_keys: GroupBatchKeyGenerator,
     /// Strict table-backed runtime resolution. A missing row is unsupported.
-    pub select_schedule_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    pub resolve_catalog_row_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
     /// The generated catalog linked for this family, when its feature is active.
     pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
@@ -289,10 +281,7 @@ fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     group: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
     let schedule = preplans.scalar::<Cfg>(group)?;
-    Ok(CommittedGroupProfile::from_params(
-        group,
-        &schedule.root.params.final_group.commitment,
-    ))
+    CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -303,10 +292,10 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     plan_regen::<Cfg>(&key, &precommitted_honest_fold_policies)
 }
 
-fn select_schedule_for_key<Cfg: CommitmentConfig>(
+fn resolve_catalog_row_for_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
-    Cfg::select_schedule_for_key(&key).map(akita_schedules::ResolvedScheduleRow::into_schedule)
+    Cfg::resolve_catalog_row_for_key(&key).map(akita_schedules::ResolvedScheduleRow::into_schedule)
 }
 
 fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
@@ -542,7 +531,7 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            select_schedule_for_key: select_schedule_for_key::<$cfg>,
+            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -561,7 +550,7 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             group_batch_keys: $group_keys,
-            select_schedule_for_key: select_schedule_for_key::<$cfg>,
+            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -758,7 +747,7 @@ mod tests {
         assert_eq!(preplans.scalar.lock().expect("preplan cache").len(), 1);
 
         preplans
-            .scalar::<fp128::Dense>(key)
+            .scalar::<fp32::OneHot>(key)
             .expect("same layout under a distinct producer");
         assert_eq!(preplans.scalar.lock().expect("preplan cache").len(), 2);
 

@@ -233,141 +233,11 @@ fn deserialize_sis_table_digest<R: Read>(
     Ok(SisTableDigest(bytes))
 }
 
-trait SetupPrefixCommitMatrixParams: Sized {
-    const ROLE: SisMatrixRole;
-
-    fn sis_modulus_profile(&self) -> SisModulusProfileId;
-    fn security_policy(&self) -> SisSecurityPolicyId;
-    fn sis_table_key(&self) -> crate::SisTableKey;
-    fn output_rank(&self) -> usize;
-    fn input_width(&self) -> usize;
-    fn coeff_linf_bound(&self) -> u128;
-
-    #[allow(clippy::too_many_arguments)]
-    fn new_unchecked(
-        policy: SisSecurityPolicyId,
-        table_digest: SisTableDigest,
-        sis_modulus_profile: SisModulusProfileId,
-        output_rank: usize,
-        input_width: usize,
-        coeff_linf_bound: u128,
-        ring_dimension: usize,
-    ) -> Self;
-}
-
-macro_rules! impl_setup_prefix_commit_matrix_params {
-    ($ty:ty, $role:expr) => {
-        impl SetupPrefixCommitMatrixParams for $ty {
-            const ROLE: SisMatrixRole = $role;
-
-            fn sis_modulus_profile(&self) -> SisModulusProfileId {
-                self.sis_modulus_profile()
-            }
-            fn security_policy(&self) -> SisSecurityPolicyId {
-                self.security_policy()
-            }
-            fn sis_table_key(&self) -> crate::SisTableKey {
-                self.sis_table_key()
-            }
-            fn output_rank(&self) -> usize {
-                self.output_rank()
-            }
-            fn input_width(&self) -> usize {
-                self.input_width()
-            }
-            fn coeff_linf_bound(&self) -> u128 {
-                self.coeff_linf_bound()
-            }
-            fn new_unchecked(
-                policy: SisSecurityPolicyId,
-                table_digest: SisTableDigest,
-                sis_modulus_profile: SisModulusProfileId,
-                output_rank: usize,
-                input_width: usize,
-                coeff_linf_bound: u128,
-                ring_dimension: usize,
-            ) -> Self {
-                Self::new_unchecked(
-                    policy,
-                    table_digest,
-                    sis_modulus_profile,
-                    output_rank,
-                    input_width,
-                    coeff_linf_bound,
-                    ring_dimension,
-                )
-            }
-        }
-    };
-}
-
-impl_setup_prefix_commit_matrix_params!(InnerCommitMatrixParams, SisMatrixRole::Inner);
-impl_setup_prefix_commit_matrix_params!(OuterCommitMatrixParams, SisMatrixRole::Outer);
-
-/// Wire layout mirrors the commit-matrix descriptor bytes:
-/// profile tag, policy tag, role tag, table digest, ring dim, row, col, linf.
-fn serialize_commit_matrix<K: SetupPrefixCommitMatrixParams, W: Write>(
-    key: &K,
-    mut writer: W,
-    compress: Compress,
-) -> Result<(), SerializationError> {
-    let table_key = key.sis_table_key();
-    serialize_sis_modulus_profile(key.sis_modulus_profile(), &mut writer)?;
-    serialize_sis_security_policy(key.security_policy(), &mut writer)?;
-    serialize_sis_matrix_role(table_key.role, &mut writer)?;
-    serialize_sis_table_digest(table_key.table_digest, &mut writer)?;
-    (table_key.ring_dimension as usize).serialize_with_mode(&mut writer, compress)?;
-    key.output_rank()
-        .serialize_with_mode(&mut writer, compress)?;
-    key.input_width()
-        .serialize_with_mode(&mut writer, compress)?;
-    key.coeff_linf_bound()
-        .serialize_with_mode(&mut writer, compress)?;
-    Ok(())
-}
-
-fn deserialize_commit_matrix<K: SetupPrefixCommitMatrixParams, R: Read>(
-    mut reader: R,
-    compress: Compress,
-    validate: Validate,
-) -> Result<K, SerializationError> {
-    let sis_modulus_profile = deserialize_sis_modulus_profile(&mut reader)?;
-    let policy = deserialize_sis_security_policy(&mut reader)?;
-    let role = deserialize_sis_matrix_role(&mut reader)?;
-    if role != K::ROLE {
-        return Err(SerializationError::InvalidData(
-            "setup-prefix commitment matrix has the wrong role".to_string(),
-        ));
-    }
-    let table_digest = deserialize_sis_table_digest(&mut reader)?;
-    let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let row_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let col_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let coeff_linf_bound = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    Ok(K::new_unchecked(
-        policy,
-        table_digest,
-        sis_modulus_profile,
-        row_len,
-        col_len,
-        coeff_linf_bound,
-        ring_dimension,
-    ))
-}
-
-fn commit_matrix_serialized_size<K: SetupPrefixCommitMatrixParams>(
-    key: &K,
-    compress: Compress,
-) -> usize {
-    1 // profile tag
-        + 1 // policy tag
-        + 1 // role tag
-        + 32 // table digest
-        + (key.sis_table_key().ring_dimension as usize).serialized_size(compress)
-        + key.output_rank().serialized_size(compress)
-        + key.input_width().serialized_size(compress)
-        + key.coeff_linf_bound().serialized_size(compress)
-}
+#[path = "setup_prefix_commit_matrix.rs"]
+mod commit_matrix;
+use commit_matrix::{
+    commit_matrix_serialized_size, deserialize_commit_matrix, serialize_commit_matrix,
+};
 
 fn serialize_precommitted_level_params<W: Write>(
     params: &PrecommittedLevelParams,
@@ -453,6 +323,7 @@ fn deserialize_precommitted_level_params<R: Read>(
     }
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let group = PolynomialGroupLayout::new(group_num_vars, group_num_polynomials);
     let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_positions_per_block =
@@ -477,7 +348,7 @@ fn deserialize_precommitted_level_params<R: Read>(
     Ok(PrecommittedLevelParams {
         layout: CommittedGroupProfile {
             version,
-            group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
+            group,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -1303,18 +1174,14 @@ pub fn setup_prefix_precommitted_params(
         if inner_width <= prefix_params.inner_commit_matrix.input_width()
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
-            let inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-                prefix_params.inner_commit_matrix.security_policy(),
-                prefix_params
-                    .inner_commit_matrix
-                    .sis_table_key()
-                    .table_digest,
-                prefix_params.inner_commit_matrix.sis_modulus_profile(),
-                prefix_params.inner_commit_matrix.output_rank(),
-                inner_width,
-                prefix_params.inner_commit_matrix.coeff_linf_bound(),
-                prefix_params.inner_commit_matrix.ring_dimension(),
-            );
+            if prefix_params.inner_commit_matrix.sis_table_key().is_none() {
+                return Err(AkitaError::InvalidSetup(
+                    "setup prefix cannot be derived from an L2 A security route".into(),
+                ));
+            }
+            let inner_commit_matrix = prefix_params
+                .inner_commit_matrix
+                .try_with_input_width(inner_width)?;
             let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
                 prefix_params.outer_commit_matrix.security_policy(),
                 prefix_params

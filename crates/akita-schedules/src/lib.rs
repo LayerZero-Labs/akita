@@ -18,18 +18,23 @@ pub use catalog_identity::{
 };
 pub use generated::*;
 pub use resolve::{
-    estimate_proof_bytes, resolve_generated_schedule_selection, schedule_from_entry,
-    select_generated_schedule_row, select_generated_schedule_row_for_profiles, ResolvedScheduleRow,
+    estimate_proof_bytes, resolve_generated_catalog_row_for_key,
+    resolve_generated_catalog_row_for_profiles, resolve_generated_schedule_selection,
+    schedule_from_entry, ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RecursiveSplitSearchPolicy,
-    RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId, ADAPTIVE_SEARCH_LEVELS,
+    default_sis_security_policy, validate_policy, PlannerCostModelId, PlannerPolicy,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, RuntimeSchedulePolicy,
+    SelectionPolicyId, SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
 #[doc(hidden)]
 pub mod planner_support {
-    pub use crate::candidate::{projected_collision_role_price, sis_key_at_dimension};
+    pub use crate::candidate::{
+        projected_collision_role_price, selective_l2_inner_matrix, sis_key_at_dimension,
+        SelectiveL2CandidateGeometry,
+    };
     pub use crate::runtime::{
         grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
         stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,

@@ -8,12 +8,28 @@ use crate::{
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
 
+// `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
+const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
+
 fn sample_schedule() -> FoldSchedule {
     let sparse = SparseChallengeConfig::pm1_only(3);
-    let committed =
+    let mut committed =
         CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 4, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
             .expect("sample committed params");
+    let inner = committed.inner_commit_matrix;
+    committed.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        TEST_TERMINAL_A_BUCKET,
+        inner.ring_dimension(),
+    );
     let (terminal_witness, admission_cap) =
         TerminalCommittedGroupParams::try_from_expanded_group(committed.clone())
             .expect("terminal response bounds");
@@ -235,11 +251,14 @@ fn role_local_ring_dimension_changes_plan_binding() {
         .commitment
         .inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
-        matrix.sis_table_key().table_digest,
+        matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         matrix.sis_modulus_profile(),
         matrix.output_rank(),
         matrix.input_width(),
-        matrix.coeff_linf_bound(),
+        matrix.coeff_linf_bound().expect("L infinity test matrix"),
         matrix.ring_dimension() * 2,
     );
 

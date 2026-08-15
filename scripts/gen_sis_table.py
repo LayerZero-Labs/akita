@@ -4,8 +4,8 @@ Regenerate the SIS max-width table used by the Akita planner.
 
 This script binary-searches for the maximum SIS width (in ring elements) that
 provides >= 128-bit security for each (d, collision_l2_sq, rank) triple. The
-output is the Rust match arm body for `sis_max_widths` in the split
-`crates/akita-types/src/sis/generated_sis_table/` modules.
+output is the Rust match arm body for `sis_l2_max_widths` in the split
+`crates/akita-types/src/sis/generated_l2_sis_table/` modules.
 
 Requires SageMath and the pinned lattice-estimator checkout under
 `third_party/lattice-estimator` (or an explicit override).
@@ -28,19 +28,18 @@ Options:
     --jobs N                Run N independent Sage subprocess shards (default: 1).
 
 Collision bucket convention:
-    Each bucket is the per-ring-row squared Euclidean collision bound
-    `collision_l2_sq` (an exact integer). The SIS solution spans `width` ring
-    rows, each of squared norm <= collision_l2_sq, so the whole-vector Euclidean
-    length bound passed to lattice-estimator is `sqrt(width * collision_l2_sq)`.
+    Each bucket is the complete scalar collision vector's squared Euclidean
+    bound `collision_l2_sq` (an exact integer). The whole-vector Euclidean
+    length bound passed to lattice-estimator is `sqrt(collision_l2_sq)`.
     Buckets are exact powers of two; the Rust table rounds a raw key up via
     `next_power_of_two` and clamps to the same ladder as `MIN_LOG_BUCKET` /
     `MAX_LOG_BUCKET` in `sis/ajtai_key.rs`.
 
-Modeling choices (matching the existing table):
-    - Reduction model: BDGL16
+Modeling choices:
+    - Reduction model: ADPS16 quantum
     - Norm: Euclidean (l2); `red_shape_model` is ignored on this path
     - Field modulus for estimation: selected by --family / --q
-    - length_bound = sqrt(width * collision_l2_sq)  (per-row squared key)
+    - length_bound = sqrt(collision_l2_sq)  (complete-vector squared key)
 
 The runtime protocol prime may be a different 128-bit pseudo-Mersenne prime,
 for example p = 2^128 - 2^32 + 22537. That distinction is immaterial for
@@ -56,7 +55,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -72,7 +70,6 @@ from lattice_estimator_pin import (  # noqa: E402
     estimator_git_sha,
     estimator_remote_url,
     locate_estimator,
-    repo_root,
 )
 
 if hasattr(signal, "SIGPIPE"):
@@ -84,60 +81,26 @@ MIN_LOG_BUCKET = 1
 MAX_LOG_BUCKET = 84
 SQUARED_BUCKETS = [1 << k for k in range(MIN_LOG_BUCKET, MAX_LOG_BUCKET + 1)]
 
-def canonical_coeff_linf_buckets() -> list[int]:
-    source = (
-        repo_root()
-        / "crates/akita-types/src/sis/ajtai_key.rs"
-    ).read_text(encoding="utf-8")
-    match = re.search(
-        r"pub const COEFF_LINF_BUCKETS: &\[u128\] = &\[(.*?)\];",
-        source,
-        flags=re.DOTALL,
-    )
-    if match is None:
-        raise RuntimeError("could not read canonical COEFF_LINF_BUCKETS")
-    return [int(value.replace("_", "")) for value in re.findall(r"[\d_]+", match.group(1))]
-
-
-COEFF_LINF_BUCKETS = canonical_coeff_linf_buckets()
-
-RING_DIMS = [32, 64, 128, 256]
-
-
-def coeff_linf_bucket_sq(b: int) -> int:
-    """Return `B²` for a coefficient-L∞ bucket `B` without float rounding."""
-    if b <= 3:
-        return b * b
-    # Buckets after `3` are `2^k - 1`; square via bit shifts.
-    k = (b + 1).bit_length() - 1
-    return (1 << (2 * k)) - (1 << (k + 1)) + 1
-
-
-def derived_l2_collision_keys() -> list[int]:
-    keys: set[int] = set()
-    for d in RING_DIMS:
-        for b in COEFF_LINF_BUCKETS:
-            keys.add(d * coeff_linf_bucket_sq(b))
-    return sorted(keys)
+RING_DIMS = [32, 64, 128, 256, 512]
 
 
 FAMILIES: dict[str, tuple[int, str, list[int], list[int]]] = {
     "q32": (
         (1 << 32) - 99,
         "2^32 - 99",
-        [32, 64, 128, 256],
+        RING_DIMS,
         SQUARED_BUCKETS,
     ),
     "q64": (
         (1 << 64) - 59,
         "2^64 - 59",
-        [32, 64, 128, 256],
+        RING_DIMS,
         SQUARED_BUCKETS,
     ),
     "q128": (
         (1 << 128) - ((1 << 32) - 22537),
         "2^128 - (2^32 - 22537)",
-        [32, 64, 128, 256],
+        RING_DIMS,
         SQUARED_BUCKETS,
     ),
 }
@@ -218,9 +181,9 @@ def default_search_cap(d: int) -> int:
 def load_estimator(path: Path):
     sys.path.insert(0, str(path))
     from estimator import SIS
-    from estimator.reduction import RC
+    from estimator.reduction import ADPS16
     from sage.all import RealField, ZZ, log, oo
-    return SIS, RC, log, oo, ZZ, RealField
+    return SIS, ADPS16, log, oo, ZZ, RealField
 
 
 def family_entries(family: str) -> list[tuple[int, int]]:
@@ -260,34 +223,32 @@ def select_entries(args: argparse.Namespace) -> list[tuple[int, int]]:
     return entries
 
 
-def sis_length_bound(ZZ, RealField, width: int, collision: int):
-    """High-precision Euclidean SIS solution bound `sqrt(width * collision_l2_sq)`.
+def sis_length_bound(ZZ, RealField, collision: int):
+    """High-precision Euclidean SIS solution bound `sqrt(collision_l2_sq)`.
 
     Build the integer product exactly, then convert it to an upward-rounded Sage
     real with precision scaled to the product size. This avoids Python's f64
     `** 0.5` path while still giving lattice-estimator the numeric real it
     expects (rather than a symbolic `sqrt(...)` expression).
     """
-    squared = ZZ(width) * ZZ(collision)
+    squared = ZZ(collision)
     precision = max(256, int(squared.nbits()) + 128)
     return RealField(precision, rnd="RNDU")(squared).sqrt()
 
 
 def estimate_bits(
-    SIS, RC, log, oo, ZZ, RealField,
+    SIS, ADPS16, log, oo, ZZ, RealField,
     q: int, d: int, rank: int, width: int, collision: int,
 ) -> float:
-    # `collision` is the per-ring-row squared Euclidean bound (collision_l2_sq).
-    # The SIS solution spans `width` ring rows, so the whole-vector Euclidean
-    # length bound is sqrt(width * collision_l2_sq). The SIS matrix still has
-    # m = width * d scalar columns and n = rank * d scalar rows.
+    # `collision` bounds the complete scalar collision vector across every
+    # input ring row. `width` affects m, but must not scale the norm again.
     n = rank * d
     m = width * d
-    length_bound = sis_length_bound(ZZ, RealField, width, collision)
+    length_bound = sis_length_bound(ZZ, RealField, collision)
     try:
         out = SIS.lattice(
             SIS.Parameters(n=n, q=q, m=m, length_bound=length_bound, norm=2, tag="sis_table"),
-            red_cost_model=RC.BDGL16,
+            red_cost_model=ADPS16(mode="quantum"),
             log_level=0,
         )
     except ValueError as exc:
@@ -301,7 +262,7 @@ def estimate_bits(
 
 
 def binary_search_max_width(
-    SIS, RC, log, oo, ZZ, RealField,
+    SIS, ADPS16, log, oo, ZZ, RealField,
     q: int,
     d: int, rank: int, collision: int,
     target_bits: float, search_cap: int,
@@ -320,22 +281,22 @@ def binary_search_max_width(
          the common small-answer cells cheap (small `m = width*d`), instead of
          the cap-first binary search's ~log2(cap) huge-`m` probes per cell.
     """
-    if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, 1, collision) < target_bits:
+    if estimate_bits(SIS, ADPS16, log, oo, ZZ, RealField, q, d, rank, 1, collision) < target_bits:
         return 0
 
-    if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, search_cap, collision) >= target_bits:
+    if estimate_bits(SIS, ADPS16, log, oo, ZZ, RealField, q, d, rank, search_cap, collision) >= target_bits:
         return search_cap
 
     hi = 1
     while True:
         nxt = min(hi * 2, search_cap)
-        if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, nxt, collision) >= target_bits:
+        if estimate_bits(SIS, ADPS16, log, oo, ZZ, RealField, q, d, rank, nxt, collision) >= target_bits:
             hi = nxt
             continue
         lo, high = hi, nxt
         while lo < high - 1:
             mid = (lo + high) // 2
-            if estimate_bits(SIS, RC, log, oo, ZZ, RealField, q, d, rank, mid, collision) >= target_bits:
+            if estimate_bits(SIS, ADPS16, log, oo, ZZ, RealField, q, d, rank, mid, collision) >= target_bits:
                 lo = mid
             else:
                 high = mid
@@ -353,7 +314,7 @@ def print_provenance_header(
     print(f"// Generated by: sage -python scripts/gen_sis_table.py")
     print(f"// Family: {args.family.upper()}")
     print(f"// lattice-estimator: {remote} @ {sha}")
-    print(f"// Model: BDGL16, Euclidean (norm=2)")
+    print(f"// Model: ADPS16 quantum, Euclidean (norm=2), complete-vector L2 bound")
     print(f"// Representative q = {q_label}")
     print(f"// q = {q}")
     if args.search_cap is None:
@@ -399,7 +360,7 @@ def run_entries(
     entries: list[tuple[int, int]],
     estimator_path: Path,
 ) -> list[tuple[int, int, list[int]]]:
-    SIS, RC, log, oo, ZZ, RealField = load_estimator(estimator_path)
+    SIS, ADPS16, log, oo, ZZ, RealField = load_estimator(estimator_path)
     family_q, _, _, _ = FAMILIES[args.family]
     q = args.q if args.q is not None else family_q
 
@@ -415,7 +376,7 @@ def run_entries(
         for rank in range(1, args.max_rank + 1):
             t0 = time.time()
             w = binary_search_max_width(
-                SIS, RC, log, oo, ZZ, RealField, q, d, rank, collision,
+                SIS, ADPS16, log, oo, ZZ, RealField, q, d, rank, collision,
                 args.target_bits, search_cap,
             )
             elapsed = time.time() - t0

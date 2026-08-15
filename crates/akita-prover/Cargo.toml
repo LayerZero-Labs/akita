@@ -55,6 +55,7 @@ transcript-keccak = [
 ]
 schedules-default = ["akita-config/schedules-default"]
 logging-transcript = ["akita-transcript/logging-transcript"]
+response-model-diagnostics = []
 parallel = [
   "dep:rayon",
   "akita-challenges/parallel",

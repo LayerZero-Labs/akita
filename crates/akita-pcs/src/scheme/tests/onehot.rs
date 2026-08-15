@@ -168,7 +168,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
 
-    let schedule = OneHotCfg::select_schedule_for_key(&multi_group_key)
+    let schedule = OneHotCfg::resolve_catalog_row_for_key(&multi_group_key)
         .expect("multi-group runtime schedule")
         .into_schedule();
     let root = multi_group_root_params(&schedule);
@@ -260,7 +260,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         .fits_setup_capacity(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("setup capacity"));
 
-    let multi_group_schedule = OneHotCfg::select_schedule_for_key(&multi_group_key)
+    let multi_group_schedule = OneHotCfg::resolve_catalog_row_for_key(&multi_group_key)
         .expect("multi-group runtime schedule")
         .into_schedule();
     let main_params = multi_group_root_params(&multi_group_schedule);
@@ -481,7 +481,7 @@ where
     let opening_layout = multi_group_key
         .opening_layout()
         .expect("multi-group opening layout");
-    let multi_group_schedule = ProtocolCfg::select_schedule_for_key(&multi_group_key)
+    let multi_group_schedule = ProtocolCfg::resolve_catalog_row_for_key(&multi_group_key)
         .expect("multi-group runtime schedule")
         .into_schedule();
     let main_params = multi_group_root_params(&multi_group_schedule);
@@ -928,3 +928,6 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     )
     .expect("batched onehot verify");
 }
+
+#[path = "onehot/selective_l2.rs"]
+mod selective_l2;

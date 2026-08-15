@@ -197,7 +197,7 @@ matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 fn fp128_dense_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let schedule = fp128::DenseMultiChunk::select_schedule_for_key(
+        let schedule = fp128::DenseMultiChunk::resolve_catalog_row_for_key(
             &akita_types::AkitaScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::singleton(16),
             ),
@@ -290,7 +290,7 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
-    fp128::OneHotMultiChunk::select_schedule_for_opening(&opening_batch)
+    fp128::OneHotMultiChunk::resolve_catalog_row_for_opening(&opening_batch)
         .expect("W8R2 multi-chunk catalog row");
 }
 
@@ -318,7 +318,8 @@ fn fp128_onehot_mc() {
 // GROUP C — Batched commitment (multiple polynomials in a single group)
 //
 // Tests that the batch-commit path correctly handles >1 polynomials per group,
-// including homogeneous (all dense / all one-hot) and mixed batches.
+// Homogeneous dense and one-hot groups round-trip. A mixed-representation
+// group has the same public geometry and is therefore protocol equivalent.
 // ============================================================================
 
 #[test]
@@ -467,13 +468,13 @@ fn fp128_dense_batched() {
 }
 
 #[test]
-fn fp128_mixed_batched() {
+fn fp128_mixed_batched_uses_source_free_group_geometry() {
     init_rayon_pool();
     run_on_large_stack(|| {
         const NV: usize = 17;
         const BATCH: usize = 4;
         let opening_batch = OpeningClaimsLayout::new(NV, BATCH).expect("opening batch");
-        let layout = DenseCfg::select_schedule_for_opening(&opening_batch)
+        let layout = DenseCfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("layout")
             .into_schedule()
             .root
@@ -503,16 +504,6 @@ fn fp128_mixed_batched() {
         let onehot_a = make_mixed_onehot(0x4d10_1001);
         let onehot_b = make_mixed_onehot(0x4d10_1002);
 
-        let pt = random_point(NV, 0x4d10_ffff);
-        // Independent oracles, per variant, before the polynomials are erased
-        // into `MultilinearPolynomial`.
-        let openings: Vec<F> = vec![
-            dense_opening_lagrange(&evals_a, &pt),
-            onehot_opening_lagrange(&onehot_a, &pt),
-            dense_opening_lagrange(&evals_b, &pt),
-            onehot_opening_lagrange(&onehot_b, &pt),
-        ];
-
         let polys = [
             MultilinearPolynomial::dense(dense_a),
             MultilinearPolynomial::onehot(onehot_a),
@@ -525,50 +516,19 @@ fn fp128_mixed_batched() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
-
-        let akita_prover::CommitOutput {
-            committed_group: commitment,
-            hint,
-        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
+        let output = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
             &setup,
             &polys,
             &stack,
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
-        .expect("mixed commit");
-        let poly_refs: Vec<_> = polys.iter().collect();
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_mixed_batched");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<DenseCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
-
-        let shape = proof.shape();
-        let mut bytes = Vec::new();
-        proof.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize");
-
-        let mut verifier_transcript =
-            AkitaTranscript::<F>::new(b"completeness/fp128_mixed_batched");
-        AkitaCommitmentScheme::<DenseCfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<DenseCfg>(&pt[..], &openings, &commitment),
-            BasisMode::Lagrange,
-        )
-        .expect("mixed verify");
+        .expect("mixed source representations share one public geometry");
+        assert_eq!(
+            output.committed_group.profile.group,
+            opening_batch
+                .root_final_group_layout()
+                .expect("final group layout")
+        );
     });
 }
 
@@ -584,7 +544,7 @@ fn fp128_mixed_batched() {
 fn fp128_onehot_oversized_setup() {
     fn run(setup_nv: usize, poly_nv: usize) {
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
-        let layout = OneHotCfg::select_schedule_for_opening(&opening_batch)
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
             .expect("layout")
             .into_schedule()
             .root

@@ -30,6 +30,38 @@ pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -
     )
 }
 
+/// Planner byte estimate for a terminal response.
+///
+/// The scheduled Golomb payload cap remains unchanged. For a single-group L2
+/// route, candidate selection may price the tighter deterministic payload bound
+/// implied by the certified energy. Unsupported shapes conservatively use the
+/// scheduled byte budget.
+pub fn terminal_response_planner_bytes(
+    field_bits: u32,
+    shape: &TerminalResponseShape,
+    response_l2_sq_cap: Option<u128>,
+) -> usize {
+    let scheduled = terminal_response_bytes(field_bits, shape);
+    let Some(l2_sq_cap) = response_l2_sq_cap else {
+        return scheduled;
+    };
+    let [group] = shape.layout.groups.as_slice() else {
+        return scheduled;
+    };
+    let Some(z_payload_bytes) = crate::golomb_rice::golomb_rice_l2_planner_payload_bytes(
+        group.z_coords,
+        l2_sq_cap,
+        group.z_rice_low_bits,
+    ) else {
+        return scheduled;
+    };
+    crate::proof::terminal_response_upper_bound_bytes(
+        field_bits,
+        &shape.layout,
+        z_payload_bytes.min(group.z_payload_bytes),
+    )
+}
+
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
     degree * elem_bytes
 }
@@ -292,6 +324,24 @@ pub fn sumcheck_rounds(level_d: usize, output_witness_len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{TailSegmentGroupLayout, TailSegmentLayout};
+
+    fn sample_terminal_shape() -> TerminalResponseShape {
+        TerminalResponseShape {
+            layout: TailSegmentLayout {
+                ring_dimension: 64,
+                groups: vec![TailSegmentGroupLayout {
+                    z_coords: 1024,
+                    e_field_elems: 64,
+                    t_field_elems: 128,
+                    z_linf_cap: Some(2_570),
+                    z_rice_low_bits: 9,
+                    z_payload_bytes: 4_096,
+                }],
+                logical_num_elems: 1_216,
+            },
+        }
+    }
 
     fn level_bytes(width: usize, fold_level: usize, ring_d: usize) -> Result<usize, AkitaError> {
         extension_opening_reduction_level_bytes(
@@ -369,5 +419,32 @@ mod tests {
         let sumcheck_bytes = (12 - 2) * EXTENSION_OPENING_REDUCTION_DEGREE * elem_bytes;
         let terminal_claim_bytes = 2 * elem_bytes;
         assert_eq!(bytes, partial_bytes + sumcheck_bytes + terminal_claim_bytes);
+    }
+
+    #[test]
+    fn terminal_l2_planner_estimate_does_not_change_the_wire_cap() {
+        let shape = sample_terminal_shape();
+        let original = shape.clone();
+        let scheduled = terminal_response_bytes(64, &shape);
+        let estimated = terminal_response_planner_bytes(64, &shape, Some(1 << 20));
+
+        assert!(estimated < scheduled);
+        assert_eq!(
+            shape, original,
+            "planning must not mutate scheduled geometry"
+        );
+        assert_eq!(shape.layout.groups[0].z_payload_bytes, 4_096);
+        assert_eq!(terminal_response_planner_bytes(64, &shape, None), scheduled);
+    }
+
+    #[test]
+    fn terminal_l2_planner_estimate_falls_back_for_multiple_groups() {
+        let mut shape = sample_terminal_shape();
+        shape.layout.groups.push(shape.layout.groups[0]);
+        shape.layout.logical_num_elems *= 2;
+        assert_eq!(
+            terminal_response_planner_bytes(64, &shape, Some(1 << 20)),
+            terminal_response_bytes(64, &shape)
+        );
     }
 }

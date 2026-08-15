@@ -142,6 +142,38 @@ impl<E: FieldCore> EqPolynomial<E> {
         (0..len).map(|index| split.eval_at(index)).collect()
     }
 
+    /// Sum the first `len` entries of the little-endian equality table without
+    /// materializing them.
+    ///
+    /// This is the multilinear analogue of a binary prefix probability. It
+    /// scans the upper-bound bits from most to least significant and costs one
+    /// field operation per coordinate instead of one per table entry.
+    pub fn prefix_sum(r: &[E], len: usize) -> Result<E, AkitaError> {
+        let table_len = Self::table_len(r.len())?;
+        if len > table_len {
+            return Err(AkitaError::InvalidSize {
+                expected: table_len,
+                actual: len,
+            });
+        }
+        if len == table_len {
+            return Ok(E::one());
+        }
+
+        let mut below = E::zero();
+        let mut equal_prefix = E::one();
+        for bit in (0..r.len()).rev() {
+            let (left, right) = Self::split_lagrange_parent(equal_prefix, r[bit]);
+            if (len >> bit) & 1 == 1 {
+                below += left;
+                equal_prefix = right;
+            } else {
+                equal_prefix = left;
+            }
+        }
+        Ok(below)
+    }
+
     /// Compute the full evaluation table with optional scaling:
     /// `scaling_factor · eq(r, x)` for all `x ∈ {0,1}^n`.
     ///
@@ -377,6 +409,23 @@ mod tests {
         let scaled = EqPolynomial::evals_with_scaling(&r, Some(scale)).unwrap();
         for (u, s) in unscaled.iter().zip(scaled.iter()) {
             assert_eq!(*s, *u * scale);
+        }
+    }
+
+    #[test]
+    fn prefix_sum_matches_materialized_prefixes() {
+        let mut rng = StdRng::seed_from_u64(0xC0DF);
+        for n in 0..9 {
+            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+            let table = EqPolynomial::evals(&r).unwrap();
+            let mut expected = F::zero();
+            for len in 0..=table.len() {
+                assert_eq!(EqPolynomial::prefix_sum(&r, len).unwrap(), expected);
+                if let Some(value) = table.get(len) {
+                    expected += *value;
+                }
+            }
+            assert!(EqPolynomial::prefix_sum(&r, table.len() + 1).is_err());
         }
     }
 

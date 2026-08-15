@@ -24,7 +24,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     const D: usize = Cfg::D;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Cfg::RING_DIMENSION_SCHEDULE_MODE;
-
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
     }
@@ -35,10 +34,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
 
     fn sis_modulus_profile() -> SisModulusProfileId {
         Cfg::sis_modulus_profile()
-    }
-
-    fn ring_subfield_embedding_norm_bound() -> u32 {
-        Cfg::ring_subfield_embedding_norm_bound()
     }
 
     fn setup_matrix_capacity(
@@ -142,7 +137,7 @@ mod tests {
         let final_group = PolynomialGroupLayout::new(32, 2);
         let expected = fp128::OneHot::profile_without_precommitted_groups(precommitted)
             .expect("independent profile");
-        let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey {
+        let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
             final_group,
             precommitteds: vec![expected, expected],
         })
@@ -161,8 +156,8 @@ mod tests {
     #[test]
     fn scalar_recursive_profile_uses_offloaded_catalog_row() {
         type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
-        let schedule = Cfg::select_schedule_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(36),
+        let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::new(36, 1),
         ))
         .expect("scalar recursive schedule");
 

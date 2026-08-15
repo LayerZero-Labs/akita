@@ -104,12 +104,17 @@ impl RecursiveFoldParams {
 
 /// Exact terminal committed-witness parameters.
 ///
-/// The terminal relation binds only the source decomposition through the
-/// inner commitment matrix. It has no outer/open commitment matrix and no
-/// outer/open response decomposition.
+/// The terminal relation binds the source decomposition through the inner
+/// commitment matrix. It also retains the terminal fold basis and digit count
+/// needed to audit a calibrated L2 route. It has no outer/open commitment
+/// matrix and no outer/open response decomposition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalCommittedGroupParams {
     pub log_basis_inner: u32,
+    /// Response basis used by the planner for this terminal fold.
+    pub fold_log_basis: u32,
+    /// Number of response digits used by the planner for this terminal fold.
+    pub fold_digit_count: usize,
     pub inner_commit_matrix: InnerCommitMatrixParams,
     pub num_live_ring_elements_per_claim: usize,
     pub num_positions_per_block: usize,
@@ -136,6 +141,8 @@ impl TerminalCommittedGroupParams {
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
             log_basis_inner: params.log_basis_inner,
+            fold_log_basis: params.log_basis_open,
+            fold_digit_count: params.num_digits_fold,
             inner_commit_matrix: params.inner_commit_matrix,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
@@ -157,7 +164,7 @@ impl TerminalCommittedGroupParams {
             crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(&sparse, num_fold_coeffs)?;
         let challenge = crate::sis::FoldChallengeNorms::new(&sparse);
         let witness = crate::sis::FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a());
-        let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
+        let (unconstrained_target, _) = crate::sis::fold_witness_linf_cap(
             params.num_live_blocks,
             1,
             challenge,
@@ -199,25 +206,31 @@ impl TerminalCommittedGroupParams {
         )
     }
 
-    /// Largest raw response admitted by this fixed inner matrix and the signed
-    /// terminal coefficient representation.
+    /// Largest raw response admitted by a terminal Linf route's selected
+    /// inner-matrix SIS bucket and signed coefficient representation.
+    ///
+    /// The matrix rank can incidentally support a larger collision bucket. The
+    /// terminal wire does not consume that slack because doing so would change
+    /// its admission and encoding bounds when an unrelated rank frontier moves.
     pub fn certified_response_linf_cap(
         &self,
         sparse: &akita_challenges::SparseChallengeConfig,
     ) -> Result<u128, AkitaError> {
+        if matches!(
+            self.inner_commit_matrix.security_route(),
+            crate::sis::InnerCommitSecurityRoute::L2 { .. }
+        ) {
+            return Err(AkitaError::InvalidSetup(
+                "terminal L2 route has no independent Linf cap".into(),
+            ));
+        }
         let challenge = crate::sis::FoldChallengeNorms::new(sparse);
-        let collision_capacity = self
-            .inner_commit_matrix
-            .max_secure_collision_linf()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("terminal A has no collision capacity".into())
-            })?;
+        let collision_capacity = self.inner_commit_matrix.coeff_linf_bound().ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal A cannot use an L2 security route".into())
+        })?;
         let certified_capacity = crate::sis::max_response_linf_for_role_a_collision(
             collision_capacity,
             challenge.l1_norm,
-            self.inner_commit_matrix
-                .sis_modulus_profile()
-                .ring_subfield_embedding_norm_bound(),
         )
         .filter(|value| *value > 0)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal A cannot certify a response".into()))?;
@@ -226,8 +239,50 @@ impl TerminalCommittedGroupParams {
         Ok(certified_capacity.min(i16::MAX as u128))
     }
 
+    /// Validate that the wire carries exactly the norm cap required by the
+    /// selected terminal security route.
+    pub fn validate_terminal_linf_cap(
+        &self,
+        sparse: &akita_challenges::SparseChallengeConfig,
+        scheduled_cap: Option<u128>,
+    ) -> Result<(), AkitaError> {
+        match self.inner_commit_matrix.security_route() {
+            crate::sis::InnerCommitSecurityRoute::Linf(_) => {
+                let cap = scheduled_cap.ok_or_else(|| {
+                    AkitaError::InvalidSetup("terminal Linf route is missing its cap".into())
+                })?;
+                if cap == 0 || cap > self.certified_response_linf_cap(sparse)? {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal Linf cap exceeds its matrix-certified capacity".into(),
+                    ));
+                }
+            }
+            crate::sis::InnerCommitSecurityRoute::L2 { .. } => {
+                if scheduled_cap.is_some() {
+                    return Err(AkitaError::InvalidSetup(
+                        "terminal L2 route must not carry an independent Linf cap".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Verifier-enforced complete physical L2 cap for a clear terminal route.
+    #[must_use]
+    pub fn response_l2_sq_cap(&self) -> Option<u128> {
+        match self.inner_commit_matrix.security_route() {
+            crate::sis::InnerCommitSecurityRoute::Linf(_) => None,
+            crate::sis::InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap, ..
+            } => Some(response_l2_sq_cap),
+        }
+    }
+
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_u32(bytes, self.log_basis_inner);
+        push_u32(bytes, self.fold_log_basis);
+        push_usize(bytes, self.fold_digit_count);
         self.inner_commit_matrix.append_descriptor_bytes(bytes);
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
