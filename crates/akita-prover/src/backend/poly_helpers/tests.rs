@@ -2,15 +2,100 @@ use super::rotated_accum::{
     decompose_ring_full_challenge_accumulate, should_use_rotated_challenge,
 };
 use super::{
-    balanced_ring_decompose_fold_partitioned, decompose_ring_interleaved, fill_rotated_challenge,
-    sparse_mul_acc, sparse_mul_acc_i16, sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar,
-    sparse_mul_acc_pm1, sparse_mul_acc_scalar, DecomposeParams,
+    balanced_ring_decompose_fold_partitioned, cached_digit_decompose_fold_partitioned,
+    decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16,
+    sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar, sparse_mul_acc_pm1, sparse_mul_acc_scalar,
+    DecomposeParams,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::CanonicalField;
 use akita_field::{Fp64, Prime128Offset275};
 use akita_types::sis::compute_num_digits_field_width;
+
+#[test]
+fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
+    use akita_field::Prime32Offset99;
+
+    type F = Prime32Offset99;
+    const D: usize = 512;
+    const POSITIONS: usize = 32;
+    const BLOCKS: usize = 4;
+    let log_basis = 4u32;
+    let num_digits = compute_num_digits_field_width(32, log_basis);
+    let rings = (0..BLOCKS * POSITIONS)
+        .map(|ring| {
+            CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                F::from_u64((ring * D + coefficient + 13) as u64 * 7)
+            }))
+        })
+        .collect::<Vec<_>>();
+    let challenges = (0..BLOCKS)
+        .map(|block| SparseChallenge {
+            positions: (0..64u32).map(|index| index * 8).collect(),
+            coeffs: (0..64)
+                .map(|index| match (index + block) % 4 {
+                    0 => -2,
+                    1 => -1,
+                    2 => 1,
+                    _ => 2,
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let threshold =
+        akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
+    let params = DecomposeParams {
+        threshold,
+        q,
+        mask: (1i128 << log_basis) - 1,
+        half_b: 1i128 << (log_basis - 1),
+        b_val: 1i128 << log_basis,
+        log_basis,
+        overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+    };
+
+    let actual = balanced_ring_decompose_fold_partitioned(
+        &rings,
+        &challenges,
+        POSITIONS,
+        num_digits,
+        &params,
+    );
+    let mut digit_planes = vec![[0i8; D]; rings.len() * num_digits];
+    for (ring, planes) in rings.iter().zip(digit_planes.chunks_exact_mut(num_digits)) {
+        decompose_ring_interleaved(ring, planes, num_digits, &params);
+    }
+    let cached = cached_digit_decompose_fold_partitioned::<F, D>(
+        &digit_planes,
+        &challenges,
+        POSITIONS,
+        num_digits,
+        log_basis,
+    );
+    let mut expected = vec![[0i32; D]; POSITIONS * num_digits];
+    let mut digit_buf = vec![[0i8; D]; num_digits];
+    for (block, challenge) in challenges.iter().enumerate() {
+        for position in 0..POSITIONS {
+            decompose_ring_interleaved(
+                &rings[block * POSITIONS + position],
+                &mut digit_buf,
+                num_digits,
+                &params,
+            );
+            for digit in 0..num_digits {
+                sparse_mul_acc_scalar(
+                    &digit_buf[digit],
+                    challenge,
+                    &mut expected[position * num_digits + digit],
+                );
+            }
+        }
+    }
+    assert_eq!(actual, expected);
+    assert_eq!(cached, expected);
+}
 
 #[test]
 fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {

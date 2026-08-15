@@ -121,10 +121,10 @@ fn relation_rhs_row_count_matches_level_params() {
     let witness_layout =
         WitnessLayout::new(&lp, &batch, &joint_geometry, 1, 2).expect("witness layout");
     let relation_geometry = lp
-        .relation_address_geometry(&batch, lp.d_a(), witness_layout.live_coeff_len())
+        .relation_address_geometry(&batch, 1, lp.d_a(), witness_layout.live_coeff_len())
         .expect("A/B/D geometry");
     let compression_geometry = lp
-        .compression_relation_address_geometry(&batch, lp.d_a(), witness_layout.live_coeff_len())
+        .compression_relation_address_geometry(&batch, 1, lp.d_a(), witness_layout.live_coeff_len())
         .expect("F/H geometry");
     assert_eq!(
         relation_geometry.relation_coefficient_block_len(),

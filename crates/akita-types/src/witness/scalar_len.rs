@@ -377,7 +377,12 @@ mod tests {
                 Default::default();
                 params.outer_commit_matrix.output_rank() * 256
             ]);
-            assert!(crate::assemble_relation_rhs(rhs, &v, &u).is_err());
+            let assembled =
+                crate::assemble_relation_rhs(rhs, &v, &u).expect("packing relation RHS assembly");
+            assert_eq!(
+                assembled.coeff_len(),
+                crate::relation_rhs_coeff_len(rhs).unwrap()
+            );
 
             for num_chunks in [1, 2] {
                 let layout =
@@ -523,7 +528,7 @@ mod tests {
             Default::default();
             overlap.outer_commit_matrix.output_rank() * 128
         ]);
-        assert!(crate::assemble_relation_rhs(overlap_relation.rhs_layout(), &v, &u).is_err());
+        assert!(crate::assemble_relation_rhs(overlap_relation.rhs_layout(), &v, &u).is_ok());
     }
 
     #[test]

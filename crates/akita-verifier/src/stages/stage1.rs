@@ -15,7 +15,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::proof::append_flat_coefficients;
 use akita_types::{
     append_digit_range_child_claims, AkitaStage1Proof, CommittedGroupParams,
-    DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
+    DigitRangeEqualityPoint, DigitRangePlan, InnerCommitSecurityRoute, OpeningClaimsLayout,
+    OpeningMethod, SubringCoefficientPackingGeometry,
 };
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
@@ -41,16 +42,25 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
 ///
 /// Returns an error if the group layout is malformed or challenge sampling fails.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
+pub(crate) enum VerifierGroupFoldChallenges {
+    EvaluationTrace(Challenges),
+    SubringCoefficientPacking {
+        geometry: SubringCoefficientPackingGeometry,
+        challenges: Challenges,
+    },
+}
+
+pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
     transcript: &mut T,
     opening_payload_coeffs: &[F],
     v_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
     grind_nonce: u32,
-) -> Result<Vec<Challenges>, AkitaError>
+) -> Result<Vec<VerifierGroupFoldChallenges>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
     append_flat_coefficients(
@@ -61,33 +71,78 @@ where
     )?;
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.group_params(opening_batch, group_index)?;
-        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         let challenge_config = group_lp.fold_challenge_config();
-        let rejection = matches!(
-            group_lp.inner_commit_matrix_params().security_route(),
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
-        )
-        .then(|| {
-            akita_challenges::selective_l2_operator_norm_rejection(
-                group_dims.d_a(),
-                &challenge_config,
-            )
-        })
-        .flatten();
-        group_challenges.push(
-            LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
-                akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
-                group_dims.d_a(),
-                group_index,
-                group_lp.num_live_blocks(),
-                k_g,
-                &challenge_config,
-                grind_nonce,
-                rejection,
-            )?,
-        );
+        let drawn = match group_lp.opening_method() {
+            OpeningMethod::EvaluationTrace => {
+                let rejection = matches!(
+                    group_lp.inner_commit_matrix_params().security_route(),
+                    InnerCommitSecurityRoute::L2 { .. }
+                )
+                .then(|| {
+                    akita_challenges::selective_l2_operator_norm_rejection(
+                        group_dims.d_a(),
+                        &challenge_config,
+                    )
+                })
+                .flatten();
+                VerifierGroupFoldChallenges::EvaluationTrace(
+                    LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
+                        akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
+                        group_dims.d_a(),
+                        group_index,
+                        group_lp.num_live_blocks(),
+                        k_g,
+                        &challenge_config,
+                        grind_nonce,
+                        rejection,
+                    )?,
+                )
+            }
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => {
+                if !matches!(
+                    group_lp.inner_commit_matrix_params().security_route(),
+                    InnerCommitSecurityRoute::Linf(_)
+                ) {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient packing requires the L-infinity A security route".into(),
+                    ));
+                }
+                let geometry = SubringCoefficientPackingGeometry::try_new(
+                    E::EXT_DEGREE,
+                    group_dims.d_a(),
+                    challenge_subring_dimension,
+                )?;
+                if challenge_config != geometry.fold_challenge_config() {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing challenge config is not the audited production family"
+                            .into(),
+                    ));
+                }
+                let challenges = LiveFoldDraw::<F, T>::new(transcript)
+                    .draw_folding_challenges_with_rejection(
+                        akita_challenges::FoldChallengeDrawDomain::SubringCoefficientPacking {
+                            challenge_subring_dimension,
+                        },
+                        challenge_subring_dimension,
+                        group_index,
+                        group_lp.num_live_blocks(),
+                        k_g,
+                        &challenge_config,
+                        grind_nonce,
+                        None,
+                    )?;
+                VerifierGroupFoldChallenges::SubringCoefficientPacking {
+                    geometry,
+                    challenges,
+                }
+            }
+        };
+        group_challenges.push(drawn);
     }
     Ok(group_challenges)
 }

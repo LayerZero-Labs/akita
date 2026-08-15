@@ -72,7 +72,7 @@ where
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
     let relation_geometry =
-        RelationWitnessGeometry::for_evaluation_trace_execution(root_lp, opening_batch)?;
+        RelationWitnessGeometry::for_level(root_lp, opening_batch, E::EXT_DEGREE)?;
     let relation_layout = relation_geometry.rhs_layout();
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
@@ -158,7 +158,22 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let prefix = if matches!(
+        root_lp.opening_method,
+        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+    ) {
+        if extension_opening_reduction.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        verify_coefficient_packing_root_prefix::<F, E, T>(
+            claims,
+            openings,
+            opening_batch,
+            basis,
+            root_lp,
+            transcript,
+        )?
+    } else if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }

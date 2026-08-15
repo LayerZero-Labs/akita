@@ -48,7 +48,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
     .unwrap();
     let relation_geometry = inputs
         .level_params
-        .relation_address_geometry(&inputs.opening_batch, TEST_D, layout.live_coeff_len())
+        .relation_address_geometry(&inputs.opening_batch, 1, TEST_D, layout.live_coeff_len())
         .unwrap();
     let full_vec_randomness = (0..relation_geometry.relation_lane_variable_count())
         .map(|idx| test_scalar(101 + idx as u128))
@@ -132,6 +132,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     let prepared = SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
+        1,
         eq_tau1,
         &witness_layout,
         &[group],
@@ -221,6 +222,7 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
     let deferred = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
+        1,
         inputs.eq_tau1.clone(),
         &layout,
         &groups,

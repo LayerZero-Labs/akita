@@ -22,7 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
-pub const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF2";
+pub const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF3";
 
 #[path = "setup_prefix_helpers.rs"]
 mod helpers;
@@ -296,6 +296,15 @@ fn serialize_committed_group_profile<W: Write>(
         .group
         .num_polynomials()
         .serialize_with_mode(&mut writer, compress)?;
+    match params.source_encoding {
+        crate::CommittedSourceEncoding::CanonicalCoefficientTable => {
+            0u8.serialize_with_mode(&mut writer, compress)?;
+        }
+        crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+            1u8.serialize_with_mode(&mut writer, compress)?;
+            extension_degree.serialize_with_mode(&mut writer, compress)?;
+        }
+    }
     params
         .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
@@ -338,6 +347,17 @@ fn deserialize_committed_group_profile<R: Read>(
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group = PolynomialGroupLayout::new(group_num_vars, group_num_polynomials);
+    let source_encoding = match u8::deserialize_with_mode(&mut reader, compress, validate, &())? {
+        0 => crate::CommittedSourceEncoding::CanonicalCoefficientTable,
+        1 => crate::CommittedSourceEncoding::TensorSubfieldProjection {
+            extension_degree: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        },
+        tag => {
+            return Err(SerializationError::InvalidData(format!(
+                "unknown committed source encoding tag {tag}"
+            )))
+        }
+    };
     let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_positions_per_block =
@@ -357,6 +377,7 @@ fn deserialize_committed_group_profile<R: Read>(
     Ok(CommittedGroupProfile {
         version,
         group,
+        source_encoding,
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
@@ -378,6 +399,14 @@ fn committed_group_profile_serialized_size(
     params.version.serialized_size(compress)
         + params.group.num_vars().serialized_size(compress)
         + params.group.num_polynomials().serialized_size(compress)
+        + match params.source_encoding {
+            crate::CommittedSourceEncoding::CanonicalCoefficientTable => {
+                0u8.serialized_size(compress)
+            }
+            crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+                1u8.serialized_size(compress) + extension_degree.serialized_size(compress)
+            }
+        }
         + params
             .num_live_ring_elements_per_claim
             .serialized_size(compress)
@@ -1058,7 +1087,7 @@ fn active_setup_projection_geometry(
     opening_batch.check()?;
     level_params.validate_opening_batch(opening_batch)?;
 
-    let mut d_physical_cols = 0usize;
+    let d_physical_cols = level_params.open_commit_matrix.input_width();
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_layout = opening_batch.group_layout(group_index)?;
@@ -1079,10 +1108,6 @@ fn active_setup_projection_geometry(
             .and_then(|n| n.checked_mul(group_params.num_digits_open()))
             .and_then(|n| n.checked_mul(d_subcolumns))
             .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-        d_physical_cols = d_physical_cols
-            .checked_add(d_active_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-
         groups.push(crate::setup_contribution::SetupProjectionGroupGeometry {
             role_dims: group_role_dims,
             a_rows: group_params.a_rows_len(),
@@ -1132,6 +1157,13 @@ pub fn setup_prefix_precommitted_params(
             "setup prefix length must be a nonzero power-of-two multiple of d_setup".to_string(),
         ));
     }
+    let setup_num_digits = crate::sis::compute_num_digits_field_width(
+        prefix_params
+            .inner_commit_matrix
+            .sis_modulus_profile()
+            .field_bits(),
+        prefix_params.log_basis_inner,
+    );
     let ring_slots = n_prefix / d_setup;
     let mut num_positions_per_block = 1usize;
     while num_positions_per_block <= ring_slots.max(1) {
@@ -1140,7 +1172,7 @@ pub fn setup_prefix_precommitted_params(
             break;
         }
         let inner_width = num_positions_per_block
-            .checked_mul(prefix_params.num_digits_inner)
+            .checked_mul(setup_num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("prefix inner width overflow".to_string()))?;
         let outer_width = CommitmentSliceGeometry::try_new(
             prefix_params.outer_slice_count,
@@ -1179,12 +1211,13 @@ pub fn setup_prefix_precommitted_params(
                 layout: CommittedGroupProfile {
                     version: CommittedGroupProfile::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
+                    source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
                     outer_slice_count: prefix_params.outer_slice_count,
                     log_basis_inner: prefix_params.log_basis_inner,
-                    num_digits_inner: prefix_params.num_digits_inner,
+                    num_digits_inner: setup_num_digits,
                     inner_commit_matrix,
                     log_basis_outer: prefix_params.log_basis_outer,
                     num_digits_outer: prefix_params.num_digits_outer,

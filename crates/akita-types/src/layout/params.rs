@@ -61,8 +61,8 @@ mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 pub use precommitted::{
-    GroupOpeningPlan, LevelParamsLike, OpeningMethod, PrecommittedGroupAdmissionPolicy,
-    PrecommittedLevelParams,
+    opening_d_segment_width, GroupOpeningPlan, LevelParamsLike, OpeningMethod,
+    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
 };
 
 /// Gadget basis used by opening-digit segments in the shared D product.
@@ -87,6 +87,8 @@ pub fn shared_d_digit_log_basis(
 pub struct CommittedGroupParams {
     /// Public B/D payload encoding selected for this fold level.
     pub payload_mode: crate::CommitmentPayloadMode,
+    /// Physical source encoding authenticated by A and B.
+    pub source_encoding: crate::CommittedSourceEncoding,
     /// Procedure used to reduce and open this group's coefficients.
     pub opening_method: OpeningMethod,
     /// Base-2 logarithm of the A/source gadget decomposition base.
@@ -257,6 +259,7 @@ impl CommittedGroupParams {
     ) -> Self {
         Self {
             payload_mode: crate::CommitmentPayloadMode::Compressed,
+            source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
             opening_method: OpeningMethod::EvaluationTrace,
             log_basis_inner: log_basis,
             log_basis_outer: log_basis,
@@ -487,19 +490,12 @@ impl CommittedGroupParams {
         fold_level: usize,
         num_polynomials: usize,
     ) -> Result<crate::CommitmentSliceGeometry, AkitaError> {
-        if matches!(
-            self.opening_method,
-            OpeningMethod::SubringCoefficientPacking { .. }
-        ) {
-            return Err(AkitaError::InvalidSetup(
-                "subring coefficient packing is not implemented yet".to_string(),
-            ));
-        }
         if num_polynomials == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment request requires at least one polynomial".into(),
             ));
         }
+        self.source_encoding.validate(self.d_a())?;
         self.validate_block_geometry()?;
         self.outer_slice_count.validate_for_commitment(
             fold_level,
@@ -613,6 +609,7 @@ impl CommittedGroupParams {
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.payload_mode.tag());
+        self.source_encoding.append_descriptor_bytes(bytes);
         self.opening_method.append_descriptor_bytes(bytes);
         push_u32(bytes, self.log_basis_inner);
         push_u32(bytes, self.log_basis_outer);
@@ -764,7 +761,7 @@ impl CommittedGroupParams {
             let group_params = self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            group_params.validate_geometry()?;
+            group_params.validate()?;
             if group_params.opening.log_basis_open != self.log_basis_open {
                 return Err(AkitaError::InvalidSetup(
                     "all opening groups must use the batch-shared opening basis".to_string(),
@@ -784,19 +781,6 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
-        if matches!(
-            self.opening_method,
-            OpeningMethod::SubringCoefficientPacking { .. }
-        ) || self.precommitted_group_iter().any(|group| {
-            matches!(
-                group.opening.opening_method,
-                OpeningMethod::SubringCoefficientPacking { .. }
-            )
-        }) {
-            return Err(AkitaError::InvalidSetup(
-                "subring coefficient packing is not implemented yet".to_string(),
-            ));
-        }
         self.validate_opening_batch_geometry(opening_batch)
     }
 
@@ -848,12 +832,13 @@ impl CommittedGroupParams {
     pub fn relation_address_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
+        extension_degree: usize,
         outgoing_witness_ring_dimension: usize,
         live_witness_coeff_len: usize,
     ) -> Result<RelationAddressGeometry, AkitaError> {
         self.validate_opening_batch(opening_batch)?;
         let relation_geometry =
-            crate::RelationWitnessGeometry::for_evaluation_trace_execution(self, opening_batch)?;
+            crate::RelationWitnessGeometry::for_level(self, opening_batch, extension_degree)?;
         RelationAddressGeometry::for_relation(
             &relation_geometry,
             outgoing_witness_ring_dimension,
@@ -865,11 +850,12 @@ impl CommittedGroupParams {
     pub fn compression_relation_address_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
+        extension_degree: usize,
         outgoing_witness_ring_dimension: usize,
         live_witness_coeff_len: usize,
     ) -> Result<CompressionRelationAddressGeometry, AkitaError> {
         let relation_geometry =
-            crate::RelationWitnessGeometry::for_evaluation_trace_execution(self, opening_batch)?;
+            crate::RelationWitnessGeometry::for_level(self, opening_batch, extension_degree)?;
         let compression_row_dims = relation_geometry
             .rhs_layout()
             .row_families()?
@@ -1277,6 +1263,7 @@ impl CommittedGroupParams {
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
             payload_mode: self.payload_mode,
+            source_encoding: self.source_encoding,
             opening_method: self.opening_method,
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
@@ -1335,6 +1322,7 @@ impl CommittedGroupParams {
     pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
             payload_mode: other.payload_mode,
+            source_encoding: other.source_encoding,
             opening_method: other.opening_method,
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,

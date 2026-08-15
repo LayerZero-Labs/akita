@@ -1,0 +1,288 @@
+use super::*;
+
+use akita_algebra::CyclotomicRing;
+use akita_config::proof_optimized::fp32;
+use akita_field::LiftBase;
+use akita_types::{basis_weights, OpeningMethod};
+
+type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
+type PackingField = <PackingCfg as CommitmentConfig>::Field;
+type PackingExt = <PackingCfg as CommitmentConfig>::ExtField;
+type PackingScheme = AkitaCommitmentScheme<PackingCfg>;
+
+#[test]
+fn fixed_root_packing_rejects_a_stale_successor_length() {
+    let opening_batch = OpeningClaimsLayout::new(20, 1).unwrap();
+    let row = PackingCfg::resolve_catalog_row_for_opening(&opening_batch).unwrap();
+    let mut schedule = row.schedule().clone();
+    schedule.terminal.input_witness_len += 1;
+    schedule
+        .validate_structure()
+        .expect_err("a successor length stale against the packed root must reject");
+}
+
+#[test]
+fn fixed_root_packing_round_trips_in_both_bases() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(|| {
+            let num_vars = 20;
+            let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
+            let row = PackingCfg::resolve_catalog_row_for_opening(&opening_batch).unwrap();
+            let root = &row.schedule().root.params.final_group.commitment;
+            let OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } = root.opening_method
+            else {
+                panic!("test catalog did not select coefficient packing");
+            };
+            assert!(
+                PackingCfg::EXT_DEGREE * challenge_subring_dimension < root.d_a(),
+                "the authenticated fixture must exercise reduced packing width"
+            );
+            assert_eq!(
+                PackingCfg::EXT_DEGREE * challenge_subring_dimension / root.role_dims().d_d(),
+                2,
+                "the authenticated fixture must exercise two physical D subcolumns"
+            );
+            assert_eq!(row.schedule().recursive_folds.len(), 1);
+            assert!(row.schedule().recursive_folds[0]
+                .params
+                .incoming_setup_prefix
+                .is_some());
+            assert!(
+                root.open_commit_matrix.input_width()
+                    < root.num_digits_open
+                        * root.num_live_blocks
+                        * root.d_a().div_ceil(root.role_dims().d_d()),
+                "the fixed row must shrink the shared D input"
+            );
+
+            let source_len = 1usize << num_vars;
+            let evaluations = (0..source_len)
+                .map(|index| PackingField::from_i64((index % 7) as i64 - 3))
+                .collect::<Vec<_>>();
+            let polynomial =
+                akita_prover::DensePoly::from_field_evals(num_vars, root.d_a(), &evaluations)
+                    .unwrap();
+            let polynomial =
+                akita_prover::MultilinearPolynomial::<PackingField, usize>::dense(polynomial);
+
+            let mut setup = PackingScheme::setup_prover(num_vars, 1).unwrap();
+            let setup_prefix = row.schedule().recursive_folds[0]
+                .params
+                .incoming_setup_prefix
+                .as_ref()
+                .unwrap()
+                .slot_id();
+            assert_eq!(setup_prefix.d_setup(), 256);
+            let prefix_prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+            let prefix_slot = akita_prover::commit_setup_prefix::<PackingField, 256, _>(
+                setup.expanded.as_ref(),
+                &CpuBackend::DEFAULT,
+                &prefix_prepared,
+                &setup_prefix.commitment_profile,
+                setup_prefix.n_prefix().unwrap(),
+                setup_prefix.natural_len,
+            )
+            .unwrap();
+            setup.prefix_slots.insert(prefix_slot).unwrap();
+            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+            let stack = akita_prover::UniformProverStack::uniform(
+                &CpuBackend::DEFAULT,
+                &prepared,
+                setup.expanded.as_ref(),
+            )
+            .unwrap();
+            let verifier_setup = PackingScheme::setup_verifier(&setup).unwrap();
+            let akita_prover::CommitOutput {
+                committed_group,
+                hint,
+            } = PackingScheme::commit::<_, _>(
+                &setup,
+                std::slice::from_ref(&polynomial),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .unwrap();
+            assert_eq!(committed_group.profile(), &row.profiles().final_group);
+            let a_matrix = setup
+                .expanded
+                .shared_matrix()
+                .ring_view::<512>(
+                    root.inner_commit_matrix.output_rank(),
+                    root.inner_commit_matrix.input_width(),
+                )
+                .unwrap();
+            let mut source_digits = Vec::new();
+            for coefficients in evaluations
+                .chunks_exact(512)
+                .take(root.num_positions_per_block)
+            {
+                source_digits.extend(
+                    CyclotomicRing::<PackingField, 512>::from_coefficients(
+                        coefficients.try_into().unwrap(),
+                    )
+                    .balanced_decompose_pow2_i8(root.num_digits_inner, root.log_basis_inner),
+                );
+            }
+            let hint_rows = hint.inner_rows()[0].as_ring_slice::<512>().unwrap();
+            for row in 0..root.inner_commit_matrix.output_rank() {
+                let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
+                    CyclotomicRing::zero(),
+                    |sum, (matrix, digits)| {
+                        sum + *matrix
+                            * CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+                                PackingField::from_i8(digits[index])
+                            }))
+                    },
+                );
+                assert_eq!(hint_rows[row], expected, "A hint row {row} mismatch");
+            }
+            let polynomial_refs = [&polynomial];
+            let point = (0..num_vars)
+                .map(|index| PackingExt::from_u64((index as u64).wrapping_mul(3).wrapping_add(1)))
+                .collect::<Vec<_>>();
+
+            for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+                let weights = basis_weights(&point, basis).unwrap();
+                let expected = evaluations.iter().zip(&weights).fold(
+                    PackingExt::zero(),
+                    |sum, (&coefficient, &weight)| {
+                        sum + weight * PackingExt::lift_base(coefficient)
+                    },
+                );
+                let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                    point.clone(),
+                    vec![PackingExt::zero()],
+                    committed_group.clone(),
+                )
+                .unwrap()])
+                .unwrap();
+                let prover_data = selected_prover_data::<PackingCfg, _>(
+                    prover_claims,
+                    vec![hint.clone()],
+                    vec![&polynomial_refs],
+                )
+                .unwrap();
+                let selection = prover_data.selection();
+                let label = match basis {
+                    BasisMode::Lagrange => b"packing/root/lagrange".as_slice(),
+                    BasisMode::Monomial => b"packing/root/monomial".as_slice(),
+                };
+                let mut prover_transcript = AkitaTranscript::<PackingField>::new(label);
+                let proof = PackingScheme::batched_prove::<_, _, _>(
+                    &setup,
+                    prover_data,
+                    &stack,
+                    &mut prover_transcript,
+                    basis,
+                )
+                .unwrap();
+                assert!(
+                    proof.root.stage3_sumcheck_proof().is_some(),
+                    "packing root must offload its setup contribution through Stage 3"
+                );
+
+                let shape = proof.shape();
+                let mut encoded = Vec::new();
+                proof.serialize_uncompressed(&mut encoded).unwrap();
+                let proof =
+                    AkitaBatchedProof::<PackingField, PackingExt>::deserialize_uncompressed(
+                        encoded.as_slice(),
+                        &shape,
+                    )
+                    .unwrap();
+                let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                    point.clone(),
+                    vec![expected],
+                    &committed_group,
+                )
+                .unwrap()])
+                .unwrap();
+                let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
+                let mut verifier_transcript = AkitaTranscript::<PackingField>::new(label);
+                PackingScheme::batched_verify(
+                    &proof,
+                    &verifier_setup,
+                    &mut verifier_transcript,
+                    statement,
+                    basis,
+                )
+                .unwrap();
+
+                #[cfg(feature = "logging-transcript")]
+                if basis == BasisMode::Lagrange {
+                    let mut malformed = proof.clone();
+                    malformed.root.extension_opening_reduction =
+                        Some(ExtensionOpeningReductionProof {
+                            partials: vec![PackingExt::zero()],
+                            sumcheck: akita_sumcheck::SumcheckProof {
+                                round_polys: Vec::new(),
+                            },
+                        });
+                    let verifier_claims =
+                        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                            point.clone(),
+                            vec![expected],
+                            &committed_group,
+                        )
+                        .unwrap()])
+                        .unwrap();
+                    let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
+                    let mut transcript = akita_transcript::LoggingTranscript::wrap(
+                        AkitaTranscript::<PackingField>::new(label),
+                    );
+                    assert!(PackingScheme::batched_verify(
+                        &malformed,
+                        &verifier_setup,
+                        &mut transcript,
+                        statement,
+                        basis,
+                    )
+                    .is_err());
+                    assert!(
+                        transcript.events().is_empty(),
+                        "unexpected packing EOR must reject before transcript replay"
+                    );
+
+                    let mut tensor_profile = *committed_group.profile();
+                    tensor_profile.source_encoding =
+                        akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+                            extension_degree: PackingCfg::EXT_DEGREE,
+                        };
+                    let tensor_group = akita_types::CommittedGroup::new(
+                        tensor_profile,
+                        committed_group.commitment().clone(),
+                    );
+                    let verifier_claims =
+                        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                            point.clone(),
+                            vec![expected],
+                            &tensor_group,
+                        )
+                        .unwrap()])
+                        .unwrap();
+                    let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
+                    let mut transcript = akita_transcript::LoggingTranscript::wrap(
+                        AkitaTranscript::<PackingField>::new(label),
+                    );
+                    assert!(PackingScheme::batched_verify(
+                        &proof,
+                        &verifier_setup,
+                        &mut transcript,
+                        statement,
+                        basis,
+                    )
+                    .is_err());
+                    assert!(
+                        transcript.events().is_empty(),
+                        "packing over a tensor source must reject before transcript replay"
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

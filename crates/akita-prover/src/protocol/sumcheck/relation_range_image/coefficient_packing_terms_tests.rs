@@ -4,7 +4,7 @@ use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_field::{Ext2, Prime64Offset59};
 use akita_types::{
     prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
-    AkitaExpandedSetup, AkitaSetupDescriptor, CoefficientPackingBatchSemanticInputs,
+    AkitaExpandedSetup, AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
     CoefficientPackingBatchSemantics, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
     OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
     PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
@@ -83,6 +83,7 @@ fn fixture() -> Fixture {
     let geometry = SubringCoefficientPackingGeometry::try_new(2, d_a, s).unwrap();
     let prepared_point = PreparedSubringCoefficientPackingPoint::new(
         geometry,
+        BasisMode::Lagrange,
         6,
         4,
         11,
@@ -218,6 +219,36 @@ fn prover_adapter_preserves_shared_stage2_semantics() {
     assert_eq!(
         prepared.weighted_scalar_opening_claim,
         semantics.stage2_terms().scalar_claim_weight() * authenticated_opening
+    );
+}
+
+#[test]
+fn prover_adapter_folds_to_shared_stage2_point_evaluation() {
+    let fixture = fixture();
+    let semantics = &fixture.batch.groups()[0];
+    let mut prepared = prepare_coefficient_packing_linear_terms(semantics, E::zero())
+        .unwrap()
+        .linear_terms;
+    let padded_len = semantics
+        .stage2_terms()
+        .physical_field_len()
+        .next_power_of_two();
+    let point = (0..padded_len.trailing_zeros())
+        .map(|index| E::from_u64(101 + u64::from(index)))
+        .collect::<Vec<_>>();
+    let coefficient_bits = semantics
+        .relation_events()
+        .relation_coefficient_block_len()
+        .trailing_zeros() as usize;
+    for &challenge in &point[..coefficient_bits] {
+        prepared.fold_coefficients(challenge);
+    }
+    for &challenge in &point[coefficient_bits..] {
+        prepared.fold_lanes(challenge);
+    }
+    assert_eq!(
+        prepared.final_value().unwrap(),
+        semantics.stage2_terms().evaluate_at_point(&point).unwrap()
     );
 }
 

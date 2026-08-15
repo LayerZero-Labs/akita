@@ -182,6 +182,7 @@ fn make_case_with_shape(
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
+        1,
         eq_tau1,
         &layout,
         &groups,

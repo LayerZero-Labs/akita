@@ -9,6 +9,7 @@ fn synthetic_profile(
 ) -> CommittedGroupProfile {
     CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
+        source_encoding: akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
         group,
         num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
         num_positions_per_block: params.num_positions_per_block,

@@ -81,6 +81,10 @@ where
         opening_method,
         root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars),
     );
+    let tensor_project_committed_root = matches!(
+        root_params.source_encoding,
+        akita_types::CommittedSourceEncoding::TensorSubfieldProjection { .. }
+    );
 
     if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
@@ -96,6 +100,7 @@ where
         prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
+            tensor_project_committed_root,
             claims,
             ExtensionOpeningSource::CurrentClaims,
             false,

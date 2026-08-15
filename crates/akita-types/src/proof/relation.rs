@@ -5,8 +5,8 @@ use crate::layout::{CommitmentRingDims, CommittedGroupParams};
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
 use crate::{
-    CommitmentSliceCount, CompressionChainPlan, LevelParamsLike, OpeningMethod,
-    SisModulusProfileId, SubringCoefficientPackingGeometry,
+    CommitmentSliceCount, CommittedSourceEncoding, CompressionChainPlan, LevelParamsLike,
+    OpeningMethod, SisModulusProfileId, SubringCoefficientPackingGeometry,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -30,11 +30,22 @@ fn opening_row_geometry(
     extension_degree: usize,
 ) -> Result<RelationRowGeometry, AkitaError> {
     let d_a = params.inner_commit_matrix_params().ring_dimension();
-    match params.opening_method() {
-        OpeningMethod::EvaluationTrace => RelationRowGeometry::native(d_a),
-        OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } => {
+    match (params.opening_method(), params.source_encoding()) {
+        (
+            OpeningMethod::EvaluationTrace,
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: encoded_degree,
+            },
+        ) if encoded_degree != extension_degree => Err(AkitaError::InvalidSetup(
+            "tensor source encoding does not match the protocol extension degree".into(),
+        )),
+        (OpeningMethod::EvaluationTrace, _) => RelationRowGeometry::native(d_a),
+        (
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            },
+            CommittedSourceEncoding::CanonicalCoefficientTable,
+        ) => {
             let geometry = SubringCoefficientPackingGeometry::try_new(
                 extension_degree,
                 d_a,
@@ -45,23 +56,13 @@ fn opening_row_geometry(
                 geometry.extension_degree(),
             )
         }
+        (OpeningMethod::SubringCoefficientPacking { .. }, _) => Err(AkitaError::InvalidSetup(
+            "coefficient packing requires the canonical coefficient source encoding".into(),
+        )),
     }
 }
 
 impl RelationRhsLayout {
-    fn require_evaluation_trace(&self) -> Result<(), AkitaError> {
-        if self
-            .groups
-            .iter()
-            .any(|group| !matches!(group.opening_method, OpeningMethod::EvaluationTrace))
-        {
-            return Err(AkitaError::InvalidSetup(
-                "subring coefficient packing relation execution is not implemented".into(),
-            ));
-        }
-        Ok(())
-    }
-
     pub fn uniform(
         role_dims: CommitmentRingDims,
         n_d: usize,
@@ -474,7 +475,18 @@ impl RelationWitnessGeometry {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<Self, AkitaError> {
         lp.validate_opening_batch(opening_batch)?;
-        Self::for_level(lp, opening_batch, 1)
+        let geometry = Self::for_level(lp, opening_batch, 1)?;
+        if geometry
+            .rhs_layout()
+            .groups
+            .iter()
+            .any(|group| !matches!(group.opening_method, OpeningMethod::EvaluationTrace))
+        {
+            return Err(AkitaError::InvalidSetup(
+                "EvaluationTrace execution received a coefficient-packing group".into(),
+            ));
+        }
+        Ok(geometry)
     }
 
     /// Common Stage-2 coefficient block derived from row polynomial moduli.
@@ -665,7 +677,6 @@ pub fn assemble_relation_rhs<F: FieldCore>(
     commitment_rows: &RingVec<F>,
 ) -> Result<RingVec<F>, AkitaError> {
     layout.validate()?;
-    layout.require_evaluation_trace()?;
     let v_rows = ring_row_count_at(v, layout.d_ring_dimension)?;
     if v_rows != layout.n_d {
         return Err(AkitaError::InvalidSize {
@@ -694,7 +705,10 @@ pub fn assemble_relation_rhs<F: FieldCore>(
     let mut coeffs = Vec::with_capacity(coeff_len);
     let mut commit_offset = 0usize;
     for group in &layout.groups {
-        coeffs.extend(repeat_n(F::zero(), group.role_dims.d_a()));
+        coeffs.extend(repeat_n(
+            F::zero(),
+            group.opening_geometry.physical_coefficient_width(),
+        ));
         let a_coeff_len = group
             .n_a
             .checked_mul(group.role_dims.d_a())
@@ -738,7 +752,6 @@ pub fn assemble_compressed_relation_rhs<F: FieldCore>(
     opening_terminal_payload: &[F],
 ) -> Result<RingVec<F>, AkitaError> {
     layout.validate()?;
-    layout.require_evaluation_trace()?;
     let compression = layout.compression.as_ref().ok_or_else(|| {
         AkitaError::InvalidSetup("relation layout has no compression geometry".into())
     })?;
@@ -769,15 +782,16 @@ pub fn assemble_compressed_relation_rhs<F: FieldCore>(
         let ordinary_coefficients = group
             .role_dims
             .d_a()
-            .checked_mul(group.n_a.checked_add(1).ok_or_else(|| {
-                AkitaError::InvalidSetup("relation RHS row count overflow".into())
-            })?)
-            .and_then(|len| {
+            .checked_mul(group.n_a)
+            .and_then(|a| {
                 group
                     .role_dims
                     .d_b()
                     .checked_mul(b_rows)
-                    .and_then(|b| len.checked_add(b))
+                    .and_then(|b| a.checked_add(b))
+            })
+            .and_then(|native| {
+                native.checked_add(group.opening_geometry.physical_coefficient_width())
             })
             .ok_or_else(|| AkitaError::InvalidSetup("relation RHS width overflow".into()))?;
         coefficients.extend(repeat_n(F::zero(), ordinary_coefficients));

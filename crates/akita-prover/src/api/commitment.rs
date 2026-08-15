@@ -17,8 +17,9 @@ use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
     Commitment, CommitmentRingDims, CommitmentSliceCount, CommittedGroup, CommittedGroupParams,
-    CommittedGroupProfile, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
+    CommittedGroupProfile, CommittedSourceEncoding, CompressionChainPlan, FpExtEncoding,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PrecommittedGroupProfiles, RingVec,
 };
 
 mod inner;
@@ -507,9 +508,10 @@ fn validate_explicit_context(
 ///
 /// Scheduler contexts select an existing S or G catalog row. Explicit
 /// contexts validate caller-supplied root parameters without catalog lookup.
-/// Tensor projection is determined solely from field/root geometry. Geometry
-/// validation, commitment arithmetic, and result assembly are shared by every
-/// context.
+/// The commitment-owned source encoding selects either the canonical
+/// coefficient table or the tensor/subfield projection.
+/// Geometry validation, commitment arithmetic, and result assembly are shared
+/// by every context.
 ///
 /// # Errors
 ///
@@ -576,28 +578,39 @@ where
         validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
     let geometry: CommitmentGeometry<'_> = params.into();
     let transform_ring_d = geometry.inner_matrix.ring_dimension();
-    let (commitment, hint) = if root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
-        transform_ring_d,
-        group_layout.num_vars(),
-    ) {
-        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
-            transform_ring_d,
-            stack.tensor(),
-            polys,
-        )?;
-        commit_with_validated_geometry::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
-            &transformed,
-            stack.commit(),
-            geometry,
-            &slice_geometry,
-        )?
-    } else {
-        commit_with_validated_geometry::<Cfg::Field, P, B>(
-            polys,
-            stack.commit(),
-            geometry,
-            &slice_geometry,
-        )?
+    let (commitment, hint) = match params.source_encoding {
+        CommittedSourceEncoding::CanonicalCoefficientTable => {
+            commit_with_validated_geometry::<Cfg::Field, P, B>(
+                polys,
+                stack.commit(),
+                geometry,
+                &slice_geometry,
+            )?
+        }
+        CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+            if extension_degree != <Cfg::ExtField as akita_field::ExtField<Cfg::Field>>::EXT_DEGREE
+                || !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
+                    transform_ring_d,
+                    group_layout.num_vars(),
+                )
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "root tensor source encoding is incompatible with the field or root geometry"
+                        .into(),
+                ));
+            }
+            let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+                transform_ring_d,
+                stack.tensor(),
+                polys,
+            )?;
+            commit_with_validated_geometry::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
+                &transformed,
+                stack.commit(),
+                geometry,
+                &slice_geometry,
+            )?
+        }
     };
 
     Ok(CommitOutput {

@@ -176,11 +176,6 @@ where
                     challenge_subring_dimension,
                 } = opening_method
                 {
-                    if basis != BasisMode::Lagrange {
-                        return Err(AkitaError::InvalidSetup(
-                            "coefficient packing requires Lagrange opening points".into(),
-                        ));
-                    }
                     let geometry = SubringCoefficientPackingGeometry::try_new(
                         E::EXT_DEGREE,
                         D,
@@ -192,9 +187,9 @@ where
                         AkitaError::InvalidInput("opening group must be nonempty".into())
                     })?;
                     let num_live_positions =
-                        <P as crate::compute::RootPolyShape<F, D>>::num_ring_elems(*first);
+                        <P as crate::compute::RootPolyShape<F, D>>::num_live_ring_elems(*first);
                     if polys.iter().any(|poly| {
-                        <P as crate::compute::RootPolyShape<F, D>>::num_ring_elems(*poly)
+                        <P as crate::compute::RootPolyShape<F, D>>::num_live_ring_elems(*poly)
                             != num_live_positions
                             || <P as crate::compute::RootPolyShape<F, D>>::num_vars(*poly)
                                 != source_num_vars
@@ -206,6 +201,7 @@ where
                     }
                     let point = PreparedSubringCoefficientPackingPoint::new(
                         geometry,
+                        basis,
                         num_live_positions,
                         num_positions_per_block,
                         source_num_vars,

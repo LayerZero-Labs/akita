@@ -65,6 +65,15 @@ where
     /// Total number of ring elements in the polynomial.
     fn num_ring_elems(&self) -> usize;
 
+    /// Exact live ring prefix consumed by coefficient packing.
+    ///
+    /// Ordinary root sources fill their complete Boolean domain, so this is
+    /// identical to [`Self::num_ring_elems`]. Recursive witnesses override it
+    /// to exclude their commitment-only zero padding.
+    fn num_live_ring_elems(&self) -> usize {
+        self.num_ring_elems()
+    }
+
     /// Total number of variables (`log2(num_ring_elems() * D)`).
     ///
     /// # Panics

@@ -126,6 +126,7 @@ impl SetupPrefixCandidateContext<'_> {
         };
         let layout = CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
+            source_encoding: akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
             num_live_ring_elements_per_claim: self.ring_slots,
             num_positions_per_block: split.num_positions_per_block,

@@ -2,9 +2,9 @@
 
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_w_ring_count, num_digits_inner, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, InnerCommitMatrixParams, InnerCommitSecurityRoute,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
+    num_digits_inner, num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
@@ -82,20 +82,6 @@ fn audit_open_matrix(
     audit_sis_key(label, matrix.sis_table_key(), SisMatrixRole::Open, policy)
 }
 
-fn checked_projected_width(
-    label: &str,
-    width: usize,
-    source_ring_dimension: usize,
-    target_ring_dimension: usize,
-) -> Result<usize, AkitaError> {
-    if target_ring_dimension == 0 || !source_ring_dimension.is_multiple_of(target_ring_dimension) {
-        return Err(invalid(label, "invalid matrix carrier projection"));
-    }
-    width
-        .checked_mul(source_ring_dimension / target_ring_dimension)
-        .ok_or_else(|| invalid(label, "projected matrix width overflow"))
-}
-
 fn audit_bound(label: &str, declared: u128, required: Option<u128>) -> Result<(), AkitaError> {
     let required = required.ok_or_else(|| invalid(label, "accepted envelope has no SIS row"))?;
     if declared < required {
@@ -167,21 +153,32 @@ fn expected_d_width(
     label: &str,
     params: &CommittedGroupParams,
     num_claims: usize,
+    extension_degree: usize,
 ) -> Result<usize, AkitaError> {
     let dims = params.role_dims();
-    let main_width =
-        decomposed_w_ring_count(params.num_digits_open, params.num_live_blocks, num_claims)
-            .ok_or_else(|| invalid(label, "main D width overflow"))?;
-    let mut width = checked_projected_width(label, main_width, dims.d_a(), dims.d_d())?;
+    let mut width = akita_types::opening_d_segment_width(
+        params.opening_method,
+        extension_degree,
+        dims.d_a(),
+        dims.d_d(),
+        params.num_digits_open,
+        params.num_live_blocks,
+        num_claims,
+    )
+    .map_err(|_| invalid(label, "main D width is incompatible with opening geometry"))?;
 
     for group in &params.precommitted_groups {
         width = width
-            .checked_add(group.d_segment_width(dims.d_d())?)
+            .checked_add(group.d_segment_width(extension_degree, dims.d_d())?)
             .ok_or_else(|| invalid(label, "precommitted D width overflow"))?;
     }
     if let Some(prefix) = &params.setup_prefix {
         width = width
-            .checked_add(prefix.commitment_params.d_segment_width(dims.d_d())?)
+            .checked_add(
+                prefix
+                    .commitment_params
+                    .d_segment_width(extension_degree, dims.d_d())?,
+            )
             .ok_or_else(|| invalid(label, "setup-prefix D width overflow"))?;
     }
     Ok(width)
@@ -239,7 +236,7 @@ fn audit_committed_params(
         dims.d_b(),
     )?
     .physical_input_width();
-    let expected_d_width = expected_d_width(label, params, num_claims)?;
+    let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
     if params.inner_commit_matrix.input_width() != expected_a_width
         || params.outer_commit_matrix.input_width() != expected_b_width
         || params.open_commit_matrix.input_width() != expected_d_width

@@ -8,11 +8,11 @@ use akita_field::{
 };
 
 use crate::{
-    relation_claim_from_compressed_rhs_extension, relation_rhs_coeff_len, ChunkedWitnessCfg,
-    CommitmentPayloadMode, CommitmentRingDims, DigitRangePlan, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, PolynomialGroupLayout, RelationAddressGeometry,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingVec,
-    SisModulusProfileId, WitnessLayout,
+    relation_claim_from_compressed_rhs_extension, relation_rhs_coeff_len, BasisMode,
+    ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, DigitRangePlan,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+    RelationAddressGeometry, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationGroupOpening, RingVec, SisModulusProfileId, WitnessLayout,
 };
 use crate::{
     CommittedGroupProfile, GroupOpeningPlan, InnerCommitMatrixParams, PrecommittedLevelParams,
@@ -114,6 +114,7 @@ where
         .collect::<Vec<_>>();
     let prepared_point = PreparedSubringCoefficientPackingPoint::new(
         geometry,
+        BasisMode::Lagrange,
         live_positions,
         positions_per_block,
         num_vars,
@@ -174,6 +175,32 @@ where
         claim_coefficients,
         tau1,
     }
+}
+
+#[test]
+fn packing_rejects_tensor_projected_commitment_source() {
+    let mut fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        64,
+        64,
+        4,
+        4,
+        10,
+        1,
+        1,
+    );
+    let extension_degree = <E as ExtField<F>>::EXT_DEGREE;
+    fixture.params.source_encoding =
+        crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree };
+    assert!(matches!(
+        RelationWitnessGeometry::for_level(
+            &fixture.params,
+            &fixture.opening_batch,
+            extension_degree,
+        ),
+        Err(AkitaError::InvalidSetup(_))
+    ));
 }
 
 fn prepare<Base, Extension>(
@@ -644,6 +671,7 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
     );
     let wrong_arity_point = PreparedSubringCoefficientPackingPoint::new(
         fixture.prepared_point.geometry(),
+        BasisMode::Lagrange,
         4,
         4,
         10,
@@ -1241,6 +1269,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
             .unwrap();
         let point = PreparedSubringCoefficientPackingPoint::new(
             geometry,
+            BasisMode::Lagrange,
             group_params.num_live_ring_elements_per_claim(),
             group_params.num_positions_per_block(),
             group_layout.num_vars(),

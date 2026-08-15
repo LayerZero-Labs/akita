@@ -448,6 +448,50 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("params");
+        let setup_num_digits = crate::sis::compute_num_digits_field_width(
+            params
+                .inner_commit_matrix
+                .sis_modulus_profile()
+                .field_bits(),
+            params.log_basis_inner,
+        );
+        params.num_digits_inner = setup_num_digits;
+        params.num_positions_per_block = 1;
+        params.num_live_blocks = 1;
+        let inner = params.inner_commit_matrix;
+        let inner_key = inner
+            .sis_table_key()
+            .expect("L infinity setup-prefix matrix");
+        params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner_key.table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            params.num_positions_per_block * params.num_digits_inner,
+            inner_key.coeff_linf_bound,
+            inner.ring_dimension(),
+        );
+        let outer_width = crate::CommitmentSliceGeometry::try_new(
+            params.outer_slice_count,
+            1,
+            1,
+            params.inner_commit_matrix.output_rank(),
+            params.num_digits_outer,
+            params.inner_commit_matrix.ring_dimension(),
+            params.outer_commit_matrix.ring_dimension(),
+        )
+        .expect("setup-prefix slice geometry")
+        .physical_input_width();
+        let outer = params.outer_commit_matrix;
+        params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank(),
+            outer_width,
+            outer.coeff_linf_bound(),
+            outer.ring_dimension(),
+        );
         let mut prefix_params =
             crate::setup_prefix_precommitted_params(&params, 64).expect("setup prefix params");
         let outer = prefix_params.layout.outer_commit_matrix;

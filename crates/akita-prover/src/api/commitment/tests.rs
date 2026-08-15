@@ -3,8 +3,11 @@ use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend};
 use crate::{AkitaProverSetup, CommitInnerWitness, CpuBackend, DensePoly};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::Fp64;
-use akita_types::{OpenCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId};
+use akita_field::{Ext2, Fp64};
+use akita_types::{
+    CommittedGroupProfile, CommittedSourceEncoding, OpenCommitMatrixParams, OpeningMethod,
+    PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
+};
 
 type F = Fp64<4294967197>;
 const D: usize = 64;
@@ -575,4 +578,91 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
             .expect("real sliced compression hint");
         assert!(!commitment.rows().coeffs().is_empty());
     }
+}
+
+#[test]
+fn commitment_bytes_follow_source_encoding_not_opening_method() {
+    const NUM_VARS: usize = 10;
+    let canonical = commitment_params_for_slice_count(akita_types::CommitmentSliceCount::ONE);
+    let mut packing_plan = canonical.clone();
+    packing_plan.opening_method = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    let group = PolynomialGroupLayout::new(NUM_VARS, 1);
+    let profile = |params: &CommittedGroupParams| CommittedGroupProfile {
+        version: CommittedGroupProfile::VERSION,
+        group,
+        source_encoding: params.source_encoding,
+        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+        num_positions_per_block: params.num_positions_per_block,
+        num_live_blocks: params.num_live_blocks,
+        outer_slice_count: params.outer_slice_count,
+        log_basis_inner: params.log_basis_inner,
+        num_digits_inner: params.num_digits_inner,
+        inner_commit_matrix: params.inner_commit_matrix,
+        log_basis_outer: params.log_basis_outer,
+        num_digits_outer: params.num_digits_outer,
+        outer_commit_matrix: params.outer_commit_matrix,
+    };
+    assert_eq!(
+        profile(&canonical),
+        profile(&packing_plan),
+        "opening policy must not enter commitment identity",
+    );
+
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        NUM_VARS,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 2_000_000,
+        },
+    )
+    .unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let ctx = OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref()).unwrap();
+    let evaluations = (0..1usize << NUM_VARS)
+        .map(|index| F::from_u64((index * 17 + 9) as u64))
+        .collect::<Vec<_>>();
+    let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evaluations).unwrap();
+    let slice_geometry =
+        validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
+    let raw = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+        std::slice::from_ref(&polynomial),
+        &ctx,
+        (&canonical).into(),
+        &slice_geometry,
+    )
+    .unwrap();
+    let raw_under_other_method = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+        std::slice::from_ref(&polynomial),
+        &ctx,
+        (&packing_plan).into(),
+        &slice_geometry,
+    )
+    .unwrap();
+    assert_eq!(raw, raw_under_other_method);
+
+    let mut tensor = canonical.clone();
+    tensor.source_encoding = CommittedSourceEncoding::TensorSubfieldProjection {
+        extension_degree: 2,
+    };
+    assert_ne!(
+        profile(&canonical),
+        profile(&tensor),
+        "different physical source encodings must have different commitment identities",
+    );
+    let transformed = tensor_project_roots::<F, DensePoly<F>, Ext2<F>, CpuBackend>(
+        D,
+        &ctx,
+        std::slice::from_ref(&polynomial),
+    )
+    .unwrap();
+    let projected = commit_with_validated_geometry::<F, RootTensorProjectionPoly<F>, CpuBackend>(
+        &transformed,
+        &ctx,
+        (&tensor).into(),
+        &slice_geometry,
+    )
+    .unwrap();
+    assert_ne!(raw.0, projected.0);
 }

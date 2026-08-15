@@ -268,6 +268,7 @@ impl SubringCoefficientPackingGeometry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedSubringCoefficientPackingPoint<E: FieldCore> {
     geometry: SubringCoefficientPackingGeometry,
+    basis: BasisMode,
     source_num_vars: usize,
     num_live_positions: usize,
     num_positions_per_block: usize,
@@ -282,6 +283,7 @@ impl<E: FieldCore> PreparedSubringCoefficientPackingPoint<E> {
     /// Split one public opening point into the canonical packing axes.
     pub fn new(
         geometry: SubringCoefficientPackingGeometry,
+        basis: BasisMode,
         num_live_positions: usize,
         num_positions_per_block: usize,
         source_num_vars: usize,
@@ -343,16 +345,14 @@ impl<E: FieldCore> PreparedSubringCoefficientPackingPoint<E> {
             offset = end;
             Ok(axis)
         };
-        let packing_weights = basis_weights(take_axis(axis_bits[0])?, BasisMode::Lagrange)?;
-        let tail_weights = basis_weights(take_axis(axis_bits[1])?, BasisMode::Lagrange)?;
-        let position_weights = basis_weights(take_axis(axis_bits[2])?, BasisMode::Lagrange)?;
-        let live_block_weights = basis_weights_prefix(
-            take_axis(axis_bits[3])?,
-            BasisMode::Lagrange,
-            num_live_blocks,
-        )?;
+        let packing_weights = basis_weights(take_axis(axis_bits[0])?, basis)?;
+        let tail_weights = basis_weights(take_axis(axis_bits[1])?, basis)?;
+        let position_weights = basis_weights(take_axis(axis_bits[2])?, basis)?;
+        let live_block_weights =
+            basis_weights_prefix(take_axis(axis_bits[3])?, basis, num_live_blocks)?;
         Ok(Self {
             geometry,
+            basis,
             source_num_vars,
             num_live_positions,
             num_positions_per_block,
@@ -367,6 +367,11 @@ impl<E: FieldCore> PreparedSubringCoefficientPackingPoint<E> {
     /// Checked coefficient-packing geometry.
     pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
         self.geometry
+    }
+
+    /// Polynomial basis used for every tensor-product opening axis.
+    pub const fn basis(&self) -> BasisMode {
+        self.basis
     }
 
     /// Authenticated public-point arity before preparation-only padding.
@@ -1039,30 +1044,41 @@ mod tests {
         let geometry = SubringCoefficientPackingGeometry::try_new(1, 128, 64).unwrap();
         // log(kh)=1, log(s)=6, log(M)=2, log(B-domain)=1.
         let point = (1..=10).map(F::from_u64).collect::<Vec<_>>();
-        let prepared =
-            PreparedSubringCoefficientPackingPoint::new(geometry, 6, 4, 10, &point).unwrap();
-        assert_eq!(
-            prepared.packing_weights(),
-            basis_weights(&point[..1], BasisMode::Lagrange).unwrap()
-        );
-        assert_eq!(
-            prepared.tail_weights(),
-            basis_weights(&point[1..7], BasisMode::Lagrange).unwrap()
-        );
-        assert_eq!(
-            prepared.position_weights(),
-            basis_weights(&point[7..9], BasisMode::Lagrange).unwrap()
-        );
-        assert_eq!(
-            prepared.live_block_weights(),
-            basis_weights_prefix(&point[9..], BasisMode::Lagrange, 2).unwrap()
-        );
-        assert_eq!(prepared.num_live_blocks(), 2);
-        assert!(
-            PreparedSubringCoefficientPackingPoint::new(geometry, 6, 4, 10, &point[..9],).is_err()
-        );
+        for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+            let prepared =
+                PreparedSubringCoefficientPackingPoint::new(geometry, basis, 6, 4, 10, &point)
+                    .unwrap();
+            assert_eq!(prepared.basis(), basis);
+            assert_eq!(
+                prepared.packing_weights(),
+                basis_weights(&point[..1], basis).unwrap()
+            );
+            assert_eq!(
+                prepared.tail_weights(),
+                basis_weights(&point[1..7], basis).unwrap()
+            );
+            assert_eq!(
+                prepared.position_weights(),
+                basis_weights(&point[7..9], basis).unwrap()
+            );
+            assert_eq!(
+                prepared.live_block_weights(),
+                basis_weights_prefix(&point[9..], basis, 2).unwrap()
+            );
+            assert_eq!(prepared.num_live_blocks(), 2);
+        }
         assert!(PreparedSubringCoefficientPackingPoint::new(
             geometry,
+            BasisMode::Lagrange,
+            6,
+            4,
+            10,
+            &point[..9],
+        )
+        .is_err());
+        assert!(PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
             6,
             4,
             10,
@@ -1074,6 +1090,7 @@ mod tests {
         let short_source_point = point[..9].to_vec();
         let padded = PreparedSubringCoefficientPackingPoint::new(
             short_source_geometry,
+            BasisMode::Lagrange,
             2,
             4,
             9,
@@ -1083,6 +1100,7 @@ mod tests {
         assert_eq!(padded.num_live_blocks(), 1);
         assert!(PreparedSubringCoefficientPackingPoint::new(
             short_source_geometry,
+            BasisMode::Lagrange,
             2,
             4,
             9,
@@ -1094,6 +1112,7 @@ mod tests {
         let low_arity_point = point[..6].to_vec();
         assert!(PreparedSubringCoefficientPackingPoint::new(
             low_arity_geometry,
+            BasisMode::Lagrange,
             1,
             1,
             6,

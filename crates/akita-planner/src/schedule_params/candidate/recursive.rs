@@ -182,6 +182,13 @@ impl RecursiveCandidateContext<'_> {
             };
             candidates.push(CommittedGroupParams {
                 payload_mode: self.payload_mode,
+                source_encoding: akita_types::CommittedSourceEncoding::for_producer(
+                    akita_types::OpeningMethod::EvaluationTrace,
+                    self.policy.claim_ext_degree,
+                    self.dimensions.d_a(),
+                    self.search.current_witness_len.trailing_zeros() as usize,
+                    false,
+                ),
                 opening_method: akita_types::OpeningMethod::EvaluationTrace,
                 log_basis_inner: self.log_basis_inner,
                 log_basis_outer: self.log_basis_open,
@@ -429,13 +436,14 @@ fn prepare_recursive_level_search(
 
 fn attach_recursive_setup_prefix(
     setup_prefix: Option<&akita_types::ScheduledSetupPrefix>,
+    extension_degree: usize,
     mut candidate_params: CommittedGroupParams,
 ) -> Result<CommittedGroupParams, AkitaError> {
     candidate_params.setup_prefix = setup_prefix.cloned();
     if let Some(prefix) = &candidate_params.setup_prefix {
         let prefix_d_width = prefix
             .commitment_params
-            .d_segment_width(candidate_params.role_dims().d_d())?;
+            .d_segment_width(extension_degree, candidate_params.role_dims().d_d())?;
         let total_d_width = candidate_params
             .open_commit_matrix
             .input_width()
@@ -531,6 +539,7 @@ impl RecursiveCandidateContext<'_> {
                 for base_candidate in &base_slice_candidates {
                     let candidate_params = attach_recursive_setup_prefix(
                         setup_prefix.as_ref(),
+                        policy.claim_ext_degree,
                         base_candidate.clone(),
                     )?;
                     if !candidate_params.compression_sources_supported()? {
@@ -664,7 +673,11 @@ fn append_selective_l2_candidates(
     for setup_prefix in &search.setup_prefixes {
         let mut sliced = Vec::new();
         for base_params in &base_slices {
-            let params = attach_recursive_setup_prefix(setup_prefix.as_ref(), base_params.clone())?;
+            let params = attach_recursive_setup_prefix(
+                setup_prefix.as_ref(),
+                policy.claim_ext_degree,
+                base_params.clone(),
+            )?;
             if params.compression_sources_supported()? {
                 sliced.push(params);
             }

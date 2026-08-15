@@ -1,6 +1,6 @@
 use super::*;
 use akita_challenges::{SparseChallenge, PRODUCTION_FOLD_CHALLENGE_RING_DIMS};
-use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_field::{Ext2, FpExt4, MulBase, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 fn field_value<T: FromPrimitiveInt>(seed: usize) -> T {
     T::from_u64(((seed * 17 + 11) % 97 + 1) as u64)
@@ -268,6 +268,62 @@ fn direct_partials_and_scalar_opening_match_flat_factorization() {
     assert_partial_and_scalar_factorization::<Prime128OffsetA7F7, Prime128OffsetA7F7>(1);
     assert_partial_and_scalar_factorization::<Prime64Offset59, Ext2<Prime64Offset59>>(2);
     assert_partial_and_scalar_factorization::<Prime32Offset99, FpExt4<Prime32Offset99>>(2);
+}
+
+#[test]
+fn prepared_point_matches_direct_opening_in_both_bases() {
+    type F = Prime64Offset59;
+    type E = Ext2<F>;
+
+    let geometry = SubringCoefficientPackingGeometry::try_new(2, 256, 64).unwrap();
+    let num_live_positions = 6;
+    let num_positions_per_block = 4;
+    let source_num_vars = 11;
+    let point = (0..source_num_vars)
+        .map(|index| field_value::<E>(index + 1_001))
+        .collect::<Vec<_>>();
+    let source = (0..num_live_positions * geometry.a_ring_dimension())
+        .map(|index| field_value::<F>(index + 2_001))
+        .collect::<Vec<_>>();
+
+    for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+        let prepared = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            basis,
+            num_live_positions,
+            num_positions_per_block,
+            source_num_vars,
+            &point,
+        )
+        .unwrap();
+        let partials = coefficient_packing_partials::<F, E>(
+            geometry,
+            num_live_positions,
+            num_positions_per_block,
+            &source,
+            prepared.position_weights(),
+            prepared.packing_weights(),
+        )
+        .unwrap();
+        let got = coefficient_packing_scalar_opening::<F, E>(
+            geometry,
+            prepared.num_live_blocks(),
+            &[partials],
+            &[E::one()],
+            prepared.live_block_weights(),
+            prepared.tail_weights(),
+        )
+        .unwrap();
+
+        let direct_weights = basis_weights(&point, basis).unwrap();
+        let expected = source
+            .iter()
+            .zip(&direct_weights)
+            .fold(E::zero(), |sum, (&coefficient, &weight)| {
+                sum + weight.mul_base(coefficient)
+            });
+        assert_eq!(got, expected, "basis={basis:?}");
+    }
 }
 
 #[test]

@@ -79,8 +79,8 @@ pub use instance_descriptor::{
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, monomial_weights, opening_domain_len,
-    packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes,
+    gadget_row_scalars, lagrange_weights, monomial_weights, opening_d_segment_width,
+    opening_domain_len, packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
     sumcheck_rounds, terminal_response_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
@@ -153,12 +153,12 @@ pub use proof::{
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile, FoldSchedule,
-    FoldScheduleEstimate, NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles,
-    RecursiveFoldParams, RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, WitnessPartition, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    CommittedSourceEncoding, FoldSchedule, FoldScheduleEstimate, NextWitnessBindingPolicy,
+    PlannedFoldSchedule, PrecommittedGroupProfiles, RecursiveFoldParams, RecursiveFoldStep,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, WitnessPartition,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{

@@ -7,10 +7,11 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeCommitBackendFor,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend, UniformProverStack,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
+    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    UniformProverStack,
 };
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
@@ -183,6 +184,14 @@ where
             + RuntimeOpeningProveBackendFor<
                 Cfg::Field,
                 akita_prover::RootTensorProjectionPoly<Cfg::Field>,
+            > + RuntimeCoefficientPackingBackendFor<
+                Cfg::Field,
+                RecursiveFoldSource<Cfg::Field>,
+                Cfg::ExtField,
+            > + RuntimeCoefficientPackingBackendFor<
+                Cfg::Field,
+                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
+                Cfg::ExtField,
             > + SuffixOpeningProveBackend<Cfg::Field>
             + DigitRowsComputeBackend<Cfg::Field>
             + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>

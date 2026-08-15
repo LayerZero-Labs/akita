@@ -21,12 +21,16 @@ pub(super) enum SuffixWitnessState<'a, F: FieldCore> {
     TerminalT(Vec<u8>),
 }
 
-fn suffix_commitment_payloads<F: FieldCore>(
+fn suffix_commitment_payloads<F, E>(
     setup: &AkitaVerifierSetup<F>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     witness_commitment: &RingVec<F>,
-) -> Result<Vec<RingVec<F>>, AkitaError> {
+) -> Result<Vec<RingVec<F>>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
     let mut group_payloads = Vec::with_capacity(opening_batch.num_groups());
     if let Some(setup_prefix_id) = lp.setup_prefix.as_ref() {
         let slot = setup
@@ -49,7 +53,7 @@ fn suffix_commitment_payloads<F: FieldCore>(
     }
 
     let relation_geometry =
-        RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+        RelationWitnessGeometry::for_level(lp, opening_batch, <E as ExtField<F>>::EXT_DEGREE)?;
     let relation_layout = relation_geometry.rhs_layout();
     let mut ordered = Vec::with_capacity(group_payloads.len());
     for (relation_group_index, group_index) in
@@ -454,7 +458,22 @@ where
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let prefix = if matches!(
+        lp.opening_method,
+        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+    ) {
+        if proof.extension_opening_reduction.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        verify_coefficient_packing_suffix_prefix::<F, E, T>(
+            &block_claims,
+            &openings,
+            &opening_batch,
+            current_state.basis,
+            lp,
+            transcript,
+        )?
+    } else if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -468,10 +487,14 @@ where
             derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
         let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
         FoldPrefix {
-            prepared_points,
+            prepared_points: prepared_points
+                .into_iter()
+                .map(super::fold::PreparedFoldOpeningPoint::EvaluationTrace)
+                .collect(),
             trace_eval_target,
             trace_claim_coefficients: row_coefficients.clone(),
             row_coefficients,
+            scalar_openings: openings.clone(),
         }
     } else {
         let row_coefficients =
@@ -525,7 +548,7 @@ where
         SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
     };
     let commitment_payloads =
-        suffix_commitment_payloads(setup, lp, &opening_batch, current_commitment)?;
+        suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, current_commitment)?;
     Ok(PreparedFoldReplay {
         lp,
         fold_grind_nonce,

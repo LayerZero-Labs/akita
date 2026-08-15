@@ -100,6 +100,13 @@ impl<F: FieldCore, const D: usize> RootPolyShape<F, D> for RecursiveFoldSource<F
     fn num_vars(&self) -> usize {
         RootPolyMeta::<F>::num_vars(self)
     }
+
+    fn num_live_ring_elems(&self) -> usize {
+        match self {
+            Self::SetupPrefix { slot, .. } => slot.id.n_prefix().map_or(1, |n| n / D),
+            Self::Witness(witness) => RootPolyShape::<F, D>::num_live_ring_elems(witness.as_ref()),
+        }
+    }
 }
 
 impl<F: FieldCore, const D: usize> RootOpeningSource<F, D> for RecursiveFoldSource<F> {
@@ -694,7 +701,7 @@ mod tests {
     fn setup_prefix_coefficient_packing_matches_copied_dense_oracle() {
         use akita_types::{
             coefficient_packing_partials, sample_akita_setup_seed, AkitaCommitmentHint,
-            AkitaSetupDescriptor, CommittedGroupParams, CommittedGroupProfile,
+            AkitaSetupDescriptor, BasisMode, CommittedGroupParams, CommittedGroupProfile,
             InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PreparedSubringCoefficientPackingPoint, SetupPrefixPublicCommitment, SetupPrefixSlotId,
             SisModulusProfileId, SubringCoefficientPackingGeometry,
@@ -762,8 +769,15 @@ mod tests {
         let public_point = (0..9)
             .map(|index| F::from_u64((index + 2) as u64))
             .collect::<Vec<_>>();
-        let point =
-            PreparedSubringCoefficientPackingPoint::new(geometry, 4, 4, 9, &public_point).unwrap();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            4,
+            4,
+            9,
+            &public_point,
+        )
+        .unwrap();
         let source = RecursiveFoldSource::setup_prefix(expanded, slot);
         let sources = [&source];
         let batch =

@@ -38,6 +38,54 @@ impl OpeningMethod {
     }
 }
 
+/// Ring-column width of one group's decomposed opening segment in the shared
+/// D matrix.
+///
+/// EvaluationTrace decomposes a full A-ring partial. Coefficient packing
+/// decomposes its `k * s` physical base-field coordinates instead. This is the
+/// canonical sizing authority used by planners, generated-row expansion, and
+/// authenticated schedule replay.
+#[allow(clippy::too_many_arguments)]
+pub fn opening_d_segment_width(
+    opening_method: OpeningMethod,
+    extension_degree: usize,
+    inner_ring_dimension: usize,
+    opening_ring_dimension: usize,
+    num_digits_open: usize,
+    num_live_blocks: usize,
+    num_claims: usize,
+) -> Result<usize, AkitaError> {
+    if opening_ring_dimension == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "group D opening dimension must be nonzero".into(),
+        ));
+    }
+    let physical_width = match opening_method {
+        OpeningMethod::EvaluationTrace => inner_ring_dimension,
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => crate::SubringCoefficientPackingGeometry::try_new(
+            extension_degree,
+            inner_ring_dimension,
+            challenge_subring_dimension,
+        )?
+        .partial_base_field_width(),
+    };
+    let role_subcolumns = physical_width
+        .checked_div(opening_ring_dimension)
+        .filter(|_| physical_width.is_multiple_of(opening_ring_dimension))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "group opening width does not decompose into D-native subcolumns".into(),
+            )
+        })?;
+    num_digits_open
+        .checked_mul(num_live_blocks)
+        .and_then(|width| width.checked_mul(num_claims))
+        .and_then(|width| width.checked_mul(role_subcolumns))
+        .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".into()))
+}
+
 /// Opening policy selected by the fold that consumes a committed group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GroupOpeningPlan {
@@ -242,18 +290,6 @@ impl PrecommittedLevelParams {
 
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        if matches!(
-            self.opening.opening_method,
-            OpeningMethod::SubringCoefficientPacking { .. }
-        ) {
-            return Err(AkitaError::InvalidSetup(
-                "subring coefficient packing is not implemented yet".to_string(),
-            ));
-        }
-        self.validate_geometry()
-    }
-
-    pub(crate) fn validate_geometry(&self) -> Result<(), AkitaError> {
         let field_bits = self
             .layout
             .inner_commit_matrix
@@ -336,17 +372,20 @@ impl PrecommittedLevelParams {
     ///
     /// Group metadata owns its A/B dimensions. The D role is batch-shared, so
     /// the caller supplies the consuming level's opening dimension.
-    pub fn d_segment_width(&self, opening_ring_dimension: usize) -> Result<usize, AkitaError> {
-        let role_dims = self.role_dims(opening_ring_dimension);
-        role_dims.validate_role_projection()?;
-        let inner_ring_dimension = role_dims.d_a();
-        let projection_ratio = inner_ring_dimension / opening_ring_dimension;
-        self.opening
-            .num_digits_open
-            .checked_mul(self.layout.num_live_blocks)
-            .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
-            .and_then(|width| width.checked_mul(projection_ratio))
-            .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".to_string()))
+    pub fn d_segment_width(
+        &self,
+        extension_degree: usize,
+        opening_ring_dimension: usize,
+    ) -> Result<usize, AkitaError> {
+        opening_d_segment_width(
+            self.opening.opening_method,
+            extension_degree,
+            self.layout.inner_commit_matrix.ring_dimension(),
+            opening_ring_dimension,
+            self.opening.num_digits_open,
+            self.layout.num_live_blocks,
+            self.layout.group.num_polynomials(),
+        )
     }
 
     /// Width contribution of this group's decomposed folded response.
@@ -367,6 +406,7 @@ impl PrecommittedLevelParams {
 /// Use this trait when code only needs the shared commitment geometry carried
 /// by both [`CommittedGroupParams`] and [`PrecommittedLevelParams`].
 pub trait LevelParamsLike {
+    fn source_encoding(&self) -> crate::CommittedSourceEncoding;
     fn opening_method(&self) -> OpeningMethod;
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams;
     fn a_rows_len(&self) -> usize;
@@ -394,6 +434,10 @@ pub trait LevelParamsLike {
 }
 
 impl LevelParamsLike for CommittedGroupParams {
+    fn source_encoding(&self) -> crate::CommittedSourceEncoding {
+        self.source_encoding
+    }
+
     fn opening_method(&self) -> OpeningMethod {
         self.opening_method
     }
@@ -476,6 +520,10 @@ impl LevelParamsLike for CommittedGroupParams {
 }
 
 impl LevelParamsLike for PrecommittedLevelParams {
+    fn source_encoding(&self) -> crate::CommittedSourceEncoding {
+        self.layout.source_encoding
+    }
+
     fn opening_method(&self) -> OpeningMethod {
         self.opening.opening_method
     }

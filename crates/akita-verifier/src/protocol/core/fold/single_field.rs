@@ -2,7 +2,7 @@
 
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
-use super::FoldPrefix;
+use super::{FoldPrefix, PreparedFoldOpeningPoint};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
 };
@@ -75,7 +75,7 @@ where
                 )
             }
         )?;
-        prepared_points.push(prepared);
+        prepared_points.push(PreparedFoldOpeningPoint::EvaluationTrace(prepared));
     }
     let row_coefficients =
         derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
@@ -85,6 +85,7 @@ where
         trace_claim_coefficients: row_coefficients.clone(),
         row_coefficients,
         trace_eval_target,
+        scalar_openings: openings.to_vec(),
     })
 }
 

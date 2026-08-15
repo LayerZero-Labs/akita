@@ -99,7 +99,7 @@ where
     let resolved = Cfg::resolve_schedule_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
     let schedule = resolved.schedule();
-    schedule.validate_evaluation_trace_execution()?;
+    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
@@ -206,7 +206,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
-    schedule.validate_evaluation_trace_execution()?;
+    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let root_params = &schedule.root.params.final_group.commitment;
     {
         // Every public group commitment is the fixed terminal F payload. The
@@ -219,8 +219,11 @@ where
                 "root commitment group count does not match opening batch".to_string(),
             ));
         }
-        let relation_geometry =
-            RelationWitnessGeometry::for_evaluation_trace_execution(root_params, &opening_batch)?;
+        let relation_geometry = RelationWitnessGeometry::for_level(
+            root_params,
+            &opening_batch,
+            Cfg::ExtField::EXT_DEGREE,
+        )?;
         let relation_layout = relation_geometry.rhs_layout();
         for (group_index, commitment) in commitments.iter().enumerate() {
             let plan = relation_layout.compression_plan_for_group(group_index)?;

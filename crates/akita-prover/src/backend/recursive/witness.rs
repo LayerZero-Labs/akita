@@ -536,6 +536,10 @@ where
     fn num_ring_elems(&self) -> usize {
         padded_ring_elems_for_live_len::<D>(self.live_coeff_len)
     }
+
+    fn num_live_ring_elems(&self) -> usize {
+        self.live_coeff_len.div_ceil(D)
+    }
 }
 
 /// D-free polynomial metadata for the recursive suffix witness (H2 boundary).

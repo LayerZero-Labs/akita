@@ -75,28 +75,45 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         }
         linear_terms.validate_len(witness_len)?;
 
-        // Self-consistency check: the materialized relation-weight table must
-        // reproduce `relation_claim` (which is established independently by
-        // `relation_claim_from_layout_extension` and bound into the sumcheck
-        // input claim). This is a full-domain
+        // Self-consistency check: the materialized ordinary relation weights
+        // plus the structured linear weights must reproduce the combined
+        // relation claim. Packing keeps its Z contribution in the structured
+        // representation, so checking the ordinary table in isolation would
+        // reject a valid factored relation. This is a full-domain
         // `O(lane_capacity * coeff_count)` pass, so it is gated to
         // debug/test builds and never runs in release proving.
         #[cfg(debug_assertions)]
         {
-            let relation_boolean_sum = w_evals_compact
+            let (ordinary_relation_sum, structured_relation_sum) = w_evals_compact
                 .chunks_exact(coeff_count)
                 .zip(&relation_lane_weights)
-                .fold(E::zero(), |acc, (lane_values, &lane_weight)| {
-                    acc + lane_values.iter().zip(&common_alpha_factor).fold(
-                        E::zero(),
-                        |lane_acc, (&w, &alpha)| {
-                            lane_acc + lane_weight * alpha * E::from_i64(i64::from(w))
-                        },
-                    )
-                });
-            if relation_boolean_sum != relation_claim {
+                .enumerate()
+                .fold(
+                    (E::zero(), E::zero()),
+                    |(ordinary, structured), (lane, (lane_values, &lane_weight))| {
+                        lane_values
+                            .iter()
+                            .zip(&common_alpha_factor)
+                            .enumerate()
+                            .fold(
+                                (ordinary, structured),
+                                |(ordinary, structured), (coefficient, (&w, &alpha))| {
+                                    let witness = E::from_i64(i64::from(w));
+                                    (
+                                        ordinary + witness * lane_weight * alpha,
+                                        structured
+                                            + witness
+                                                * linear_terms.get(lane, coefficient, coeff_count),
+                                    )
+                                },
+                            )
+                    },
+                );
+            if ordinary_relation_sum + structured_relation_sum
+                != relation_claim + linear_opening_claim
+            {
                 return Err(AkitaError::InvalidInput(
-                    "materialized relation-weight table does not match the relation claim".into(),
+                    "materialized relation weights do not match the combined relation claim".into(),
                 ));
             }
         }

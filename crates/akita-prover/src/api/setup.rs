@@ -317,6 +317,7 @@ mod tests {
         let commitment_params = PrecommittedLevelParams {
             layout: CommittedGroupProfile {
                 version: CommittedGroupProfile::VERSION,
+                source_encoding: akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                 group: PolynomialGroupLayout::singleton(6),
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,

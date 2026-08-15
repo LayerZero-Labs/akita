@@ -60,6 +60,7 @@ pub(crate) fn walk_generated_schedule_entry(
             .expand_to_multi_group_root_level_params_with_setup(
                 policy,
                 ring_challenge_config,
+                entry.root.final_group.opening_method,
                 key.final_group.num_polynomials(),
                 entry.root.final_group.num_digits_inner,
                 entry.root.final_group.num_digits_fold,
@@ -75,6 +76,7 @@ pub(crate) fn walk_generated_schedule_entry(
             .expand_to_level_params_with_setup(
                 policy,
                 akita_types::CommitmentPayloadMode::Compressed,
+                entry.root.final_group.opening_method,
                 ring_challenge_config,
                 0,
                 Some(entry.root.final_group.num_digits_inner),
@@ -86,7 +88,6 @@ pub(crate) fn walk_generated_schedule_entry(
                 None,
             )?
     };
-    root_params.opening_method = entry.root.final_group.opening_method;
     let distributed_levels = distributed_activation_depth(
         entry.root.witness_partition,
         entry
@@ -123,6 +124,7 @@ pub(crate) fn walk_generated_schedule_entry(
         let mut params = fold.witness.expand_to_level_params_with_setup(
             policy,
             fold.payload_mode,
+            fold.opening_method,
             ring_challenge_config,
             index + 1,
             None,
@@ -133,7 +135,6 @@ pub(crate) fn walk_generated_schedule_entry(
             fold.open_commit_matrix,
             fold.incoming_setup_prefix,
         )?;
-        params.opening_method = fold.opening_method;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
         let output_witness_len = planned_next_witness_len(
             field_bits,

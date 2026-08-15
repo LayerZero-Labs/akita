@@ -299,8 +299,17 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 
 fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
     format!(
-        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
+        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, source_encoding: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
         emit_key(layout.group),
+        match layout.source_encoding {
+            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable =>
+                "akita_types::CommittedSourceEncoding::CanonicalCoefficientTable".to_string(),
+            akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree,
+            } => format!(
+                "akita_types::CommittedSourceEncoding::TensorSubfieldProjection {{ extension_degree: {extension_degree} }}"
+            ),
+        },
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,

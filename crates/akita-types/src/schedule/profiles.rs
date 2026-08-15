@@ -8,6 +8,76 @@ use crate::{
 };
 use akita_field::{AkitaError, FieldCore};
 
+/// Physical coefficient representation authenticated by a commitment.
+///
+/// This is commitment identity, not an opening policy. In particular, changing
+/// [`crate::OpeningMethod`] cannot reinterpret an existing commitment between
+/// these encodings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CommittedSourceEncoding {
+    /// The source's canonical base-field coefficient table.
+    CanonicalCoefficientTable,
+    /// The existing tensor/subfield projection used by extension-field EOR.
+    TensorSubfieldProjection {
+        /// Degree of the extension whose coordinates are packed by the projection.
+        extension_degree: usize,
+    },
+}
+
+impl CommittedSourceEncoding {
+    /// Select the physical source representation when a producer creates a
+    /// commitment for one scheduled consumer.
+    #[must_use]
+    pub fn for_producer(
+        opening_method: crate::OpeningMethod,
+        extension_degree: usize,
+        ring_dimension: usize,
+        source_num_vars: usize,
+        is_root: bool,
+    ) -> Self {
+        if matches!(opening_method, crate::OpeningMethod::EvaluationTrace)
+            && extension_degree > 1
+            && (!is_root
+                || crate::root_tensor_projection_enabled_for_width(
+                    extension_degree,
+                    ring_dimension,
+                    source_num_vars,
+                ))
+        {
+            Self::TensorSubfieldProjection { extension_degree }
+        } else {
+            Self::CanonicalCoefficientTable
+        }
+    }
+
+    pub(crate) fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
+        match self {
+            Self::CanonicalCoefficientTable => bytes.push(0),
+            Self::TensorSubfieldProjection { extension_degree } => {
+                bytes.push(1);
+                push_usize(bytes, extension_degree);
+            }
+        }
+    }
+
+    pub(crate) fn validate(self, ring_dimension: usize) -> Result<(), AkitaError> {
+        if let Self::TensorSubfieldProjection { extension_degree } = self {
+            let tensor_capacity = ring_dimension / 2;
+            if extension_degree <= 1
+                || !extension_degree.is_power_of_two()
+                || extension_degree > tensor_capacity
+                || !tensor_capacity.is_multiple_of(extension_degree)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "tensor source encoding requires a power-of-two extension degree greater than one dividing half the A ring dimension"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommittedGroupProfile {
@@ -15,6 +85,8 @@ pub struct CommittedGroupProfile {
     pub version: u8,
     /// Per-group root schedule entry shape.
     pub group: PolynomialGroupLayout,
+    /// Physical source encoding fixed by this commitment.
+    pub source_encoding: CommittedSourceEncoding,
     /// Exact number of live source ring elements per claim (`N`).
     pub num_live_ring_elements_per_claim: usize,
     /// Number of positions per block (`M`), power-of-two in the current Boolean layout.
@@ -39,7 +111,7 @@ pub struct CommittedGroupProfile {
 
 impl CommittedGroupProfile {
     /// Current committed-profile format.
-    pub const VERSION: u8 = 2;
+    pub const VERSION: u8 = 3;
 
     /// Build and validate frozen group metadata from concrete root commitment parameters.
     ///
@@ -65,6 +137,7 @@ impl CommittedGroupProfile {
         Self {
             version: Self::VERSION,
             group,
+            source_encoding: params.source_encoding,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
@@ -97,6 +170,7 @@ impl CommittedGroupProfile {
         bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
+        self.source_encoding.append_descriptor_bytes(bytes);
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
@@ -121,6 +195,7 @@ impl CommittedGroupProfile {
         self.inner_commit_matrix.validate()?;
         self.outer_commit_matrix.validate()?;
         let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        self.source_encoding.validate(inner_ring_dimension)?;
         let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
         if !inner_ring_dimension.is_power_of_two()
             || !outer_ring_dimension.is_power_of_two()
@@ -377,6 +452,44 @@ impl AkitaScheduleLookupKey {
             layout.validate(field_bits)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_encoding_tests {
+    use super::CommittedSourceEncoding;
+    use crate::OpeningMethod;
+
+    #[test]
+    fn producer_encoding_preserves_existing_tensor_gate() {
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 512, 20, true,),
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: 4,
+            },
+        );
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 512, 8, true,),
+            CommittedSourceEncoding::CanonicalCoefficientTable,
+        );
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(
+                OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension: 64,
+                },
+                4,
+                512,
+                20,
+                true,
+            ),
+            CommittedSourceEncoding::CanonicalCoefficientTable,
+        );
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 64, 1, false,),
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: 4,
+            },
+        );
     }
 }
 

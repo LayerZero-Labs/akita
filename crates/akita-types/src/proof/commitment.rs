@@ -256,6 +256,15 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
             .serialize_with_mode(&mut writer, Compress::No)?;
         write_usize(&mut writer, profile.group.num_vars())?;
         write_usize(&mut writer, profile.group.num_polynomials())?;
+        match profile.source_encoding {
+            crate::CommittedSourceEncoding::CanonicalCoefficientTable => {
+                0u8.serialize_with_mode(&mut writer, Compress::No)?;
+            }
+            crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+                1u8.serialize_with_mode(&mut writer, Compress::No)?;
+                write_usize(&mut writer, extension_degree)?;
+            }
+        }
         for value in [
             profile.num_live_ring_elements_per_claim,
             profile.num_positions_per_block,
@@ -318,7 +327,12 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
 
     fn serialized_size(&self, compress: Compress) -> usize {
         const MATRIX_SIZE: usize = 1 + 1 + 1 + 32 + 4 + 8 + 8 + 16;
+        let source_encoding_size = match self.profile.source_encoding {
+            crate::CommittedSourceEncoding::CanonicalCoefficientTable => 1,
+            crate::CommittedSourceEncoding::TensorSubfieldProjection { .. } => 1 + 8,
+        };
         1 + 16
+            + source_encoding_size
             + 32
             + 4
             + 8
@@ -404,6 +418,18 @@ where
         let num_vars = read_usize(&mut reader)?;
         let num_polynomials = read_usize(&mut reader)?;
         let group = PolynomialGroupLayout::new(num_vars, num_polynomials);
+        let source_encoding =
+            match u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())? {
+                0 => crate::CommittedSourceEncoding::CanonicalCoefficientTable,
+                1 => crate::CommittedSourceEncoding::TensorSubfieldProjection {
+                    extension_degree: read_usize(&mut reader)?,
+                },
+                tag => {
+                    return Err(SerializationError::InvalidData(format!(
+                        "unknown committed source encoding tag {tag}"
+                    )))
+                }
+            };
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
@@ -443,6 +469,7 @@ where
         let descriptor = CommittedGroupProfile {
             version,
             group,
+            source_encoding,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -561,6 +588,7 @@ mod committed_group_tests {
         let profile = CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::new(11, 1),
+            source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 32,
             num_live_blocks: 1,
@@ -622,8 +650,19 @@ mod committed_group_tests {
         )
         .is_err());
 
+        let mut unknown_source_encoding = bytes.clone();
+        let source_encoding_offset = 1 + 2 * 8;
+        unknown_source_encoding[source_encoding_offset] = u8::MAX;
+        assert!(CommittedGroup::<F>::deserialize_with_mode(
+            unknown_source_encoding.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+
         let mut invalid_slice_count = bytes.clone();
-        let slice_count_offset = 1 + 5 * 8;
+        let slice_count_offset = 1 + 2 * 8 + 1 + 3 * 8;
         invalid_slice_count[slice_count_offset..slice_count_offset + 8]
             .copy_from_slice(&3u64.to_le_bytes());
         assert!(CommittedGroup::<F>::deserialize_with_mode(
@@ -634,7 +673,7 @@ mod committed_group_tests {
         )
         .is_err());
 
-        let inner_matrix_role_offset = 1 + 2 * 8 + 3 * 8 + 4 + 8 + 2;
+        let inner_matrix_role_offset = 1 + 2 * 8 + 1 + 3 * 8 + 4 + 8 + 2;
         let mut wrong_matrix_role = bytes;
         wrong_matrix_role[inner_matrix_role_offset] = SisMatrixRole::Outer.tag();
         assert!(CommittedGroup::<F>::deserialize_with_mode(

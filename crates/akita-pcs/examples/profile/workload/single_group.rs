@@ -22,8 +22,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    RecursiveProveBackend, RootPolyShape, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    RuntimeRootProvePoly,
+    RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor,
+    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
 use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly};
@@ -80,7 +80,8 @@ fn run_prove<
         + AkitaSerialize
         + Valid,
     CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
-        + RecursiveProveBackend<FF, P, Cfg::ExtField>,
+        + RecursiveProveBackend<FF, P, Cfg::ExtField>
+        + RuntimeCoefficientPackingBackendFor<FF, P, Cfg::ExtField>,
 {
     let pools = ProfileThreadPools::get();
     let poly_refs: [&P; 1] = [poly];

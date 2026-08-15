@@ -204,14 +204,6 @@ pub(crate) struct PreparedEvaluationTrace<E: FieldCore> {
 }
 
 impl<E: FieldCore> PreparedEvaluationTrace<E> {
-    #[cfg(test)]
-    pub(crate) fn empty_for_test(num_variables: usize) -> Self {
-        Self {
-            groups: Vec::new(),
-            num_variables,
-        }
-    }
-
     /// Evaluate the trace-weight MLE without constructing prover terms or
     /// scanning physical coefficient support.
     pub(crate) fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
@@ -881,12 +873,12 @@ mod tests {
                                 for role_coefficient in 0..group_dims.d_d() {
                                     let address = unit
                                         .e_coefficient_index(
-                                            group_dims.d_a(),
                                             group_dims.d_d(),
                                             group_layout.num_polynomials(),
                                             parameters.opening_digit_weights().len(),
                                             local_claim,
                                             block,
+                                            role_subcolumn,
                                             digit,
                                             role_coefficient,
                                         )

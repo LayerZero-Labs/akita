@@ -257,7 +257,11 @@ macro_rules! delegate_tensor_kernels {
                 CpuBackend::DEFAULT.sparse_linear_combination(prepared, source, coeffs)
             }
         }
+    };
+}
 
+macro_rules! delegate_coefficient_packing {
+    ($ty:ty) => {
         impl<S, F, E, const D: usize> SubringCoefficientPackingBatchKernel<S, F, E, D> for $ty
         where
             F: FieldCore + CanonicalField,
@@ -335,6 +339,7 @@ delegate_compute_backend_setup!(OpeningCluster);
 delegate_compression!(OpeningCluster);
 delegate_digit_rows!(OpeningCluster);
 delegate_opening_kernels!(OpeningCluster);
+delegate_coefficient_packing!(OpeningCluster);
 
 /// Delegating tensor-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]
@@ -342,6 +347,7 @@ pub struct TensorCluster;
 
 delegate_compute_backend_setup!(TensorCluster);
 delegate_tensor_kernels!(TensorCluster);
+delegate_coefficient_packing!(TensorCluster);
 
 /// Delegating ring-switch-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]

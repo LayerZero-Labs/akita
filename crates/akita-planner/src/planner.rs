@@ -144,7 +144,9 @@ fn precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width(shared_opening_ring_dimension)?)
+            .checked_add(
+                group.d_segment_width(policy.claim_ext_degree, shared_opening_ring_dimension)?,
+            )
             .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
     }
     Ok(Some((groups, d_width)))
@@ -435,6 +437,13 @@ fn root_final_group_level_params_candidate(
 
     let params = CommittedGroupParams {
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        source_encoding: akita_types::CommittedSourceEncoding::for_producer(
+            akita_types::OpeningMethod::EvaluationTrace,
+            policy.claim_ext_degree,
+            d_a,
+            ctx.final_num_vars,
+            true,
+        ),
         opening_method: akita_types::OpeningMethod::EvaluationTrace,
         log_basis_inner,
         log_basis_outer: log_basis_open,

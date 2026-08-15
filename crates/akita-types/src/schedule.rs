@@ -3,8 +3,8 @@
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, RelationAddressGeometry, SetupContributionMode,
-    TerminalResponseShape,
+    CommittedGroupParams, InnerCommitMatrixParams, InnerCommitSecurityRoute, LevelParamsLike,
+    OpeningMethod, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::AkitaError;
 
@@ -13,7 +13,7 @@ mod sizing;
 
 pub use profiles::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    PrecommittedGroupProfiles,
+    CommittedSourceEncoding, PrecommittedGroupProfiles,
 };
 pub use sizing::{detect_field_modulus, r_decomp_levels};
 
@@ -489,41 +489,72 @@ impl FoldSchedule {
         Ok(())
     }
 
-    /// Validate that every nonterminal opening uses the currently executable
-    /// evaluation-trace path.
+    /// Validate the opening methods currently admitted by nonterminal proving
+    /// and verification.
     ///
-    /// Provers and verifiers call this before transcript mutation while the
-    /// coefficient-packing relation and verifier cutover remain incomplete.
-    pub fn validate_evaluation_trace_execution(&self) -> Result<(), AkitaError> {
+    /// Evaluation trace remains valid at every nonterminal level. Subring
+    /// coefficient packing is restricted to absolute levels 0 and 1, uses one
+    /// method across every group consumed by that fold, and requires the
+    /// audited production challenge family under the L-infinity A route.
+    pub fn validate_nonterminal_opening_execution(
+        &self,
+        extension_degree: usize,
+    ) -> Result<(), AkitaError> {
         self.validate_structure()?;
-        let root_uses_packing = matches!(
-            self.root.params.final_group.commitment.opening_method,
-            crate::OpeningMethod::SubringCoefficientPacking { .. }
-        ) || self.root.params.precommitted_groups.iter().any(|group| {
-            matches!(
-                group.commitment.opening.opening_method,
-                crate::OpeningMethod::SubringCoefficientPacking { .. }
-            )
-        });
-        let recursive_uses_packing = self.recursive_folds.iter().any(|step| {
-            matches!(
-                step.params.witness.opening_method,
-                crate::OpeningMethod::SubringCoefficientPacking { .. }
-            ) || step
-                .params
-                .incoming_setup_prefix
-                .as_ref()
-                .is_some_and(|prefix| {
-                    matches!(
-                        prefix.commitment_params.opening.opening_method,
-                        crate::OpeningMethod::SubringCoefficientPacking { .. }
-                    )
-                })
-        });
-        if root_uses_packing || recursive_uses_packing {
+        if !extension_degree.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
-                "subring coefficient packing execution is not implemented yet".into(),
+                "opening extension degree must be a nonzero power of two".into(),
             ));
+        }
+        if !self.root.input_witness_len.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "root input witness length must be a power of two".into(),
+            ));
+        }
+        let root_final = &self.root.params.final_group.commitment;
+        let mut root_groups = vec![OpeningExecutionGroup {
+            params: root_final,
+            expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                root_final.opening_method,
+                extension_degree,
+                root_final.d_a(),
+                self.root.input_witness_len.trailing_zeros() as usize,
+                true,
+            )),
+        }];
+        root_groups.extend(self.root.params.precommitted_groups.iter().map(|group| {
+            let commitment = &group.commitment;
+            OpeningExecutionGroup {
+                params: commitment as &dyn LevelParamsLike,
+                expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                    commitment.opening.opening_method,
+                    extension_degree,
+                    commitment.layout.inner_commit_matrix.ring_dimension(),
+                    group.descriptor.group.num_vars(),
+                    true,
+                )),
+            }
+        }));
+        validate_level_opening_execution(0, extension_degree, &root_groups)?;
+        for (index, step) in self.recursive_folds.iter().enumerate() {
+            let witness = &step.params.witness;
+            let mut groups = vec![OpeningExecutionGroup {
+                params: witness,
+                expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                    witness.opening_method,
+                    extension_degree,
+                    witness.d_a(),
+                    0,
+                    false,
+                )),
+            }];
+            if let Some(prefix) = &step.params.incoming_setup_prefix {
+                groups.push(OpeningExecutionGroup {
+                    params: &prefix.commitment_params,
+                    expected_source_encoding: None,
+                });
+            }
+            validate_level_opening_execution(index + 1, extension_degree, &groups)?;
         }
         Ok(())
     }
@@ -591,6 +622,100 @@ impl FoldSchedule {
     }
 }
 
+struct OpeningExecutionGroup<'a> {
+    params: &'a dyn LevelParamsLike,
+    expected_source_encoding: Option<crate::CommittedSourceEncoding>,
+}
+
+fn validate_level_opening_execution(
+    absolute_level: usize,
+    extension_degree: usize,
+    groups: &[OpeningExecutionGroup<'_>],
+) -> Result<(), AkitaError> {
+    let first = groups
+        .first()
+        .ok_or_else(|| AkitaError::InvalidSetup("nonterminal fold has no opening groups".into()))?;
+    let opening_method = first.params.opening_method();
+    if groups
+        .iter()
+        .any(|group| group.params.opening_method() != opening_method)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "all groups consumed by one fold must use the same opening method".into(),
+        ));
+    }
+    for group in groups {
+        match (opening_method, group.params.source_encoding()) {
+            (
+                OpeningMethod::EvaluationTrace,
+                crate::CommittedSourceEncoding::TensorSubfieldProjection {
+                    extension_degree: encoded_degree,
+                },
+            ) if encoded_degree != extension_degree => {
+                return Err(AkitaError::InvalidSetup(
+                    "tensor source encoding does not match the protocol extension degree".into(),
+                ));
+            }
+            (
+                OpeningMethod::SubringCoefficientPacking { .. },
+                crate::CommittedSourceEncoding::TensorSubfieldProjection { .. },
+            ) => {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient packing requires the canonical coefficient source encoding".into(),
+                ));
+            }
+            _ => {}
+        }
+        if group
+            .expected_source_encoding
+            .is_some_and(|expected| expected != group.params.source_encoding())
+        {
+            return Err(AkitaError::InvalidSetup(
+                "committed source encoding does not match its producer geometry and opening method"
+                    .into(),
+            ));
+        }
+    }
+    let OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension,
+    } = opening_method
+    else {
+        return Ok(());
+    };
+    if absolute_level > 1 {
+        return Err(AkitaError::InvalidSetup(
+            "subring coefficient packing is restricted to nonterminal levels 0 and 1".into(),
+        ));
+    }
+    let expected = akita_challenges::SparseChallengeConfig::production_for_ring_dim(
+        challenge_subring_dimension,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "coefficient-packing challenge subring is not in the production ladder".into(),
+        )
+    })?;
+    for group in groups {
+        let matrix = group.params.inner_commit_matrix_params();
+        if !matches!(matrix.security_route(), InnerCommitSecurityRoute::Linf(_)) {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient packing requires the L-infinity A security route".into(),
+            ));
+        }
+        if group.params.fold_challenge_config() != expected {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient packing requires its audited production challenge family".into(),
+            ));
+        }
+        crate::SubringCoefficientPackingGeometry::try_new(
+            extension_degree,
+            matrix.ring_dimension(),
+            challenge_subring_dimension,
+        )?;
+    }
+    Ok(())
+}
+
 impl TerminalFoldStep {
     /// Canonical ordering descriptor for a terminal suffix.
     pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
@@ -626,14 +751,31 @@ fn validate_stage2_successor_capacity(
             "{predecessor_name} successor ring dimension {successor_ring_dimension} is invalid"
         )));
     }
-    let shared_d = predecessor.role_dims().d_d();
-    let precommitted_role_dims = predecessor
-        .precommitted_group_iter()
-        .map(|group| group.role_dims(shared_d))
-        .collect::<Vec<_>>();
-    let geometry = RelationAddressGeometry::new_for_groups(
-        predecessor.role_dims(),
-        &precommitted_role_dims,
+    let role_dims = predecessor.role_dims();
+    let shared_d = role_dims.d_d();
+    let mut relation_coefficient_block_len = role_dims.common_relation_coeff_count();
+    if let OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension,
+    } = predecessor.opening_method
+    {
+        relation_coefficient_block_len =
+            relation_coefficient_block_len.min(challenge_subring_dimension);
+    }
+    for group in predecessor.precommitted_group_iter() {
+        let group_dims = group.role_dims(shared_d);
+        relation_coefficient_block_len =
+            relation_coefficient_block_len.min(group_dims.common_relation_coeff_count());
+        if let OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } = group.opening.opening_method
+        {
+            relation_coefficient_block_len =
+                relation_coefficient_block_len.min(challenge_subring_dimension);
+        }
+    }
+    let geometry = RelationAddressGeometry::new_with_coefficient_block(
+        role_dims,
+        relation_coefficient_block_len,
         successor_ring_dimension,
         output_witness_len,
     )?;

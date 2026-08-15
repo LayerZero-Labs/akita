@@ -314,6 +314,19 @@ The remaining existing axes are the position point `r_M` and block point
 `r_B`. The point order and descriptor MUST bind this split. Prover and verifier
 MUST derive it from `(k, d_A, s)`; it is not caller-selected layout metadata.
 
+Let `w_basis(r, u)` denote the Boolean tensor-product weight selected by the
+protocol's authenticated `BasisMode`:
+
+```text
+w_Lagrange(r, u) = eq(r, u);
+w_Monomial(r, u) = product over bit positions ell with u_ell = 1 of r_ell.
+```
+
+Coefficient packing supports both existing opening bases. The basis changes
+only these point-derived weights. It does not change the coefficient layout,
+challenge subring, extension-coordinate basis, fold relation, or transcript
+order. Every point axis below uses the same schedule-bound basis mode.
+
 ### Partial opening
 
 For each live block, define
@@ -321,7 +334,7 @@ For each live block, define
 ```text
 e_i(Y)
   = sum_(x,a,j)
-      eq(r_M, x) eq(r_pack, a) f_(i,x,a,j) Y^j
+      w_basis(r_M, x) w_basis(r_pack, a) f_(i,x,a,j) Y^j
   in C = E[Y]/(Y^s+1).
 ```
 
@@ -349,7 +362,7 @@ the canonical base-field layout above.
 point coordinate. The scalar opening below contracts the coefficient table
 with `eq(r_tail,j)`. Ring switching later evaluates the extension opening ring
 polynomial at `Y = alpha`; those are different operations with different
-purposes.
+purposes. The scalar contraction uses `w_basis(r_tail,j)`.
 
 ### Scalar opening equation
 
@@ -357,8 +370,8 @@ For one polynomial with claimed opening `v`, the coefficient packing equation
 is
 
 ```text
-sum_i eq(r_B, i)
-  sum_(j < s) eq(r_tail, j)
+sum_i w_basis(r_B, i)
+  sum_(j < s) w_basis(r_tail, j)
   sum_(t < k) beta_t e_(i,t,j)
   = v.
 ```
@@ -366,8 +379,8 @@ sum_i eq(r_B, i)
 After gadget decomposition at opening basis `b_open`, this becomes
 
 ```text
-sum_i eq(r_B, i)
-  sum_(j < s) eq(r_tail, j)
+sum_i w_basis(r_B, i)
+  sum_(j < s) w_basis(r_tail, j)
   sum_(t < k) beta_t
   sum_l b_open^l e_hat_(i,l,t,j)
   = v.
@@ -424,7 +437,7 @@ Let the coefficient packing map be
 ```text
 L(F_i)(Y)
   = sum_(x,a,j)
-      eq(r_M, x) eq(r_pack, a) f_(i,x,a,j) Y^j.
+      w_basis(r_M, x) w_basis(r_pack, a) f_(i,x,a,j) Y^j.
 ```
 
 Because multiplying by `Y` advances only the `j` index, and because wrapping
@@ -567,7 +580,7 @@ alpha^(a + k h j).
 The packing consistency contribution uses
 
 ```text
-eq(r_pack, a) alpha^j.
+w_basis(r_pack, a) alpha^j.
 ```
 
 For a general point and a general `alpha`, these two coefficient vectors are
@@ -588,7 +601,7 @@ one separate `z_hat` consistency term with the coefficient weights above. The
 scalar opening term for that group uses
 
 ```text
-gamma_claim eq(r_B, block) beta_t eq(r_tail, j) G_open[digit]
+gamma_claim w_basis(r_B, block) beta_t w_basis(r_tail, j) G_open[digit]
 ```
 
 on the packed E digit at `[claim][block][t][j]`. Here `beta_t` is the canonical
@@ -1013,21 +1026,44 @@ per group in `OpeningClaimsLayout::root_group_order`. All level 0 entries use
 The planner does not pad them to one level wide `s`.
 
 The consuming fold owns this plan. The commitment profile does not. A
-`CommittedGroupProfile` or setup prefix commitment fixes the source polynomial
-layout, the A and B matrices, and the commitment bytes. It does not fix whether
-a later fold uses `EvaluationTrace` or `SubringCoefficientPacking`.
+`CommittedGroupProfile` or setup prefix commitment fixes the physical source
+encoding, the source polynomial layout, the A and B matrices, and the
+commitment bytes. It does not fix whether a later fold uses `EvaluationTrace`
+or `SubringCoefficientPacking` when that opening method supports the frozen
+source encoding.
+
+The physical source encoding is separate commitment metadata:
+
+```rust
+enum CommittedSourceEncoding {
+    CanonicalCoefficientTable,
+    TensorSubfieldProjection { extension_degree: usize },
+}
+```
+
+Coefficient packing in this feature supports `CanonicalCoefficientTable`.
+The existing EOR path may use `TensorSubfieldProjection`. These encodings are
+different commitment identities because the tensor subfield projection does
+not commute with the coefficient packing challenge action
+`Y -> X^(k h)`. The implementation MUST reject coefficient packing over a
+tensor projected source before transcript mutation. It MUST NOT choose a
+physical encoding by reading `OpeningMethod` after a commitment profile has
+already been fixed.
 
 The schedule fixes the opening method, `s`, and the sparse challenge family
 before proving begins. The transcript draws the actual sparse challenge at
-runtime after the D or H payload is bound. Neither the runtime draw nor the
-choice of opening method changes the earlier commitment bytes.
+runtime after the D or H payload is bound. Neither the runtime draw nor a
+change of opening method changes the bytes of a commitment with a fixed source
+encoding. A producer may create a distinct commitment under another source
+encoding, but that encoding is then part of commitment identity.
 
 The implementation MUST keep commitment identity separate from opening
 admission data. In particular, a setup prefix registry key MUST NOT create two
 different commitments only because two consuming schedules choose different
-opening methods for the same content and matrix geometry. A composite schedule
-object may contain both kinds of data, but its commitment identity and opening
-plan must remain separate fields with separate validation.
+opening methods for the same content, source encoding, and matrix geometry. A
+composite schedule object may contain both kinds of data, but its commitment
+identity and opening plan must remain separate fields with separate
+validation.
 
 The consuming fold validates the frozen A and B matrices against its selected
 challenge bounds. A commitment that is too narrow for the selected challenge

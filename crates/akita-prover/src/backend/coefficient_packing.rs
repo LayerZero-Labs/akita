@@ -137,8 +137,8 @@ mod tests {
         Prime32Offset99, Prime64Offset59,
     };
     use akita_types::{
-        coefficient_packing_partials, FpExtEncoding, PreparedSubringCoefficientPackingPoint,
-        SubringCoefficientPackingGeometry,
+        coefficient_packing_partials, BasisMode, FpExtEncoding,
+        PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
     };
 
     type F = Prime32Offset99;
@@ -150,7 +150,8 @@ mod tests {
         let point = (0..9)
             .map(|index| E::from_u64((index + 2) as u64))
             .collect::<Vec<_>>();
-        PreparedSubringCoefficientPackingPoint::new(geometry, 2, 4, 9, &point).unwrap()
+        PreparedSubringCoefficientPackingPoint::new(geometry, BasisMode::Lagrange, 2, 4, 9, &point)
+            .unwrap()
     }
 
     fn assert_dense_matches_reference<T, U, const RING_D: usize>(s: usize)
@@ -164,9 +165,15 @@ mod tests {
         let public_point = (0..point_len)
             .map(|index| U::from_u64((index + 3) as u64))
             .collect::<Vec<_>>();
-        let point =
-            PreparedSubringCoefficientPackingPoint::new(geometry, 2, 4, point_len, &public_point)
-                .unwrap();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            2,
+            4,
+            point_len,
+            &public_point,
+        )
+        .unwrap();
         let rings = (0..2)
             .map(|position| {
                 CyclotomicRing::<T, RING_D>::from_coefficients(std::array::from_fn(|coefficient| {
@@ -251,8 +258,15 @@ mod tests {
         let public_point = (0..11)
             .map(|index| E::from_u64((index + 5) as u64))
             .collect::<Vec<_>>();
-        let point =
-            PreparedSubringCoefficientPackingPoint::new(geometry, 6, 4, 11, &public_point).unwrap();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            6,
+            4,
+            11,
+            &public_point,
+        )
+        .unwrap();
         let source_digits = (0..2)
             .map(|claim| {
                 (0..6 * D)
@@ -372,8 +386,15 @@ mod tests {
         let public_point = (0..11)
             .map(|index| E::from_u64((index + 7) as u64))
             .collect::<Vec<_>>();
-        let point =
-            PreparedSubringCoefficientPackingPoint::new(geometry, 2, 4, 11, &public_point).unwrap();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            2,
+            4,
+            11,
+            &public_point,
+        )
+        .unwrap();
         let hot = [17usize, 1009usize];
         let dense = DensePoly::from_ring_coeffs(
             hot.iter()
@@ -450,8 +471,15 @@ mod tests {
         let public_point = (0..6)
             .map(|index| Base::from_u64((index + 1) as u64))
             .collect::<Vec<_>>();
-        let point =
-            PreparedSubringCoefficientPackingPoint::new(geometry, 1, 1, 6, &public_point).unwrap();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            1,
+            1,
+            6,
+            &public_point,
+        )
+        .unwrap();
         let lower_arity = DensePoly::from_field_evals(5, RING_D, vec![Base::one(); 32]).unwrap();
         let refs = [&lower_arity];
         let batch =

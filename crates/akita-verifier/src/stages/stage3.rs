@@ -157,7 +157,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
         let setup_term = setup_val * setup_index_weight * alpha_val;
         if final_claim != setup_term {
-            return Err(AkitaError::InvalidProof);
+            return Err(AkitaError::InvalidInput(
+                "Stage 3 setup-product claim disagrees with the projected setup opening".into(),
+            ));
         }
         Ok(challenges)
     }

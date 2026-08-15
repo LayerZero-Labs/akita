@@ -1,7 +1,7 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::super::*;
-use super::{absorb_protocol_opening_points, FoldPrefix};
+use super::{absorb_protocol_opening_points, FoldPrefix, PreparedFoldOpeningPoint};
 use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
 pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
@@ -423,7 +423,7 @@ where
                     )
                 }
             )?;
-            prepared_points.push(prepared);
+            prepared_points.push(PreparedFoldOpeningPoint::EvaluationTrace(prepared));
         }
     }
     let row_coefficients =
@@ -443,7 +443,7 @@ where
         prepared_points = eor_replay
             .groups
             .into_iter()
-            .map(|group| group.prepared)
+            .map(|group| PreparedFoldOpeningPoint::EvaluationTrace(group.prepared))
             .collect();
     }
     let eor_final_relation = eor_replay.final_relation;
@@ -465,6 +465,7 @@ where
         row_coefficients,
         trace_eval_target,
         trace_claim_coefficients,
+        scalar_openings: openings.to_vec(),
     })
 }
 
@@ -564,10 +565,14 @@ where
     let trace_claim_coefficients =
         opening_batch.scale_row_coefficients_by_group(&row_coefficients, &factors_by_group)?;
     Ok(FoldPrefix {
-        prepared_points: groups.into_iter().map(|group| group.prepared).collect(),
+        prepared_points: groups
+            .into_iter()
+            .map(|group| PreparedFoldOpeningPoint::EvaluationTrace(group.prepared))
+            .collect(),
         row_coefficients,
         trace_eval_target: final_claim,
         trace_claim_coefficients,
+        scalar_openings: openings.to_vec(),
     })
 }
 

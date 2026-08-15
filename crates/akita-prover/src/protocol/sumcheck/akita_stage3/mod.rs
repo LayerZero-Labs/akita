@@ -324,6 +324,7 @@ where
     let plan = SetupContributionPlan::prepare::<F>(
         lp,
         opening_batch,
+        relation.extension_degree(),
         eq_tau1,
         &chunk_layout,
         &groups,

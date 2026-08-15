@@ -229,7 +229,13 @@ mod tests {
             SparseChallengeConfig::production_for_ring_dim(ring_dimension)
                 .expect("production challenge"),
         )
-        .with_decomp(4, 3, 2, 2, 2)
+        .with_decomp(
+            4,
+            3,
+            akita_types::sis::compute_num_digits_field_width(128, 3),
+            2,
+            2,
+        )
         .expect("level params");
         let inner = params.inner_commit_matrix;
         params.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
@@ -247,6 +253,15 @@ mod tests {
             inner.input_width(),
         )
         .expect("audited inner matrix");
+        params = params
+            .with_decomp(
+                params.num_positions_per_block,
+                params.num_live_ring_elements_per_claim,
+                params.num_digits_inner,
+                params.num_digits_outer,
+                params.num_digits_open,
+            )
+            .expect("layout rebuilt for audited inner rank");
         let outer = params.outer_commit_matrix;
         params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
@@ -342,7 +357,13 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(16, 256, 2, 2, 2)
+        .with_decomp(
+            16,
+            256,
+            akita_types::sis::compute_num_digits_field_width(128, 3),
+            2,
+            2,
+        )
         .expect("level params");
         let witness_ring_slots = level_params
             .num_live_blocks

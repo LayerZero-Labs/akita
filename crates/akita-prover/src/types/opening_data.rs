@@ -325,11 +325,11 @@ where
         // polynomial group's shape, keeping this byte-identical to verifier
         // replay for well-formed inputs.
         let layout = self.opening_layout()?;
-        let relation_geometry =
-            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
-                root_params,
-                &layout,
-            )?;
+        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+            root_params,
+            &layout,
+            PointF::EXT_DEGREE,
+        )?;
         let relation_layout = relation_geometry.rhs_layout();
         layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for (group_index, commitment) in self.commitments().into_iter().enumerate() {
@@ -503,6 +503,7 @@ mod tests {
     ) -> CommittedGroupProfile {
         CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
+            source_encoding: akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             group,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,

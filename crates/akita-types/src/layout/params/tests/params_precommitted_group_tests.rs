@@ -182,6 +182,7 @@ fn precommit_admission_fixture() -> (
     .expect("audited B matrix");
     let layout = CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
+        source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
         group: PolynomialGroupLayout::new(14, 1),
         num_live_ring_elements_per_claim: 256,
         num_positions_per_block: 32,
@@ -195,6 +196,41 @@ fn precommit_admission_fixture() -> (
         outer_commit_matrix,
     };
     (layout, policy, challenge, num_digits_fold)
+}
+
+#[test]
+fn opening_d_segment_width_uses_the_method_physical_width() {
+    let evaluation_trace =
+        crate::opening_d_segment_width(crate::OpeningMethod::EvaluationTrace, 4, 512, 64, 3, 5, 2)
+            .expect("full A-ring D segment");
+    let coefficient_packing = crate::opening_d_segment_width(
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        },
+        4,
+        512,
+        64,
+        3,
+        5,
+        2,
+    )
+    .expect("reduced packing D segment");
+
+    assert_eq!(evaluation_trace, 3 * 5 * 2 * (512 / 64));
+    assert_eq!(coefficient_packing, 3 * 5 * 2 * (4 * 64 / 64));
+    assert_eq!(evaluation_trace, 2 * coefficient_packing);
+    assert!(crate::opening_d_segment_width(
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        },
+        4,
+        512,
+        96,
+        3,
+        5,
+        2,
+    )
+    .is_err());
 }
 
 #[test]
@@ -522,7 +558,7 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
     );
     assert_eq!(layout.unit(0, 0).unwrap().e_geometry(), precommitted);
     assert!(crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch).is_err());
-    assert!(lp.validate_opening_batch(&batch).is_err());
+    assert!(lp.validate_opening_batch(&batch).is_ok());
 }
 
 #[test]

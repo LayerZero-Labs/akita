@@ -984,9 +984,9 @@ mod prepared_group_tests {
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::{Ext2, ExtField, Prime64Offset59};
     use akita_types::{
-        relation_rhs_coeff_len, CommitmentPayloadMode, OpenCommitMatrixParams, OpeningClaimsLayout,
-        OpeningMethod, PreparedSubringCoefficientPackingPoint, RelationWitnessGeometry,
-        SisModulusProfileId, SubringCoefficientPackingGeometry,
+        relation_rhs_coeff_len, BasisMode, CommitmentPayloadMode, OpenCommitMatrixParams,
+        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
+        RelationWitnessGeometry, SisModulusProfileId, SubringCoefficientPackingGeometry,
     };
 
     type F = Prime64Offset59;
@@ -1037,8 +1037,15 @@ mod prepared_group_tests {
         let public_point = (0..11)
             .map(|index| E::from_u64(2 + index as u64))
             .collect::<Vec<_>>();
-        let prepared_point =
-            PreparedSubringCoefficientPackingPoint::new(geometry, 6, 4, 11, &public_point).unwrap();
+        let prepared_point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            6,
+            4,
+            11,
+            &public_point,
+        )
+        .unwrap();
         let challenges = Challenges::from_sparse(
             (0..4)
                 .map(|challenge| SparseChallenge {
@@ -1102,6 +1109,7 @@ mod prepared_group_tests {
         for stale_point in [
             PreparedSubringCoefficientPackingPoint::new(
                 valid[0].coefficient_packing_point().unwrap().geometry(),
+                BasisMode::Lagrange,
                 7,
                 4,
                 11,
@@ -1110,6 +1118,7 @@ mod prepared_group_tests {
             .unwrap(),
             PreparedSubringCoefficientPackingPoint::new(
                 valid[0].coefficient_packing_point().unwrap().geometry(),
+                BasisMode::Lagrange,
                 6,
                 8,
                 11,
@@ -1131,8 +1140,15 @@ mod prepared_group_tests {
         let point = (0..11)
             .map(|index| E::from_u64(13 + index as u64))
             .collect::<Vec<_>>();
-        let wrong_point =
-            PreparedSubringCoefficientPackingPoint::new(wrong_geometry, 16, 4, 11, &point).unwrap();
+        let wrong_point = PreparedSubringCoefficientPackingPoint::new(
+            wrong_geometry,
+            BasisMode::Lagrange,
+            16,
+            4,
+            11,
+            &point,
+        )
+        .unwrap();
         let stale = vec![PreparedRelationGroup {
             kind: PreparedRelationGroupKind::SubringCoefficientPacking(wrong_point),
             scalar_openings: vec![E::from_u64(7), E::from_u64(11)],

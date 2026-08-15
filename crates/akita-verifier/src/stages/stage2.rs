@@ -31,7 +31,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     alpha: E,
     num_rounds: usize,
     relation_claim: E,
-    evaluation_trace: PreparedEvaluationTrace<E>,
+    evaluation_trace: Option<PreparedEvaluationTrace<E>>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
     coefficient_packing_groups: &'a [CoefficientPackingGroupSemantics<E>],
@@ -65,7 +65,7 @@ where
         relation_claim: E,
         col_bits: usize,
         ring_bits: usize,
-        evaluation_trace: PreparedEvaluationTrace<E>,
+        evaluation_trace: Option<PreparedEvaluationTrace<E>>,
         evaluation_trace_row_weight: E,
         evaluation_trace_opening_claim: E,
         relation: &RingRelationInstance<F>,
@@ -118,6 +118,11 @@ where
             .iter()
             .filter(|opening| opening.coefficient_packing_geometry().is_some())
             .count();
+        if evaluation_trace.is_some() == (expected_packing_groups != 0) {
+            return Err(AkitaError::InvalidSetup(
+                "Stage 2 opening semantics disagree with the relation methods".into(),
+            ));
+        }
         if coefficient_packing_groups.len() != expected_packing_groups {
             return Err(AkitaError::InvalidSetup(
                 "coefficient-packing verifier batch is incomplete".into(),
@@ -227,10 +232,12 @@ where
         let coefficient_packing_weight = self.coefficient_packing_weight_at_point(challenges)?;
         let relation_oracle =
             w_eval * (relation_weight + coefficient_packing_weight) + compression_oracle;
-        let trace_oracle = {
+        let trace_oracle = if let Some(evaluation_trace) = &self.evaluation_trace {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
-            let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;
+            let trace_weight = evaluation_trace.evaluate_at_point(challenges)?;
             self.evaluation_trace_row_weight * w_eval * trace_weight
+        } else {
+            E::zero()
         };
         let physical_l2_oracle = if self.physical_l2_families.is_empty() {
             E::zero()
@@ -268,11 +275,12 @@ mod tests {
     use akita_field::{Ext2, Prime64Offset59};
     use akita_types::{
         prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
-        AkitaSetupDescriptor, CoefficientPackingBatchSemanticInputs, CommitmentPayloadMode,
-        DigitRangePlan, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
-        PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-        RelationWitnessGeometry, RingRelationGroupOpening, RingVec, SisModulusProfileId,
-        SubringCoefficientPackingGeometry, WitnessLayout,
+        AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
+        CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
+        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
+        RelationAddressGeometry, RelationRangeImagePlan, RelationWitnessGeometry,
+        RingRelationGroupOpening, RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry,
+        WitnessLayout,
     };
     use std::sync::Arc;
 
@@ -338,6 +346,7 @@ mod tests {
         let geometry = SubringCoefficientPackingGeometry::try_new(2, d_a, s).unwrap();
         let prepared_point = PreparedSubringCoefficientPackingPoint::new(
             geometry,
+            BasisMode::Lagrange,
             6,
             4,
             11,
@@ -417,6 +426,7 @@ mod tests {
                 level_params: params.clone(),
                 opening_batch: opening_batch.clone(),
                 witness_layout: Arc::new(witness_layout),
+                extension_degree: <E as ExtField<F>>::EXT_DEGREE,
             }),
             setup_plan_cache: Default::default(),
         };
@@ -446,7 +456,7 @@ mod tests {
             E::zero(),
             relation_address_geometry.relation_lane_variable_count(),
             relation_address_geometry.relation_coefficient_variable_count(),
-            PreparedEvaluationTrace::empty_for_test(domain.num_vars()),
+            None,
             E::zero(),
             E::zero(),
             &relation,
@@ -496,7 +506,7 @@ mod tests {
             E::zero(),
             relation_address_geometry.relation_lane_variable_count(),
             relation_address_geometry.relation_coefficient_variable_count(),
-            PreparedEvaluationTrace::empty_for_test(domain.num_vars()),
+            None,
             E::zero(),
             E::zero(),
             &relation,
@@ -523,7 +533,7 @@ mod tests {
             E::zero(),
             relation_address_geometry.relation_lane_variable_count(),
             relation_address_geometry.relation_coefficient_variable_count(),
-            PreparedEvaluationTrace::empty_for_test(domain.num_vars()),
+            None,
             E::zero(),
             E::zero(),
             &relation,

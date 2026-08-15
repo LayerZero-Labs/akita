@@ -40,6 +40,34 @@ fn prefix_eligible_level_params() -> CommittedGroupParams {
 }
 
 #[test]
+fn setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer() {
+    let params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q32Offset99,
+        64,
+        3,
+        2,
+        3,
+        2,
+        SparseChallengeConfig::production_for_ring_dim(64).unwrap(),
+    )
+    .with_decomp(32, 3, 1, 2, 2)
+    .expect("tight recursive consumer with setup-prefix capacity");
+    assert_eq!(
+        params.inner_commit_matrix.input_width(),
+        params.num_positions_per_block * params.num_digits_inner
+    );
+    let prefix = setup_prefix_precommitted_params(&params, 128).expect("setup prefix params");
+    assert_eq!(
+        prefix.layout.num_digits_inner,
+        crate::sis::compute_num_digits_field_width(
+            SisModulusProfileId::Q32Offset99.field_bits(),
+            params.log_basis_inner,
+        )
+    );
+    assert_ne!(prefix.layout.num_digits_inner, params.num_digits_inner);
+}
+
+#[test]
 fn active_setup_field_len_matches_packed_role_maximum() {
     let lp = sample_level_params();
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
@@ -189,7 +217,7 @@ fn setup_prefix_slot_identity_excludes_consuming_opening_plan() {
     let mut subring_packing_schedule = Vec::new();
     subring_packing.append_descriptor_bytes(&mut subring_packing_schedule);
     assert_ne!(evaluation_trace_schedule, subring_packing_schedule);
-    assert!(subring_packing.commitment_params.validate().is_err());
+    assert!(subring_packing.commitment_params.validate().is_ok());
 }
 
 #[test]
@@ -353,11 +381,7 @@ fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
     let base_ring_dimension = 64usize;
     let mut expected_a_projection = 0usize;
     let mut expected_b_projection = 0usize;
-    let mut expected_d_physical_cols = 0usize;
     for group_index in 0..opening_batch.num_groups() {
-        let group_layout = opening_batch
-            .group_layout(group_index)
-            .expect("group layout");
         let group_params = final_params
             .group_params(&opening_batch, group_index)
             .expect("group params");
@@ -366,18 +390,13 @@ fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
             .expect("group role dimensions");
         let a_cols = group_params.num_positions_per_block() * group_params.num_digits_inner();
         let b_cols = group_params.b_col_len();
-        let d_cols = group_layout.num_polynomials()
-            * group_params.num_live_blocks()
-            * group_params.num_digits_open()
-            * (dims.d_a() / dims.d_d());
         expected_a_projection = expected_a_projection
             .max(group_params.a_rows_len() * a_cols * (dims.d_a() / base_ring_dimension));
         expected_b_projection = expected_b_projection
             .max(group_params.b_rows_len() * b_cols * (dims.d_b() / base_ring_dimension));
-        expected_d_physical_cols += d_cols;
     }
     let expected_d_projection = final_params.open_commit_matrix.output_rank()
-        * expected_d_physical_cols
+        * final_params.open_commit_matrix.input_width()
         * (final_params.role_dims().d_d() / base_ring_dimension);
     let expected_ring_slots = expected_a_projection
         .max(expected_b_projection)

@@ -48,6 +48,7 @@ type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
+mod coefficient_packing;
 mod dense_group;
 mod layout;
 mod onehot;

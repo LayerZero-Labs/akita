@@ -82,6 +82,7 @@ where
     // common coefficients are the low Boolean coordinates.
     let geometry = lp.relation_address_geometry(
         opening_batch,
+        instance.extension_degree(),
         opening_ring_dim,
         witness_layout.live_coeff_len(),
     )?;

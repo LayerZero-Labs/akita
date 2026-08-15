@@ -29,9 +29,10 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let relation_geometry = RelationWitnessGeometry::for_evaluation_trace_execution(
+    let relation_geometry = RelationWitnessGeometry::for_level(
         &context.level_params,
         &context.opening_batch,
+        context.extension_degree,
     )?;
     let row_families = relation_geometry.rhs_layout().row_families()?;
     let quotient_row_dims = row_families
@@ -146,7 +147,12 @@ where
     for (row, family) in row_families.iter().enumerate() {
         if matches!(
             family,
-            RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+            RelationRowFamily::CompressionF { .. }
+                | RelationRowFamily::CompressionH { .. }
+                | RelationRowFamily::Consistency {
+                    opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { .. },
+                    ..
+                }
         ) {
             continue;
         }

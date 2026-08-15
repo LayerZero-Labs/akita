@@ -68,6 +68,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     let err = match SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
+        1,
         vec![F::one(); 4].into(),
         &witness_layout,
         &setup_groups,
@@ -158,6 +159,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
             level_params: lp,
             opening_batch,
             witness_layout: Arc::new(witness_layout),
+            extension_degree: 1,
         }),
         setup_plan_cache: Default::default(),
     };

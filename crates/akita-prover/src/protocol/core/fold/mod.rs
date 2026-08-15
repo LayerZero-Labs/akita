@@ -48,11 +48,20 @@ pub(super) fn uniform_opening_method(
         .group_params_geometry(opening_batch, 0)?
         .opening_method();
     for group_index in 1..opening_batch.num_groups() {
-        if level_params
+        let group_method = level_params
             .group_params_geometry(opening_batch, group_index)?
-            .opening_method()
-            != method
-        {
+            .opening_method();
+        let same_family = matches!(
+            (method, group_method),
+            (
+                akita_types::OpeningMethod::EvaluationTrace,
+                akita_types::OpeningMethod::EvaluationTrace
+            ) | (
+                akita_types::OpeningMethod::SubringCoefficientPacking { .. },
+                akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+            )
+        );
+        if !same_family {
             return Err(AkitaError::InvalidSetup(
                 "one fold cannot mix EvaluationTrace and coefficient-packing groups".into(),
             ));
@@ -581,6 +590,81 @@ where
             let prepared = prepare_coefficient_packing_linear_terms(semantics, group_opening)?;
             if prepared.group_index != group_index || prepared.geometry != semantics.geometry() {
                 return Err(AkitaError::InvalidProof);
+            }
+            #[cfg(debug_assertions)]
+            {
+                let witness = rs.w_evals_compact.as_ref();
+                let events = semantics.relation_events();
+                let event_sum = events.events().iter().try_fold(E::zero(), |sum, event| {
+                    let range = event.physical_coefficients();
+                    let coefficients =
+                        witness.get(range.clone()).ok_or(AkitaError::InvalidProof)?;
+                    let powers = events
+                        .alpha_powers()
+                        .get(
+                            event.alpha_exponent_start()
+                                ..event.alpha_exponent_start() + range.len(),
+                        )
+                        .ok_or(AkitaError::InvalidProof)?;
+                    Ok::<_, AkitaError>(
+                        sum + coefficients.iter().zip(powers).fold(
+                            E::zero(),
+                            |acc, (&coefficient, &power)| {
+                                acc + event.scalar() * power * E::from_i64(i64::from(coefficient))
+                            },
+                        ),
+                    )
+                })?;
+                let stage2 = semantics.stage2_terms();
+                let mut direct_sum = E::zero();
+                let mut packing_z_sum = E::zero();
+                for term in stage2.terms() {
+                    let source = match term.source() {
+                        akita_types::CoefficientPackingStage2Source::DirectOpening => {
+                            stage2.direct_opening_source()
+                        }
+                        akita_types::CoefficientPackingStage2Source::PackingZ => {
+                            stage2.packing_z_source()
+                        }
+                    };
+                    let mut term_sum = E::zero();
+                    for segment in stage2
+                        .segments()
+                        .get(term.segments())
+                        .ok_or(AkitaError::InvalidProof)?
+                    {
+                        let physical = witness
+                            .get(segment.physical_coefficients())
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let weights = source
+                            .get(segment.source_coefficients())
+                            .ok_or(AkitaError::InvalidProof)?;
+                        term_sum += physical.iter().zip(weights).fold(
+                            E::zero(),
+                            |acc, (&coefficient, &weight)| {
+                                acc + weight * E::from_i64(i64::from(coefficient))
+                            },
+                        );
+                    }
+                    match term.source() {
+                        akita_types::CoefficientPackingStage2Source::DirectOpening => {
+                            direct_sum += term.factor() * term_sum;
+                        }
+                        akita_types::CoefficientPackingStage2Source::PackingZ => {
+                            packing_z_sum += term.factor() * term_sum;
+                        }
+                    }
+                }
+                if event_sum + packing_z_sum != E::zero() {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "coefficient-packing consistency relation failed for group {group_index}"
+                    )));
+                }
+                if direct_sum != prepared.weighted_scalar_opening_claim {
+                    return Err(AkitaError::InvalidInput(
+                        "coefficient-packing direct-opening relation failed".into(),
+                    ));
+                }
             }
             weighted_opening_claim += prepared.weighted_scalar_opening_claim;
             if let Some(combined) = combined_terms.as_mut() {

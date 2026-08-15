@@ -20,15 +20,14 @@ use crate::generated::{
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_w_ring_count, min_secure_rank, num_digits_inner,
-    num_digits_open, projected_role_ring_count, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, SisTableKey,
+    decomposed_s_block_ring_count, min_secure_rank, num_digits_inner, num_digits_open,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommitmentSliceCount,
-    CommitmentSliceGeometry, CommittedGroupParams, DecompositionParams, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedLevelParams,
-    TerminalCommittedGroupParams,
+    CommitmentSliceGeometry, CommittedGroupParams, CommittedSourceEncoding, DecompositionParams,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    PrecommittedLevelParams, TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -161,6 +160,7 @@ impl GeneratedCommittedGroup {
         &self,
         policy: &PlannerPolicy,
         payload_mode: akita_types::CommitmentPayloadMode,
+        opening_method: akita_types::OpeningMethod,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
         exact_num_digits_inner: Option<u32>,
@@ -247,11 +247,18 @@ impl GeneratedCommittedGroup {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
-        let ring_challenge_cfg = if response_l2_sq_cap.is_some() {
-            akita_challenges::selective_l2_challenge_config(ring_d)
-                .unwrap_or(ring_challenge_config(ring_d)?)
-        } else {
-            ring_challenge_config(ring_d)?
+        let ring_challenge_cfg = match opening_method {
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => akita_challenges::SparseChallengeConfig::production_for_ring_dim(
+                challenge_subring_dimension,
+            )
+            .ok_or_else(|| no_layout("A"))?,
+            akita_types::OpeningMethod::EvaluationTrace if response_l2_sq_cap.is_some() => {
+                akita_challenges::selective_l2_challenge_config(ring_d)
+                    .unwrap_or(ring_challenge_config(ring_d)?)
+            }
+            akita_types::OpeningMethod::EvaluationTrace => ring_challenge_config(ring_d)?,
         };
         let num_digits_inner = if let Some(num_digits_inner) = exact_num_digits_inner {
             usize::try_from(num_digits_inner).map_err(|_| {
@@ -373,12 +380,15 @@ impl GeneratedCommittedGroup {
             log_basis_open,
         )
         .ok_or_else(|| no_layout("D"))?;
-        let native_main_d_width =
-            decomposed_w_ring_count(num_digits_open_val, num_live_blocks, num_claims)
-                .ok_or_else(|| no_layout("D"))?;
-        let main_d_width =
-            projected_role_ring_count(dimensions.d_a(), dimensions.d_d(), native_main_d_width)
-                .ok_or_else(|| no_layout("D"))?;
+        let main_d_width = akita_types::opening_d_segment_width(
+            opening_method,
+            policy.claim_ext_degree,
+            dimensions.d_a(),
+            dimensions.d_d(),
+            num_digits_open_val,
+            num_live_blocks,
+            num_claims,
+        )?;
         let setup_prefix = if let Some(group) = setup_prefix_group {
             let commitment_params = group.expand_to_precommitted_group(
                 policy,
@@ -405,7 +415,11 @@ impl GeneratedCommittedGroup {
         let precommitted_groups = Vec::new();
         let precommitted_d_width = setup_prefix
             .as_ref()
-            .map(|prefix| prefix.commitment_params.d_segment_width(dimensions.d_d()))
+            .map(|prefix| {
+                prefix
+                    .commitment_params
+                    .d_segment_width(policy.claim_ext_degree, dimensions.d_d())
+            })
             .transpose()?
             .unwrap_or(0);
         let d_matrix_width = main_d_width
@@ -441,7 +455,14 @@ impl GeneratedCommittedGroup {
         // of the panicking `new`).
         let params = CommittedGroupParams {
             payload_mode,
-            opening_method: akita_types::OpeningMethod::EvaluationTrace,
+            source_encoding: CommittedSourceEncoding::for_producer(
+                opening_method,
+                policy.claim_ext_degree,
+                ring_d,
+                input_witness_len.trailing_zeros() as usize,
+                is_root,
+            ),
+            opening_method,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -493,6 +514,7 @@ impl GeneratedCommittedGroup {
         &self,
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        opening_method: akita_types::OpeningMethod,
         main_num_polys: usize,
         num_digits_inner: u32,
         num_digits_fold: u32,
@@ -556,7 +578,15 @@ impl GeneratedCommittedGroup {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
-        let ring_challenge_cfg = ring_challenge_config(ring_d)?;
+        let ring_challenge_cfg = match opening_method {
+            akita_types::OpeningMethod::EvaluationTrace => ring_challenge_config(ring_d)?,
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => akita_challenges::SparseChallengeConfig::production_for_ring_dim(
+                challenge_subring_dimension,
+            )
+            .ok_or_else(|| no_layout("A"))?,
+        };
         let num_digits_inner = usize::try_from(num_digits_inner).map_err(|_| {
             AkitaError::InvalidSetup(
                 "generated root inner digit depth does not fit the target platform".into(),
@@ -612,12 +642,15 @@ impl GeneratedCommittedGroup {
         )?
         .physical_input_width();
 
-        let native_main_d_width =
-            decomposed_w_ring_count(num_digits_open_val, num_live_blocks, main_num_polys)
-                .ok_or_else(|| no_layout("D"))?;
-        let main_d_width =
-            projected_role_ring_count(dimensions.d_a(), dimensions.d_d(), native_main_d_width)
-                .ok_or_else(|| no_layout("D"))?;
+        let main_d_width = akita_types::opening_d_segment_width(
+            opening_method,
+            policy.claim_ext_degree,
+            dimensions.d_a(),
+            dimensions.d_d(),
+            num_digits_open_val,
+            num_live_blocks,
+            main_num_polys,
+        )?;
         let d_matrix_width = main_d_width
             .checked_add(precommitted_d_width)
             .ok_or_else(|| {
@@ -655,7 +688,18 @@ impl GeneratedCommittedGroup {
         )?;
         let params = CommittedGroupParams {
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            opening_method: akita_types::OpeningMethod::EvaluationTrace,
+            source_encoding: CommittedSourceEncoding::for_producer(
+                opening_method,
+                policy.claim_ext_degree,
+                ring_d,
+                self.geometry
+                    .live_ring_elements_per_claim
+                    .checked_mul(ring_d as u64)
+                    .filter(|len| len.is_power_of_two())
+                    .map_or(0, |len| len.trailing_zeros() as usize),
+                true,
+            ),
+            opening_method,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,

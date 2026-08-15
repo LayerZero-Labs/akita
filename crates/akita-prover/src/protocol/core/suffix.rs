@@ -117,7 +117,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
-    schedule.validate_evaluation_trace_execution()?;
+    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let planned_num_levels = schedule.num_fold_levels();
     if planned_num_levels < 2 {
         return Err(AkitaError::InvalidSetup(
@@ -548,6 +548,7 @@ where
         prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
+            false,
             block_claims,
             ExtensionOpeningSource::Logical(&logical_groups),
             true,

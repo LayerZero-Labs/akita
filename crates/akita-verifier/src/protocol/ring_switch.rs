@@ -13,8 +13,9 @@ use akita_types::{
     build_compression_relation_weights, dispatch_for_field, shared_setup_fold_gadget,
     validate_role_dispatch, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
     FpExtEncoding, NegativeBinarySupport, OpeningClaimsLayout, PreparedRelationAddress,
-    RelationAddressGeometry, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
-    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    RelationAddressGeometry, RelationWitnessGeometry, RingMultiplierOpeningPoint,
+    RingRelationGroupOpeningView, RingRelationInstance, RingRole, SetupContributionGroupInputs,
+    SetupContributionPlan, WitnessLayout,
 };
 use std::sync::{Arc, Mutex};
 
@@ -112,6 +113,7 @@ pub(crate) struct FlatRelationContext {
     pub(crate) level_params: CommittedGroupParams,
     pub(crate) opening_batch: OpeningClaimsLayout,
     pub(crate) witness_layout: Arc<WitnessLayout>,
+    pub(crate) extension_degree: usize,
 }
 
 #[derive(Clone)]
@@ -161,16 +163,34 @@ where
     };
 
     let num_claims = relation.opening_batch().num_total_polynomials();
+    let relation_geometry =
+        RelationWitnessGeometry::for_level(lp, opening_batch, relation.extension_degree())?;
     // Validate each group's opening/multiplier point against that group's own
     // block geometry (final vs frozen-precommit). For a scalar batch this is the
     // single group at `lp`'s geometry, byte-identical to the historical check.
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
-        let multiplier_point = relation.group_ring_multiplier_point(group_index)?;
-        if multiplier_point.position_len() != group_lp.num_positions_per_block()
-            || multiplier_point.fold_len() != group_lp.num_live_blocks()
-        {
-            return Err(AkitaError::InvalidProof);
+        match relation.group_opening_view(group_index)? {
+            RingRelationGroupOpeningView::EvaluationTrace {
+                ring_multiplier_point,
+                ..
+            } => {
+                if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
+                    || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+            }
+            RingRelationGroupOpeningView::SubringCoefficientPacking { geometry, .. } => {
+                let expected = relation_geometry.group_opening_geometry(group_index)?;
+                if geometry.extension_degree() != relation.extension_degree()
+                    || geometry.a_ring_dimension()
+                        != group_lp.inner_commit_matrix_params().ring_dimension()
+                    || geometry.partial_base_field_width() != expected.physical_coefficient_width()
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+            }
         }
     }
     if num_polys != num_claims {
@@ -180,6 +200,7 @@ where
     let witness_layout = relation.segment_layout(lp, None)?;
     let relation_address_geometry = lp.relation_address_geometry(
         opening_batch,
+        relation.extension_degree(),
         replay.opening_ring_dim,
         witness_layout.live_coeff_len(),
     )?;
@@ -282,6 +303,7 @@ where
     let layout = relation.segment_layout(lp, witness_ring_len)?;
     let relation_address_geometry = lp.relation_address_geometry(
         opening_batch,
+        relation.extension_degree(),
         replay.opening_ring_dim,
         layout.live_coeff_len(),
     )?;
@@ -301,10 +323,17 @@ where
             layout,
             rows,
             relation_address_geometry,
+            relation.extension_degree(),
         );
     }
     let challenges = relation.group_ambient_a_challenges(0)?;
-    let ring_multiplier_point = relation.group_ring_multiplier_point(0)?;
+    let ring_multiplier_point = match relation.group_opening_view(0)? {
+        RingRelationGroupOpeningView::EvaluationTrace {
+            ring_multiplier_point,
+            ..
+        } => Some(ring_multiplier_point),
+        RingRelationGroupOpeningView::SubringCoefficientPacking { .. } => None,
+    };
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -321,6 +350,7 @@ where
                 layout,
                 rows,
                 relation_address_geometry,
+                relation.extension_degree(),
             )
         }
     )
@@ -334,6 +364,7 @@ fn prepare_relation_matrix_evaluator_multi_group<F, E>(
     layout: WitnessLayout,
     rows: usize,
     relation_address_geometry: RelationAddressGeometry,
+    extension_degree: usize,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -389,11 +420,19 @@ where
             ));
         }
 
-        let ring_multiplier_point = relation.group_ring_multiplier_point(group_index)?;
-        if ring_multiplier_point.position_len() != num_positions_per_block
-            || ring_multiplier_point.fold_len() != num_live_blocks
-        {
-            return Err(AkitaError::InvalidProof);
+        let ring_multiplier_point = match relation.group_opening_view(group_index)? {
+            RingRelationGroupOpeningView::EvaluationTrace {
+                ring_multiplier_point,
+                ..
+            } => Some(ring_multiplier_point),
+            RingRelationGroupOpeningView::SubringCoefficientPacking { .. } => None,
+        };
+        if let Some(ring_multiplier_point) = ring_multiplier_point {
+            if ring_multiplier_point.position_len() != num_positions_per_block
+                || ring_multiplier_point.fold_len() != num_live_blocks
+            {
+                return Err(AkitaError::InvalidProof);
+            }
         }
 
         let total_blocks = k_g.checked_mul(num_live_blocks).ok_or_else(|| {
@@ -414,9 +453,12 @@ where
                 let alpha_pows = scalar_powers(alpha, D_GROUP);
                 let c_alphas =
                     prepare_challenge_evals::<F, E>(challenges, &alpha_pows, k_g, num_live_blocks)?;
-                let opening_a_evals = (0..num_positions_per_block)
-                    .map(|idx| ring_multiplier_point.eval_position_at::<E>(idx, &alpha_pows))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let opening_a_evals = match ring_multiplier_point {
+                    Some(point) => (0..num_positions_per_block)
+                        .map(|idx| point.eval_position_at::<E>(idx, &alpha_pows))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    None => vec![E::zero(); num_positions_per_block],
+                };
                 Ok::<_, AkitaError>((c_alphas, opening_a_evals))
             }
         )?;
@@ -451,6 +493,7 @@ where
             level_params: lp.clone(),
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
+            extension_degree,
         }),
         setup_plan_cache: Default::default(),
     })
@@ -484,7 +527,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     challenges: &Challenges,
-    ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
+    ring_multiplier_point: Option<&RingMultiplierOpeningPoint<F>>,
     alpha: E,
     lp: &CommittedGroupParams,
     tau1: &[E],
@@ -493,6 +536,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     layout: WitnessLayout,
     rows: usize,
     relation_address_geometry: RelationAddressGeometry,
+    extension_degree: usize,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -528,9 +572,12 @@ where
 
     let c_alphas =
         prepare_challenge_evals::<F, E>(challenges, &alpha_pows, num_claims, lp.num_live_blocks)?;
-    let opening_a_evals = (0..num_positions_per_block)
-        .map(|idx| ring_multiplier_point.eval_position_at::<E>(idx, &alpha_pows))
-        .collect::<Result<Vec<_>, _>>()?;
+    let opening_a_evals = match ring_multiplier_point {
+        Some(point) => (0..num_positions_per_block)
+            .map(|idx| point.eval_position_at::<E>(idx, &alpha_pows))
+            .collect::<Result<Vec<_>, _>>()?,
+        None => vec![E::zero(); num_positions_per_block],
+    };
     let group = RelationMatrixGroupEvaluator {
         c_alphas,
         opening_a_evals,
@@ -554,6 +601,7 @@ where
             level_params: lp.clone(),
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
+            extension_degree,
         }),
         setup_plan_cache: Default::default(),
     })
@@ -628,6 +676,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         SetupContributionPlan::prepare::<F>(
             &context.level_params,
             &context.opening_batch,
+            context.extension_degree,
             self.eq_tau1.clone(),
             &context.witness_layout,
             &setup_groups,

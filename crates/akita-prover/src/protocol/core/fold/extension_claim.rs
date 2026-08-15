@@ -19,6 +19,7 @@ pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
 pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     run_eor: bool,
+    tensor_project_committed_root: bool,
     block_claims: ProverOpeningData<'a, E, P, F>,
     eor_source: ExtensionOpeningSource<'_, P>,
     pad_base_evals: bool,
@@ -107,9 +108,15 @@ where
         (protocol_points, None, None)
     };
 
-    // Tensor-project only when EOR ran without base-eval padding (root geometry).
-    // All other arms share one finish path.
-    if run_eor && !pad_base_evals {
+    // Commitment identity, rather than the opening path, selects the root
+    // representation. Execution admission permits this tensor branch only for
+    // EvaluationTrace; coefficient packing requires canonical coefficients.
+    if tensor_project_committed_root {
+        if pad_base_evals {
+            return Err(AkitaError::InvalidSetup(
+                "recursive opening cannot request a root tensor projection".into(),
+            ));
+        }
         let transformed: Vec<RootTensorProjectionPoly<F>> = {
             let _span = tracing::info_span!(
                 "extension_transform_polys",

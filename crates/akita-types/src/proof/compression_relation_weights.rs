@@ -394,13 +394,14 @@ where
 {
     let opening_batch = instance.opening_batch();
     let relation_geometry =
-        crate::RelationWitnessGeometry::for_evaluation_trace_execution(lp, opening_batch)?;
+        crate::RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
     let relation_layout = relation_geometry.rhs_layout();
     let row_families = relation_layout.row_families()?;
     let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;
     let coefficient_block_len = lp
         .compression_relation_address_geometry(
             opening_batch,
+            instance.extension_degree(),
             outgoing_ring_dimension,
             witness_layout.live_coeff_len(),
         )?

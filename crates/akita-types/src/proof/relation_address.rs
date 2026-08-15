@@ -105,7 +105,7 @@ impl RelationAddressGeometry {
         )
     }
 
-    fn new_with_coefficient_block(
+    pub(crate) fn new_with_coefficient_block(
         role_dims: CommitmentRingDims,
         relation_coefficient_block_len: usize,
         outgoing_witness_ring_dimension: usize,

@@ -709,6 +709,7 @@ mod tests {
         crate::PrecommittedLevelParams {
             layout: crate::CommittedGroupProfile {
                 version: crate::CommittedGroupProfile::VERSION,
+                source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
