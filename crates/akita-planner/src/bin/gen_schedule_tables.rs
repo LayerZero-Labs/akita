@@ -12,6 +12,7 @@ use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroup
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::Instant;
 
 #[derive(Default)]
 struct ExplicitRows {
@@ -47,7 +48,9 @@ fn generator_command() -> &'static str {
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
      --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
-     [family_module_name ...] \
+     [family_module_name ...]\n\
+     positional family names select only those generated families; omit them \
+     to generate every family \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
      [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
@@ -115,7 +118,10 @@ fn parse_explicit_group(raw: &str) -> Result<ExplicitGroup, String> {
 }
 
 fn parse_args() -> Result<ParsedArgs, String> {
-    let raw_args: Vec<String> = env::args().skip(1).collect();
+    parse_args_from(env::args().skip(1).collect())
+}
+
+fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if raw_args.is_empty() {
         return Err(usage().to_string());
     }
@@ -219,6 +225,15 @@ fn parse_args() -> Result<ParsedArgs, String> {
         family_filter,
         explicit_rows,
     })
+}
+
+fn selected_families(family_filter: Option<&[String]>) -> Vec<&'static GeneratedFamily> {
+    ALL_GENERATED_FAMILIES
+        .iter()
+        .filter(|family| {
+            family_filter.is_none_or(|names| names.iter().any(|name| name == family.module_name))
+        })
+        .collect()
 }
 
 fn validate_materialized_catalog(
@@ -495,18 +510,12 @@ fn emit_spec_with_overrides(
 }
 
 fn main() -> Result<(), String> {
+    let generation_started = Instant::now();
     let args = parse_args()?;
     validate_explicit_output_isolation(&args.base_dir, &args.explicit_rows)?;
     fs::create_dir_all(&args.base_dir)
         .map_err(|e| format!("create {}: {e}", args.base_dir.display()))?;
-    let families_to_write = ALL_GENERATED_FAMILIES
-        .iter()
-        .filter(|family| {
-            args.family_filter
-                .as_ref()
-                .is_none_or(|names| names.iter().any(|name| name == family.module_name))
-        })
-        .collect::<Vec<_>>();
+    let families_to_write = selected_families(args.family_filter.as_deref());
 
     let specs = if args.wiring_only {
         Vec::new()
@@ -522,20 +531,30 @@ fn main() -> Result<(), String> {
         let workers = offline_planning_worker_count(family_count);
         let mut specs = bounded_parallel_filter_map(&indexed_families, workers, |item| {
             let (index, family) = *item;
+            let family_started = Instant::now();
             eprintln!(
                 "planning schedule family {}/{}: {}",
                 index + 1,
                 family_count,
                 family.module_name
             );
-            emit_spec_with_overrides(
+            let spec = emit_spec_with_overrides(
                 family,
                 &preplans,
                 args.base_dir.clone(),
                 &args.explicit_rows,
                 generator_command,
-            )
-            .map(Some)
+            )?;
+            eprintln!(
+                "planned schedule family {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
+                index + 1,
+                family_count,
+                family.module_name,
+                spec.keys.len(),
+                spec.group_batch_keys.len(),
+                family_started.elapsed(),
+            );
+            Ok(Some(spec))
         })?;
         for (family, spec) in families_to_write.iter().zip(&mut specs) {
             preplans.attach_to_spec(family, spec);
@@ -570,8 +589,28 @@ fn main() -> Result<(), String> {
             }
         },
     )?;
-    for destination in publish_generated_outputs(outputs)? {
+    let destinations = publish_generated_outputs(outputs)?;
+    for destination in &destinations {
         println!("wrote {}", destination.display());
+    }
+    if args.wiring_only {
+        eprintln!(
+            "finished schedule module wiring and published {} files in {:.2?}",
+            destinations.len(),
+            generation_started.elapsed(),
+        );
+    } else {
+        eprintln!(
+            "finished {} schedule {} and published {} files in {:.2?}",
+            specs.len(),
+            if specs.len() == 1 {
+                "family"
+            } else {
+                "families"
+            },
+            destinations.len(),
+            generation_started.elapsed(),
+        );
     }
     Ok(())
 }
@@ -579,6 +618,44 @@ fn main() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn positional_family_filters_are_checked_and_ordered() {
+        let one =
+            parse_args_from(vec!["generated".into(), "fp32_dense".into()]).expect("known family");
+        assert_eq!(
+            one.family_filter.as_deref(),
+            Some(&["fp32_dense".into()][..])
+        );
+        assert_eq!(
+            selected_families(one.family_filter.as_deref())
+                .iter()
+                .map(|family| family.module_name)
+                .collect::<Vec<_>>(),
+            vec!["fp32_dense"],
+        );
+
+        let multiple = parse_args_from(vec![
+            "generated".into(),
+            "fp64_dense".into(),
+            "fp32_dense".into(),
+        ])
+        .expect("known families");
+        let selected = selected_families(multiple.family_filter.as_deref())
+            .iter()
+            .map(|family| family.module_name)
+            .collect::<Vec<_>>();
+        assert_eq!(selected, vec!["fp64_dense", "fp32_dense"]);
+
+        let all = parse_args_from(vec!["generated".into()]).expect("all families");
+        assert!(all.family_filter.is_none());
+        assert_eq!(selected_families(None).len(), ALL_GENERATED_FAMILIES.len());
+
+        let unknown = parse_args_from(vec!["generated".into(), "not_a_family".into()])
+            .err()
+            .expect("unknown family must reject");
+        assert!(unknown.contains("unknown schedule family"));
+    }
 
     #[test]
     fn explicit_scalar_sweep_replaces_default_catalog_work() {

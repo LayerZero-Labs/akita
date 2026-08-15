@@ -3,12 +3,90 @@ use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
 use akita_field::LiftBase;
-use akita_types::{basis_weights, OpeningMethod};
+use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
 type PackingField = <PackingCfg as CommitmentConfig>::Field;
 type PackingExt = <PackingCfg as CommitmentConfig>::ExtField;
 type PackingScheme = AkitaCommitmentScheme<PackingCfg>;
+
+#[test]
+fn synthetic_packing_row_is_derived_from_one_checked_authority() {
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::singleton(20),
+        precommitteds: Vec::new(),
+    };
+    let first = PackingCfg::derive_catalog_row(&key, 64).unwrap();
+    let second = PackingCfg::derive_catalog_row(&key, 64).unwrap();
+    assert_eq!(first.selection(), second.selection());
+    assert_eq!(first.schedule(), second.schedule());
+
+    let schedule = first.schedule();
+    let root = &schedule.root.params.final_group.commitment;
+    assert_eq!(root.d_a(), 512);
+    assert_eq!(PackingCfg::EXT_DEGREE, 4);
+    let OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension,
+    } = root.opening_method
+    else {
+        panic!("synthetic root must use coefficient packing");
+    };
+    assert_eq!(challenge_subring_dimension, 64);
+    let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+        PackingCfg::EXT_DEGREE,
+        root.d_a(),
+        challenge_subring_dimension,
+    )
+    .unwrap();
+    assert_eq!(geometry.packing_factor(), 2);
+    assert_eq!(
+        geometry.partial_base_field_width() / root.role_dims().d_d(),
+        2,
+    );
+    assert_eq!(
+        root.source_encoding,
+        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+    );
+
+    let successor = &schedule.recursive_folds[0];
+    assert_eq!(
+        schedule.root.output_witness_len,
+        successor.input_witness_len
+    );
+    assert!(matches!(
+        successor.params.witness.opening_method,
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64
+        }
+    ));
+    assert_eq!(
+        successor.params.witness.source_encoding,
+        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+    );
+    let prefix = successor
+        .params
+        .incoming_setup_prefix
+        .as_ref()
+        .expect("synthetic successor must consume the root setup prefix");
+    assert_eq!(
+        prefix.commitment_params.layout.source_encoding,
+        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+    );
+    assert!(matches!(
+        prefix.commitment_params.opening.opening_method,
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64
+        }
+    ));
+    assert_eq!(
+        successor.output_witness_len,
+        schedule.terminal.input_witness_len
+    );
+    schedule.validate_structure().unwrap();
+
+    PackingCfg::derive_catalog_row(&key, 96)
+        .expect_err("a non-production challenge subring must reject");
+}
 
 #[test]
 fn fixed_root_packing_rejects_a_stale_successor_length() {
@@ -127,7 +205,9 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 );
             }
             let hint_rows = hint.inner_rows()[0].as_ring_slice::<512>().unwrap();
-            for row in 0..root.inner_commit_matrix.output_rank() {
+            let output_rank = root.inner_commit_matrix.output_rank();
+            assert_eq!(hint_rows.len(), output_rank * root.num_live_blocks);
+            for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
                 let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
                     CyclotomicRing::zero(),
                     |sum, (matrix, digits)| {
@@ -137,7 +217,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                             }))
                     },
                 );
-                assert_eq!(hint_rows[row], expected, "A hint row {row} mismatch");
+                assert_eq!(*actual, expected, "A hint row {row} mismatch");
             }
             let polynomial_refs = [&polynomial];
             let point = (0..num_vars)

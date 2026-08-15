@@ -150,72 +150,13 @@ impl<Envelope, Final> Clone for EnvelopeFinalGroupConfig<Envelope, Final> {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct RootCoefficientPackingConfig<Base>(PhantomData<fn() -> Base>);
 
-impl<Base> CommitmentConfig for RootCoefficientPackingConfig<Base>
+impl<Base> RootCoefficientPackingConfig<Base>
 where
     Base: CommitmentConfig + 'static,
 {
-    type Field = Base::Field;
-    type ExtField = Base::ExtField;
-
-    const D: usize = Base::D;
-    const EXT_DEGREE: usize = Base::EXT_DEGREE;
-    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-        Base::RING_DIMENSION_SCHEDULE_MODE;
-
-    fn decomposition() -> DecompositionParams {
-        Base::decomposition()
-    }
-
-    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        Base::ring_challenge_config(d)
-    }
-
-    fn sis_modulus_profile() -> SisModulusProfileId {
-        Base::sis_modulus_profile()
-    }
-
-    fn setup_matrix_capacity(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixCapacity, AkitaError> {
-        let base = Base::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
-        Ok(SetupMatrixCapacity {
-            num_field_elements: base.num_field_elements.checked_mul(16).ok_or_else(|| {
-                AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())
-            })?,
-        })
-    }
-
-    fn setup_prefix_inner_ring_dimension() -> usize {
-        Base::setup_prefix_inner_ring_dimension()
-    }
-
-    fn opening_basis_range() -> (u32, u32) {
-        Base::opening_basis_range()
-    }
-
-    fn inner_basis_range() -> (u32, u32) {
-        Base::inner_basis_range()
-    }
-
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-        Base::root_honest_fold_policy()
-    }
-
-    fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
-        Base::chunked_witness_cfg()
-    }
-
-    fn recursive_setup_planning() -> bool {
-        Base::recursive_setup_planning()
-    }
-
-    fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        Base::selection_policy()
-    }
-
-    fn resolve_catalog_row_for_key(
+    pub(crate) fn derive_catalog_row(
         key: &AkitaScheduleLookupKey,
+        challenge_subring_dimension: usize,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         if !key.precommitteds.is_empty() {
             return Err(AkitaError::UnsupportedSchedule(
@@ -227,7 +168,6 @@ where
         let policy = policy_of::<Self>();
         let root = &mut schedule.root.params.final_group.commitment;
         let d_a = root.inner_commit_matrix.ring_dimension();
-        let challenge_subring_dimension = 64;
         akita_types::SubringCoefficientPackingGeometry::try_new(
             Self::EXT_DEGREE,
             d_a,
@@ -538,7 +478,77 @@ where
         };
         akita_config::ResolvedScheduleRow::try_new(selection, profiles, schedule, &policy)
     }
+}
 
+impl<Base> CommitmentConfig for RootCoefficientPackingConfig<Base>
+where
+    Base: CommitmentConfig + 'static,
+{
+    type Field = Base::Field;
+    type ExtField = Base::ExtField;
+
+    const D: usize = Base::D;
+    const EXT_DEGREE: usize = Base::EXT_DEGREE;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        Base::RING_DIMENSION_SCHEDULE_MODE;
+
+    fn decomposition() -> DecompositionParams {
+        Base::decomposition()
+    }
+
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Base::ring_challenge_config(d)
+    }
+
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        Base::sis_modulus_profile()
+    }
+
+    fn setup_matrix_capacity(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        let base = Base::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
+        Ok(SetupMatrixCapacity {
+            num_field_elements: base.num_field_elements.checked_mul(16).ok_or_else(|| {
+                AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())
+            })?,
+        })
+    }
+
+    fn setup_prefix_inner_ring_dimension() -> usize {
+        Base::setup_prefix_inner_ring_dimension()
+    }
+
+    fn opening_basis_range() -> (u32, u32) {
+        Base::opening_basis_range()
+    }
+
+    fn inner_basis_range() -> (u32, u32) {
+        Base::inner_basis_range()
+    }
+
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Base::root_honest_fold_policy()
+    }
+
+    fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+        Base::chunked_witness_cfg()
+    }
+
+    fn recursive_setup_planning() -> bool {
+        Base::recursive_setup_planning()
+    }
+
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        Base::selection_policy()
+    }
+
+    fn resolve_catalog_row_for_key(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        Self::derive_catalog_row(key, 64)
+    }
     fn resolve_catalog_row_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {

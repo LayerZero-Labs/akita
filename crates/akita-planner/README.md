@@ -215,6 +215,20 @@ To regenerate schedule tables:
 scripts/generate-schedule-tables.sh
 ```
 
+During planner development, pass one or more generated family module names to
+plan and publish only those families. The generator validates the names against
+the canonical family registry and reports the elapsed time and key counts for
+each selected family:
+
+```bash
+scripts/generate-schedule-tables.sh fp32_dense
+scripts/generate-schedule-tables.sh fp32_dense fp64_dense
+```
+
+Targeted generation leaves the shared `mod.rs` wiring complete. Before a
+planner change is committed, run the unfiltered command above so every tracked
+family is regenerated.
+
 One generator run reuses a successful scalar schedule when grouped key
 construction and scalar row emission need the same producer configuration and
 layout. The cache lasts for one run and stores the complete selected

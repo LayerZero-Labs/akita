@@ -503,10 +503,11 @@ mod tests {
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
-        CommittedGroupProfile, CompressionChainPlan, InnerCommitMatrixParams,
-        OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
-        SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
-        SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+        CommittedGroupProfile, CommittedSourceEncoding, CompressionChainPlan, GroupOpeningPlan,
+        InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+        PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot,
+        SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+        DEFAULT_SIS_SECURITY_POLICY,
     };
 
     type TestF = Prime128Offset275;
@@ -551,6 +552,7 @@ mod tests {
             layout: CommittedGroupProfile {
                 version: CommittedGroupProfile::VERSION,
                 group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
+                source_encoding: CommittedSourceEncoding::CanonicalCoefficientTable,
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
@@ -562,10 +564,12 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            log_basis_open: 1,
-            fold_challenge_config: SparseChallengeConfig::pm1_only(0),
-            num_digits_open: 1,
-            num_digits_fold: 1,
+            opening: GroupOpeningPlan::evaluation_trace(
+                SparseChallengeConfig::pm1_only(0),
+                1,
+                1,
+                1,
+            ),
         }
     }
 

@@ -157,4 +157,55 @@ mod tests {
         );
         fs::remove_dir_all(dir).expect("remove test directory");
     }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn targeted_family_render_keeps_complete_module_wiring() {
+        use crate::generated_families::{wiring_emit_spec, ALL_GENERATED_FAMILIES};
+
+        let dir = test_dir("targeted-family");
+        fs::create_dir_all(&dir).expect("create test directory");
+        let mod_path = dir.join("mod.rs");
+        fs::write(
+            &mod_path,
+            "// @generated schedule module wiring begin\n\
+             // stale wiring\n\
+             // @generated schedule module wiring end\n",
+        )
+        .expect("write wiring fixture");
+        let selected = ALL_GENERATED_FAMILIES
+            .iter()
+            .find(|family| family.module_name == "fp32_dense")
+            .expect("known selected family");
+        let selected_specs = vec![wiring_emit_spec(selected, dir.clone())];
+        let wiring_specs = ALL_GENERATED_FAMILIES
+            .iter()
+            .map(|family| wiring_emit_spec(family, dir.clone()))
+            .collect::<Vec<_>>();
+
+        let outputs = render_generated_outputs(&selected_specs, &wiring_specs, Some(&mod_path))
+            .expect("render targeted output plan");
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|output| {
+                    output
+                        .destination
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect::<Vec<_>>(),
+            vec!["fp32_dense.rs", "mod.rs"],
+        );
+        assert!(!outputs
+            .iter()
+            .any(|output| output.destination.ends_with("fp64_dense.rs")));
+        let wiring = &outputs.last().expect("module wiring output").body;
+        assert!(wiring.contains("pub mod fp32_dense;"));
+        assert!(wiring.contains("pub mod fp64_dense;"));
+
+        fs::remove_dir_all(dir).expect("remove test directory");
+    }
 }
