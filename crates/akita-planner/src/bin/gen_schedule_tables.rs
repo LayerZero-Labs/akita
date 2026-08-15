@@ -1,6 +1,8 @@
 //! Generate schedule tables using the offline DP planner.
 
-use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
+use akita_planner::emit::{
+    bounded_parallel_filter_map, offline_planning_worker_count, MaterializationDiagnostics,
+};
 use akita_planner::generated_families::{
     emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
     ALL_GENERATED_FAMILIES,
@@ -8,7 +10,10 @@ use akita_planner::generated_families::{
 use akita_planner::{
     publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
 };
-use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
+use akita_types::{
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    FoldSchedule, PolynomialGroupLayout,
+};
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -24,6 +29,8 @@ struct ParsedArgs {
     base_dir: PathBuf,
     wiring_only: bool,
     check_catalog: bool,
+    catalog_report: Option<PathBuf>,
+    row_progress: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
 }
@@ -48,6 +55,7 @@ fn generator_command() -> &'static str {
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
      --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
+     [--catalog-report <path>] [--row-progress] \
      [family_module_name ...]\n\
      positional family names select only those generated families; omit them \
      to generate every family \
@@ -128,6 +136,8 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     let base_dir = PathBuf::from(&raw_args[0]);
     let mut wiring_only = false;
     let mut check_catalog = false;
+    let mut catalog_report = None;
+    let mut row_progress = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
     let mut i = 1;
@@ -140,6 +150,20 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
             "--check-catalog" => {
                 check_catalog = true;
                 i += 1;
+            }
+            "--row-progress" => {
+                row_progress = true;
+                i += 1;
+            }
+            "--catalog-report" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--catalog-report requires a path".to_string())?;
+                if catalog_report.is_some() {
+                    return Err("--catalog-report may be supplied only once".to_string());
+                }
+                catalog_report = Some(PathBuf::from(value));
+                i += 2;
             }
             "--final-group" => {
                 let value = raw_args
@@ -218,10 +242,15 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if check_catalog && !cfg!(feature = "catalog-check") {
         return Err("--check-catalog requires the `catalog-check` feature".to_string());
     }
+    if catalog_report.is_some() && !check_catalog {
+        return Err("--catalog-report requires --check-catalog".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
         check_catalog,
+        catalog_report,
+        row_progress,
         family_filter,
         explicit_rows,
     })
@@ -239,26 +268,189 @@ fn selected_families(family_filter: Option<&[String]>) -> Vec<&'static Generated
 fn validate_materialized_catalog(
     spec: &EmitSpec,
     entries: &[akita_planner::emit::MaterializedEntry],
-) -> Result<(), String> {
+) -> Result<CatalogComparison, String> {
     let family = family_by_name(spec.module_name)
         .ok_or_else(|| format!("unknown generated family: {}", spec.module_name))?;
-    if (family.schedule_catalog)().is_none() {
-        return Err(format!(
+    let table = (family.schedule_catalog)().ok_or_else(|| {
+        format!(
             "{}: compiled catalog is unavailable; build with all schedule features",
             spec.module_name
-        ));
-    }
-    for (key, expected) in entries {
-        let actual = (family.resolve_catalog_row_for_key)(key.clone())
-            .map_err(|error| format!("{}: resolve {key:?}: {error}", spec.module_name))?;
-        if actual != *expected {
-            return Err(format!(
-                "{}: compiled catalog row {key:?} disagrees with the planner",
-                spec.module_name
-            ));
+        )
+    })?;
+    compare_materialized_catalog(spec, table, entries)
+}
+
+struct CatalogComparison {
+    report: String,
+    changed_rows: usize,
+}
+
+struct CatalogRowMetrics {
+    setup_fields: usize,
+    proof_bytes: usize,
+    fold_levels: usize,
+    row_digest: String,
+}
+
+const CATALOG_REPORT_HEADER: &str = "family\tstatus\tkey\told_setup_fields\tnew_setup_fields\told_proof_bytes\tnew_proof_bytes\told_levels\tnew_levels\told_row_digest\tnew_row_digest\n";
+
+fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
+    let final_group = CommittedGroupProfile::try_from_params(
+        key.final_group,
+        &schedule.root.params.final_group.commitment,
+    )
+    .map_err(|error| format!("derive final committed profile: {error}"))?;
+    let profiles = CommittedGroupBatchProfile {
+        final_group,
+        precommitteds: key.precommitteds.clone(),
+    };
+    let digest = schedule_row_digest(&profiles, schedule)
+        .map_err(|error| format!("derive schedule row digest: {error}"))?;
+    Ok(digest
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn catalog_row_metrics(
+    spec: &EmitSpec,
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+) -> Result<CatalogRowMetrics, String> {
+    let proof_bytes =
+        akita_schedules::expanded_schedule_proof_payload_bytes(key, schedule, &spec.policy)
+            .map_err(|error| format!("estimate proof payload: {error}"))?;
+    let setup_fields = akita_types::setup_matrix_capacity_for_schedule(schedule)
+        .map_err(|error| format!("estimate setup capacity: {error}"))?
+        .num_field_elements;
+    Ok(CatalogRowMetrics {
+        setup_fields,
+        proof_bytes,
+        fold_levels: schedule.num_fold_levels(),
+        row_digest: row_digest_hex(key, schedule)?,
+    })
+}
+
+fn compact_catalog_key(key: &AkitaScheduleLookupKey) -> String {
+    let digest = akita_types::instance_descriptor::digest_descriptor_bytes(
+        &key.canonical_descriptor_bytes(),
+    );
+    let id = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!(
+        "nv={};polys={};precommits={};key={id}",
+        key.final_group.num_vars(),
+        key.final_group.num_polynomials(),
+        key.precommitteds.len(),
+    )
+}
+
+fn optional_metric(
+    value: Option<&CatalogRowMetrics>,
+    field: fn(&CatalogRowMetrics) -> usize,
+) -> String {
+    value
+        .map(field)
+        .map_or_else(|| "-".to_string(), |value| value.to_string())
+}
+
+fn optional_digest(value: Option<&CatalogRowMetrics>) -> &str {
+    value.map_or("-", |metrics| metrics.row_digest.as_str())
+}
+
+fn compare_materialized_catalog(
+    spec: &EmitSpec,
+    table: akita_schedules::GeneratedScheduleTable,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<CatalogComparison, String> {
+    let mut old_rows = table
+        .entries
+        .iter()
+        .copied()
+        .map(|entry| {
+            let key = entry.to_runtime_lookup_key();
+            let schedule = akita_schedules::schedule_from_entry(
+                &entry,
+                &key,
+                &spec.policy,
+                spec.ring_challenge_config,
+            )
+            .map_err(|error| format!("{}: expand compiled row: {error}", spec.module_name))?;
+            Ok((key, schedule))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    old_rows
+        .sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
+
+    let mut report = String::new();
+    let mut old_index = 0;
+    let mut new_index = 0;
+    let mut changed_rows = 0;
+    while old_index < old_rows.len() || new_index < entries.len() {
+        let ordering = match (old_rows.get(old_index), entries.get(new_index)) {
+            (Some((old, _)), Some((new, _))) => akita_schedules::runtime_schedule_key_cmp(old, new),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => break,
+        };
+        let (status, key, old_schedule, new_schedule) = match ordering {
+            std::cmp::Ordering::Less => {
+                let (key, schedule) = &old_rows[old_index];
+                old_index += 1;
+                ("removed", key, Some(schedule), None)
+            }
+            std::cmp::Ordering::Greater => {
+                let (key, schedule) = &entries[new_index];
+                new_index += 1;
+                ("added", key, None, Some(schedule))
+            }
+            std::cmp::Ordering::Equal => {
+                let (key, old_schedule) = &old_rows[old_index];
+                let (_, new_schedule) = &entries[new_index];
+                old_index += 1;
+                new_index += 1;
+                let status = if old_schedule == new_schedule {
+                    "equal"
+                } else {
+                    "changed"
+                };
+                (status, key, Some(old_schedule), Some(new_schedule))
+            }
+        };
+        if status != "equal" {
+            changed_rows += 1;
         }
+        let old_metrics = old_schedule
+            .map(|schedule| catalog_row_metrics(spec, key, schedule))
+            .transpose()?;
+        let new_metrics = new_schedule
+            .map(|schedule| catalog_row_metrics(spec, key, schedule))
+            .transpose()?;
+        use std::fmt::Write as _;
+        writeln!(
+            report,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            spec.module_name,
+            status,
+            compact_catalog_key(key),
+            optional_metric(old_metrics.as_ref(), |metrics| metrics.setup_fields),
+            optional_metric(new_metrics.as_ref(), |metrics| metrics.setup_fields),
+            optional_metric(old_metrics.as_ref(), |metrics| metrics.proof_bytes),
+            optional_metric(new_metrics.as_ref(), |metrics| metrics.proof_bytes),
+            optional_metric(old_metrics.as_ref(), |metrics| metrics.fold_levels),
+            optional_metric(new_metrics.as_ref(), |metrics| metrics.fold_levels),
+            optional_digest(old_metrics.as_ref()),
+            optional_digest(new_metrics.as_ref()),
+        )
+        .map_err(|error| format!("write catalog comparison: {error}"))?;
     }
-    Ok(())
+    Ok(CatalogComparison {
+        report,
+        changed_rows,
+    })
 }
 
 fn resolved_output_path(path: &Path) -> Result<PathBuf, String> {
@@ -577,18 +769,44 @@ fn main() -> Result<(), String> {
         None
     };
     let check_catalog = args.check_catalog;
+    let mut catalog_report = if check_catalog {
+        CATALOG_REPORT_HEADER.to_string()
+    } else {
+        String::new()
+    };
+    let mut changed_catalog_rows = 0usize;
     let outputs = render_generated_outputs_with_validation(
         &specs,
         &sorted_unique_specs(&wiring_specs),
         mod_path.as_deref(),
+        MaterializationDiagnostics {
+            row_progress: args.row_progress,
+        },
         |spec, entries| {
             if check_catalog {
-                validate_materialized_catalog(spec, entries)
-            } else {
-                Ok(())
+                let comparison = validate_materialized_catalog(spec, entries)?;
+                catalog_report.push_str(&comparison.report);
+                changed_catalog_rows = changed_catalog_rows
+                    .checked_add(comparison.changed_rows)
+                    .ok_or_else(|| "catalog comparison row count overflow".to_string())?;
             }
+            Ok(())
         },
     )?;
+    if check_catalog {
+        if let Some(path) = &args.catalog_report {
+            fs::write(path, &catalog_report)
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+            eprintln!("wrote catalog comparison {}", path.display());
+        } else {
+            eprint!("{catalog_report}");
+        }
+        if changed_catalog_rows != 0 {
+            return Err(format!(
+                "compiled catalog differs from the planner in {changed_catalog_rows} rows"
+            ));
+        }
+    }
     let destinations = publish_generated_outputs(outputs)?;
     for destination in &destinations {
         println!("wrote {}", destination.display());
@@ -651,6 +869,40 @@ mod tests {
         assert!(all.family_filter.is_none());
         assert_eq!(selected_families(None).len(), ALL_GENERATED_FAMILIES.len());
 
+        let progress = parse_args_from(vec![
+            "generated".into(),
+            "--row-progress".into(),
+            "fp32_dense".into(),
+        ])
+        .expect("row progress");
+        assert!(progress.row_progress);
+
+        let report = parse_args_from(vec![
+            "generated".into(),
+            "--check-catalog".into(),
+            "--catalog-report".into(),
+            "report.tsv".into(),
+        ]);
+        if cfg!(feature = "catalog-check") {
+            assert_eq!(
+                report.expect("catalog report").catalog_report,
+                Some(PathBuf::from("report.tsv"))
+            );
+        } else {
+            assert!(report
+                .err()
+                .expect("catalog check feature")
+                .contains("catalog-check"));
+        }
+        assert!(parse_args_from(vec![
+            "generated".into(),
+            "--catalog-report".into(),
+            "report.tsv".into(),
+        ])
+        .err()
+        .expect("report requires comparison")
+        .contains("requires --check-catalog"));
+
         let unknown = parse_args_from(vec!["generated".into(), "not_a_family".into()])
             .err()
             .expect("unknown family must reject");
@@ -682,6 +934,70 @@ mod tests {
     #[test]
     fn explicit_group_rejects_source_metadata() {
         assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
+    }
+
+    #[cfg(feature = "catalog-check")]
+    #[test]
+    fn catalog_comparison_reports_complete_key_union() {
+        let family = family_by_name("fp32_dense").expect("known family");
+        let table = (family.schedule_catalog)().expect("compiled fp32 dense table");
+        let spec = wiring_emit_spec(family, PathBuf::from("generated"));
+        let entries = table
+            .entries
+            .iter()
+            .copied()
+            .map(|entry| {
+                let key = entry.to_runtime_lookup_key();
+                let schedule = akita_schedules::schedule_from_entry(
+                    &entry,
+                    &key,
+                    &spec.policy,
+                    spec.ring_challenge_config,
+                )
+                .expect("expand compiled row");
+                assert_eq!(
+                    akita_schedules::expanded_schedule_proof_payload_bytes(
+                        &key,
+                        &schedule,
+                        &spec.policy,
+                    )
+                    .expect("expanded proof payload"),
+                    akita_schedules::estimate_proof_bytes(
+                        &entry,
+                        &key,
+                        &spec.policy,
+                        spec.ring_challenge_config,
+                    )
+                    .expect("generated proof payload"),
+                );
+                (key, schedule)
+            })
+            .collect::<Vec<_>>();
+
+        let equal = compare_materialized_catalog(&spec, table, &entries).expect("equal report");
+        assert_eq!(equal.changed_rows, 0);
+        assert_eq!(equal.report.matches("\tequal\t").count(), entries.len());
+
+        let removed = compare_materialized_catalog(&spec, table, &entries[..entries.len() - 1])
+            .expect("removed report");
+        assert_eq!(removed.changed_rows, 1);
+        assert!(removed.report.contains("\tremoved\t"));
+
+        let empty_table = akita_schedules::GeneratedScheduleTable {
+            entries: &[],
+            identity: table.identity,
+        };
+        let added =
+            compare_materialized_catalog(&spec, empty_table, &entries[..1]).expect("added report");
+        assert_eq!(added.changed_rows, 1);
+        assert!(added.report.contains("\tadded\t"));
+
+        let mut changed_entries = entries.clone();
+        changed_entries[0].1.root.input_witness_len += 1;
+        let changed =
+            compare_materialized_catalog(&spec, table, &changed_entries).expect("changed report");
+        assert_eq!(changed.changed_rows, 1);
+        assert!(changed.report.contains("\tchanged\t"));
     }
 
     #[test]

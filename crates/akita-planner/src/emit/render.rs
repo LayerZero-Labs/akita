@@ -90,7 +90,13 @@ pub fn render_generated_outputs(
     wiring_specs: &[EmitSpec],
     mod_path: Option<&Path>,
 ) -> Result<Vec<GeneratedOutput>, String> {
-    render_generated_outputs_with_validation(specs, wiring_specs, mod_path, |_, _| Ok(()))
+    render_generated_outputs_with_validation(
+        specs,
+        wiring_specs,
+        mod_path,
+        MaterializationDiagnostics::default(),
+        |_, _| Ok(()),
+    )
 }
 
 /// Render every family after validating the exact schedules materialized by
@@ -100,9 +106,10 @@ pub fn render_generated_outputs_with_validation(
     specs: &[EmitSpec],
     wiring_specs: &[EmitSpec],
     mod_path: Option<&Path>,
-    validate: impl Fn(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
+    diagnostics: MaterializationDiagnostics,
+    mut validate: impl FnMut(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
 ) -> Result<Vec<GeneratedOutput>, String> {
-    let materialized = materialized_entries_for_specs(specs)?;
+    let materialized = materialized_entries_for_specs(specs, diagnostics)?;
     for (spec, entries) in specs.iter().zip(&materialized) {
         validate(spec, entries)?;
     }

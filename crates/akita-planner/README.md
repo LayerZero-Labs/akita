@@ -225,6 +225,19 @@ scripts/generate-schedule-tables.sh fp32_dense
 scripts/generate-schedule-tables.sh fp32_dense fp64_dense
 ```
 
+Add `--row-progress` when one of those searches is slow. It reports start,
+completion, elapsed time, and the selected fold count for each flattened row
+request. The flag observes only the row boundary after planning has completed;
+it adds no instrumentation to candidate enumeration and is disabled by
+default.
+
+`--check-catalog` compares the union of regenerated and compiled keys. Its
+stable tab-separated report includes added, removed, changed, and equal rows,
+with old and new setup capacity, proof payload, fold count, and row identity.
+This check requires the generator's `catalog-check` feature; the repository
+script selects it automatically. Add `--catalog-report <path>` to keep that
+stable report separate from live progress on standard error.
+
 Targeted generation leaves the shared `mod.rs` wiring complete. Before a
 planner change is committed, run the unfiltered command above so every tracked
 family is regenerated.

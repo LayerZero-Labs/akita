@@ -23,9 +23,9 @@ pub use resolve::{
     schedule_from_entry, ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, validate_policy, PlannerCostModelId, PlannerPolicy,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, RuntimeSchedulePolicy,
-    SelectionPolicyId, SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
+    default_sis_security_policy, expanded_schedule_proof_payload_bytes, validate_policy,
+    PlannerCostModelId, PlannerPolicy, RecursiveSplitSearchPolicy, RingDimensionScheduleMode,
+    RuntimeSchedulePolicy, SelectionPolicyId, SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
@@ -36,8 +36,8 @@ pub mod planner_support {
         SelectiveL2CandidateGeometry,
     };
     pub use crate::runtime::{
-        grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
-        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
-        CandidateTerminalResponse, MAX_RECURSION_DEPTH,
+        grouped_segment_rings, materialize_candidate_schedule, nonterminal_level_payload_bytes,
+        planned_next_witness_len, stage3_payload_bytes_for_successor, validate_policy,
+        CandidateFoldStep, CandidateTerminalResponse, MAX_RECURSION_DEPTH,
     };
 }

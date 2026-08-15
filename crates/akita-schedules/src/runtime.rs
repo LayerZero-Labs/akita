@@ -510,6 +510,129 @@ pub fn stage3_payload_bytes_for_successor(
     ))
 }
 
+#[doc(hidden)]
+pub fn nonterminal_level_payload_bytes(
+    policy: &PlannerPolicy,
+    level: usize,
+    eor_key: PolynomialGroupLayout,
+    params: &CommittedGroupParams,
+    successor: Option<&CommittedGroupParams>,
+    input_witness_len: usize,
+    output_witness_len: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let challenge_field_bits = policy.challenge_field_bits()?;
+    let direct = akita_types::level_proof_bytes(
+        policy.decomposition.field_bits(),
+        challenge_field_bits,
+        params,
+        successor,
+        output_witness_len,
+        Some(if successor.is_some() {
+            akita_types::NextWitnessBindingPolicy::OuterPayload
+        } else {
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState
+        }),
+    )?;
+    let eor = if matches!(
+        params.opening_method,
+        akita_types::OpeningMethod::EvaluationTrace
+    ) {
+        akita_types::extension_opening_reduction_level_bytes(
+            challenge_field_bits,
+            policy.claim_ext_degree,
+            level,
+            eor_key,
+            input_witness_len,
+            params.d_a(),
+        )?
+    } else {
+        0
+    };
+    let direct = direct
+        .checked_add(eor)
+        .ok_or_else(|| AkitaError::InvalidSetup("level proof payload size overflow".into()))?;
+    Ok((
+        direct,
+        stage3_payload_bytes_for_successor(policy, successor)?,
+    ))
+}
+
+/// Recompute the exact serialized proof payload for one expanded schedule.
+///
+/// This is the non-leaking reporting counterpart to generated-row replay. It
+/// consumes only the public lookup key, expanded schedule, and catalog policy;
+/// no compact generated row or planner candidate is constructed.
+pub fn expanded_schedule_proof_payload_bytes(
+    key: &akita_types::AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let field_bits = policy.decomposition.field_bits();
+    key.validate(field_bits)?;
+    schedule.validate_structure()?;
+    let eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
+    let nonterminal_levels = schedule
+        .recursive_folds
+        .len()
+        .checked_add(1)
+        .ok_or_else(|| AkitaError::InvalidSetup("fold level count overflow".into()))?;
+    let mut total = 0usize;
+    for level in 0..nonterminal_levels {
+        let (params, input_witness_len, output_witness_len) = if level == 0 {
+            (
+                &schedule.root.params.final_group.commitment,
+                schedule.root.input_witness_len,
+                schedule.root.output_witness_len,
+            )
+        } else {
+            let fold = schedule.recursive_folds.get(level - 1).ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive fold index is out of range".into())
+            })?;
+            (
+                &fold.params.witness,
+                fold.input_witness_len,
+                fold.output_witness_len,
+            )
+        };
+        let successor = schedule
+            .recursive_folds
+            .get(level)
+            .map(|fold| &fold.params.witness);
+        let (direct, stage3) = nonterminal_level_payload_bytes(
+            policy,
+            level,
+            eor_key,
+            params,
+            successor,
+            input_witness_len,
+            output_witness_len,
+        )?;
+        total = total
+            .checked_add(direct)
+            .and_then(|value| value.checked_add(stage3))
+            .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
+    }
+
+    let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits()?,
+        policy.claim_ext_degree,
+        nonterminal_levels,
+        eor_key,
+        schedule.terminal.input_witness_len,
+        schedule.terminal.params.witness.d_a(),
+    )?;
+    let terminal_response = akita_types::terminal_response_planner_bytes(
+        field_bits,
+        &schedule.terminal.params.response_shape,
+        schedule.terminal.params.witness.response_l2_sq_cap(),
+    );
+    total
+        .checked_add(akita_types::FOLD_GRIND_NONCE_BYTES)
+        .and_then(|value| value.checked_add(terminal_eor))
+        .and_then(|value| value.checked_add(terminal_response))
+        .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
+}
+
 /// Materialize and validate the schedule shared by offline search and generated replay.
 ///
 /// `cached_num_setup_field_elements` is the exact shared flat setup capacity.

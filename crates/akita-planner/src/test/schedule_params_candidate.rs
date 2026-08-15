@@ -342,6 +342,43 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     )
     .expect("root packing candidates");
     assert!(!candidates.is_empty());
+    let (first_params, first_next_witness_len) = &candidates[0];
+    let (packing_direct_bytes, _) =
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            &policy,
+            0,
+            key.final_group,
+            first_params,
+            None,
+            1 << 16,
+            *first_next_witness_len,
+        )
+        .expect("packing level payload");
+    assert_eq!(
+        packing_direct_bytes,
+        akita_types::level_proof_bytes(
+            policy.decomposition.field_bits(),
+            policy.challenge_field_bits().unwrap(),
+            first_params,
+            None,
+            *first_next_witness_len,
+            Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState),
+        )
+        .expect("packing direct payload without EOR"),
+    );
+    assert!(
+        akita_types::extension_opening_reduction_level_bytes(
+            policy.challenge_field_bits().unwrap(),
+            policy.claim_ext_degree,
+            0,
+            key.final_group,
+            1 << 16,
+            first_params.d_a(),
+        )
+        .expect("legacy EOR price")
+            > 0,
+        "packing must skip a nonzero legacy EOR payload",
+    );
     for (params, next_witness_len) in &candidates {
         assert_eq!(
             params.opening_method,

@@ -7,6 +7,8 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -31,6 +33,15 @@ pub use publish::publish_generated_outputs;
 pub use render::{
     render_generated_outputs, render_generated_outputs_with_validation, GeneratedOutput,
 };
+
+/// Optional observability for the offline row-materialization queue.
+///
+/// This boundary is outside the planner candidate loops. Disabled generation
+/// performs no timing, formatting, or atomic updates for individual rows.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MaterializationDiagnostics {
+    pub row_progress: bool,
+}
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -708,13 +719,49 @@ enum PlanningRequest {
 
 struct IndexedPlanningRequest {
     spec_index: usize,
+    request_index: usize,
     request: PlanningRequest,
 }
 
 pub type MaterializedEntry = (AkitaScheduleLookupKey, FoldSchedule);
 
+enum MaterializedRequestOutcome {
+    Planned(MaterializedEntry),
+    ReusedPreplan(MaterializedEntry),
+    Unsupported,
+}
+
+#[derive(Default)]
+struct MaterializationCounters {
+    reused_preplans: AtomicUsize,
+    planned: AtomicUsize,
+    unsupported: AtomicUsize,
+}
+
+fn compact_request_label(request: &PlanningRequest) -> String {
+    let key = match request {
+        PlanningRequest::Scalar(layout) => AkitaScheduleLookupKey::single(*layout),
+        PlanningRequest::Grouped { key, .. } => key.clone(),
+    };
+    let digest = akita_types::instance_descriptor::digest_descriptor_bytes(
+        &key.canonical_descriptor_bytes(),
+    );
+    let id = digest
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!(
+        "nv={} polys={} precommits={} key={id}",
+        key.final_group.num_vars(),
+        key.final_group.num_polynomials(),
+        key.precommitteds.len(),
+    )
+}
+
 pub(super) fn materialized_entries_for_specs(
     specs: &[EmitSpec],
+    diagnostics: MaterializationDiagnostics,
 ) -> Result<Vec<Vec<MaterializedEntry>>, String> {
     let request_count = specs
         .iter()
@@ -724,11 +771,13 @@ pub(super) fn materialized_entries_for_specs(
     for (spec_index, spec) in specs.iter().enumerate() {
         requests.extend(spec.keys.iter().copied().map(|key| IndexedPlanningRequest {
             spec_index,
+            request_index: 0,
             request: PlanningRequest::Scalar(key),
         }));
         requests.extend(spec.group_batch_keys.iter().cloned().map(
             |(key, honest_fold_policies)| IndexedPlanningRequest {
                 spec_index,
+                request_index: 0,
                 request: PlanningRequest::Grouped {
                     key,
                     honest_fold_policies,
@@ -736,12 +785,93 @@ pub(super) fn materialized_entries_for_specs(
             },
         ));
     }
+    for (request_index, request) in requests.iter_mut().enumerate() {
+        request.request_index = request_index;
+    }
 
     let workers = offline_planning_worker_count(requests.len());
+    let counters = diagnostics.row_progress.then(|| {
+        std::iter::repeat_with(MaterializationCounters::default)
+            .take(specs.len())
+            .collect::<Vec<_>>()
+    });
     let materialized = bounded_parallel_filter_map(&requests, workers, |indexed| {
-        materialized_entry(&specs[indexed.spec_index], &indexed.request)
-            .map(|entry| entry.map(|entry| (indexed.spec_index, entry)))
+        let spec = &specs[indexed.spec_index];
+        let progress = diagnostics.row_progress.then(|| {
+            let label = compact_request_label(&indexed.request);
+            eprintln!(
+                "planning schedule row {}/{}: {} {label}",
+                indexed.request_index + 1,
+                requests.len(),
+                spec.module_name,
+            );
+            (Instant::now(), label)
+        });
+        let outcome = materialized_entry(spec, &indexed.request);
+        if let Some((started, label)) = progress {
+            let counters = &counters.as_ref().expect("progress counters")[indexed.spec_index];
+            match &outcome {
+                Ok(MaterializedRequestOutcome::Planned((_, schedule))) => {
+                    counters.planned.fetch_add(1, Ordering::Relaxed);
+                    eprintln!(
+                        "planned schedule row {}/{}: {} {label} levels={} in {:.2?}",
+                        indexed.request_index + 1,
+                        requests.len(),
+                        spec.module_name,
+                        schedule.num_fold_levels(),
+                        started.elapsed(),
+                    );
+                }
+                Ok(MaterializedRequestOutcome::ReusedPreplan((_, schedule))) => {
+                    counters.reused_preplans.fetch_add(1, Ordering::Relaxed);
+                    eprintln!(
+                        "reused schedule row {}/{}: {} {label} levels={} in {:.2?}",
+                        indexed.request_index + 1,
+                        requests.len(),
+                        spec.module_name,
+                        schedule.num_fold_levels(),
+                        started.elapsed(),
+                    );
+                }
+                Ok(MaterializedRequestOutcome::Unsupported) => {
+                    counters.unsupported.fetch_add(1, Ordering::Relaxed);
+                    eprintln!(
+                        "unsupported schedule row {}/{}: {} {label} in {:.2?}",
+                        indexed.request_index + 1,
+                        requests.len(),
+                        spec.module_name,
+                        started.elapsed(),
+                    );
+                }
+                Err(_) => {
+                    eprintln!(
+                        "failed schedule row {}/{}: {} {label} in {:.2?}",
+                        indexed.request_index + 1,
+                        requests.len(),
+                        spec.module_name,
+                        started.elapsed(),
+                    );
+                }
+            }
+        }
+        outcome.map(|outcome| match outcome {
+            MaterializedRequestOutcome::Planned(entry)
+            | MaterializedRequestOutcome::ReusedPreplan(entry) => Some((indexed.spec_index, entry)),
+            MaterializedRequestOutcome::Unsupported => None,
+        })
     })?;
+    if let Some(counters) = &counters {
+        for (spec, counters) in specs.iter().zip(counters) {
+            eprintln!(
+                "schedule row summary {}: requested={} reused={} planned={} unsupported={}",
+                spec.module_name,
+                spec.keys.len() + spec.group_batch_keys.len(),
+                counters.reused_preplans.load(Ordering::Relaxed),
+                counters.planned.load(Ordering::Relaxed),
+                counters.unsupported.load(Ordering::Relaxed),
+            );
+        }
+    }
     let mut entries_by_spec = std::iter::repeat_with(Vec::new)
         .take(specs.len())
         .collect::<Vec<_>>();
@@ -759,16 +889,17 @@ pub(super) fn materialized_entries_for_specs(
 fn materialized_entry(
     spec: &EmitSpec,
     request: &PlanningRequest,
-) -> Result<Option<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
-    let (key, result) = match request {
+) -> Result<MaterializedRequestOutcome, String> {
+    let (key, result, reused_preplan) = match request {
         PlanningRequest::Scalar(key) => {
             let lookup = AkitaScheduleLookupKey::single(*key);
-            let result = spec
+            let preplanned = spec
                 .preplanned_scalar
                 .iter()
-                .find(|(preplanned_key, _)| preplanned_key == key)
-                .map_or_else(|| (spec.regen)(*key), |(_, schedule)| Ok(schedule.clone()));
-            (lookup, result)
+                .find(|(preplanned_key, _)| preplanned_key == key);
+            let result =
+                preplanned.map_or_else(|| (spec.regen)(*key), |(_, schedule)| Ok(schedule.clone()));
+            (lookup, result, preplanned.is_some())
         }
         PlanningRequest::Grouped {
             key,
@@ -776,11 +907,17 @@ fn materialized_entry(
         } => (
             key.clone(),
             (spec.regen_group_batch)(key.clone(), honest_fold_policies.clone()),
+            false,
         ),
     };
     match result {
-        Ok(schedule) => Ok(Some((key, schedule))),
-        Err(akita_field::AkitaError::UnsupportedSchedule(_)) => Ok(None),
+        Ok(schedule) if reused_preplan => {
+            Ok(MaterializedRequestOutcome::ReusedPreplan((key, schedule)))
+        }
+        Ok(schedule) => Ok(MaterializedRequestOutcome::Planned((key, schedule))),
+        Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {
+            Ok(MaterializedRequestOutcome::Unsupported)
+        }
         Err(error) => {
             let kind = if key.precommitteds.is_empty() {
                 "regen"
@@ -794,7 +931,10 @@ fn materialized_entry(
 
 /// Emit one family module (entries + embedded catalog identity).
 pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
-    let mut materialized = materialized_entries_for_specs(std::slice::from_ref(spec))?;
+    let mut materialized = materialized_entries_for_specs(
+        std::slice::from_ref(spec),
+        MaterializationDiagnostics::default(),
+    )?;
     let materialized = materialized
         .pop()
         .ok_or_else(|| "missing materialized schedule family".to_string())?;
@@ -914,7 +1054,8 @@ mod preplanned_scalar_tests {
         REGEN_CALLS.store(0, Ordering::Relaxed);
         ACTIVE_REGEN.store(0, Ordering::Relaxed);
         MAX_ACTIVE_REGEN.store(0, Ordering::Relaxed);
-        materialized_entries_for_specs(&specs).expect("flattened planning queue");
+        materialized_entries_for_specs(&specs, MaterializationDiagnostics::default())
+            .expect("flattened planning queue");
         assert_eq!(REGEN_CALLS.load(Ordering::Relaxed), 6);
         assert!(
             MAX_ACTIVE_REGEN.load(Ordering::Relaxed) <= offline_planning_worker_count(6),

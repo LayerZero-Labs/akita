@@ -9,15 +9,15 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, AkitaScheduleLookupKey,
-    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalResponseShape,
+    extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, PlannedFoldSchedule,
+    PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalResponseShape,
 };
 
 use crate::generated::{validate_entry_key, GeneratedFoldScheduleEntry};
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::runtime::{
-    materialize_candidate_schedule, planned_next_witness_len, stage3_payload_bytes_for_successor,
+    materialize_candidate_schedule, nonterminal_level_payload_bytes, planned_next_witness_len,
     CandidateFoldStep, CandidateTerminalResponse,
 };
 use crate::PlannerPolicy;
@@ -198,31 +198,15 @@ pub(crate) fn walk_generated_schedule_entry(
     let mut total_bytes = 0usize;
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {
         let next_lp = expanded.get(fold_level + 1).map(|(params, _, _)| params);
-        let binds_terminal = next_lp.is_none();
-        let direct_level_bytes = level_proof_bytes(
-            field_bits,
-            challenge_field_bits,
-            lp,
-            next_lp,
-            *output_witness_len,
-            if binds_terminal {
-                Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
-            } else {
-                Some(akita_types::NextWitnessBindingPolicy::OuterPayload)
-            },
-        )?
-        .checked_add(extension_opening_reduction_level_bytes(
-            challenge_field_bits,
-            policy.claim_ext_degree,
+        let (direct_level_bytes, stage3_bytes) = nonterminal_level_payload_bytes(
+            policy,
             fold_level,
             root_eor_key,
+            lp,
+            next_lp,
             *input_witness_len,
-            lp.role_dims().d_a(),
-        )?)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("generated level byte count overflow".to_string())
-        })?;
-        let stage3_bytes = stage3_payload_bytes_for_successor(policy, next_lp)?;
+            *output_witness_len,
+        )?;
         total_bytes = total_bytes
             .checked_add(direct_level_bytes)
             .and_then(|value| value.checked_add(stage3_bytes))
