@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
-        let row = TestCfg::select_schedule_for_opening(
+        let row = TestCfg::resolve_catalog_row_for_opening(
             &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
         )
         .expect("generated singleton row");

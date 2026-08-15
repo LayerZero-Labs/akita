@@ -635,8 +635,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "INFO proof fold level label=onehot_fp128 level=0 d=64 "
                 "total_bytes=4 fold_grind_nonce_bytes=4",
                 "INFO proof fold level label=onehot_fp128 level=1 d=64 "
-                "total_bytes=548 extension_opening_partials_bytes=64 "
-                "extension_opening_sumcheck_bytes=480 fold_grind_nonce_bytes=4 "
+                "total_bytes=564 extension_opening_partials_bytes=64 "
+                "extension_opening_sumcheck_bytes=480 "
+                "extension_opening_final_claims_bytes=16 fold_grind_nonce_bytes=4 "
                 "root_variant=terminal",
             ]
         )
@@ -678,6 +679,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Sum of squared coefficients (L2): ≤ 633,237,013", report)
         self.assertIn("<em>Input from L0</em><br>Field elements: 2,048", report)
         self.assertIn("Clear z, e, and t terminal response", report)
+        self.assertIn("final claims 16", report)
         self.assertNotIn("| L1 | terminal fold | — | — |", report)
 
     def test_multi_group_root_and_setup_offload_keep_group_parameters(self) -> None:

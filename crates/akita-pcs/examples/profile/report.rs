@@ -860,15 +860,20 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
 
 fn extension_opening_reduction_sizes<E: FieldCore + AkitaSerialize>(
     reduction: Option<&akita_types::ExtensionOpeningReductionProof<E>>,
-) -> (usize, usize) {
-    reduction.map_or((0, 0), |reduction| {
+) -> (usize, usize, usize) {
+    reduction.map_or((0, 0, 0), |reduction| {
         let partials = reduction
             .partials
             .iter()
             .map(|value| value.serialized_size(Compress::No))
             .sum();
         let sumcheck = reduction.sumcheck.serialized_size(Compress::No);
-        (partials, sumcheck)
+        let final_claims = reduction
+            .final_claims
+            .iter()
+            .map(|value| value.serialized_size(Compress::No))
+            .sum();
+        (partials, sumcheck, final_claims)
     })
 }
 
@@ -920,8 +925,11 @@ where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
 {
-    let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+    let (
+        extension_opening_partials_size,
+        extension_opening_sumcheck_size,
+        extension_opening_final_claims_size,
+    ) = extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let opening_payload_size = level.opening_payload.serialized_size(Compress::No);
     let opening_payload_d = level.opening_payload.coeff_len();
     let total = level.serialized_size(Compress::No);
@@ -978,6 +986,7 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        extension_opening_final_claims_bytes = extension_opening_final_claims_size,
         opening_payload_bytes = opening_payload_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
@@ -995,6 +1004,9 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!(
+        "[{label}]     extension_opening_final_claims={extension_opening_final_claims_size} bytes"
+    );
     eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
@@ -1013,6 +1025,7 @@ where
         total,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + extension_opening_final_claims_size
             + opening_payload_size
             + fold_grind_nonce_size
             + stage1_sumcheck_size
@@ -1038,8 +1051,11 @@ where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
 {
-    let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+    let (
+        extension_opening_partials_size,
+        extension_opening_sumcheck_size,
+        extension_opening_final_claims_size,
+    ) = extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let terminal_response_size = level.terminal_response().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce;
@@ -1076,6 +1092,7 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        extension_opening_final_claims_bytes = extension_opening_final_claims_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
         grind_attempts,
@@ -1095,6 +1112,9 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!(
+        "[{label}]     extension_opening_final_claims={extension_opening_final_claims_size} bytes"
+    );
     eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!(
         "[{label}]     terminal_response={terminal_response_size} bytes (absorbed via transcript)"
@@ -1103,6 +1123,7 @@ where
         full,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + extension_opening_final_claims_size
             + fold_grind_nonce_size
             + terminal_response_size
     );
