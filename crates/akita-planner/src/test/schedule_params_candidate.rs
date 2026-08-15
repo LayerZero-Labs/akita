@@ -130,7 +130,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         None,
         &policy,
         akita_types::CommitmentPayloadMode::Compressed,
-        &challenge,
+        PlannerOpeningCandidate::evaluation_trace(challenge),
         CommitmentRingDims::uniform(64),
         948_672,
         crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
@@ -176,6 +176,331 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
+    use akita_config::{policy_of, proof_optimized::fp64::Dense};
+    use akita_types::{InnerCommitSecurityRoute, OpeningMethod};
+
+    let policy = policy_of::<Dense>();
+    let dimensions = CommitmentRingDims {
+        inner: 256,
+        outer: 128,
+        opening: 64,
+    };
+    let opening =
+        PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 64)
+            .expect("packing geometry");
+    let candidates = derive_candidate_level_params(
+        None,
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        opening,
+        dimensions,
+        948_672,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 3 },
+        3,
+        3,
+        1,
+        None,
+        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+    )
+    .expect("packing candidates");
+    assert!(!candidates.is_empty());
+    for (params, next_witness_len) in &candidates {
+        assert_eq!(
+            params.opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64
+            }
+        );
+        assert_eq!(
+            params.source_encoding,
+            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
+        );
+        assert!(matches!(
+            params.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::Linf(_)
+        ));
+        assert_eq!(
+            params.open_commit_matrix.input_width(),
+            akita_types::opening_d_segment_width(
+                params.opening_method,
+                policy.claim_ext_degree,
+                dimensions.d_a(),
+                dimensions.d_d(),
+                params.num_digits_open,
+                params.num_live_blocks,
+                1,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            *next_witness_len,
+            planned_next_witness_len(
+                policy.decomposition.field_bits(),
+                policy.claim_ext_degree,
+                params,
+                1,
+                policy.chunks_at_level(1),
+            )
+            .unwrap()
+            .unwrap()
+        );
+    }
+    let mut prefix_cache = SetupPrefixSearchCache::default();
+    let with_prefix = derive_candidate_level_params(
+        Some(&mut prefix_cache),
+        &policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        opening,
+        dimensions,
+        948_672,
+        crate::InnerBasisSource::BalancedDigits { log_basis: 3 },
+        3,
+        3,
+        1,
+        Some(1 << 14),
+        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+    )
+    .expect("packing candidates with setup prefix");
+    assert!(!with_prefix.is_empty());
+    for (params, next_witness_len) in with_prefix {
+        let prefix = params.setup_prefix.as_ref().expect("attached setup prefix");
+        assert_eq!(
+            prefix.commitment_params.opening.opening_method,
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64
+            }
+        );
+        assert_eq!(
+            prefix.commitment_params.layout.source_encoding,
+            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
+        );
+        let d_d = params.role_dims().d_d();
+        let witness_width = akita_types::opening_d_segment_width(
+            params.opening_method,
+            policy.claim_ext_degree,
+            params.d_a(),
+            d_d,
+            params.num_digits_open,
+            params.num_live_blocks,
+            1,
+        )
+        .unwrap();
+        let prefix_width = prefix
+            .commitment_params
+            .d_segment_width(policy.claim_ext_degree, d_d)
+            .unwrap();
+        assert_eq!(
+            params.open_commit_matrix.input_width(),
+            witness_width + prefix_width
+        );
+        assert_eq!(
+            next_witness_len,
+            planned_next_witness_len(
+                policy.decomposition.field_bits(),
+                policy.claim_ext_degree,
+                &params,
+                1,
+                policy.chunks_at_level(1),
+            )
+            .unwrap()
+            .unwrap()
+        );
+    }
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
+    use akita_config::{
+        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
+    };
+    use akita_types::{AkitaScheduleLookupKey, InnerCommitSecurityRoute, OpeningMethod};
+
+    let policy = policy_of::<Dense>();
+    let dimensions = CommitmentRingDims {
+        inner: 256,
+        outer: 128,
+        opening: 64,
+    };
+    let opening =
+        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
+            .unwrap();
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
+    let candidates = crate::planner::root_level_candidates_for_basis(
+        &key,
+        honest_fold_policy_of::<Dense>(),
+        &[],
+        &policy,
+        dimensions,
+        opening,
+        &[],
+        1 << 16,
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        false,
+    )
+    .expect("root packing candidates");
+    assert!(!candidates.is_empty());
+    for (params, next_witness_len) in &candidates {
+        assert_eq!(
+            params.opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64
+            }
+        );
+        assert!(matches!(
+            params.inner_commit_matrix.security_route(),
+            InnerCommitSecurityRoute::Linf(_)
+        ));
+        assert_eq!(
+            params.open_commit_matrix.input_width(),
+            akita_types::opening_d_segment_width(
+                params.opening_method,
+                policy.claim_ext_degree,
+                dimensions.d_a(),
+                dimensions.d_d(),
+                params.num_digits_open,
+                params.num_live_blocks,
+                key.final_group.num_polynomials(),
+            )
+            .unwrap()
+        );
+        let opening_batch = key.opening_layout().unwrap();
+        assert_eq!(
+            *next_witness_len,
+            params
+                .output_witness_len_for_field_bits(
+                    policy.decomposition.field_bits(),
+                    policy.claim_ext_degree,
+                    &opening_batch,
+                )
+                .unwrap()
+        );
+    }
+    let frozen_group = synthetic_profile(key.final_group, &candidates[0].0);
+    let grouped_key = AkitaScheduleLookupKey {
+        final_group: key.final_group,
+        precommitteds: vec![frozen_group],
+    };
+    let precommit_opening =
+        PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 128)
+            .unwrap();
+    let grouped = crate::planner::root_level_candidates_for_basis(
+        &grouped_key,
+        honest_fold_policy_of::<Dense>(),
+        &[honest_fold_policy_of::<Dense>()],
+        &policy,
+        dimensions,
+        opening,
+        &[precommit_opening],
+        1 << 16,
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        false,
+    )
+    .expect("group-local packing candidates");
+    assert!(!grouped.is_empty());
+    for (params, _) in grouped {
+        assert_eq!(params.precommitted_groups.len(), 1);
+        assert_eq!(
+            params.precommitted_groups[0].opening.opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 128
+            }
+        );
+        let d_d = params.role_dims().d_d();
+        let final_width = akita_types::opening_d_segment_width(
+            params.opening_method,
+            policy.claim_ext_degree,
+            params.d_a(),
+            d_d,
+            params.num_digits_open,
+            params.num_live_blocks,
+            grouped_key.final_group.num_polynomials(),
+        )
+        .unwrap();
+        let precommit_width = params.precommitted_groups[0]
+            .d_segment_width(policy.claim_ext_degree, d_d)
+            .unwrap();
+        assert_eq!(
+            params.open_commit_matrix.input_width(),
+            final_width + precommit_width
+        );
+    }
+    let trace_precommit = PlannerOpeningCandidate::evaluation_trace(
+        SparseChallengeConfig::production_for_ring_dim(dimensions.d_a()).unwrap(),
+    );
+    assert!(crate::planner::root_level_candidates_for_basis(
+        &grouped_key,
+        honest_fold_policy_of::<Dense>(),
+        &[honest_fold_policy_of::<Dense>()],
+        &policy,
+        dimensions,
+        opening,
+        &[trace_precommit],
+        1 << 16,
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        false,
+    )
+    .unwrap()
+    .is_empty());
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn setup_prefix_cache_separates_equal_width_opening_methods() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, RecursiveCommitmentConfig};
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let policy = policy_of::<Recursive>();
+    let dimensions = CommitmentRingDims {
+        inner: 128,
+        outer: 64,
+        opening: 64,
+    };
+    let challenge = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+    let trace = PlannerOpeningCandidate::evaluation_trace(challenge);
+    let exact_packing =
+        PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 128)
+            .unwrap();
+    let reduced_packing =
+        PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 64)
+            .unwrap();
+    let mut cache = SetupPrefixSearchCache::default();
+    let request = |opening| SetupPrefixSearchRequest {
+        policy: &policy,
+        opening,
+        log_basis_open: 3,
+        n_prefix: 1 << 14,
+        num_chunks: 1,
+        inner_ring_dimension: dimensions.d_a(),
+        outer_ring_dimension: dimensions.d_b(),
+    };
+    let trace_groups = derive_setup_prefix_groups(&mut cache, request(trace)).unwrap();
+    let exact_groups = derive_setup_prefix_groups(&mut cache, request(exact_packing)).unwrap();
+    let reduced_groups = derive_setup_prefix_groups(&mut cache, request(reduced_packing)).unwrap();
+    assert!(!trace_groups.is_empty() && !exact_groups.is_empty() && !reduced_groups.is_empty());
+    assert!(trace_groups.iter().all(|group| {
+        group.opening.opening_method == akita_types::OpeningMethod::EvaluationTrace
+    }));
+    assert!(exact_groups.iter().all(|group| {
+        group.opening.opening_method
+            == akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 128,
+            }
+    }));
+    assert!(reduced_groups.iter().all(|group| {
+        group.opening.opening_method
+            == akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            }
+    }));
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
@@ -190,7 +515,7 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
             &mut cache,
             SetupPrefixSearchRequest {
                 policy: &policy,
-                ring_challenge_cfg: &challenge,
+                opening: PlannerOpeningCandidate::evaluation_trace(challenge),
                 log_basis_open: 3,
                 n_prefix: 1usize << log_prefix,
                 num_chunks: 1,

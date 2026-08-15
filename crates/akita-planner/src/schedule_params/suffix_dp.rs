@@ -509,8 +509,19 @@ pub(crate) fn derive_selected_suffix_schedule(
                         precommitted_honest_fold_policies,
                         policy,
                         dimensions,
-                        &ring_challenge_cfg,
-                        ring_challenge_config,
+                        crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
+                            ring_challenge_cfg,
+                        ),
+                        &root_key
+                            .precommitteds
+                            .iter()
+                            .map(|layout| {
+                                ring_challenge_config(
+                                    layout.inner_commit_matrix.ring_dimension(),
+                                )
+                                .map(crate::schedule_params::PlannerOpeningCandidate::evaluation_trace)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
                         current_witness_len,
                         inner_lb,
                         open_lb,
@@ -542,7 +553,9 @@ pub(crate) fn derive_selected_suffix_schedule(
                                 Some(&mut memo.setup_prefixes),
                                 policy,
                                 mode,
-                                &ring_challenge_cfg,
+                                crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
+                                    ring_challenge_cfg,
+                                ),
                                 dimensions,
                                 current_witness_len,
                                 inner_source,
@@ -557,7 +570,9 @@ pub(crate) fn derive_selected_suffix_schedule(
                                 Some(&mut memo.setup_prefixes),
                                 policy,
                                 mode,
-                                &ring_challenge_cfg,
+                                crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
+                                    ring_challenge_cfg,
+                                ),
                                 dimensions,
                                 current_witness_len,
                                 inner_source,

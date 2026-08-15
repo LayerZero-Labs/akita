@@ -177,6 +177,7 @@ impl PrecommittedLevelParams {
         layout: CommittedGroupProfile,
         num_digits_fold: usize,
         policy: PrecommittedGroupAdmissionPolicy,
+        opening_method: OpeningMethod,
         fold_challenge_config: SparseChallengeConfig,
         log_basis_open: u32,
     ) -> Result<Self, AkitaError> {
@@ -259,12 +260,13 @@ impl PrecommittedLevelParams {
 
         let params = Self {
             layout,
-            opening: GroupOpeningPlan::evaluation_trace(
+            opening: GroupOpeningPlan {
+                opening_method,
                 fold_challenge_config,
                 log_basis_open,
                 num_digits_open,
                 num_digits_fold,
-            ),
+            },
         };
         params.validate()?;
         Ok(params)

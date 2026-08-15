@@ -635,16 +635,22 @@ fn validate_level_opening_execution(
     let first = groups
         .first()
         .ok_or_else(|| AkitaError::InvalidSetup("nonterminal fold has no opening groups".into()))?;
-    let opening_method = first.params.opening_method();
-    if groups
-        .iter()
-        .any(|group| group.params.opening_method() != opening_method)
-    {
+    let packing_family = matches!(
+        first.params.opening_method(),
+        OpeningMethod::SubringCoefficientPacking { .. }
+    );
+    if groups.iter().any(|group| {
+        matches!(
+            group.params.opening_method(),
+            OpeningMethod::SubringCoefficientPacking { .. }
+        ) != packing_family
+    }) {
         return Err(AkitaError::InvalidSetup(
-            "all groups consumed by one fold must use the same opening method".into(),
+            "all groups consumed by one fold must use the same opening-method family".into(),
         ));
     }
     for group in groups {
+        let opening_method = group.params.opening_method();
         match (opening_method, group.params.source_encoding()) {
             (
                 OpeningMethod::EvaluationTrace,
@@ -675,27 +681,25 @@ fn validate_level_opening_execution(
                     .into(),
             ));
         }
-    }
-    let OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension,
-    } = opening_method
-    else {
-        return Ok(());
-    };
-    if absolute_level > 1 {
-        return Err(AkitaError::InvalidSetup(
-            "subring coefficient packing is restricted to nonterminal levels 0 and 1".into(),
-        ));
-    }
-    let expected = akita_challenges::SparseChallengeConfig::production_for_ring_dim(
-        challenge_subring_dimension,
-    )
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "coefficient-packing challenge subring is not in the production ladder".into(),
+        let OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } = opening_method
+        else {
+            continue;
+        };
+        if absolute_level > 1 {
+            return Err(AkitaError::InvalidSetup(
+                "subring coefficient packing is restricted to nonterminal levels 0 and 1".into(),
+            ));
+        }
+        let expected = akita_challenges::SparseChallengeConfig::production_for_ring_dim(
+            challenge_subring_dimension,
         )
-    })?;
-    for group in groups {
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "coefficient-packing challenge subring is not in the production ladder".into(),
+            )
+        })?;
         let matrix = group.params.inner_commit_matrix_params();
         if !matches!(matrix.security_route(), InnerCommitSecurityRoute::Linf(_)) {
             return Err(AkitaError::InvalidSetup(

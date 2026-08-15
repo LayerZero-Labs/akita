@@ -11,10 +11,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_for_linf_cap,
-    num_digits_inner_for_bound, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy,
-    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
+    num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OuterCommitMatrixParams,
 };
 use akita_types::{
@@ -47,7 +47,7 @@ pub(crate) use candidate::derive_linf_candidate_level_params;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_candidate_level_params,
     derive_candidate_level_params_split_frontier, recursive_split_search_domain,
-    AbCommitmentCandidateRequest, SetupPrefixSearchCache,
+    AbCommitmentCandidateRequest, PlannerOpeningCandidate, SetupPrefixSearchCache,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{

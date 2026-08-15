@@ -105,14 +105,14 @@ impl GeneratedSetupPrefixInput {
             sis_table_digest: policy.sis_table_digest,
             sis_modulus_profile: policy.sis_modulus_profile,
         };
-        let mut params = PrecommittedLevelParams::admit(
+        let params = PrecommittedLevelParams::admit(
             self.commitment,
             self.opening.num_digits_fold,
             admission_policy,
+            self.opening.opening_method,
             self.opening.fold_challenge_config,
             log_basis_open,
         )?;
-        params.opening.opening_method = self.opening.opening_method;
         if params.opening != self.opening {
             return Err(AkitaError::InvalidSetup(
                 "generated setup-prefix opening plan is not the canonical admitted plan".into(),

@@ -39,6 +39,34 @@ fn accepts_packing_geometry_for_every_extension_degree() {
 }
 
 #[test]
+fn accepts_group_local_packing_subring_dimensions() {
+    let packing_group = |s| {
+        let mut params = committed_params(128);
+        params.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: s,
+        };
+        params.fold_challenge_config =
+            akita_challenges::SparseChallengeConfig::production_for_ring_dim(s).unwrap();
+        params.source_encoding = crate::CommittedSourceEncoding::CanonicalCoefficientTable;
+        params
+    };
+    let s64 = packing_group(64);
+    let s128 = packing_group(128);
+    let groups = [
+        OpeningExecutionGroup {
+            params: &s64,
+            expected_source_encoding: None,
+        },
+        OpeningExecutionGroup {
+            params: &s128,
+            expected_source_encoding: None,
+        },
+    ];
+    validate_level_opening_execution(0, 1, &groups)
+        .expect("each root group owns its challenge subring dimension");
+}
+
+#[test]
 fn accepts_level_one_packing() {
     let mut schedule = recursive_schedule(128, 128, false);
     let recursive = &mut schedule.recursive_folds[0].params.witness;

@@ -81,7 +81,9 @@ fn enumerate_suffixes(
                         None,
                         policy,
                         payload_mode,
-                        &ring_challenge,
+                        crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
+                            ring_challenge,
+                        ),
                         *candidate_dimensions,
                         input_witness_len,
                         crate::InnerBasisSource::BalancedDigits {
@@ -98,7 +100,9 @@ fn enumerate_suffixes(
                         None,
                         policy,
                         payload_mode,
-                        &ring_challenge,
+                        crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
+                            ring_challenge,
+                        ),
                         *candidate_dimensions,
                         input_witness_len,
                         crate::InnerBasisSource::BalancedDigits {
@@ -298,8 +302,10 @@ pub(super) fn find_schedule(
                         &[],
                         policy,
                         *root_dimensions,
-                        &ring_challenge,
-                        &ring_challenge_config,
+                        crate::schedule_params::PlannerOpeningCandidate::evaluation_trace(
+                            ring_challenge,
+                        ),
+                        &[],
                         input_witness_len,
                         inner_basis,
                         log_basis,

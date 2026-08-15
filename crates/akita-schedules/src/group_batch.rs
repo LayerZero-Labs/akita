@@ -38,22 +38,29 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
         .iter()
         .zip(generated_groups)
         .map(|(layout, generated)| {
-            let ring_challenge_cfg =
-                ring_challenge_config(layout.inner_commit_matrix.ring_dimension())?;
+            let challenge_dimension = match generated.opening_method {
+                akita_types::OpeningMethod::EvaluationTrace => {
+                    layout.inner_commit_matrix.ring_dimension()
+                }
+                akita_types::OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension,
+                } => challenge_subring_dimension,
+            };
+            let ring_challenge_cfg = ring_challenge_config(challenge_dimension)?;
             let num_digits_fold = usize::try_from(generated.num_digits_fold).map_err(|_| {
                 AkitaError::InvalidSetup(
                     "generated precommitted fold depth does not fit the target platform"
                         .to_string(),
                 )
             })?;
-            let mut params = PrecommittedLevelParams::admit(
+            let params = PrecommittedLevelParams::admit(
                 *layout,
                 num_digits_fold,
                 admission_policy,
+                generated.opening_method,
                 ring_challenge_cfg,
                 log_basis_open,
             )?;
-            params.opening.opening_method = generated.opening_method;
             params.validate()?;
             Ok(params)
         })

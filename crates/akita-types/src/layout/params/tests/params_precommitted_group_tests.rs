@@ -240,6 +240,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         layout,
         num_digits_fold,
         policy,
+        OpeningMethod::EvaluationTrace,
         challenge,
         layout.log_basis_outer,
     )
@@ -253,6 +254,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         layout,
         num_digits_fold,
         mismatched_modulus,
+        OpeningMethod::EvaluationTrace,
         challenge,
         layout.log_basis_outer,
     )
@@ -262,6 +264,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         layout,
         num_digits_fold,
         policy,
+        OpeningMethod::EvaluationTrace,
         challenge,
         layout.log_basis_outer - 1,
     )
@@ -282,6 +285,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         wrong_outer_depth,
         num_digits_fold,
         policy,
+        OpeningMethod::EvaluationTrace,
         challenge,
         layout.log_basis_outer,
     )
@@ -311,6 +315,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
         low_a,
         num_digits_fold,
         policy,
+        OpeningMethod::EvaluationTrace,
         challenge,
         layout.log_basis_outer,
     )
@@ -336,6 +341,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
         low_b,
         num_digits_fold,
         policy,
+        OpeningMethod::EvaluationTrace,
         challenge,
         layout.log_basis_outer,
     )

@@ -264,9 +264,11 @@ pub(crate) fn derive_ab_commitment_candidate(
     }))
 }
 
+mod opening;
 mod recursive;
 mod setup_prefix;
 
+pub(crate) use opening::PlannerOpeningCandidate;
 #[cfg(test)]
 pub(crate) use recursive::derive_linf_candidate_level_params;
 pub(crate) use recursive::{
