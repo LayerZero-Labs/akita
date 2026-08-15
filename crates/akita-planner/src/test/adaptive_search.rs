@@ -434,73 +434,57 @@ fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn mixed_root_prices_eor_at_candidate_a_dimension() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+fn root_eor_pricing_uses_candidate_a_dimension() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
 
     let mut policy = policy_of::<OneHot>();
-    // D256 enables root projection at this width while the D64 candidate does not.
     policy.claim_ext_degree = 64;
-    let candidate_dimensions = CommitmentRingDims::uniform(64);
-    let domain =
-        RingDimensionSearchDomain::new([candidate_dimensions]).expect("mixed dimension domain");
-    policy = policy_for_domain(policy, &domain);
     let key = onehot_group(16, 1);
-    let selected = find_schedule(
-        key,
-        &policy,
-        OneHot::root_honest_fold_policy(),
-        &domain,
-        OneHot::ring_challenge_config,
-    )
-    .expect("mixed planner boundary schedule");
-    let schedule = &selected.schedule;
-    let root_params = &schedule.root.params.final_group.commitment;
-    assert_eq!(root_params.role_dims(), candidate_dimensions);
-
+    let input_witness_len = 1usize << key.num_vars();
     let challenge_field_bits = policy.challenge_field_bits().expect("valid policy");
+
     let candidate_eor_bytes = extension_opening_reduction_level_bytes(
         challenge_field_bits,
         policy.claim_ext_degree,
         0,
         key,
-        schedule.root.input_witness_len,
-        candidate_dimensions.d_a(),
+        input_witness_len,
+        64,
     )
-    .expect("candidate EOR bytes");
+    .expect("D64 root EOR bytes");
     let uniform_eor_bytes = extension_opening_reduction_level_bytes(
         challenge_field_bits,
         policy.claim_ext_degree,
         0,
         key,
-        schedule.root.input_witness_len,
+        input_witness_len,
         policy.uniform_ring_dimension,
     )
-    .expect("setup-generation EOR bytes");
+    .expect("D256 root EOR bytes");
     assert_eq!(candidate_eor_bytes, 0);
     assert!(uniform_eor_bytes > 0);
+}
 
-    let next_params = schedule
-        .recursive_folds
-        .first()
-        .map(|step| &step.params.witness);
-    let next_binding = if next_params.is_some() {
-        akita_types::NextWitnessBindingPolicy::OuterPayload
-    } else {
-        akita_types::NextWitnessBindingPolicy::TerminalInnerState
-    };
-    let root_without_eor = level_proof_bytes(
-        policy.decomposition.field_bits(),
-        challenge_field_bits,
-        root_params,
-        next_params,
-        schedule.root.output_witness_len,
-        Some(next_binding),
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn recursive_tensor_encoding_infeasibility_is_pruned() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+
+    let mut policy = policy_of::<OneHot>();
+    policy.claim_ext_degree = 64;
+    let dimensions = CommitmentRingDims::uniform(64);
+    let domain = RingDimensionSearchDomain::new([dimensions]).expect("D64 domain");
+    policy = policy_for_domain(policy, &domain);
+
+    let error = find_schedule(
+        onehot_group(16, 1),
+        &policy,
+        OneHot::root_honest_fold_policy(),
+        &domain,
+        OneHot::ring_challenge_config,
     )
-    .expect("root bytes without EOR");
-    assert_eq!(
-        selected.estimate.estimated_root_direct_payload_bytes,
-        root_without_eor + candidate_eor_bytes,
-    );
+    .expect_err("k=64 cannot tensor-project into the half-ring of d_A=64");
+    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
 }
 
 #[cfg(feature = "catalog-gen")]

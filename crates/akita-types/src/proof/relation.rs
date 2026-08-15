@@ -1188,22 +1188,25 @@ where
             .coeffs()
             .get(offset..end)
             .ok_or(AkitaError::InvalidProof)?;
-        if geometry.coordinate_plane_count() != 1 {
-            if !matches!(
-                family,
-                RelationRowFamily::Consistency {
-                    opening_method: crate::OpeningMethod::SubringCoefficientPacking { .. },
-                    ..
-                }
-            ) || row.iter().any(|coefficient| !coefficient.is_zero())
-            {
+        if matches!(
+            family,
+            RelationRowFamily::Consistency {
+                opening_method: crate::OpeningMethod::SubringCoefficientPacking { .. },
+                ..
+            }
+        ) {
+            if row.iter().any(|coefficient| !coefficient.is_zero()) {
                 return Err(AkitaError::InvalidSetup(
-                    "only a zero coefficient-packing consistency RHS may use coordinate planes"
-                        .into(),
+                    "coefficient-packing consistency RHS must be zero".into(),
                 ));
             }
             offset = end;
             continue;
+        }
+        if geometry.coordinate_plane_count() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "non-packing relation RHS cannot use coordinate planes".into(),
+            ));
         }
         let modulus_dimension = geometry.polynomial_modulus_dimension();
         let power_index = alpha_powers

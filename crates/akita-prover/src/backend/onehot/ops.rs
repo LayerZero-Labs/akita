@@ -408,6 +408,10 @@ where
                         .ok_or_else(|| {
                             AkitaError::InvalidInput("one-hot source length overflow".into())
                         })?;
+                // One-hot roots authenticate their complete Boolean domain.
+                // Unlike recursive witness storage, they cannot discard a
+                // padded suffix merely because the opening plan names a live
+                // prefix.
                 if actual_field_len != expected_field_len {
                     return Err(AkitaError::InvalidSize {
                         expected: expected_field_len,

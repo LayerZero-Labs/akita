@@ -133,8 +133,8 @@ mod tests {
     use crate::{RootTensorProjectionPoly, SparseRingPoly};
     use akita_algebra::CyclotomicRing;
     use akita_field::{
-        CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt, Prime128OffsetA7F7,
-        Prime32Offset99, Prime64Offset59,
+        AkitaError, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt,
+        Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
     };
     use akita_types::{
         coefficient_packing_partials, BasisMode, FpExtEncoding,
@@ -342,6 +342,61 @@ mod tests {
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
         assert_eq!(dense_partials, onehot_partials);
+    }
+
+    #[test]
+    fn dense_and_onehot_reject_recursive_style_live_prefixes() {
+        let geometry = SubringCoefficientPackingGeometry::try_new(4, D, 64).unwrap();
+        let public_point = (0..11)
+            .map(|index| E::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            6,
+            4,
+            11,
+            &public_point,
+        )
+        .expect("recursive-style live prefix point");
+        let dense = DensePoly::from_ring_coeffs::<D>(vec![CyclotomicRing::zero(); 8]);
+        let onehot = OneHotPoly::<F>::new(
+            D,
+            D,
+            vec![
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0),
+                None,
+                None,
+            ],
+        )
+        .unwrap();
+        let dense_refs = [&dense];
+        let onehot_refs = [&onehot];
+        let dense_batch =
+            <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_refs).unwrap();
+        let onehot_batch =
+            <OneHotPoly<F> as RootTensorSource<F, D>>::tensor_batch(&onehot_refs).unwrap();
+        let plan = SubringCoefficientPackingPlan { point: &point };
+
+        assert!(matches!(
+            CpuBackend::DEFAULT.coefficient_packing_partials_batch(None, dense_batch, plan),
+            Err(AkitaError::InvalidSize {
+                expected: 6,
+                actual: 8,
+            })
+        ));
+        assert!(matches!(
+            CpuBackend::DEFAULT.coefficient_packing_partials_batch(None, onehot_batch, plan),
+            Err(AkitaError::InvalidSize {
+                expected,
+                actual,
+            }) if expected == 6 * D && actual == 8 * D
+        ));
     }
 
     #[test]

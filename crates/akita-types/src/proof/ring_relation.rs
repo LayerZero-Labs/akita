@@ -457,9 +457,20 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
             });
         }
         for opening in &self.group_openings {
-            opening
-                .evaluation_trace_multiplier_point()?
-                .ensure_ring_dim::<D>()?;
+            match opening.view() {
+                RingRelationGroupOpeningView::EvaluationTrace {
+                    ring_multiplier_point,
+                    ..
+                } => ring_multiplier_point.ensure_ring_dim::<D>()?,
+                RingRelationGroupOpeningView::SubringCoefficientPacking { geometry, .. } => {
+                    if geometry.a_ring_dimension() != D {
+                        return Err(AkitaError::InvalidInput(format!(
+                            "coefficient-packing ambient dimension {} does not match requested D={D}",
+                            geometry.a_ring_dimension(),
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -621,6 +632,9 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
 #[cfg(test)]
 mod tests {
+    mod dimension_tests;
+    mod support;
+
     use super::*;
     use crate::layout::PrecommittedLevelParams;
     use crate::DigitBlocks;
@@ -631,6 +645,7 @@ mod tests {
     };
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
     use akita_field::Fp32;
+    use support::{flatten_markers, marker};
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -644,21 +659,6 @@ mod tests {
             .expect("relation geometry")
             .rhs_layout()
             .clone()
-    }
-
-    fn marker<const N: usize>(index: usize) -> [i8; N] {
-        let value = (index % 100 + 1) as i8;
-        std::array::from_fn(|coefficient| {
-            if coefficient.is_multiple_of(2) {
-                value
-            } else {
-                -value
-            }
-        })
-    }
-
-    fn flatten_markers<const N: usize>(markers: impl IntoIterator<Item = [i8; N]>) -> Vec<i8> {
-        markers.into_iter().flatten().collect()
     }
 
     fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {

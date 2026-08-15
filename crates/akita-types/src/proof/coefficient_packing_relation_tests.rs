@@ -990,6 +990,36 @@ fn public_rhs_accepts_zero_packing_consistency_and_rejects_nonzero_payload() {
 }
 
 #[test]
+fn degree_one_packing_consistency_rhs_must_be_zero() {
+    type Base = Prime128OffsetA7F7;
+    let fixture = fixture::<Base, Base>(
+        SisModulusProfileId::Q128OffsetA7F7,
+        128,
+        64,
+        64,
+        6,
+        4,
+        10,
+        1,
+        1,
+    );
+    let layout = fixture
+        .relation_plan
+        .relation_witness_geometry()
+        .rhs_layout();
+    let mut malformed = fixture.relation.rhs().coeffs().to_vec();
+    malformed[0] = Base::one();
+
+    assert!(relation_claim_from_compressed_rhs_extension::<Base, Base>(
+        layout,
+        &fixture.tau1,
+        Base::from_u64(23),
+        &RingVec::from_coeffs(malformed),
+    )
+    .is_err());
+}
+
+#[test]
 fn alpha_and_role_dimensions_are_bound_by_the_shared_plan() {
     let fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,

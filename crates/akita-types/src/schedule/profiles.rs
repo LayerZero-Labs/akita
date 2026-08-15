@@ -60,7 +60,13 @@ impl CommittedSourceEncoding {
         }
     }
 
-    pub(crate) fn validate(self, ring_dimension: usize) -> Result<(), AkitaError> {
+    /// Validate that this encoding can represent coefficients at `ring_dimension`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a tensor projection's extension degree does not
+    /// divide the usable half-ring coefficient capacity.
+    pub fn validate(self, ring_dimension: usize) -> Result<(), AkitaError> {
         if let Self::TensorSubfieldProjection { extension_degree } = self {
             let tensor_capacity = ring_dimension / 2;
             if extension_degree <= 1
@@ -490,6 +496,39 @@ mod source_encoding_tests {
                 extension_degree: 4,
             },
         );
+
+        let valid_recursive_boundary = CommittedSourceEncoding::for_producer(
+            OpeningMethod::EvaluationTrace,
+            32,
+            64,
+            16,
+            false,
+        );
+        assert_eq!(
+            valid_recursive_boundary,
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: 32,
+            },
+        );
+        valid_recursive_boundary
+            .validate(64)
+            .expect("k=32 fits the half-ring capacity at d_A=64");
+
+        let invalid_recursive_boundary = CommittedSourceEncoding::for_producer(
+            OpeningMethod::EvaluationTrace,
+            64,
+            64,
+            16,
+            false,
+        );
+        assert_eq!(
+            invalid_recursive_boundary,
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: 64,
+            },
+            "recursive EvaluationTrace must not silently change the authenticated encoding",
+        );
+        assert!(invalid_recursive_boundary.validate(64).is_err());
     }
 }
 

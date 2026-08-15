@@ -157,6 +157,16 @@ impl RecursiveCandidateContext<'_> {
         if physical_witness_len >= self.search.current_witness_len {
             return Ok(Vec::new());
         }
+        let source_encoding = akita_types::CommittedSourceEncoding::for_producer(
+            akita_types::OpeningMethod::EvaluationTrace,
+            self.policy.claim_ext_degree,
+            d_a,
+            self.search.current_witness_len.trailing_zeros() as usize,
+            false,
+        );
+        if source_encoding.validate(d_a).is_err() {
+            return Ok(Vec::new());
+        }
         let mut candidates = Vec::new();
         for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
             if outer_slice_count
@@ -182,13 +192,7 @@ impl RecursiveCandidateContext<'_> {
             };
             candidates.push(CommittedGroupParams {
                 payload_mode: self.payload_mode,
-                source_encoding: akita_types::CommittedSourceEncoding::for_producer(
-                    akita_types::OpeningMethod::EvaluationTrace,
-                    self.policy.claim_ext_degree,
-                    self.dimensions.d_a(),
-                    self.search.current_witness_len.trailing_zeros() as usize,
-                    false,
-                ),
+                source_encoding,
                 opening_method: akita_types::OpeningMethod::EvaluationTrace,
                 log_basis_inner: self.log_basis_inner,
                 log_basis_outer: self.log_basis_open,

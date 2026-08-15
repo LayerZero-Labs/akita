@@ -213,6 +213,9 @@ where
                                 "coefficient-packing dense source length overflow".into(),
                             )
                         })?;
+                // Dense roots authenticate the complete Boolean hypercube, so
+                // every stored ring is live. Exact-prefix storage is reserved
+                // for recursive witness views.
                 if rings.len() != plan.point.num_live_positions() {
                     return Err(AkitaError::InvalidSize {
                         expected: plan.point.num_live_positions(),
