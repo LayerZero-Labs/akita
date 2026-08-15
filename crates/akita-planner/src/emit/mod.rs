@@ -67,7 +67,11 @@ const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 // Schedule search is memory bound. Keep the default below host-wide
 // parallelism while allowing explicit tuning for large generation machines.
-const DEFAULT_OFFLINE_PLANNING_WORKERS: usize = 3;
+// Packing search retains large exact suffix frontiers for the heaviest
+// generated rows. Two concurrent rows fit the observed developer-workstation
+// envelope; constrained jobs can override this through
+// `AKITA_SCHEDULE_GEN_JOBS` (the catalog-drift CI job uses one worker).
+const DEFAULT_OFFLINE_PLANNING_WORKERS: usize = 2;
 
 /// Bound memory-heavy offline planner searches for generation and drift checks.
 pub fn offline_planning_worker_count(work_items: usize) -> usize {
@@ -1061,5 +1065,52 @@ mod preplanned_scalar_tests {
             MAX_ACTIVE_REGEN.load(Ordering::Relaxed) <= offline_planning_worker_count(6),
             "flattened planning exceeded the process worker bound"
         );
+    }
+
+    #[test]
+    fn packing_planner_expanded_and_generated_prices_agree() {
+        use akita_config::{
+            honest_fold_policy_of, policy_of, proof_optimized::fp128::OneHot, CommitmentConfig,
+        };
+
+        let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 1));
+        let policy = policy_of::<OneHot>();
+        let planned = crate::planner::find_schedule(
+            &key,
+            honest_fold_policy_of::<OneHot>(),
+            &[],
+            &policy,
+            OneHot::ring_challenge_config,
+        )
+        .expect("planned packing schedule");
+        assert!(matches!(
+            planned
+                .schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .opening_method,
+            akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        ));
+        let expanded = akita_schedules::expanded_schedule_proof_payload_bytes(
+            &key,
+            &planned.schedule,
+            &policy,
+        )
+        .expect("expanded schedule price");
+        let generated = generated_entry(&key, &planned.schedule).expect("compact schedule row");
+        let replayed = akita_schedules::estimate_proof_bytes(
+            &generated,
+            &key,
+            &policy,
+            OneHot::ring_challenge_config,
+        )
+        .expect("generated-row replay price");
+        assert_eq!(
+            planned.estimate.estimated_proof_payload_bytes().unwrap(),
+            expanded,
+        );
+        assert_eq!(expanded, replayed);
     }
 }

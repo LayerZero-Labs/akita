@@ -12,7 +12,7 @@ type LevelCandidate = (
 );
 
 type LevelFrontierEntry = (
-    [usize; 5],
+    [usize; 6],
     Vec<u8>,
     CommittedGroupParams,
     usize,
@@ -41,6 +41,7 @@ pub(super) fn level_candidates(
                 .output_rank()
                 .checked_mul(params.role_dims().d_d())
                 .ok_or_else(|| AkitaError::InvalidSetup("D output dimension overflow".into()))?,
+            eor_bytes,
         ];
         let descriptor = params.canonical_descriptor_bytes();
         pareto::insert(
@@ -64,6 +65,13 @@ pub(super) fn level_candidates(
             )| {
                 best_params.payload_mode == candidate_params.payload_mode
                     && best_params.role_dims() == candidate_params.role_dims()
+                    && matches!(
+                        best_params.opening_method,
+                        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                    ) == matches!(
+                        candidate_params.opening_method,
+                        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+                    )
                     // This PR emits one L2 split and norm-proof shape per DP
                     // state. Keep Linf and L2 frontiers separate because these
                     // coordinates do not price the L2 norm payload.

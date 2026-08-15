@@ -38,16 +38,16 @@ mod suffix_dp;
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
-    materialize_candidate_schedule, stage3_payload_bytes_for_successor, CandidateFoldStep,
-    CandidateTerminalResponse,
+    materialize_candidate_schedule, CandidateFoldStep, CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
 #[cfg(test)]
 pub(crate) use candidate::derive_linf_candidate_level_params;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_candidate_level_params,
-    derive_candidate_level_params_split_frontier, recursive_split_search_domain,
-    AbCommitmentCandidateRequest, PlannerOpeningCandidate, SetupPrefixSearchCache,
+    derive_candidate_level_params_split_frontier, derive_terminal_candidate_params,
+    recursive_split_search_domain, AbCommitmentCandidateRequest, PlannerOpeningCandidate,
+    SetupPrefixSearchCache,
 };
 pub(crate) use objective::select_complete_candidate;
 pub(crate) use setup_score::{

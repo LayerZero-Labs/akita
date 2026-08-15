@@ -12,6 +12,7 @@ struct RecursiveCandidateContext<'a> {
     log_basis_open: u32,
     fold_level: usize,
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
+    require_output_contraction: bool,
 }
 
 #[derive(Clone)]
@@ -149,7 +150,7 @@ impl RecursiveCandidateContext<'_> {
         core: &RecursiveCandidateCore,
     ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
         let d_a = self.dimensions.d_a();
-        if !self.opening.is_coefficient_packing() {
+        if self.require_output_contraction && !self.opening.is_coefficient_packing() {
             let physical_witness_len = akita_schedules::planner_support::grouped_segment_rings(
                 1,
                 core.num_live_blocks,
@@ -612,7 +613,8 @@ fn best_linf_candidate(
     )?;
 
     Ok(best.and_then(|(_, r, params, next)| {
-        (next < context.search.current_witness_len).then_some((r, params, next))
+        (!context.require_output_contraction || next < context.search.current_witness_len)
+            .then_some((r, params, next))
     }))
 }
 
@@ -629,6 +631,7 @@ fn append_selective_l2_candidates(
     log_basis_open: u32,
     fold_level: usize,
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
+    require_output_contraction: bool,
 ) -> Result<(), AkitaError> {
     if !policy.selective_l2_response_model_enabled() {
         return Ok(());
@@ -656,6 +659,7 @@ fn append_selective_l2_candidates(
         log_basis_open,
         fold_level,
         source_moment: Some(source_moment),
+        require_output_contraction,
     };
     let Some(mut l2_core) = l2_context.candidate_core(*block_index_bits)? else {
         return Ok(());
@@ -715,7 +719,7 @@ fn append_selective_l2_candidates(
             else {
                 continue;
             };
-            if next_witness_len < search.current_witness_len {
+            if !require_output_contraction || next_witness_len < search.current_witness_len {
                 candidates.push((params, next_witness_len));
             }
         }
@@ -762,6 +766,7 @@ pub(crate) fn derive_candidate_level_params(
         log_basis_open,
         fold_level,
         source_moment,
+        require_output_contraction: true,
     };
     let best_modeled = best_linf_candidate(&modeled_context)?;
     let mut candidates: Vec<_> = best_modeled
@@ -794,9 +799,92 @@ pub(crate) fn derive_candidate_level_params(
             log_basis_open,
             fold_level,
             source_moment,
+            true,
         )?;
     }
     Ok(candidates)
+}
+
+/// Derive EvaluationTrace parameters used only to certify a direct terminal
+/// response. Unlike an emitted recursive fold, this boundary does not require
+/// the unused successor witness layout to contract.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_terminal_candidate_params(
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    opening: PlannerOpeningCandidate,
+    dimensions: CommitmentRingDims,
+    current_witness_len: usize,
+    source: crate::InnerBasisSource,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    fold_level: usize,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
+) -> Result<Vec<CommittedGroupParams>, AkitaError> {
+    if opening.is_coefficient_packing() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal candidates require EvaluationTrace opening parameters".into(),
+        ));
+    }
+    let Some(search) = prepare_recursive_level_search(
+        None,
+        policy,
+        opening,
+        dimensions,
+        current_witness_len,
+        log_basis_open,
+        fold_level,
+        None,
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    let modeled_context = RecursiveCandidateContext {
+        policy,
+        payload_mode,
+        opening,
+        dimensions,
+        search: &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        source_moment,
+        require_output_contraction: false,
+    };
+    let best_modeled = best_linf_candidate(&modeled_context)?;
+    let mut candidates = best_modeled
+        .as_ref()
+        .map(|(_, params, next)| (params.clone(), *next))
+        .into_iter()
+        .collect::<Vec<_>>();
+    if source_moment.is_some() {
+        let universal_context = RecursiveCandidateContext {
+            source_moment: None,
+            ..modeled_context
+        };
+        if let Some((_, params, next)) = best_linf_candidate(&universal_context)? {
+            let universal = (params, next);
+            if !candidates.contains(&universal) {
+                candidates.push(universal);
+            }
+        }
+    }
+    append_selective_l2_candidates(
+        &mut candidates,
+        best_modeled.as_ref(),
+        policy,
+        payload_mode,
+        dimensions,
+        &search,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        source_moment,
+        false,
+    )?;
+    Ok(candidates.into_iter().map(|(params, _)| params).collect())
 }
 
 #[cfg(test)]
@@ -838,6 +926,7 @@ pub(crate) fn derive_linf_candidate_level_params(
         log_basis_open,
         fold_level,
         source_moment: None,
+        require_output_contraction: true,
     };
     Ok(best_linf_candidate(&context)?.map(|(_, params, next)| (params, next)))
 }
@@ -882,6 +971,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
         log_basis_open,
         fold_level,
         source_moment,
+        require_output_contraction: true,
     };
     let mut candidates = Vec::new();
     let mut best_modeled_with_score: Option<(
@@ -950,6 +1040,7 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
             log_basis_open,
             fold_level,
             source_moment,
+            true,
         )?;
     }
     Ok(candidates)

@@ -273,7 +273,7 @@ pub(crate) use opening::PlannerOpeningCandidate;
 pub(crate) use recursive::derive_linf_candidate_level_params;
 pub(crate) use recursive::{
     derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    recursive_split_search_domain,
+    derive_terminal_candidate_params, recursive_split_search_domain,
 };
 pub(crate) use setup_prefix::SetupPrefixSearchCache;
 pub(super) use setup_prefix::{derive_setup_prefix_groups, SetupPrefixSearchRequest};

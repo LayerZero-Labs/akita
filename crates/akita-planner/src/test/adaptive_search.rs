@@ -155,11 +155,12 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 fn terminal_candidates_compete_across_opening_bases() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
-    let dimensions = RingDimensionSearchDomain::uniform(128).unwrap();
+    // fp32 has extension degree four, so production s >= 64 requires d_A >= 256.
+    let dimensions = RingDimensionSearchDomain::uniform(256).unwrap();
     let mut policy = policy_of::<OneHot>();
-    policy.uniform_ring_dimension = 128;
+    policy.uniform_ring_dimension = 256;
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
-        ring_dimension: 128,
+        ring_dimension: 256,
     };
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
@@ -182,8 +183,125 @@ fn terminal_candidates_compete_across_opening_bases() {
             .witness
             .inner_commit_matrix
             .coeff_linf_bound(),
-        Some(524_287),
+        Some(65_535),
     );
+    let root = &selected.schedule.root.params.final_group.commitment;
+    assert!(matches!(
+        root.opening_method,
+        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+    ));
+    let terminal_level = selected.schedule.recursive_folds.len() + 1;
+    let terminal_eor = extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits().unwrap(),
+        policy.claim_ext_degree,
+        terminal_level,
+        onehot_group(14, 1),
+        selected.schedule.terminal.input_witness_len,
+        selected.schedule.terminal.params.witness.d_a(),
+    )
+    .unwrap();
+    assert!(terminal_eor > 0, "the ET terminal must retain its EOR");
+    assert_eq!(
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        akita_schedules::expanded_schedule_proof_payload_bytes(
+            &akita_types::AkitaScheduleLookupKey::single(onehot_group(14, 1)),
+            &selected.schedule,
+            &policy,
+        )
+        .unwrap(),
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn statically_infeasible_packing_domain_falls_back_to_evaluation_trace() {
+    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
+
+    let dimensions = RingDimensionSearchDomain::uniform(128).unwrap();
+    let mut policy = policy_of::<OneHot>();
+    policy.uniform_ring_dimension = 128;
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
+        ring_dimension: 128,
+    };
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+    let selected = find_schedule(
+        onehot_group(14, 1),
+        &policy,
+        OneHot::root_honest_fold_policy(),
+        &dimensions,
+        OneHot::ring_challenge_config,
+    )
+    .expect("EvaluationTrace fallback schedule");
+    assert_eq!(
+        selected
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .opening_method,
+        akita_types::OpeningMethod::EvaluationTrace,
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn feasible_packing_dimension_suppresses_smaller_et_fallback() {
+    use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
+
+    let dimensions = RingDimensionSearchDomain::new([
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims::uniform(128),
+        CommitmentRingDims::uniform(256),
+    ])
+    .unwrap();
+    let mut policy = policy_of::<OneHot>();
+    policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: 2,
+        suffix_dimensions: &[64, 128],
+        potential_a_dimensions: &[64, 128, 256],
+        potential_b_dimensions: &[64, 128, 256],
+        potential_d_dimensions: &[64, 128, 256],
+    };
+    let key = onehot_group(14, 1);
+    let selected = find_schedule(
+        key,
+        &policy,
+        OneHot::root_honest_fold_policy(),
+        &dimensions,
+        OneHot::ring_challenge_config,
+    )
+    .expect("packing schedule from mixed domain");
+    assert!(matches!(
+        selected
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .opening_method,
+        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+    ));
+    let unpruned = unpruned_search::find_schedule(
+        key,
+        &policy,
+        OneHot::root_honest_fold_policy(),
+        &dimensions,
+        OneHot::ring_challenge_config,
+    )
+    .expect("unpruned packing schedule from mixed domain");
+    assert!(matches!(
+        unpruned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .opening_method,
+        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+    ));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -249,6 +367,16 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
             InnerCommitSecurityRoute::L2 { .. }
         )
     }));
+    assert!(
+        selected
+            .schedule
+            .terminal
+            .params
+            .witness
+            .response_l2_sq_cap()
+            .is_some(),
+        "terminal-only planning must preserve the PR369 selective-L2 route",
+    );
 }
 
 #[test]
@@ -280,6 +408,10 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
         unpruned.estimate.estimated_proof_payload_bytes().unwrap()
+    );
+    assert_eq!(
+        selected.estimate.estimated_num_setup_field_elements,
+        unpruned.estimate.estimated_num_setup_field_elements,
     );
     assert_eq!(
         selected.schedule.canonical_descriptor_bytes(),
@@ -328,13 +460,13 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
     let expected_root_dimensions = [
         CommitmentRingDims {
             inner: 128,
-            outer: 64,
+            outer: 128,
             opening: 64,
         },
         CommitmentRingDims {
             inner: 128,
             outer: 64,
-            opening: 64,
+            opening: 128,
         },
     ];
 
@@ -557,7 +689,7 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
         CommitmentRingDims {
             inner: 256,
             outer: 64,
-            opening: 128,
+            opening: 64,
         }
     );
     assert_eq!(
@@ -567,6 +699,23 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
             .role_dims(),
         d64
     );
+    let opening_methods = std::iter::once(selected_root.opening_method).chain(
+        selected
+            .schedule
+            .recursive_folds
+            .iter()
+            .map(|fold| fold.params.witness.opening_method),
+    );
+    for (level, opening_method) in opening_methods.enumerate() {
+        if level <= 1 {
+            assert!(matches!(
+                opening_method,
+                akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+            ));
+        } else {
+            assert_eq!(opening_method, akita_types::OpeningMethod::EvaluationTrace);
+        }
+    }
     assert!(
         selected.estimate.estimated_num_setup_field_elements
             <= rank_one_capped.estimate.estimated_num_setup_field_elements,

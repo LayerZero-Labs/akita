@@ -483,6 +483,110 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     )
     .unwrap()
     .is_empty());
+
+    let product_key = AkitaScheduleLookupKey {
+        final_group: grouped_key.final_group,
+        precommitteds: vec![frozen_group, frozen_group],
+    };
+    let opening_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &product_key,
+    )
+    .expect("root precommit opening products");
+    assert_eq!(opening_products.len(), 4);
+    assert!(opening_products
+        .iter()
+        .all(|assignment| assignment.len() == 2));
+    assert!(opening_products.iter().flatten().all(|opening| matches!(
+        opening.method(),
+        OpeningMethod::SubringCoefficientPacking { .. }
+    )));
+    let mut tensor_profile = product_key.precommitteds[0];
+    tensor_profile.source_encoding =
+        akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+            extension_degree: policy.claim_ext_degree,
+        };
+    let tensor_key = AkitaScheduleLookupKey {
+        final_group: product_key.final_group,
+        precommitteds: vec![tensor_profile],
+    };
+    assert!(
+        crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+            &policy,
+            dimensions,
+            &tensor_key,
+        )
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn tensor_frozen_precommit_uses_uniform_evaluation_trace_fallback() {
+    use akita_config::{
+        honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
+    };
+    use akita_types::{AkitaScheduleLookupKey, OpeningMethod};
+
+    let mut policy = policy_of::<Dense>();
+    let dimensions = CommitmentRingDims::uniform(256);
+    policy.uniform_ring_dimension = 256;
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
+        ring_dimension: 256,
+    };
+    policy.selection_policy = crate::SelectionPolicyId::for_policy(
+        policy.recursive_setup_planning,
+        policy.ring_dimension_schedule_mode,
+    );
+    let pre_group = PolynomialGroupLayout::new(14, 1);
+    let pre_key = AkitaScheduleLookupKey::single(pre_group);
+    let pre_candidates = crate::planner::root_level_candidates_for_basis(
+        &pre_key,
+        honest_fold_policy_of::<Dense>(),
+        &[],
+        &policy,
+        dimensions,
+        PlannerOpeningCandidate::evaluation_trace(Dense::ring_challenge_config(256).unwrap()),
+        &[],
+        1 << 14,
+        Dense::inner_basis_range().0,
+        Dense::opening_basis_range().0,
+        false,
+    )
+    .expect("standalone precommit candidates");
+    let mut precommitted = CommittedGroupProfile::try_from_params(
+        pre_group,
+        &pre_candidates.first().expect("precommit candidate").0,
+    )
+    .expect("standalone precommit profile");
+    precommitted.source_encoding = akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+        extension_degree: 2,
+    };
+    precommitted
+        .validate_frozen_precommit(policy.decomposition.field_bits())
+        .expect("tensor source is valid for the frozen A ring");
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(16, 1),
+        precommitteds: vec![precommitted],
+    };
+    let planned = crate::planner::find_schedule(
+        &key,
+        honest_fold_policy_of::<Dense>(),
+        &[honest_fold_policy_of::<Dense>()],
+        &policy,
+        Dense::ring_challenge_config,
+    )
+    .expect("grouped ET fallback schedule");
+    let root = &planned.schedule.root.params;
+    assert_eq!(
+        root.final_group.commitment.opening_method,
+        OpeningMethod::EvaluationTrace,
+    );
+    assert!(root.precommitted_groups.iter().all(|group| {
+        group.commitment.opening.opening_method == OpeningMethod::EvaluationTrace
+    }));
 }
 
 #[cfg(feature = "catalog-gen")]

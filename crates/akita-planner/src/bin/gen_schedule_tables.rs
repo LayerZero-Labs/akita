@@ -1000,6 +1000,107 @@ mod tests {
         assert!(changed.report.contains("\tchanged\t"));
     }
 
+    #[cfg(feature = "catalog-check")]
+    #[test]
+    fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
+        use akita_types::OpeningMethod;
+
+        let family =
+            family_by_name("fp128_onehot_recursive_multi_chunk_w8r2").expect("known W8R2 family");
+        let table = (family.schedule_catalog)().expect("compiled W8R2 table");
+        assert_eq!(table.entries.len(), 1);
+        let entry = table.entries[0];
+        let key = entry.to_runtime_lookup_key();
+        let spec = wiring_emit_spec(family, PathBuf::from("generated"));
+        let expand = || {
+            akita_schedules::schedule_from_entry(
+                &entry,
+                &key,
+                &spec.policy,
+                spec.ring_challenge_config,
+            )
+            .expect("expand W8R2 row")
+        };
+        let schedule = expand();
+        assert_eq!(schedule, expand(), "generated replay must be deterministic");
+        schedule.validate_structure().expect("valid W8R2 schedule");
+
+        assert_eq!(
+            schedule.root.params.final_group.commitment.opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            },
+        );
+        assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
+        assert!(schedule
+            .root
+            .params
+            .precommitted_groups
+            .iter()
+            .all(|group| {
+                group.commitment.opening.opening_method
+                    == OpeningMethod::SubringCoefficientPacking {
+                        challenge_subring_dimension: 128,
+                    }
+            }));
+
+        let first_recursive = schedule
+            .recursive_folds
+            .first()
+            .expect("W8R2 row has a recursive packing fold");
+        assert_eq!(
+            first_recursive.params.witness.opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            },
+        );
+        assert_eq!(
+            first_recursive
+                .params
+                .incoming_setup_prefix
+                .as_ref()
+                .expect("first recursive fold consumes the setup prefix")
+                .commitment_params
+                .opening
+                .opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            },
+        );
+        assert!(schedule.recursive_folds[1..].iter().all(|fold| fold
+            .params
+            .witness
+            .opening_method
+            == OpeningMethod::EvaluationTrace));
+
+        let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
+            spec.policy
+                .challenge_field_bits()
+                .expect("challenge field bits"),
+            spec.policy.claim_ext_degree,
+            schedule.recursive_folds.len() + 1,
+            key.final_group,
+            schedule.terminal.input_witness_len,
+            schedule.terminal.params.witness.d_a(),
+        )
+        .expect("terminal EOR price");
+        assert_eq!(
+            terminal_eor, 0,
+            "the fp128 base-field terminal follows the ET/EOR pricing path, whose width-one reduction is empty",
+        );
+        assert_eq!(
+            akita_schedules::expanded_schedule_proof_payload_bytes(&key, &schedule, &spec.policy,)
+                .expect("expanded proof payload"),
+            akita_schedules::estimate_proof_bytes(
+                &entry,
+                &key,
+                &spec.policy,
+                spec.ring_challenge_config,
+            )
+            .expect("generated proof payload"),
+        );
+    }
+
     #[test]
     fn explicit_sweeps_reject_the_checked_in_generated_tree() {
         let explicit_rows = ExplicitRows {

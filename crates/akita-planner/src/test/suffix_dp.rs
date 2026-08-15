@@ -43,6 +43,109 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
 }
 
 #[test]
+fn full_suffix_cache_evicts_within_the_inserted_state_class() {
+    assert!(super::eviction_uses_direct_queue(true, true, true));
+    assert!(!super::eviction_uses_direct_queue(false, true, true));
+    assert!(!super::eviction_uses_direct_queue(true, false, true));
+    assert!(super::eviction_uses_direct_queue(false, true, false));
+}
+
+fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
+    super::ScheduleMemoKey {
+        level,
+        current_witness_len: 1024,
+        current_lb: 3,
+        source_moment: None,
+        incoming_setup_prefix,
+        d_a: 64,
+        d_b: 64,
+        d_d: 64,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+    }
+}
+
+#[test]
+fn suffix_cache_preserves_capacity_and_class_local_second_chance() {
+    let direct_hot = memo_key(1, None);
+    let direct_cold = memo_key(2, None);
+    let prefixed_cold = memo_key(3, Some(1));
+    let prefixed_other = memo_key(4, Some(1));
+    let mut memo = super::ScheduleMemo::with_capacity(4);
+    for key in [direct_hot, direct_cold, prefixed_cold, prefixed_other] {
+        memo.insert(key, super::empty_suffix_result());
+        assert!(memo.internal_invariants_hold());
+    }
+
+    memo.get(&direct_hot).expect("mark direct entry as hot");
+    let new_direct = memo_key(5, None);
+    memo.insert(new_direct, super::empty_suffix_result());
+    assert!(memo.contains(&direct_hot));
+    assert!(!memo.contains(&direct_cold));
+    assert!(memo.contains(&prefixed_cold));
+    assert!(memo.contains(&prefixed_other));
+    assert_eq!(memo.queue_lengths(), (2, 2));
+    assert_eq!(memo.len(), 4);
+    assert!(memo.internal_invariants_hold());
+
+    let new_prefixed = memo_key(6, Some(2));
+    memo.insert(new_prefixed, super::empty_suffix_result());
+    assert!(memo.contains(&direct_hot));
+    assert!(memo.contains(&new_direct));
+    assert!(!memo.contains(&prefixed_cold));
+    assert!(memo.contains(&prefixed_other));
+    assert!(memo.contains(&new_prefixed));
+    assert_eq!(memo.queue_lengths(), (2, 2));
+    assert_eq!(memo.len(), 4);
+    assert!(memo.internal_invariants_hold());
+
+    memo.insert(new_prefixed, super::empty_suffix_result());
+    assert_eq!(memo.queue_lengths(), (2, 2));
+    assert_eq!(memo.len(), 4);
+    assert!(memo.internal_invariants_hold());
+}
+
+#[test]
+fn suffix_cache_falls_back_only_when_inserted_class_is_empty() {
+    let prefixed_one = memo_key(1, Some(1));
+    let prefixed_two = memo_key(2, Some(1));
+    let direct = memo_key(3, None);
+    let mut memo = super::ScheduleMemo::with_capacity(2);
+    memo.insert(prefixed_one, super::empty_suffix_result());
+    memo.insert(prefixed_two, super::empty_suffix_result());
+    assert!(memo.internal_invariants_hold());
+
+    memo.insert(direct, super::empty_suffix_result());
+    assert!(memo.contains(&direct));
+    assert!(!memo.contains(&prefixed_one));
+    assert!(memo.contains(&prefixed_two));
+    assert_eq!(memo.queue_lengths(), (1, 1));
+    assert_eq!(memo.len(), 2);
+    assert!(memo.internal_invariants_hold());
+
+    let direct_one = memo_key(4, None);
+    let direct_two = memo_key(5, None);
+    let prefixed = memo_key(6, Some(2));
+    let mut memo = super::ScheduleMemo::with_capacity(2);
+    memo.insert(direct_one, super::empty_suffix_result());
+    memo.insert(direct_two, super::empty_suffix_result());
+    memo.insert(prefixed, super::empty_suffix_result());
+    assert!(memo.contains(&prefixed));
+    assert!(!memo.contains(&direct_one));
+    assert!(memo.contains(&direct_two));
+    assert_eq!(memo.queue_lengths(), (1, 1));
+    assert_eq!(memo.len(), 2);
+    assert!(memo.internal_invariants_hold());
+}
+
+#[test]
+fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
+    assert!(super::state_allows_terminal_seed(false, false));
+    assert!(!super::state_allows_terminal_seed(true, false));
+    assert!(!super::state_allows_terminal_seed(false, true));
+    assert!(!super::state_allows_terminal_seed(true, true));
+}
+
+#[test]
 fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::OneHot>();
     let crate::RingDimensionScheduleMode::AdaptiveDimension {

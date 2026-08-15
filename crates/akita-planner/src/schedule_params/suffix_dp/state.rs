@@ -100,6 +100,7 @@ pub(crate) struct ScheduleMemo {
     entries: HashMap<ScheduleMemoKey, MemoEntry>,
     direct_insertion_order: VecDeque<ScheduleMemoKey>,
     prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
+    capacity: usize,
     pub(super) setup_prefixes: SetupPrefixSearchCache,
 }
 
@@ -109,14 +110,20 @@ pub(super) struct MemoEntry {
 }
 
 const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
-// Prefix layouts create a much wider stream of one-off states than ordinary
-// suffixes. Separate FIFO quotas prevent that stream from evicting the direct
-// states reused across basis, dimension, and split candidates while preserving
-// the original hard bound on total cached results.
-const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 196_608;
-const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
-    MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
+// Direct and prefixed states share the hard total bound. Before the cache is
+// full, either class may use free capacity. Once it fills, each insertion
+// normally evicts from its own class, so the population split becomes
+// phase-stable instead of allowing a wide prefix stream to churn hot direct
+// states. The other class is used only when the inserted class is empty.
 const MAX_SECOND_CHANCE_PROBES: usize = 16;
+
+pub(super) fn eviction_uses_direct_queue(
+    inserting_direct: bool,
+    direct_has_entries: bool,
+    prefixed_has_entries: bool,
+) -> bool {
+    (inserting_direct && direct_has_entries) || !prefixed_has_entries
+}
 
 pub(super) fn evict_suffix_entry(
     entries: &mut HashMap<ScheduleMemoKey, MemoEntry>,
@@ -146,8 +153,68 @@ impl ScheduleMemo {
             entries: HashMap::new(),
             direct_insertion_order: VecDeque::new(),
             prefixed_insertion_order: VecDeque::new(),
+            capacity: MAX_SUFFIX_SEARCH_CACHE_ENTRIES,
             setup_prefixes: SetupPrefixSearchCache::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_capacity(capacity: usize) -> Self {
+        assert!(capacity > 0, "suffix memo capacity must be nonzero");
+        Self {
+            capacity,
+            ..Self::new()
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn contains(&self, key: &ScheduleMemoKey) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    #[cfg(test)]
+    pub(super) fn queue_lengths(&self) -> (usize, usize) {
+        (
+            self.direct_insertion_order.len(),
+            self.prefixed_insertion_order.len(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn internal_invariants_hold(&self) -> bool {
+        let direct = self
+            .direct_insertion_order
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        let prefixed = self
+            .prefixed_insertion_order
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        self.entries.len() <= self.capacity
+            && self.direct_insertion_order.len() == direct.len()
+            && self.prefixed_insertion_order.len() == prefixed.len()
+            && direct.is_disjoint(&prefixed)
+            && direct.len() + prefixed.len() == self.entries.len()
+            && direct
+                .iter()
+                .all(|key| key.is_direct() && self.entries.contains_key(key))
+            && prefixed
+                .iter()
+                .all(|key| !key.is_direct() && self.entries.contains_key(key))
+            && self.entries.keys().all(|key| {
+                if key.is_direct() {
+                    direct.contains(key)
+                } else {
+                    prefixed.contains(key)
+                }
+            })
     }
 
     pub(super) fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
@@ -165,20 +232,24 @@ impl ScheduleMemo {
             });
             return;
         }
-        let (insertion_order, capacity) = if key.is_direct() {
-            (
-                &mut self.direct_insertion_order,
-                MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
-            )
-        } else {
-            (
-                &mut self.prefixed_insertion_order,
-                MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
-            )
-        };
-        if insertion_order.len() >= capacity {
+        if self.entries.len() >= self.capacity {
+            let evict_direct = eviction_uses_direct_queue(
+                key.is_direct(),
+                !self.direct_insertion_order.is_empty(),
+                !self.prefixed_insertion_order.is_empty(),
+            );
+            let insertion_order = if evict_direct {
+                &mut self.direct_insertion_order
+            } else {
+                &mut self.prefixed_insertion_order
+            };
             evict_suffix_entry(&mut self.entries, insertion_order);
         }
+        let insertion_order = if key.is_direct() {
+            &mut self.direct_insertion_order
+        } else {
+            &mut self.prefixed_insertion_order
+        };
         insertion_order.push_back(key);
         self.entries.insert(
             key,
@@ -200,13 +271,12 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
 
 /// DP-invariant inputs for the suffix search.
 ///
-/// `policy`, `ring_challenge_cfg`, and `num_vars` are constant across the whole
+/// `policy`, the challenge-family provider, and `num_vars` are constant across the whole
 /// recursion, so they are carried in one context value rather than as
 /// per-call arguments (keeps the recursive signature small).
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     pub(crate) num_vars: usize,

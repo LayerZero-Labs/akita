@@ -558,10 +558,8 @@ pub fn find_schedule(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
         })?;
-    let ring_challenge_cfg = ring_challenge_config(active_policy.uniform_ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy: active_policy,
-        default_ring_challenge_cfg: &ring_challenge_cfg,
         ring_challenge_config,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
