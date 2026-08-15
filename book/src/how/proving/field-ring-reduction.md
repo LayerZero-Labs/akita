@@ -22,8 +22,8 @@ ring elements, define that multiplication as a `TraceOpen` operation, and then
 write the same evaluation claim directly as a linear relation on the committed
 fold witness.
 
-Base-field polynomials evaluated at extension-field points are left as a stub
-at the end of the page.
+Base-field polynomials evaluated at extension-field points require the
+extension-opening reduction summarized at the end of this page.
 
 ## The evaluation problem
 
