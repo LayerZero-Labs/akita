@@ -80,20 +80,9 @@ pub(super) fn insert_mixed_frontier(
     }
     let candidate_key = ParentObservableKey::new(policy, candidate.first_fold_params())?;
     let bucket = frontier.by_parent.entry(candidate_key).or_default();
-    let mut dominated = false;
-    let mut retained = Vec::with_capacity(bucket.len() + 1);
-    for existing in bucket.drain(..) {
-        if dominates_mixed_score(mixed_score(&existing), mixed_score(&candidate)) {
-            dominated = true;
-        }
-        if !dominates_mixed_score(mixed_score(&candidate), mixed_score(&existing)) {
-            retained.push(existing);
-        }
-    }
-    if !dominated {
-        retained.push(candidate);
-    }
-    *bucket = retained;
+    crate::schedule_params::pareto::insert(bucket, candidate, |left, right| {
+        dominates_mixed_score(mixed_score(left), mixed_score(right))
+    });
     Ok(())
 }
 

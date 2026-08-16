@@ -271,7 +271,8 @@ mod setup_prefix;
 pub(crate) use opening::PlannerOpeningCandidate;
 pub(crate) use recursive::{
     derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    derive_terminal_candidate_params, recursive_split_search_domain,
+    derive_recursive_candidate_views, derive_terminal_candidate_params,
+    recursive_split_search_domain,
 };
 #[cfg(test)]
 pub(crate) use recursive::{

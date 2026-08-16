@@ -43,9 +43,9 @@ pub(crate) use akita_schedules::planner_support::{
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_candidate_level_params,
-    derive_candidate_level_params_split_frontier, derive_terminal_candidate_params,
-    recursive_split_search_domain, AbCommitmentCandidateRequest, PlannerOpeningCandidate,
-    SetupPrefixSearchCache,
+    derive_candidate_level_params_split_frontier, derive_recursive_candidate_views,
+    derive_terminal_candidate_params, recursive_split_search_domain, AbCommitmentCandidateRequest,
+    PlannerOpeningCandidate, SetupPrefixSearchCache,
 };
 #[cfg(test)]
 pub(crate) use candidate::{

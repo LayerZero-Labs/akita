@@ -15,9 +15,10 @@ use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
     derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    derive_terminal_candidate_params, dimension_candidates, level_setup_field_elements,
-    suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
-    CandidateTerminalResponse, MixedScore, ScheduleCandidate, SetupPrefixSearchCache,
+    derive_recursive_candidate_views, derive_terminal_candidate_params, dimension_candidates,
+    level_setup_field_elements, suffix_opening_layout, terminal_setup_field_elements,
+    CandidateFoldStep, CandidateTerminalResponse, MixedScore, ScheduleCandidate,
+    SetupPrefixSearchCache,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -701,6 +702,44 @@ pub(crate) fn derive_selected_suffix_schedule(
                     for &mode in
                         payload_phase.candidate_modes(level, incoming_setup_prefix.is_some())
                     {
+                        let retain_split_frontier = incoming_setup_prefix.is_some()
+                            || matches!(
+                                policy.ring_dimension_schedule_mode,
+                                crate::RingDimensionScheduleMode::AdaptiveDimension {
+                                    num_search_levels,
+                                    ..
+                                } if level < num_search_levels
+                            );
+                        if work.allows_terminal
+                            && work.allows_fold
+                            && incoming_setup_prefix.is_none()
+                        {
+                            let views = derive_recursive_candidate_views(
+                                policy,
+                                mode,
+                                work.opening,
+                                work.dimensions,
+                                current_witness_len,
+                                inner_source,
+                                inner_lb,
+                                open_lb,
+                                level,
+                                source_moment,
+                                retain_split_frontier,
+                            )?;
+                            terminal_candidates.extend(
+                                views
+                                    .terminal
+                                    .into_iter()
+                                    .map(|params| (params, 0, work.opening_reduction_bytes)),
+                            );
+                            fold_candidates.extend(views.folds.into_iter().map(
+                                |(params, next_witness_len)| {
+                                    (params, next_witness_len, work.opening_reduction_bytes)
+                                },
+                            ));
+                            continue;
+                        }
                         if work.allows_terminal {
                             terminal_candidates.extend(
                                 derive_terminal_candidate_params(
@@ -722,14 +761,6 @@ pub(crate) fn derive_selected_suffix_schedule(
                         if !work.allows_fold {
                             continue;
                         }
-                        let retain_split_frontier = incoming_setup_prefix.is_some()
-                            || matches!(
-                                policy.ring_dimension_schedule_mode,
-                                crate::RingDimensionScheduleMode::AdaptiveDimension {
-                                    num_search_levels,
-                                    ..
-                                } if level < num_search_levels
-                            );
                         let level_candidates = if retain_split_frontier {
                             derive_candidate_level_params_split_frontier(
                                 Some(&mut memo.setup_prefixes),
