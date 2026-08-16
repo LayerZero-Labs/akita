@@ -179,5 +179,5 @@ spec pruning pass.
 - [`distributed-prover.md`](distributed-prover.md)
 - [`distributed-planner.md`](distributed-planner.md)
 - [`digit-innermost-layout.md`](digit-innermost-layout.md)
-- [`commitment-compression-cutover.md`](commitment-compression-cutover.md)
+- [`commitment-compression-cutover.md`](archive/2026-Q3/commitment-compression-cutover.md)
 - [`book/src/how/proving/opening-points-layout.md`](../book/src/how/proving/opening-points-layout.md)

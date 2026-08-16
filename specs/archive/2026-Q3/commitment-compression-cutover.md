@@ -1,6 +1,14 @@
 # Spec: Commitment Compression Cutover
 
-Status: protocol activated; final validation pending.
+| Field | Value |
+|---|---|
+| Status | archived |
+| PR | #341 (implementation); #340 (book fold and archive) |
+| Book-chapter | book/src/how/proving/akita-fold-realizations.md |
+| Archived | 2026-Q3 |
+
+> The production cutover is complete. Durable protocol behavior now lives in
+> the book chapter above; this file is retained as the implementation record.
 
 Implementation base: PR 341 at `f0710986f93c2dd9a81acce4bee3d1ee2ae2211d`.
 
@@ -259,7 +267,7 @@ mode, or compression plan is serialized inside a fold proof.
 ### Protocol epoch
 
 PR #343 increased `AKITA_INSTANCE_DESCRIPTOR_VERSION` from 2 to 3. The later
-[`dyadic-chunk-partition.md`](dyadic-chunk-partition.md) cut resets this
+[`dyadic-chunk-partition.md`](../../dyadic-chunk-partition.md) cut resets this
 unreleased development epoch to 1. The schedule row hash domain still increases
 from `v1` to `v2` because witness and proof size semantics change. Generated
 schedule identities and catalog digests are regenerated.
