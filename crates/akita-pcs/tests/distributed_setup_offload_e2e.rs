@@ -22,10 +22,11 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_prover::{NttExecutionRequirements, NttOperationCluster};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, PolynomialGroupLayout,
-    SetupContributionMode,
+    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, NttCacheKey, NttTransformDomain,
+    PolynomialGroupLayout, SetupContributionMode,
 };
 use common::*;
 
@@ -98,6 +99,62 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     .expect("frozen precommit footprint");
     assert_eq!(setup_for_two.num_field_elements, precommit_footprint);
     assert_eq!(setup_for_four.num_field_elements, prover.num_field_elements);
+}
+
+#[test]
+fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
+    let key = w8r2_profiling_key();
+    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&key)
+        .expect("W8R2 schedule")
+        .into_schedule();
+    let first_recursive = &schedule.recursive_folds[0].params;
+    assert_eq!(first_recursive.witness_partition.num_chunks(), 8);
+    let prefix = first_recursive
+        .incoming_setup_prefix
+        .as_ref()
+        .expect("W8R2 first recursive fold must consume a setup prefix");
+    let witness_a = &first_recursive.witness.inner_commit_matrix;
+    let prefix_a = &prefix.commitment_params.layout.inner_commit_matrix;
+    assert_eq!(
+        (
+            witness_a.ring_dimension(),
+            witness_a.output_rank(),
+            witness_a.input_width(),
+        ),
+        (64, 5, 2_048),
+    );
+    assert_eq!(
+        (
+            prefix_a.ring_dimension(),
+            prefix_a.output_rank(),
+            prefix_a.input_width(),
+        ),
+        (64, 6, 4_096),
+    );
+
+    let witness_tail =
+        NttCacheKey::from_matrix_shape(64, 5, 2_048, NttTransformDomain::I16TailBothTransforms)
+            .expect("valid W8R2 witness tail key");
+    let prefix_tail =
+        NttCacheKey::from_matrix_shape(64, 6, 4_096, NttTransformDomain::I16TailBothTransforms)
+            .expect("valid W8R2 prefix tail key");
+    let requirements =
+        NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
+    let has_tail = |expected| {
+        requirements.entries().iter().any(|entry| {
+            entry.fold_level == 1
+                && entry.cluster == NttOperationCluster::RingSwitch
+                && entry.key == expected
+        })
+    };
+    assert!(
+        !has_tail(witness_tail),
+        "the smaller recursive-witness bound must remain on the base CRT profile"
+    );
+    assert!(
+        has_tail(prefix_tail),
+        "the incoming prefix must inherit the consuming W8 chunk count"
+    );
 }
 
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".

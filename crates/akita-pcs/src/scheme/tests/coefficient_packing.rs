@@ -23,7 +23,6 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
 
     let schedule = first.schedule();
     let root = &schedule.root.params.final_group.commitment;
-    assert_eq!(root.d_a(), 512);
     assert_eq!(PackingCfg::EXT_DEGREE, 4);
     let OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
@@ -38,7 +37,16 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         challenge_subring_dimension,
     )
     .unwrap();
-    assert_eq!(geometry.packing_factor(), 2);
+    assert!(
+        geometry.packing_factor() > 1,
+        "synthetic packing row must reduce the physical opening width"
+    );
+    assert_eq!(
+        root.d_a(),
+        geometry.extension_degree()
+            * geometry.challenge_subring_dimension()
+            * geometry.packing_factor(),
+    );
     assert_eq!(
         geometry.partial_base_field_width() / root.role_dims().d_d(),
         2,

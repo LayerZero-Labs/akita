@@ -68,9 +68,10 @@ impl NttExecutionRequirements {
         schedule.validate_structure()?;
         let mut requirements = Self::default();
         let root = &schedule.root.params;
-        requirements.add_group_relation(0, &root.final_group.commitment)?;
+        let root_num_chunks = root.witness_partition.num_chunks();
+        requirements.add_group_relation(0, &root.final_group.commitment, root_num_chunks)?;
         for precommitted in &root.precommitted_groups {
-            requirements.add_precommitted_relation(0, &precommitted.commitment)?;
+            requirements.add_precommitted_relation(0, &precommitted.commitment, root_num_chunks)?;
         }
         let root_open_extent = matrix_extent(
             root.open_commit_matrix.output_rank(),
@@ -102,11 +103,16 @@ impl NttExecutionRequirements {
         for (index, step) in schedule.recursive_folds.iter().enumerate() {
             let predecessor_level = index;
             let level = index + 1;
+            let num_chunks = step.params.witness_partition.num_chunks();
             requirements.add_group_commit(predecessor_level, &step.params.witness)?;
-            requirements.add_group_relation(level, &step.params.witness)?;
+            requirements.add_group_relation(level, &step.params.witness, num_chunks)?;
             if let Some(prefix) = &step.params.incoming_setup_prefix {
                 requirements.add_setup_prefix_commitment(level, &prefix.slot_id())?;
-                requirements.add_precommitted_relation(level, &prefix.commitment_params)?;
+                requirements.add_precommitted_relation(
+                    level,
+                    &prefix.commitment_params,
+                    num_chunks,
+                )?;
             }
             let open_extent = matrix_extent(
                 step.params.open_commit_matrix.output_rank(),
@@ -266,6 +272,7 @@ impl NttExecutionRequirements {
         &mut self,
         level: usize,
         params: &CommittedGroupParams,
+        num_chunks: usize,
     ) -> Result<(), AkitaError> {
         self.add_relation_ab(
             level,
@@ -277,10 +284,11 @@ impl NttExecutionRequirements {
             params.outer_commit_matrix.input_width(),
             params.log_basis_open,
             params.num_digits_fold,
+            num_chunks,
             params.inner_commit_matrix.sis_modulus_profile(),
         )?;
         for precommitted in &params.precommitted_groups {
-            self.add_precommitted_relation(level, precommitted)?;
+            self.add_precommitted_relation(level, precommitted, num_chunks)?;
         }
         Ok(())
     }
@@ -289,6 +297,7 @@ impl NttExecutionRequirements {
         &mut self,
         level: usize,
         params: &PrecommittedLevelParams,
+        num_chunks: usize,
     ) -> Result<(), AkitaError> {
         self.add_relation_ab(
             level,
@@ -300,6 +309,7 @@ impl NttExecutionRequirements {
             params.layout.outer_commit_matrix.input_width(),
             params.opening.log_basis_open,
             params.opening.num_digits_fold,
+            num_chunks,
             params.layout.inner_commit_matrix.sis_modulus_profile(),
         )
     }
@@ -357,8 +367,14 @@ impl NttExecutionRequirements {
         width_b: usize,
         log_basis_open: u32,
         num_digits_fold: usize,
+        num_chunks: usize,
         modulus_profile: SisModulusProfileId,
     ) -> Result<(), AkitaError> {
+        if num_chunks == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "ring-switch relation must retain at least one fold chunk".into(),
+            ));
+        }
         let a_extent = matrix_extent(n_a, width_a)?;
         for domain in [NttTransformDomain::Negacyclic, NttTransformDomain::Cyclic] {
             self.add_matrix(
@@ -378,9 +394,15 @@ impl NttExecutionRequirements {
             log_basis_open,
             num_digits_fold,
         );
-        let rhs_abs_bound = u64::try_from(negative.max(positive)).map_err(|_| {
-            AkitaError::InvalidSetup("folded-witness bound exceeds NTT capacity model".into())
-        })?;
+        let rhs_abs_bound = negative
+            .max(positive)
+            .checked_mul(num_chunks as u128)
+            .and_then(|bound| u64::try_from(bound).ok())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "aggregated folded-witness bound exceeds NTT capacity model".into(),
+                )
+            })?;
         if centered_quotient_requires_i16_tail(modulus_profile, d_a, rhs_abs_bound)? {
             self.add_matrix(
                 level,
@@ -529,6 +551,7 @@ mod tests {
                 7,
                 1,
                 1,
+                1,
                 SisModulusProfileId::Q128OffsetA7F7,
             )
             .unwrap();
@@ -549,6 +572,80 @@ mod tests {
             requirements.entries[2].key.domain,
             NttTransformDomain::Cyclic
         );
+    }
+
+    #[test]
+    fn distributed_fold_aggregation_selects_the_q128_d64_tail() {
+        let mut single = NttExecutionRequirements::default();
+        single
+            .add_relation_ab(
+                1,
+                64,
+                6,
+                4_096,
+                64,
+                1,
+                1,
+                4,
+                4,
+                1,
+                SisModulusProfileId::Q128OffsetA7F7,
+            )
+            .unwrap();
+        assert!(!single
+            .entries()
+            .iter()
+            .any(|entry| { entry.key.domain == NttTransformDomain::I16TailBothTransforms }));
+
+        let mut distributed = NttExecutionRequirements::default();
+        distributed
+            .add_relation_ab(
+                1,
+                64,
+                6,
+                4_096,
+                64,
+                1,
+                1,
+                4,
+                4,
+                8,
+                SisModulusProfileId::Q128OffsetA7F7,
+            )
+            .unwrap();
+        assert!(distributed.entries().iter().any(|entry| {
+            entry.fold_level == 1
+                && entry.cluster == NttOperationCluster::RingSwitch
+                && entry.key
+                    == NttCacheKey::from_matrix_shape(
+                        64,
+                        6,
+                        4_096,
+                        NttTransformDomain::I16TailBothTransforms,
+                    )
+                    .unwrap()
+        }));
+    }
+
+    #[test]
+    fn distributed_fold_bound_overflow_rejects() {
+        let mut requirements = NttExecutionRequirements::default();
+        assert!(matches!(
+            requirements.add_relation_ab(
+                0,
+                64,
+                1,
+                1,
+                64,
+                1,
+                1,
+                4,
+                4,
+                usize::MAX,
+                SisModulusProfileId::Q128OffsetA7F7,
+            ),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 
     #[test]
