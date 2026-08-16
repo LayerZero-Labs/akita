@@ -108,6 +108,17 @@ fn fixed_root_packing_rejects_a_stale_successor_length() {
 }
 
 #[test]
+fn packing_setup_prefix_dispatch_rejects_an_unsupported_dimension() {
+    let result = akita_types::dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        PackingField,
+        96,
+        |D_SETUP| Ok::<usize, akita_field::AkitaError>(D_SETUP)
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn fixed_root_packing_round_trips_in_both_bases() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
@@ -161,15 +172,29 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .as_ref()
                 .unwrap()
                 .slot_id();
-            assert_eq!(setup_prefix.d_setup(), 256);
+            assert_eq!(
+                setup_prefix.d_setup(),
+                setup_prefix
+                    .commitment_profile
+                    .inner_commit_matrix
+                    .ring_dimension(),
+                "the prefix dispatcher must use its frozen A-ring dimension"
+            );
             let prefix_prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
-            let prefix_slot = akita_prover::commit_setup_prefix::<PackingField, 256, _>(
-                setup.expanded.as_ref(),
-                &CpuBackend::DEFAULT,
-                &prefix_prepared,
-                &setup_prefix.commitment_profile,
-                setup_prefix.n_prefix().unwrap(),
-                setup_prefix.natural_len,
+            let prefix_slot = akita_types::dispatch_for_field!(
+                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                PackingField,
+                setup_prefix.d_setup(),
+                |D_SETUP| {
+                    akita_prover::commit_setup_prefix::<PackingField, D_SETUP, _>(
+                        setup.expanded.as_ref(),
+                        &CpuBackend::DEFAULT,
+                        &prefix_prepared,
+                        &setup_prefix.commitment_profile,
+                        setup_prefix.n_prefix().unwrap(),
+                        setup_prefix.natural_len,
+                    )
+                }
             )
             .unwrap();
             setup.prefix_slots.insert(prefix_slot).unwrap();
@@ -192,41 +217,53 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             )
             .unwrap();
             assert_eq!(committed_group.profile(), &row.profiles().final_group);
-            let a_matrix = setup
-                .expanded
-                .shared_matrix()
-                .ring_view::<512>(
-                    root.inner_commit_matrix.output_rank(),
-                    root.inner_commit_matrix.input_width(),
-                )
-                .unwrap();
-            let mut source_digits = Vec::new();
-            for coefficients in evaluations
-                .chunks_exact(512)
-                .take(root.num_positions_per_block)
-            {
-                source_digits.extend(
-                    CyclotomicRing::<PackingField, 512>::from_coefficients(
-                        coefficients.try_into().unwrap(),
-                    )
-                    .balanced_decompose_pow2_i8(root.num_digits_inner, root.log_basis_inner),
-                );
-            }
-            let hint_rows = hint.inner_rows()[0].as_ring_slice::<512>().unwrap();
-            let output_rank = root.inner_commit_matrix.output_rank();
-            assert_eq!(hint_rows.len(), output_rank * root.num_live_blocks);
-            for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
-                let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
-                    CyclotomicRing::zero(),
-                    |sum, (matrix, digits)| {
-                        sum + *matrix
-                            * CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
-                                PackingField::from_i8(digits[index])
-                            }))
-                    },
-                );
-                assert_eq!(*actual, expected, "A hint row {row} mismatch");
-            }
+            akita_types::dispatch_for_field!(
+                akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                PackingField,
+                root.d_a(),
+                |D_A| {
+                    let a_matrix = setup
+                        .expanded
+                        .shared_matrix()
+                        .ring_view::<D_A>(
+                            root.inner_commit_matrix.output_rank(),
+                            root.inner_commit_matrix.input_width(),
+                        )
+                        .unwrap();
+                    let mut source_digits = Vec::new();
+                    for coefficients in evaluations
+                        .chunks_exact(D_A)
+                        .take(root.num_positions_per_block)
+                    {
+                        source_digits.extend(
+                            CyclotomicRing::<PackingField, D_A>::from_coefficients(
+                                coefficients.try_into().unwrap(),
+                            )
+                            .balanced_decompose_pow2_i8(
+                                root.num_digits_inner,
+                                root.log_basis_inner,
+                            ),
+                        );
+                    }
+                    let hint_rows = hint.inner_rows()[0].as_ring_slice::<D_A>().unwrap();
+                    let output_rank = root.inner_commit_matrix.output_rank();
+                    assert_eq!(hint_rows.len(), output_rank * root.num_live_blocks);
+                    for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
+                        let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
+                            CyclotomicRing::zero(),
+                            |sum, (matrix, digits)| {
+                                sum + *matrix
+                                    * CyclotomicRing::from_coefficients(std::array::from_fn(
+                                        |index| PackingField::from_i8(digits[index]),
+                                    ))
+                            },
+                        );
+                        assert_eq!(*actual, expected, "A hint row {row} mismatch");
+                    }
+                    Ok::<(), akita_field::AkitaError>(())
+                }
+            )
+            .unwrap();
             let polynomial_refs = [&polynomial];
             let point = (0..num_vars)
                 .map(|index| PackingExt::from_u64((index as u64).wrapping_mul(3).wrapping_add(1)))

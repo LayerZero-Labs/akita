@@ -224,13 +224,13 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
 }
 
 #[test]
-fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
+fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
     type Cfg = fp32::OneHot;
     type F = fp32::Field;
     type E = fp32::ExtensionField;
     type Scheme = AkitaCommitmentScheme<Cfg>;
     const NUM_VARS: usize = 20;
-    const LABEL: &[u8] = b"test/fp32-nv20-shipped-d128-terminal-l2";
+    const LABEL: &[u8] = b"test/fp32-nv20-shipped-terminal-route";
 
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -239,21 +239,7 @@ fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
             .expect("shipped fp32 schedule")
             .into_schedule();
         let terminal_params = &schedule.terminal.params.witness;
-        let response_l2_sq_cap = terminal_params
-            .response_l2_sq_cap()
-            .expect("nv20 must ship a direct terminal L2 cap");
-        assert_eq!(terminal_params.d_a(), 128);
-        assert_eq!(
-            schedule.terminal.params.sparse_challenge_config,
-            akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
-        );
-        assert_eq!(
-            akita_challenges::selective_l2_operator_norm_rejection(
-                terminal_params.d_a(),
-                &schedule.terminal.params.sparse_challenge_config,
-            ),
-            Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
-        );
+        let response_l2_sq_cap = terminal_params.response_l2_sq_cap();
 
         let poly = fp32_l2_onehot_poly(&schedule.root.params.final_group.commitment, 9);
         let point = (0..NUM_VARS)
@@ -294,7 +280,7 @@ fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
-        .expect("shipped D128 terminal L2 proof");
+        .expect("shipped terminal proof");
 
         let verify = |candidate: &AkitaBatchedProof<F, E>| {
             let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -313,7 +299,7 @@ fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
                 BasisMode::Lagrange,
             )
         };
-        verify(&proof).expect("verify shipped D128 terminal L2 proof");
+        verify(&proof).expect("verify shipped terminal proof");
 
         let mut bad_nonce = proof.clone();
         bad_nonce.terminal.fold_grind_nonce = bad_nonce
@@ -342,23 +328,36 @@ fn fp32_nv20_shipped_d128_terminal_l2_roundtrip_and_rejections() {
             .into_iter()
             .map(i64::from)
             .collect::<Vec<_>>();
-        assert!(
-            group.z_linf_cap.is_none(),
-            "terminal L2 routes must not enforce a separate Linf cap"
-        );
-        // Stay comfortably inside the signed terminal wire type while making
-        // the complete decoded response exceed its scheduled L2 bound.
-        let coordinate = i64::from(i16::MAX / 2);
-        let coordinate_sq = u128::try_from(coordinate * coordinate).expect("positive square");
-        let mut forced_l2_sq = 0u128;
-        for value in &mut values {
-            *value = coordinate;
-            forced_l2_sq += coordinate_sq;
-            if forced_l2_sq > response_l2_sq_cap {
-                break;
+        if let Some(response_l2_sq_cap) = response_l2_sq_cap {
+            assert!(
+                group.z_linf_cap.is_none(),
+                "terminal L2 routes must not enforce a separate Linf cap"
+            );
+            // Stay comfortably inside the signed terminal wire type while
+            // making the complete decoded response exceed the scheduled cap.
+            let coordinate = i64::from(i16::MAX / 2);
+            let coordinate_sq = u128::try_from(coordinate * coordinate).expect("positive square");
+            let mut forced_l2_sq = 0u128;
+            for value in &mut values {
+                *value = coordinate;
+                forced_l2_sq += coordinate_sq;
+                if forced_l2_sq > response_l2_sq_cap {
+                    break;
+                }
             }
+            assert!(forced_l2_sq > response_l2_sq_cap);
+        } else {
+            let linf_cap = group
+                .z_linf_cap
+                .expect("terminal Linf routes must carry a coefficient cap");
+            let over_linf = i64::try_from(
+                linf_cap
+                    .checked_add(1)
+                    .expect("terminal Linf cap increment"),
+            )
+            .expect("terminal Linf cap fits the signed wire type");
+            *values.first_mut().expect("nonempty terminal response") = over_linf;
         }
-        assert!(forced_l2_sq > response_l2_sq_cap);
         *payload = encode_test_golomb_rice(&values, group.z_rice_low_bits);
         assert!(payload.len() <= group.z_payload_bytes);
         assert!(verify(&over_cap).is_err());

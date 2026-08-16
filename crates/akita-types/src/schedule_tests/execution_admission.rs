@@ -1,5 +1,94 @@
 use super::*;
 
+#[test]
+fn accepts_packing_prefix_then_evaluation_trace_prefix() {
+    let packing = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let mut schedule = recursive_schedule(64, 64, true);
+    schedule.root.params.final_group.commitment.opening_method = packing;
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .fold_challenge_config = production;
+    schedule.root.params.sparse_challenge_config = production;
+    schedule.recursive_folds[0].params.witness.opening_method = packing;
+    schedule.recursive_folds[0]
+        .params
+        .witness
+        .fold_challenge_config = production;
+    schedule.recursive_folds[0].params.sparse_challenge_config = production;
+    let first_prefix = schedule.recursive_folds[0]
+        .params
+        .incoming_setup_prefix
+        .as_mut()
+        .expect("level 1 prefix");
+    first_prefix.commitment_params.opening.opening_method = packing;
+    first_prefix.commitment_params.opening.fold_challenge_config = production;
+    schedule.recursive_folds[0].params.witness.setup_prefix = Some(first_prefix.clone());
+
+    append_recursive_fold(&mut schedule);
+    let level2 = &mut schedule.recursive_folds[1];
+    level2.params.witness.opening_method = OpeningMethod::EvaluationTrace;
+    level2.params.witness.fold_challenge_config = production;
+    level2.params.sparse_challenge_config = production;
+    let natural_len = 64;
+    provision_setup_prefix_capacity(&mut level2.params.witness, natural_len);
+    let commitment_params =
+        crate::setup_prefix_precommitted_params(&level2.params.witness, natural_len)
+            .expect("level 2 EvaluationTrace prefix");
+    let second_prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
+    level2.params.incoming_setup_prefix = Some(second_prefix.clone());
+    level2.params.witness.setup_prefix = Some(second_prefix);
+    level2.params.open_commit_matrix = level2.params.witness.open_commit_matrix;
+
+    schedule
+        .validate_structure()
+        .expect("packing at levels 0 and 1 may hand an independent ET prefix to level 2");
+    schedule
+        .validate_nonterminal_opening_execution(1)
+        .expect("each consuming fold has one uniform method family");
+    assert!(matches!(
+        schedule.recursive_folds[0]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+            .unwrap()
+            .commitment_params
+            .opening
+            .opening_method,
+        OpeningMethod::SubringCoefficientPacking { .. }
+    ));
+    assert_eq!(
+        schedule.recursive_folds[1]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+            .unwrap()
+            .commitment_params
+            .opening
+            .opening_method,
+        OpeningMethod::EvaluationTrace
+    );
+    let digest = crate::digest_effective_schedule(&schedule);
+    let mut changed = schedule.clone();
+    let changed_prefix = {
+        let prefix = changed.recursive_folds[1]
+            .params
+            .incoming_setup_prefix
+            .as_mut()
+            .unwrap();
+        prefix.commitment_params.opening.opening_method = packing;
+        prefix.clone()
+    };
+    changed.recursive_folds[1].params.witness.setup_prefix = Some(changed_prefix);
+    assert_ne!(digest, crate::digest_effective_schedule(&changed));
+    assert!(changed.validate_nonterminal_opening_execution(1).is_err());
+}
+
 fn use_expected_producer_encodings(schedule: &mut FoldSchedule, extension_degree: usize) {
     let root = &mut schedule.root.params.final_group.commitment;
     root.source_encoding = crate::CommittedSourceEncoding::for_producer(

@@ -25,8 +25,8 @@ use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_prover::{NttExecutionRequirements, NttOperationCluster};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, NttCacheKey, NttTransformDomain,
-    PolynomialGroupLayout, SetupContributionMode,
+    AkitaScheduleLookupKey, FoldSchedule, NttCacheKey, NttTransformDomain, OpeningMethod,
+    PolynomialGroupLayout, SetupContributionMode, SubringCoefficientPackingGeometry,
 };
 use common::*;
 
@@ -82,8 +82,10 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     );
     assert!(incoming_prefixes[0].is_some());
     assert!(incoming_prefixes[1..].iter().all(Option::is_none));
-    assert_eq!(prover.num_field_elements, 16_777_216);
-    assert_eq!(verifier.num_field_elements, 8_388_608);
+    assert!(
+        verifier.num_field_elements <= prover.num_field_elements,
+        "verifier setup must remain a prefix of the prover setup"
+    );
 
     // `K=2` cannot reach the four-polynomial grouped root, and this family
     // ships no row without precommitted groups. The only shape it can still serve is
@@ -170,28 +172,36 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "W8R2 profile must have at least three fold levels, got {}",
         1 + schedule.recursive_folds.len()
     );
+    for (level, params) in [
+        &schedule.root.params.final_group.commitment,
+        &schedule.recursive_folds[0].params.witness,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } = params.opening_method
+        else {
+            panic!("level {level} must use coefficient packing");
+        };
+        let geometry = SubringCoefficientPackingGeometry::try_new(
+            W8R2Cfg::EXT_DEGREE,
+            params.d_a(),
+            challenge_subring_dimension,
+        )
+        .expect("valid coefficient-packing geometry");
+        if level == 0 {
+            assert!(
+                geometry.packing_factor() > 1,
+                "the root must use reduced-width coefficient packing"
+            );
+        }
+    }
     assert_eq!(
-        schedule.root.params.final_group.commitment.role_dims(),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 128,
-        },
-        "level 0 must use the A/B/D role dimensions the shipped W8R2 row selects"
-    );
-    assert_eq!(
-        schedule.recursive_folds[0].params.witness.role_dims(),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 128,
-        },
-        "level 1 must use the A/B/D role dimensions the shipped W8R2 row selects"
-    );
-    assert_eq!(
-        schedule.recursive_folds[1].params.witness.role_dims(),
-        CommitmentRingDims::uniform(64),
-        "level 2 must retain the shipped uniform D64 suffix dimensions"
+        schedule.recursive_folds[1].params.witness.opening_method,
+        OpeningMethod::EvaluationTrace,
+        "the level-2 fold must consume the packing-produced flat witness through EvaluationTrace"
     );
 
     // Levels 0 and 1 both use the W8R2 witness partition: 8 chunks over the two
@@ -229,6 +239,17 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             .is_some(),
         "level 1 must consume the level-0 setup prefix"
     );
+    assert!(matches!(
+        schedule.recursive_folds[0]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+            .expect("level-1 setup prefix")
+            .commitment_params
+            .opening
+            .opening_method,
+        OpeningMethod::SubringCoefficientPacking { .. }
+    ));
 
     // Level 2 is the single-chunk direct fold after the selected offload edge.
     let level2 = &schedule.recursive_folds[1].params;

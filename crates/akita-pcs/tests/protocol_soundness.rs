@@ -21,8 +21,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommittedGroup,
-    CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection,
-    PolynomialGroupClaims,
+    CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims, OpeningMethod,
+    OpeningScheduleSelection, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 use rand::rngs::StdRng;
@@ -661,11 +661,10 @@ fn ext4_point() -> Vec<fp32::ExtensionField> {
         .collect()
 }
 
-/// The fp32 extension-opening reduction (EOR) is a required part of the proof
-/// when claims live in a strict extension of the commitment field. Tampering
-/// with it — or dropping it — must be rejected at the public PCS boundary.
+/// Coefficient packing removes EOR from the first two fp32 folds. The terminal
+/// remains EvaluationTrace and must reject a changed or missing EOR payload.
 #[test]
-fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
+fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -722,9 +721,50 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             BasisMode::Lagrange,
         )
         .expect("fp32 extension proof");
+        let resolved = Cfg::resolve_schedule_selection(selection).expect("selected fp32 row");
         assert!(
-            proof.root.extension_opening_reduction.is_some(),
-            "non-base fp32 claims must carry a root extension-opening reduction"
+            matches!(
+                resolved
+                    .schedule()
+                    .root
+                    .params
+                    .final_group
+                    .commitment
+                    .opening_method,
+                OpeningMethod::SubringCoefficientPacking { .. }
+            ),
+            "the shipped fp32 row must use coefficient packing at the root"
+        );
+        assert!(
+            proof.root.extension_opening_reduction.is_none(),
+            "coefficient packing must not emit a root EOR payload"
+        );
+        assert!(
+            matches!(
+                resolved
+                    .schedule()
+                    .recursive_folds
+                    .first()
+                    .expect("fp32 row has a level-1 fold")
+                    .params
+                    .witness
+                    .opening_method,
+                OpeningMethod::SubringCoefficientPacking { .. }
+            ),
+            "the shipped fp32 row must use coefficient packing at level 1"
+        );
+        assert!(
+            proof
+                .recursive_folds
+                .first()
+                .expect("fp32 proof has a level-1 fold")
+                .extension_opening_reduction
+                .is_none(),
+            "coefficient packing must not emit a level-1 EOR payload"
+        );
+        assert!(
+            proof.terminal.extension_opening_reduction.is_some(),
+            "the EvaluationTrace terminal must retain EOR"
         );
 
         // Baseline: the honest proof verifies.
@@ -751,16 +791,16 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
         )
         .expect_err("wrong batched extension opening must reject");
 
-        // (2) A tampered EOR partial evaluation must be rejected.
+        // (2) A tampered terminal EOR partial evaluation must be rejected.
         let mut tampered = proof.clone();
         *tampered
-            .root
+            .terminal
             .extension_opening_reduction
             .as_mut()
-            .expect("root EOR payload")
+            .expect("terminal EOR payload")
             .partials
             .first_mut()
-            .expect("root EOR must carry a partial evaluation") += SE::one();
+            .expect("terminal EOR must carry a partial evaluation") += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &tampered,
@@ -769,11 +809,11 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
             BasisMode::Lagrange,
         )
-        .expect_err("tampered extension-opening reduction partial must reject");
+        .expect_err("tampered terminal extension-opening reduction partial must reject");
 
-        // (3) Omitting the required EOR entirely must be rejected.
+        // (3) Omitting the required terminal EOR entirely must be rejected.
         let mut stripped = proof.clone();
-        stripped.root.extension_opening_reduction = None;
+        stripped.terminal.extension_opening_reduction = None;
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &stripped,
@@ -782,7 +822,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
             BasisMode::Lagrange,
         )
-        .expect_err("omitting the required root extension-opening reduction must reject");
+        .expect_err("omitting the required terminal extension-opening reduction must reject");
     });
 }
 

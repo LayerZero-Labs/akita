@@ -8,10 +8,13 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
+use akita_types::sis::{
+    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
+};
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    DecompositionParams, OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
-    SisModulusProfileId,
+    DecompositionParams, LevelParamsLike, OpeningScheduleSelection, PolynomialGroupLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::{
     any::TypeId,
@@ -127,6 +130,140 @@ fn rebuild_group_output_matrices(
     Ok(())
 }
 
+fn universal_fold_digit_depth(
+    params: &(impl LevelParamsLike + ?Sized),
+    field_bits: u32,
+    num_claims: usize,
+    num_chunks: usize,
+) -> Result<usize, AkitaError> {
+    let d_a = params.inner_commit_matrix_params().ring_dimension();
+    let witness_norms = FoldWitnessNorms::bounded(params.log_basis_inner(), d_a);
+    let challenge_config = params.fold_challenge_config();
+    let width_s = params
+        .num_positions_per_block()
+        .checked_mul(params.num_digits_inner())
+        .ok_or_else(|| AkitaError::InvalidSetup("synthetic fold width overflow".into()))?;
+    let num_fold_coeffs = width_s
+        .checked_mul(d_a)
+        .and_then(|count| count.checked_mul(num_chunks))
+        .ok_or_else(|| AkitaError::InvalidSetup("synthetic fold response overflow".into()))?;
+    BalancedSignedDigitFoldPolicy::universal(field_bits, witness_norms).num_digits_fold(
+        HonestFoldSizingQuery {
+            ring_dimension: d_a,
+            num_claims,
+            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim(),
+            num_live_blocks: params.num_live_blocks(),
+            num_positions_per_block: params.num_positions_per_block(),
+            num_chunks,
+            num_fold_coeffs,
+            witness_norms,
+            log_basis_response: params.log_basis_open(),
+            challenge_config: &challenge_config,
+        },
+    )
+}
+
+fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
+    schedule: &mut akita_types::FoldSchedule,
+) -> Result<(), AkitaError> {
+    let policy = policy_of::<Cfg>();
+    let predecessor_output = schedule
+        .recursive_folds
+        .last()
+        .ok_or_else(|| AkitaError::InvalidSetup("synthetic terminal has no predecessor".into()))?
+        .output_witness_len;
+    let terminal = &mut schedule.terminal;
+    terminal.input_witness_len = predecessor_output;
+    let terminal_witness = &mut terminal.params.witness;
+    let terminal_d = [terminal_witness.d_a(), 64]
+        .into_iter()
+        .find(|dimension| terminal.input_witness_len.is_multiple_of(*dimension))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("packing test output has no supported terminal divisor".into())
+        })?;
+    terminal.params.sparse_challenge_config = Cfg::ring_challenge_config(terminal_d)?;
+    terminal_witness.num_live_ring_elements_per_claim = terminal.input_witness_len / terminal_d;
+    let terminal_witness_norms =
+        FoldWitnessNorms::bounded(terminal_witness.log_basis_inner, terminal_d);
+    let ring_dimension = terminal_d
+        .try_into()
+        .map_err(|_| AkitaError::InvalidSetup("packing terminal dimension exceeds u32".into()))?;
+    let mut selected = None;
+    for positions_per_block in [256usize, 128, 64, 32, 16, 8, 4, 2, 1] {
+        let num_live_blocks = terminal_witness
+            .num_live_ring_elements_per_claim
+            .div_ceil(positions_per_block);
+        let a_width = positions_per_block
+            .checked_mul(terminal_witness.num_digits_inner)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("synthetic terminal A width overflow".into())
+            })?;
+        let response_width = a_width.checked_mul(terminal_d).ok_or_else(|| {
+            AkitaError::InvalidSetup("synthetic terminal response overflow".into())
+        })?;
+        let fold_digit_count = BalancedSignedDigitFoldPolicy::universal(
+            policy.decomposition.field_bits(),
+            terminal_witness_norms,
+        )
+        .num_digits_fold(HonestFoldSizingQuery {
+            ring_dimension: terminal_d,
+            num_claims: 1,
+            num_live_ring_elements_per_claim: terminal_witness.num_live_ring_elements_per_claim,
+            num_live_blocks,
+            num_positions_per_block: positions_per_block,
+            num_chunks: 1,
+            num_fold_coeffs: response_width,
+            witness_norms: terminal_witness_norms,
+            log_basis_response: terminal_witness.fold_log_basis,
+            challenge_config: &terminal.params.sparse_challenge_config,
+        })?;
+        let Some(a_bound) = akita_types::sis::rounded_up_role_a_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_table_digest,
+            policy.sis_modulus_profile,
+            terminal_d,
+            terminal_witness.fold_log_basis,
+            &terminal.params.sparse_challenge_config,
+            fold_digit_count,
+        ) else {
+            continue;
+        };
+        let Ok(matrix) = akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
+            akita_types::SisTableKey {
+                policy: policy.sis_security_policy,
+                table_digest: policy.sis_table_digest,
+                modulus_profile: policy.sis_modulus_profile,
+                role: akita_types::SisMatrixRole::Inner,
+                ring_dimension,
+                coeff_linf_bound: a_bound,
+            },
+            a_width,
+        ) else {
+            continue;
+        };
+        selected = Some((
+            positions_per_block,
+            num_live_blocks,
+            fold_digit_count,
+            matrix,
+        ));
+        break;
+    }
+    let (positions_per_block, num_live_blocks, fold_digit_count, matrix) =
+        selected.ok_or_else(|| {
+            AkitaError::InvalidSetup("packing test terminal has no admissible Linf geometry".into())
+        })?;
+    terminal_witness.num_positions_per_block = positions_per_block;
+    terminal_witness.num_live_blocks = num_live_blocks;
+    terminal_witness.fold_digit_count = fold_digit_count;
+    terminal_witness.inner_commit_matrix = matrix;
+    let encoding_scale =
+        terminal_witness.certified_response_linf_cap(&terminal.params.sparse_challenge_config)?;
+    terminal.params.response_shape =
+        akita_types::TerminalResponseShape::derive(terminal_witness, encoding_scale)?;
+    Ok(())
+}
+
 /// Test-only commitment config that combines an envelope config with a final
 /// group config.
 ///
@@ -184,7 +321,11 @@ where
                         "root packing subring is not in the production challenge ladder".into(),
                     )
                 })?;
-        let root_open_dimension = 128usize;
+        let root_open_dimension = 128usize.min(
+            Self::EXT_DEGREE
+                .checked_mul(challenge_subring_dimension)
+                .ok_or_else(|| AkitaError::InvalidSetup("packing width overflow".into()))?,
+        );
         let root_open_bound = akita_types::sis::rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
@@ -283,6 +424,12 @@ where
         successor_witness.num_live_blocks = successor_witness
             .num_live_ring_elements_per_claim
             .div_ceil(successor_witness.num_positions_per_block);
+        successor_witness.num_digits_fold = universal_fold_digit_depth(
+            successor_witness,
+            policy.decomposition.field_bits(),
+            1,
+            successor_witness.witness_chunk.num_chunks,
+        )?;
         let successor_a_width = successor_witness
             .num_positions_per_block
             .checked_mul(successor_witness.num_digits_inner)
@@ -325,7 +472,10 @@ where
         let mut prefix_source_params = successor_witness.clone();
         prefix_source_params.setup_prefix = None;
         prefix_source_params.log_basis_inner = root.log_basis_inner;
-        prefix_source_params.num_digits_inner = root.num_digits_inner;
+        prefix_source_params.num_digits_inner = akita_types::sis::compute_num_digits_field_width(
+            policy.decomposition.field_bits(),
+            root.log_basis_inner,
+        );
         let prefix_inner_width = prefix_positions
             .checked_mul(prefix_source_params.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("packing prefix A width overflow".into()))?;
@@ -365,11 +515,6 @@ where
                 "packing root setup prefix left the base row's planned commitment class".into(),
             ));
         }
-        prefix_params.opening.num_digits_fold = akita_types::sis::num_digits_for_linf_cap(
-            i16::MAX as u128,
-            policy.decomposition.field_bits(),
-            prefix_params.opening.log_basis_open,
-        );
         prefix_params.opening.opening_method =
             akita_types::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
@@ -381,6 +526,48 @@ where
                         "setup-prefix packing subring is not in the production ladder".into(),
                     )
                 })?;
+        prefix_params.opening.num_digits_fold = universal_fold_digit_depth(
+            &prefix_params,
+            policy.decomposition.field_bits(),
+            1,
+            successor_witness.witness_chunk.num_chunks,
+        )?;
+        let prefix_a_bound = akita_types::sis::rounded_up_role_a_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_table_digest,
+            policy.sis_modulus_profile,
+            prefix_params.layout.inner_commit_matrix.ring_dimension(),
+            prefix_params.opening.log_basis_open,
+            &prefix_params.opening.fold_challenge_config,
+            prefix_params.opening.num_digits_fold,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("packing prefix has no audited A bound".into()))?;
+        let mut prefix_a_key = prefix_params
+            .layout
+            .inner_commit_matrix
+            .sis_table_key()
+            .ok_or_else(|| AkitaError::InvalidSetup("packing prefix requires Linf A".into()))?;
+        prefix_a_key.coeff_linf_bound = prefix_a_bound;
+        prefix_params.layout.inner_commit_matrix =
+            akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
+                prefix_a_key,
+                prefix_params.layout.inner_commit_matrix.input_width(),
+            )?;
+        let prefix_outer_width = akita_types::CommitmentSliceGeometry::try_new(
+            prefix_params.layout.outer_slice_count,
+            prefix_params.layout.num_live_blocks,
+            1,
+            prefix_params.layout.inner_commit_matrix.output_rank(),
+            prefix_params.layout.num_digits_outer,
+            prefix_params.layout.inner_commit_matrix.ring_dimension(),
+            prefix_params.layout.outer_commit_matrix.ring_dimension(),
+        )?
+        .physical_input_width();
+        prefix_params.layout.outer_commit_matrix =
+            akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
+                prefix_params.layout.outer_commit_matrix.sis_table_key(),
+                prefix_outer_width,
+            )?;
         let incoming_setup_prefix =
             akita_types::scheduled_setup_prefix(root_setup_natural_len, prefix_params);
         successor_witness.setup_prefix = Some(incoming_setup_prefix.clone());
@@ -413,59 +600,7 @@ where
         schedule.recursive_folds.clear();
         schedule.recursive_folds.push(successor);
 
-        let terminal = &mut schedule.terminal;
-        terminal.input_witness_len = schedule.recursive_folds[0].output_witness_len;
-        let terminal_witness = &mut terminal.params.witness;
-        let terminal_d = [terminal_witness.d_a(), 64]
-            .into_iter()
-            .find(|dimension| terminal.input_witness_len.is_multiple_of(*dimension))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "packing test root output has no supported terminal divisor".into(),
-                )
-            })?;
-        terminal.params.sparse_challenge_config = Self::ring_challenge_config(terminal_d)?;
-        terminal_witness.num_live_ring_elements_per_claim = terminal.input_witness_len / terminal_d;
-        terminal_witness.num_live_blocks = terminal_witness
-            .num_live_ring_elements_per_claim
-            .div_ceil(terminal_witness.num_positions_per_block);
-        terminal_witness.fold_digit_count = akita_types::sis::num_digits_for_linf_cap(
-            i16::MAX as u128,
-            policy.decomposition.field_bits(),
-            terminal_witness.fold_log_basis,
-        );
-        let terminal_a_bound = akita_types::sis::rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            terminal_d,
-            terminal_witness.fold_log_basis,
-            &terminal.params.sparse_challenge_config,
-            terminal_witness.fold_digit_count,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("packing test terminal has no L-infinity A bound".into())
-        })?;
-        terminal_witness.inner_commit_matrix =
-            akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
-                akita_types::SisTableKey {
-                    policy: policy.sis_security_policy,
-                    table_digest: policy.sis_table_digest,
-                    modulus_profile: policy.sis_modulus_profile,
-                    role: akita_types::SisMatrixRole::Inner,
-                    ring_dimension: terminal_d.try_into().map_err(|_| {
-                        AkitaError::InvalidSetup(
-                            "packing test terminal dimension exceeds u32".into(),
-                        )
-                    })?,
-                    coeff_linf_bound: terminal_a_bound,
-                },
-                terminal_witness.inner_width(),
-            )?;
-        let encoding_scale = terminal_witness
-            .certified_response_linf_cap(&terminal.params.sparse_challenge_config)?;
-        terminal.params.response_shape =
-            akita_types::TerminalResponseShape::derive(terminal_witness, encoding_scale)?;
+        retarget_synthetic_terminal::<Self>(&mut schedule)?;
 
         schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
         let root = &schedule.root.params.final_group.commitment;

@@ -620,11 +620,11 @@ mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
     use akita_config::proof_optimized::fp128;
-    use akita_config::CommitmentConfig;
     use akita_types::{
         basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
-        DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry,
-        RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
+        CommittedGroupParams, DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint,
+        RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint,
+        SisModulusProfileId, WitnessLayout,
     };
 
     #[test]
@@ -749,22 +749,25 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type Cfg = fp128::Dense;
-        type F = fp128::Field;
+        type F = akita_field::Prime128OffsetA7F7;
         type E = F;
-        const D: usize = Cfg::D;
+        const D: usize = 128;
         const NUM_VARIABLES: usize = 16;
 
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
-        let level_params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
-            .expect("level parameters")
-            .schedule()
-            .root
-            .params
-            .final_group
-            .commitment
-            .clone();
+        let level_params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            3,
+            2,
+            4,
+            3,
+            akita_challenges::SparseChallengeConfig::production_for_ring_dim(D)
+                .expect("D128 challenge"),
+        )
+        .with_decomp(64, (1usize << NUM_VARIABLES) / D, 2, 2, 2)
+        .expect("local EvaluationTrace geometry");
         let relation_witness_geometry =
             akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
                 &level_params,
