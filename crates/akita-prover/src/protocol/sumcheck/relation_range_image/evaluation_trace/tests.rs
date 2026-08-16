@@ -1,18 +1,17 @@
 use super::*;
 
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing};
-use akita_config::{proof_optimized::fp128, CommitmentConfig};
+use akita_config::proof_optimized::fp128;
 use akita_field::{Ext2, ExtField, FromPrimitiveInt};
 use akita_types::{
     basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
-    DigitRangePlan, EvaluationTraceInputs, FpExtEncoding, OpeningClaimsLayout,
-    PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RingMultiplierOpeningPoint, WitnessLayout,
+    CommittedGroupParams, DigitRangePlan, EvaluationTraceInputs, FpExtEncoding,
+    OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
+    RingMultiplierOpeningPoint, SisModulusProfileId, WitnessLayout,
 };
 
-type Cfg = fp128::Dense;
 type F = fp128::Field;
-const D: usize = Cfg::D;
+const D: usize = 128;
 const NUM_VARIABLES: usize = 16;
 
 fn fold_prepared_trace_at_point<E: FieldCore>(
@@ -79,14 +78,18 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
-    let level_params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
-        .unwrap()
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
+    let level_params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        D,
+        3,
+        2,
+        4,
+        3,
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(D)
+            .expect("D128 challenge"),
+    )
+    .with_decomp(64, (1usize << NUM_VARIABLES) / D, 2, 2, 2)
+    .expect("local EvaluationTrace geometry");
     let relation_witness_geometry =
         akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
             &level_params,
