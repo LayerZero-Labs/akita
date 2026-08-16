@@ -63,13 +63,13 @@ MODE_NUM_POLYS = {
 }
 MODE_NUM_VARS = {
     "onehot_fp31": {30},
-    "dense_fp31": {26},
+    "dense_fp31": {28},
     "onehot_fp32": {30},
-    "dense_fp32": {26},
+    "dense_fp32": {28},
     "onehot_fp63": {30},
-    "dense_fp63": {26},
+    "dense_fp63": {28},
     "onehot_fp64": {30},
-    "dense_fp64": {26},
+    "dense_fp64": {28},
     "dense_fp128": {28},
     "onehot_fp128": {36},
     "onehot_fp128_multi_group": {32},

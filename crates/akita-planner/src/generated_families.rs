@@ -168,7 +168,7 @@ const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
 
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
-    PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
 ];
 
 const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
@@ -181,7 +181,7 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     // the planned schedule disagree on the fold-level-1 witness length.
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
-    PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
 ];
 
 const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1)];
@@ -787,6 +787,22 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn small_field_dense_families_emit_nv28_without_nv26() {
+        for family_name in ["fp31_dense", "fp32_dense", "fp63_dense", "fp64_dense"] {
+            let family = ALL_GENERATED_FAMILIES
+                .iter()
+                .find(|family| family.module_name == family_name)
+                .expect("known small-field dense family");
+            assert!(family
+                .scalar_keys
+                .contains(&PolynomialGroupLayout::singleton(28)));
+            assert!(!family
+                .scalar_keys
+                .contains(&PolynomialGroupLayout::singleton(26)));
+        }
+    }
 
     #[test]
     fn scalar_preplans_deduplicate_by_exact_producer_and_layout() {
