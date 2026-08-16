@@ -290,9 +290,209 @@ struct CatalogRowMetrics {
     proof_bytes: usize,
     fold_levels: usize,
     row_digest: String,
+    policy_signature: String,
 }
 
-const CATALOG_REPORT_HEADER: &str = "family\tstatus\tkey\told_setup_fields\tnew_setup_fields\told_proof_bytes\tnew_proof_bytes\told_levels\tnew_levels\told_row_digest\tnew_row_digest\n";
+const CATALOG_REPORT_HEADER: &str = "family\tstatus\tkey\told_setup_fields\tnew_setup_fields\told_proof_bytes\tnew_proof_bytes\told_levels\tnew_levels\told_row_digest\tnew_row_digest\told_policy\tnew_policy\n";
+
+fn source_encoding_signature(value: akita_types::CommittedSourceEncoding) -> String {
+    match value {
+        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable => "canonical".into(),
+        akita_types::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+            format!("tensor-k{extension_degree}")
+        }
+    }
+}
+
+fn security_route_signature(value: akita_types::InnerCommitSecurityRoute) -> &'static str {
+    match value {
+        akita_types::InnerCommitSecurityRoute::Linf(_) => "Linf",
+        akita_types::InnerCommitSecurityRoute::L2 { .. } => "L2",
+    }
+}
+
+fn opening_policy_signature(
+    opening_method: akita_types::OpeningMethod,
+    source_encoding: akita_types::CommittedSourceEncoding,
+    extension_degree: usize,
+    d_a: usize,
+    security_route: akita_types::InnerCommitSecurityRoute,
+) -> Result<String, String> {
+    let opening = match opening_method {
+        akita_types::OpeningMethod::EvaluationTrace => "ET,s=-,h=-,w=-".to_string(),
+        akita_types::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => {
+            let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
+                extension_degree,
+                d_a,
+                challenge_subring_dimension,
+            )
+            .map_err(|error| format!("derive catalog packing geometry: {error}"))?;
+            format!(
+                "PACK,s={},h={},w={}",
+                geometry.challenge_subring_dimension(),
+                geometry.packing_factor(),
+                geometry.partial_base_field_width(),
+            )
+        }
+    };
+    Ok(format!(
+        "{opening},src={},dA={d_a},sec={}",
+        source_encoding_signature(source_encoding),
+        security_route_signature(security_route),
+    ))
+}
+
+fn catalog_policy_signature(
+    spec: &EmitSpec,
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+) -> Result<String, String> {
+    use std::fmt::Write as _;
+
+    let mut signature = String::new();
+    let root_eor_layout = key
+        .opening_layout()
+        .and_then(|layout| layout.aggregate_polynomial_group_layout())
+        .map_err(|error| format!("derive aggregate root EOR layout: {error}"))?;
+    let nonterminal = std::iter::once((
+        0usize,
+        &schedule.root.params.final_group.commitment,
+        schedule.root.input_witness_len,
+        schedule.root.output_witness_len,
+    ))
+    .chain(
+        schedule
+            .recursive_folds
+            .iter()
+            .enumerate()
+            .map(|(index, fold)| {
+                (
+                    index + 1,
+                    &fold.params.witness,
+                    fold.input_witness_len,
+                    fold.output_witness_len,
+                )
+            }),
+    );
+    for (level, params, input_witness_len, output_witness_len) in nonterminal {
+        let eor = if matches!(
+            params.opening_method,
+            akita_types::OpeningMethod::EvaluationTrace
+        ) {
+            akita_types::extension_opening_reduction_level_bytes(
+                spec.policy
+                    .challenge_field_bits()
+                    .map_err(|error| format!("derive challenge width: {error}"))?,
+                spec.policy.claim_ext_degree,
+                level,
+                root_eor_layout,
+                input_witness_len,
+                params.d_a(),
+            )
+            .map_err(|error| format!("derive level EOR bytes: {error}"))?
+        } else {
+            0
+        };
+        if level != 0 {
+            signature.push('/');
+        }
+        write!(
+            signature,
+            "L{level}[chunks={}@{},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
+            params.witness_chunk.num_chunks,
+            params.witness_chunk.num_activated_levels,
+            opening_policy_signature(
+                params.opening_method,
+                params.source_encoding,
+                spec.policy.claim_ext_degree,
+                params.d_a(),
+                params.inner_commit_matrix.security_route(),
+            )?,
+        )
+        .map_err(|error| format!("write catalog policy signature: {error}"))?;
+        if level == 0 {
+            for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+                write!(
+                    signature,
+                    ";pre{index}={}",
+                    opening_policy_signature(
+                        group.commitment.opening.opening_method,
+                        group.commitment.layout.source_encoding,
+                        spec.policy.claim_ext_degree,
+                        group.commitment.layout.inner_commit_matrix.ring_dimension(),
+                        group.commitment.layout.inner_commit_matrix.security_route(),
+                    )?,
+                )
+                .map_err(|error| format!("write catalog policy signature: {error}"))?;
+            }
+        } else if let Some(prefix) = schedule.recursive_folds[level - 1]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+        {
+            write!(
+                signature,
+                ";prefix={}",
+                opening_policy_signature(
+                    prefix.commitment_params.opening.opening_method,
+                    prefix.commitment_params.layout.source_encoding,
+                    spec.policy.claim_ext_degree,
+                    prefix
+                        .commitment_params
+                        .layout
+                        .inner_commit_matrix
+                        .ring_dimension(),
+                    prefix
+                        .commitment_params
+                        .layout
+                        .inner_commit_matrix
+                        .security_route(),
+                )?,
+            )
+            .map_err(|error| format!("write catalog policy signature: {error}"))?;
+        }
+        signature.push(']');
+    }
+    let terminal_level = schedule.recursive_folds.len() + 1;
+    let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
+        spec.policy
+            .challenge_field_bits()
+            .map_err(|error| format!("derive challenge width: {error}"))?,
+        spec.policy.claim_ext_degree,
+        terminal_level,
+        root_eor_layout,
+        schedule.terminal.input_witness_len,
+        schedule.terminal.params.witness.d_a(),
+    )
+    .map_err(|error| format!("derive terminal EOR bytes: {error}"))?;
+    let terminal_source = akita_types::CommittedSourceEncoding::for_producer(
+        akita_types::OpeningMethod::EvaluationTrace,
+        spec.policy.claim_ext_degree,
+        schedule.terminal.params.witness.d_a(),
+        akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
+            .map_err(|error| format!("derive terminal source arity: {error}"))?,
+        false,
+    );
+    write!(
+        signature,
+        "/T[method=ET,src={},eor={terminal_eor},input={},dA={},sec={}]",
+        source_encoding_signature(terminal_source),
+        schedule.terminal.input_witness_len,
+        schedule.terminal.params.witness.d_a(),
+        security_route_signature(
+            schedule
+                .terminal
+                .params
+                .witness
+                .inner_commit_matrix
+                .security_route(),
+        ),
+    )
+    .map_err(|error| format!("write catalog policy signature: {error}"))?;
+    Ok(signature)
+}
 
 fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
     let final_group = CommittedGroupProfile::try_from_params(
@@ -329,6 +529,7 @@ fn catalog_row_metrics(
         proof_bytes,
         fold_levels: schedule.num_fold_levels(),
         row_digest: row_digest_hex(key, schedule)?,
+        policy_signature: catalog_policy_signature(spec, key, schedule)?,
     })
 }
 
@@ -359,6 +560,10 @@ fn optional_metric(
 
 fn optional_digest(value: Option<&CatalogRowMetrics>) -> &str {
     value.map_or("-", |metrics| metrics.row_digest.as_str())
+}
+
+fn optional_policy(value: Option<&CatalogRowMetrics>) -> &str {
+    value.map_or("-", |metrics| metrics.policy_signature.as_str())
 }
 
 fn compare_materialized_catalog(
@@ -432,7 +637,7 @@ fn compare_materialized_catalog(
         use std::fmt::Write as _;
         writeln!(
             report,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             spec.module_name,
             status,
             compact_catalog_key(key),
@@ -444,6 +649,8 @@ fn compare_materialized_catalog(
             optional_metric(new_metrics.as_ref(), |metrics| metrics.fold_levels),
             optional_digest(old_metrics.as_ref()),
             optional_digest(new_metrics.as_ref()),
+            optional_policy(old_metrics.as_ref()),
+            optional_policy(new_metrics.as_ref()),
         )
         .map_err(|error| format!("write catalog comparison: {error}"))?;
     }
@@ -977,6 +1184,11 @@ mod tests {
         let equal = compare_materialized_catalog(&spec, table, &entries).expect("equal report");
         assert_eq!(equal.changed_rows, 0);
         assert_eq!(equal.report.matches("\tequal\t").count(), entries.len());
+        assert!(CATALOG_REPORT_HEADER.ends_with("old_policy\tnew_policy\n"));
+        assert!(equal
+            .report
+            .lines()
+            .all(|line| line.split('\t').count() == 13));
 
         let removed = compare_materialized_catalog(&spec, table, &entries[..entries.len() - 1])
             .expect("removed report");
@@ -1073,13 +1285,33 @@ mod tests {
             .opening_method
             == OpeningMethod::EvaluationTrace));
 
+        let policy_signature =
+            catalog_policy_signature(&spec, &key, &schedule).expect("W8R2 policy signature");
+        assert!(policy_signature.contains("L0[chunks=8@2,eor=0,in="));
+        assert!(
+            policy_signature.contains("witness=PACK,s=64,h=4,w=64,src=canonical,dA=256,sec=Linf")
+        );
+        assert!(
+            policy_signature.contains("pre0=PACK,s=128,h=2,w=128,src=canonical,dA=256,sec=Linf")
+        );
+        assert!(policy_signature.contains("L1[chunks=8@2,eor=0,in="));
+        assert!(policy_signature.contains("prefix=PACK,s=64"));
+        assert!(policy_signature.contains("L2[chunks=1@0,eor=0,in="));
+        assert!(policy_signature.contains("witness=ET,s=-,h=-,w=-"));
+        assert!(policy_signature.contains("/T[method=ET,src=canonical,eor=0,input="));
+        assert!(!policy_signature.contains(['\t', '\n']));
+
+        let root_eor_layout = key
+            .opening_layout()
+            .and_then(|layout| layout.aggregate_polynomial_group_layout())
+            .expect("aggregate root EOR layout");
         let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
             spec.policy
                 .challenge_field_bits()
                 .expect("challenge field bits"),
             spec.policy.claim_ext_degree,
             schedule.recursive_folds.len() + 1,
-            key.final_group,
+            root_eor_layout,
             schedule.terminal.input_witness_len,
             schedule.terminal.params.witness.d_a(),
         )
@@ -1098,6 +1330,49 @@ mod tests {
                 spec.ring_challenge_config,
             )
             .expect("generated proof payload"),
+        );
+
+        assert_eq!(
+            source_encoding_signature(
+                akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+                    extension_degree: 2,
+                }
+            ),
+            "tensor-k2",
+        );
+        assert_ne!(
+            source_encoding_signature(
+                akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+                    extension_degree: 2,
+                }
+            ),
+            source_encoding_signature(
+                akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+                    extension_degree: 4,
+                }
+            ),
+        );
+
+        let mut activation_changed = schedule.clone();
+        activation_changed
+            .root
+            .params
+            .final_group
+            .commitment
+            .witness_chunk
+            .num_activated_levels = 1;
+        assert_ne!(
+            policy_signature,
+            catalog_policy_signature(&spec, &key, &activation_changed)
+                .expect("activation policy signature"),
+        );
+
+        let mut input_changed = schedule.clone();
+        input_changed.root.input_witness_len += 1;
+        assert_ne!(
+            policy_signature,
+            catalog_policy_signature(&spec, &key, &input_changed)
+                .expect("input-length policy signature"),
         );
     }
 

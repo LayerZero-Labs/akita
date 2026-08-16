@@ -941,6 +941,31 @@ def extract_summary(
                     "d_a": int(kvs["d_a"]),
                     "d_b": int(kvs["d_b"]),
                     "d_d": int(kvs["d_d"]),
+                    **(
+                        {"source_encoding": kvs["source_encoding"]}
+                        if "source_encoding" in kvs
+                        else {}
+                    ),
+                    **(
+                        {"extension_degree": int(kvs["extension_degree"])}
+                        if "extension_degree" in kvs
+                        else {}
+                    ),
+                    **(
+                        {"opening_method": kvs["opening_method"]}
+                        if "opening_method" in kvs
+                        else {}
+                    ),
+                    **{
+                        key: parse_tracing_optional_int(kvs.get(key))
+                        for key in (
+                            "challenge_subring_dimension",
+                            "packing_factor",
+                            "packing_partial_width",
+                            "packing_quotient_width",
+                        )
+                        if key in kvs
+                    },
                     "a_width": int(kvs.get("a_width", "0")),
                     "b_width": int(kvs.get("b_width", "0")),
                     "d_width": int(kvs.get("d_width", "0")),
@@ -1071,6 +1096,58 @@ def extract_summary(
                 "d_a": int(kvs.get("d_a", legacy_d)),
                 "d_b": int(kvs.get("d_b", legacy_d)),
                 "d_d": int(kvs.get("d_d", legacy_d)),
+                **(
+                    {"source_encoding": kvs["source_encoding"]}
+                    if "source_encoding" in kvs
+                    else {}
+                ),
+                **(
+                    {"witness_chunk_count": int(kvs["witness_chunk_count"])}
+                    if "witness_chunk_count" in kvs
+                    else {}
+                ),
+                **(
+                    {
+                        "witness_chunk_activated_levels": int(
+                            kvs["witness_chunk_activated_levels"]
+                        )
+                    }
+                    if "witness_chunk_activated_levels" in kvs
+                    else {}
+                ),
+                **(
+                    {"witness_chunk_active": kvs["witness_chunk_active"] == "true"}
+                    if "witness_chunk_active" in kvs
+                    else {}
+                ),
+                **(
+                    {
+                        "extension_opening_reduction_present": (
+                            kvs["extension_opening_reduction_present"] == "true"
+                        ),
+                        "extension_opening_reduction_bytes": int(
+                            kvs["extension_opening_reduction_bytes"]
+                        ),
+                    }
+                    if "extension_opening_reduction_present" in kvs
+                    and "extension_opening_reduction_bytes" in kvs
+                    else {}
+                ),
+                **(
+                    {"opening_method": kvs["opening_method"]}
+                    if "opening_method" in kvs
+                    else {}
+                ),
+                **{
+                    key: parse_tracing_optional_int(kvs.get(key))
+                    for key in (
+                        "challenge_subring_dimension",
+                        "packing_factor",
+                        "packing_partial_width",
+                        "packing_quotient_width",
+                    )
+                    if key in kvs
+                },
                 "a_width": int(kvs.get("a_width", "0")),
                 "b_width": int(kvs.get("b_width", "0")),
                 "d_width": int(kvs.get("d_width", "0")),

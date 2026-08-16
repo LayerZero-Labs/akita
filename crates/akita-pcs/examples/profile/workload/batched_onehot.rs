@@ -174,8 +174,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             setup_contribution_mode,
             plan,
         );
-        emit_runtime_schedule_summary(label, plan, group_layout, Cfg::decomposition().field_bits())
-            .expect("runtime schedule report geometry");
+        emit_runtime_schedule_summary(
+            label,
+            plan,
+            group_layout,
+            Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -196,6 +202,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &schedule,
             group_layout,
             Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(

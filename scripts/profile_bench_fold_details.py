@@ -156,7 +156,14 @@ def matrix_line(
 
 
 def challenge_line(params: dict[str, object]) -> str:
-    challenge = f"Ring D{fmt_count(float(params['d_a']))}"
+    if params.get("opening_method") == "subring_coefficient_packing":
+        challenge = (
+            "Subring S"
+            f"{fmt_count(float(params['challenge_subring_dimension']))}"
+            f" embedded in A ring D{fmt_count(float(params['d_a']))}"
+        )
+    else:
+        challenge = f"Ring D{fmt_count(float(params['d_a']))}"
     count_pm1 = params.get("challenge_count_pm1")
     count_pm2 = params.get("challenge_count_pm2")
     if count_pm1 is not None and count_pm2 is not None:
@@ -167,6 +174,65 @@ def challenge_line(params: dict[str, object]) -> str:
     if threshold is not None:
         challenge += f" · operator norm threshold {fmt_count(float(threshold))}"
     return challenge
+
+
+def opening_method_lines(params: dict[str, object]) -> list[str]:
+    source_encoding = params.get("source_encoding")
+    source_line = None
+    if source_encoding == "canonical_coefficients":
+        source_line = "Committed source: canonical coefficient table"
+    elif source_encoding == "tensor_subfield_projection":
+        extension_degree = params.get("extension_degree")
+        source_line = "Committed source: tensor subfield projection"
+        if extension_degree is not None:
+            source_line += f" (k{fmt_count(float(extension_degree))})"
+    if params.get("opening_method") != "subring_coefficient_packing":
+        lines = [
+            "Evaluation trace",
+            "Opening width: full A ring "
+            f"D{fmt_count(float(params['d_a']))} base-field coefficients",
+        ]
+    else:
+        lines = [
+            "Subring coefficient packing",
+            f"Extension degree: k{fmt_count(float(params['extension_degree']))}",
+            "Challenge subring: S"
+            f"{fmt_count(float(params['challenge_subring_dimension']))}",
+            f"Packing factor: h{fmt_count(float(params['packing_factor']))}",
+            "Packed partial width: "
+            f"{fmt_count(float(params['packing_partial_width']))} base-field coefficients",
+            "Q_pack width: "
+            f"{fmt_count(float(params['packing_quotient_width']))} base-field coefficients",
+        ]
+    if source_line is not None:
+        lines.append(source_line)
+    return lines
+
+
+def fold_path_value(level: dict[str, object]) -> str:
+    rows = []
+    chunk_count = level.get("witness_chunk_count")
+    if chunk_count is not None:
+        chunk_line = f"Witness chunks: {fmt_count(float(chunk_count))}"
+        activated_levels = level.get("witness_chunk_activated_levels")
+        if activated_levels is not None:
+            chunk_line += (
+                " · activated levels: "
+                f"{fmt_count(float(activated_levels))}"
+            )
+        rows.append(chunk_line)
+    eor_bytes = level.get("extension_opening_reduction_bytes")
+    if eor_bytes is not None:
+        if bool(level.get("extension_opening_reduction_present")):
+            rows.append(
+                "Extension opening reduction: "
+                f"{fmt_bytes(float(eor_bytes))} bytes"
+            )
+        else:
+            rows.append("Extension opening reduction: omitted (0 bytes)")
+    if not rows:
+        rows.append("Fold wide path details were not reported")
+    return detail_block("Fold wide path", rows)
 
 
 def response_bound_lines(params: dict[str, object]) -> list[str]:
@@ -236,6 +302,7 @@ def planned_group_planner_value(group: dict[str, object]) -> str:
     return detail_block(
         planned_group_label(group),
         [
+            f"<em>Opening method</em><br>{'<br>'.join(opening_method_lines(group))}",
             f"<em>Commitment matrices used at this fold</em><br>{'<br>'.join(matrices)}",
             f"<br><em>B commitment slicing</em><br>{'<br>'.join(b_geometry)}",
             f"<br><em>Folded response check</em><br>{'<br>'.join(response_bound_lines(group))}",
@@ -576,6 +643,16 @@ def render_fold_details(
             )
             schedule_choice = render_group_choices(
                 current_groups, baseline_groups, planned_group_planner_value
+            )
+            schedule_choice = (
+                exact_choice(
+                    fold_path_value(schedule),
+                    fold_path_value(baseline_schedule)
+                    if baseline_schedule is not None
+                    else None,
+                )
+                + "<br><br>"
+                + schedule_choice
             )
             work = render_group_choices(
                 current_groups, baseline_groups, planned_group_work_value

@@ -10,8 +10,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
     extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponseShape,
+    PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
 
 use crate::generated::{validate_entry_key, GeneratedFoldScheduleEntry};
@@ -41,7 +40,7 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
-    let root_eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
+    let root_eor_key = key.opening_layout()?.aggregate_polynomial_group_layout()?;
     let mut root_params = if is_multi_group {
         let (precommitted_groups, precommitted_d_width) =
             multi_group_root_precommitted_groups_for_open_basis(

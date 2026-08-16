@@ -7,9 +7,10 @@ use akita_types::{
     layout::proof_size::field_bytes,
     sis::{compute_num_digits_field_width, num_digits_for_bound},
     AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
-    FoldLevelProof, FoldSchedule, InnerCommitSecurityRoute, NttTransformDomain,
-    OpenCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, SetupSumcheckProof,
-    SisModulusProfileId, TerminalLevelProof, ZFoldEncodingStats,
+    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, InnerCommitSecurityRoute,
+    NttTransformDomain, OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
+    PolynomialGroupLayout, PrecommittedLevelParams, SetupSumcheckProof, SisModulusProfileId,
+    SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
 };
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
@@ -287,6 +288,13 @@ struct PlannedGroupReport {
     d_a: usize,
     d_b: usize,
     d_d: usize,
+    source_encoding: &'static str,
+    extension_degree: usize,
+    opening_method: &'static str,
+    challenge_subring_dimension: Option<usize>,
+    packing_factor: Option<usize>,
+    packing_partial_width: Option<usize>,
+    packing_quotient_width: Option<usize>,
     a_width: usize,
     b_width: usize,
     d_width: usize,
@@ -317,6 +325,54 @@ struct PlannedGroupReport {
     norm_proof_shape: Option<akita_types::PhysicalL2NormProofShape>,
     setup_prefix_natural_field_elements: usize,
     setup_prefix_padded_field_elements: usize,
+}
+
+const fn source_encoding_name(source_encoding: CommittedSourceEncoding) -> &'static str {
+    match source_encoding {
+        CommittedSourceEncoding::CanonicalCoefficientTable => "canonical_coefficients",
+        CommittedSourceEncoding::TensorSubfieldProjection { .. } => "tensor_subfield_projection",
+    }
+}
+
+#[derive(Clone, Copy)]
+struct OpeningReportGeometry {
+    method: &'static str,
+    challenge_subring_dimension: Option<usize>,
+    packing_factor: Option<usize>,
+    partial_width: Option<usize>,
+    quotient_width: Option<usize>,
+}
+
+fn opening_report_geometry(
+    opening_method: OpeningMethod,
+    extension_degree: usize,
+    a_ring_dimension: usize,
+) -> Result<OpeningReportGeometry, AkitaError> {
+    match opening_method {
+        OpeningMethod::EvaluationTrace => Ok(OpeningReportGeometry {
+            method: "evaluation_trace",
+            challenge_subring_dimension: None,
+            packing_factor: None,
+            partial_width: None,
+            quotient_width: None,
+        }),
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => {
+            let geometry = SubringCoefficientPackingGeometry::try_new(
+                extension_degree,
+                a_ring_dimension,
+                challenge_subring_dimension,
+            )?;
+            Ok(OpeningReportGeometry {
+                method: "subring_coefficient_packing",
+                challenge_subring_dimension: Some(geometry.challenge_subring_dimension()),
+                packing_factor: Some(geometry.packing_factor()),
+                partial_width: Some(geometry.partial_base_field_width()),
+                quotient_width: Some(geometry.partial_base_field_width()),
+            })
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -379,8 +435,11 @@ impl PlannedGroupReport {
         witness_field_elements: usize,
         public_group: Option<PolynomialGroupLayout>,
         params: &CommittedGroupParams,
+        extension_degree: usize,
     ) -> Result<Self, AkitaError> {
         let role_dims = params.role_dims();
+        let opening =
+            opening_report_geometry(params.opening_method, extension_degree, role_dims.d_a())?;
         let security_route = params.inner_commit_matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
@@ -417,6 +476,13 @@ impl PlannedGroupReport {
             d_a: role_dims.d_a(),
             d_b: role_dims.d_b(),
             d_d: role_dims.d_d(),
+            source_encoding: source_encoding_name(params.source_encoding),
+            extension_degree,
+            opening_method: opening.method,
+            challenge_subring_dimension: opening.challenge_subring_dimension,
+            packing_factor: opening.packing_factor,
+            packing_partial_width: opening.partial_width,
+            packing_quotient_width: opening.quotient_width,
             a_width: params.inner_commit_matrix.input_width(),
             b_width: params.outer_commit_matrix.input_width(),
             d_width: params.open_commit_matrix.input_width(),
@@ -454,16 +520,23 @@ impl PlannedGroupReport {
         group: String,
         consumer_level: usize,
         witness_field_elements: usize,
-        public_group: Option<PolynomialGroupLayout>,
         params: &PrecommittedLevelParams,
         shared_open: &OpenCommitMatrixParams,
         setup_prefix_lengths: Option<(usize, usize)>,
+        extension_degree: usize,
     ) -> Result<Self, AkitaError> {
         let layout = params.layout;
         let role_dims = params.role_dims(shared_open.ring_dimension());
+        let opening = opening_report_geometry(
+            params.opening.opening_method,
+            extension_degree,
+            role_dims.d_a(),
+        )?;
         let (setup_prefix_natural_field_elements, setup_prefix_padded_field_elements) =
             setup_prefix_lengths.unwrap_or((0, 0));
-        let (public_num_vars, public_num_polynomials) = public_group
+        let (public_num_vars, public_num_polynomials) = setup_prefix_lengths
+            .is_none()
+            .then_some(layout.group)
             .map(|layout| (layout.num_vars(), layout.num_polynomials()))
             .unwrap_or((0, 0));
         let security_route = layout.inner_commit_matrix.security_route();
@@ -503,6 +576,13 @@ impl PlannedGroupReport {
             d_a: role_dims.d_a(),
             d_b: role_dims.d_b(),
             d_d: role_dims.d_d(),
+            source_encoding: source_encoding_name(layout.source_encoding),
+            extension_degree,
+            opening_method: opening.method,
+            challenge_subring_dimension: opening.challenge_subring_dimension,
+            packing_factor: opening.packing_factor,
+            packing_partial_width: opening.partial_width,
+            packing_quotient_width: opening.quotient_width,
             a_width: layout.inner_commit_matrix.input_width(),
             b_width: layout.outer_commit_matrix.input_width(),
             d_width: shared_open.input_width(),
@@ -553,6 +633,13 @@ impl PlannedGroupReport {
             d_a = self.d_a,
             d_b = self.d_b,
             d_d = self.d_d,
+            source_encoding = self.source_encoding,
+            extension_degree = self.extension_degree,
+            opening_method = self.opening_method,
+            challenge_subring_dimension = ?self.challenge_subring_dimension,
+            packing_factor = ?self.packing_factor,
+            packing_partial_width = ?self.packing_partial_width,
+            packing_quotient_width = ?self.packing_quotient_width,
             a_width = self.a_width,
             b_width = self.b_width,
             d_width = self.d_width,
@@ -594,10 +681,28 @@ pub(crate) fn emit_runtime_schedule_summary(
     schedule: &FoldSchedule,
     final_group: PolynomialGroupLayout,
     field_bits: u32,
+    extension_degree: usize,
 ) -> Result<(), AkitaError> {
+    let challenge_field_bits = field_bits
+        .checked_mul(
+            u32::try_from(extension_degree).map_err(|_| {
+                AkitaError::InvalidSetup("profile extension degree exceeds u32".into())
+            })?,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("profile challenge field width overflow".into()))?;
     let levels = schedule.num_fold_levels();
     let num_setup_field_elements =
         akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
+    let root_precommitted_layouts = schedule
+        .root
+        .params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.descriptor.group)
+        .collect::<Vec<_>>();
+    let root_eor_layout =
+        OpeningClaimsLayout::from_root_groups(&root_precommitted_layouts, final_group)?
+            .aggregate_polynomial_group_layout()?;
     let num_setup_bytes = num_setup_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule
         .recursive_folds
@@ -623,10 +728,10 @@ pub(crate) fn emit_runtime_schedule_summary(
             format!("pre{index}"),
             0,
             witness_field_elements,
-            Some(layout),
             &group.commitment,
             root_open,
             None,
+            extension_degree,
         )?
         .emit(label, 0, field_bits);
     }
@@ -637,6 +742,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         group_field_elements(final_group.num_vars(), final_group.num_polynomials()),
         Some(final_group),
         &schedule.root.params.final_group.commitment,
+        extension_degree,
     )?
     .emit(label, 0, field_bits);
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
@@ -647,6 +753,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             fold.input_witness_len,
             None,
             &fold.params.witness,
+            extension_degree,
         )?
         .emit(label, index + 1, field_bits);
         if let Some(prefix) = &fold.params.incoming_setup_prefix {
@@ -654,10 +761,10 @@ pub(crate) fn emit_runtime_schedule_summary(
                 format!("setup_to_L{}", index + 1),
                 index + 1,
                 prefix.natural_len,
-                None,
                 &prefix.commitment_params,
                 &fold.params.open_commit_matrix,
                 Some((prefix.natural_len, prefix.n_prefix().unwrap_or(0))),
+                extension_degree,
             )?
             .emit(label, index, field_bits);
         }
@@ -686,6 +793,21 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
     for (level_idx, lp, input_witness_len, output_witness_len, current_w_groups) in nonterminal {
         let role_dims = lp.role_dims();
+        let opening =
+            opening_report_geometry(lp.opening_method, extension_degree, role_dims.d_a())?;
+        let extension_opening_reduction_bytes =
+            if matches!(lp.opening_method, OpeningMethod::EvaluationTrace) {
+                akita_types::extension_opening_reduction_level_bytes(
+                    challenge_field_bits,
+                    extension_degree,
+                    level_idx,
+                    root_eor_layout,
+                    input_witness_len,
+                    role_dims.d_a(),
+                )?
+            } else {
+                0
+            };
         let current_w_len = current_w_groups;
         let next_w_len = output_witness_len;
         let setup_prefix = schedule
@@ -731,6 +853,18 @@ pub(crate) fn emit_runtime_schedule_summary(
             d_a = role_dims.d_a(),
             d_b = role_dims.d_b(),
             d_d = role_dims.d_d(),
+            source_encoding = source_encoding_name(lp.source_encoding),
+            extension_degree,
+            witness_chunk_count = lp.witness_chunk.num_chunks,
+            witness_chunk_activated_levels = lp.witness_chunk.num_activated_levels,
+            witness_chunk_active = lp.witness_chunk.uses_multi_chunk(),
+            opening_method = opening.method,
+            challenge_subring_dimension = ?opening.challenge_subring_dimension,
+            packing_factor = ?opening.packing_factor,
+            packing_partial_width = ?opening.partial_width,
+            packing_quotient_width = ?opening.quotient_width,
+            extension_opening_reduction_present = extension_opening_reduction_bytes != 0,
+            extension_opening_reduction_bytes,
             a_width = lp.inner_commit_matrix.input_width(),
             b_width = lp.outer_commit_matrix.input_width(),
             d_width = lp.open_commit_matrix.input_width(),

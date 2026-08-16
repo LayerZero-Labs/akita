@@ -570,7 +570,7 @@ pub fn expanded_schedule_proof_payload_bytes(
     let field_bits = policy.decomposition.field_bits();
     key.validate(field_bits)?;
     schedule.validate_structure()?;
-    let eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
+    let eor_key = key.opening_layout()?.aggregate_polynomial_group_layout()?;
     let nonterminal_levels = schedule
         .recursive_folds
         .len()

@@ -148,8 +148,14 @@ fn run_prove<
                 plan,
             );
         }
-        emit_runtime_schedule_summary(label, plan, group_layout, Cfg::decomposition().field_bits())
-            .expect("runtime schedule report geometry");
+        emit_runtime_schedule_summary(
+            label,
+            plan,
+            group_layout,
+            Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -177,6 +183,7 @@ fn run_prove<
             &schedule,
             group_layout,
             Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
