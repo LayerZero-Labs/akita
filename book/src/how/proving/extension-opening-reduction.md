@@ -45,7 +45,7 @@ This internal shared reduction challenge is not an ambient public opening point.
 
 - `crates/akita-prover/src/protocol/extension_opening_reduction/`.
 - `crates/akita-prover/src/protocol/core/extension_opening_reduction.rs`.
-- `crates/akita-verifier/src/protocol/core/fold.rs`.
+- `crates/akita-verifier/src/protocol/core/fold/mod.rs`.
 - `crates/akita-types/src/extension_opening_reduction.rs`.
 - Paper App B.4.1 `sec:akita-eor-sumcheck` (implemented prover paths, prefix-suffix tensor weight, streamed/staged prover).
 - `specs/extension-field-opening-batching.md` (trim stale `akita-scheme` refs), `specs/eor-streamed-prover.md` (active).

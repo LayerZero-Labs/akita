@@ -24,12 +24,14 @@ pub use opening_point::{
 };
 pub use params::{
     shared_d_digit_log_basis, CommittedGroupParams, InnerCommitMatrixParams, LevelParamsLike,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedLevelParams, SisModulusProfileId,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy,
+    PrecommittedLevelParams, SisModulusProfileId,
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes, sumcheck_rounds,
-    terminal_response_bytes, try_extension_opening_reduction_level_bytes,
+    terminal_response_bytes, terminal_response_planner_bytes,
+    try_extension_opening_reduction_level_bytes,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

@@ -1,4 +1,10 @@
-# Spec: Akita PCS Crate Decomposition and Naming Cutover
+# Historical spec: Akita PCS Crate Decomposition and Naming Cutover
+
+> **Historical design record.** This spec records the decomposition as it
+> landed in #64. Commitment-API names below, such as `CommitmentProver`,
+> `batched_commit`, `commit_with_params`, and `get_params_for_prove`, describe
+> that implementation. The current surface is one `commit` entry point taking a
+> `GroupContext`; see [`book/src/usage/commitment-api.md`](../book/src/usage/commitment-api.md).
 
 | Field       | Value        |
 |-------------|--------------|
@@ -35,12 +41,11 @@ It also sits naturally beside the Greyhound/LaBRADOR lineage: a concrete, memora
 The rename is justified because the implementation target is no longer only a packaging refactor of the original Hachi paper.
 The Akita line includes, or is being designed to include, material protocol improvements over the original Hachi design:
 
-- faster verifier-oriented reductions through matrix-claim delegation and tensor-structured challenges;
+- faster verifier-oriented reductions through matrix-claim delegation;
 - smaller proof sizes for large-field deployments, including 128-bit-field settings, through modulus switching and field-size lowering;
 - an efficient zero-knowledge layer, tentatively named Whiteout, based on fully blinding the proof with committed sumcheck masks and Gaussian masking noise.
 
-The crate decomposition should keep these protocol improvements cleanly separable from foundational crates.
-For example, tensor challenge sampling belongs in `akita-challenges` or role crates as appropriate, shared public proof/config shapes belong in `akita-types`, and Whiteout prover-only machinery must not leak into `akita-verifier`.
+The crate decomposition should keep protocol improvements cleanly separable from foundational crates. Shared public proof/config shapes belong in `akita-types`, and Whiteout prover-only machinery must not leak into `akita-verifier`.
 
 The target workspace layout uses a central top-level `crates/` directory.
 Each extracted package lives under `crates/<package-name>/`.
@@ -94,7 +99,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 
 ### Non-Goals
 
-1. Changing current protocol behavior, security assumptions, schedule choices, proof layout semantics, Fiat-Shamir domain labels, or field/ring arithmetic as part of the crate split. Akita protocol improvements such as matrix-claim delegation, tensor challenges, modulus switching, and Whiteout should land as explicit protocol changes, not accidental side effects of moving files.
+1. Changing current protocol behavior, security assumptions, schedule choices, proof layout semantics, Fiat-Shamir domain labels, or field/ring arithmetic as part of the crate split. Akita protocol improvements such as matrix-claim delegation, modulus switching, and Whiteout should land as explicit protocol changes, not accidental side effects of moving files.
 2. Migrating Jolt to consume the new Akita crates in this PR. The output should make that integration straightforward, but the Jolt-side dependency change is separate.
 3. Importing Jolt's code, eval framework, or crate names into Akita.
 4. Keeping temporary compatibility shims for old module paths such as `akita_pcs::protocol::...`, or preserving the old monolithic protocol tree under a new `akita_pcs::protocol::...` facade.

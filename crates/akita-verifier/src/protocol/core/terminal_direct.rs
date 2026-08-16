@@ -12,62 +12,53 @@ use akita_types::{
     TerminalCommittedGroupParams, TerminalResponse,
 };
 
-fn sparse_challenge_ring<F, const D: usize>(
+fn sparse_challenge_mul_accumulate<F, const D: usize>(
     challenge: &SparseChallenge,
-) -> Result<CyclotomicRing<F, D>, AkitaError>
+    value: &CyclotomicRing<F, D>,
+    destination: &mut CyclotomicRing<F, D>,
+) -> Result<(), AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
 {
     challenge.validate::<D>()?;
-    let mut coeffs = [F::zero(); D];
     for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-        let slot = coeffs
-            .get_mut(position as usize)
-            .ok_or(AkitaError::InvalidProof)?;
-        *slot += F::from_i64(i64::from(coefficient));
-    }
-    Ok(CyclotomicRing::from_coefficients(coeffs))
-}
-
-fn challenge_rings<F, const D: usize>(
-    challenges: &Challenges,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-{
-    match challenges {
-        Challenges::Sparse { challenges, .. } => challenges
-            .iter()
-            .map(sparse_challenge_ring::<F, D>)
-            .collect(),
-        Challenges::Tensor { factored } => {
-            factored.validate::<D>()?;
-            (0..factored.total_blocks()?)
-                .map(|index| {
-                    let (_, _, high, low) = factored.factors_for_logical_block(index)?;
-                    Ok(sparse_challenge_ring::<F, D>(high)? * sparse_challenge_ring::<F, D>(low)?)
-                })
-                .collect()
+        let position = usize::try_from(position).map_err(|_| AkitaError::InvalidProof)?;
+        match coefficient {
+            1 => value.shift_accumulate_into(destination, position),
+            -1 => value.shift_sub_into(destination, position),
+            2 => {
+                value.shift_accumulate_into(destination, position);
+                value.shift_accumulate_into(destination, position);
+            }
+            -2 => {
+                value.shift_sub_into(destination, position);
+                value.shift_sub_into(destination, position);
+            }
+            _ => value.shift_scale_accumulate_into(
+                destination,
+                position,
+                F::from_i64(i64::from(coefficient)),
+            ),
         }
     }
+    Ok(())
 }
 
-fn ring_dot<F, const D: usize>(
-    row: &[CyclotomicRing<F, D>],
+fn sparse_challenge_dot<F, const D: usize>(
+    row: &Challenges,
     input: &[CyclotomicRing<F, D>],
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + FromPrimitiveInt,
 {
-    if row.len() != input.len() {
+    if row.as_slice().len() != input.len() {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(row
-        .iter()
-        .zip(input)
-        .fold(CyclotomicRing::zero(), |sum, (lhs, rhs)| {
-            sum + (*lhs * *rhs)
-        }))
+    let mut sum = CyclotomicRing::zero();
+    for (challenge, value) in row.as_slice().iter().zip(input) {
+        sparse_challenge_mul_accumulate(challenge, value, &mut sum)?;
+    }
+    Ok(sum)
 }
 
 #[inline]
@@ -80,19 +71,12 @@ where
     }))
 }
 
-fn narrow_terminal_z_i16(values: Vec<i64>) -> Result<Vec<i16>, AkitaError> {
-    values
-        .into_iter()
-        .map(|value| i16::try_from(value).map_err(|_| AkitaError::InvalidProof))
-        .collect()
-}
-
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
 fn check_a_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     t: &[CyclotomicRing<F, D>],
     z: &[[i16; D]],
-    challenges: &[CyclotomicRing<F, D>],
+    challenges: &Challenges,
     n_a: usize,
     n_a_cols: usize,
     prepared_prefix_len: usize,
@@ -102,6 +86,7 @@ where
 {
     if t.len()
         != challenges
+            .as_slice()
             .len()
             .checked_mul(n_a)
             .ok_or(AkitaError::InvalidProof)?
@@ -115,18 +100,20 @@ where
             let _span = tracing::info_span!(
                 "terminal_direct_a_lhs",
                 rows = n_a,
-                challenges = challenges.len()
+                challenges = challenges.as_slice().len()
             )
             .entered();
             (0..n_a)
                 .map(|row_index| {
-                    challenges.iter().zip(t.chunks_exact(n_a)).try_fold(
-                        CyclotomicRing::zero(),
-                        |sum, (challenge, rows)| {
+                    challenges
+                        .as_slice()
+                        .iter()
+                        .zip(t.chunks_exact(n_a))
+                        .try_fold(CyclotomicRing::zero(), |mut sum, (challenge, rows)| {
                             let row = rows.get(row_index).ok_or(AkitaError::InvalidProof)?;
-                            Ok::<_, AkitaError>(sum + (*challenge * *row))
-                        },
-                    )
+                            sparse_challenge_mul_accumulate(challenge, row, &mut sum)?;
+                            Ok::<_, AkitaError>(sum)
+                        })
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()
         }
@@ -164,7 +151,10 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
-    if group_layout.z_admission_linf_cap > params.certified_response_linf_cap(sparse)? {
+    if params
+        .validate_terminal_linf_cap(sparse, group_layout.z_linf_cap)
+        .is_err()
+    {
         return Err(AkitaError::InvalidProof);
     }
     dispatch_for_field!(
@@ -188,15 +178,19 @@ where
                     z_coords = group_layout.z_coords
                 )
                 .entered();
-                let values = decode_terminal_z_golomb_payload(
+                decode_terminal_z_golomb_payload(
                     witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?,
                     group_layout,
                 )
                 .map_err(|error| {
                     AkitaError::InvalidInput(format!("terminal z decode failed: {error:?}"))
-                })?;
-                narrow_terminal_z_i16(values)?
+                })?
             };
+            if params.response_l2_sq_cap().is_some_and(|cap| {
+                akita_types::sis::checked_centered_l2_sq(&z_values).is_none_or(|norm| norm > cap)
+            }) {
+                return Err(AkitaError::InvalidProof);
+            }
             let z_centered = {
                 let _span = tracing::info_span!(
                     "terminal_direct_decode_z_rings",
@@ -212,18 +206,19 @@ where
                 }
                 rings
             };
-            let challenges = {
+            {
                 let _span = tracing::info_span!(
                     "terminal_direct_challenges",
                     num_blocks = params.num_live_blocks
                 )
                 .entered();
-                challenge_rings::<F, D_A>(challenges).map_err(|error| {
-                    AkitaError::InvalidInput(format!(
-                        "terminal challenge conversion failed: {error:?}"
-                    ))
-                })?
-            };
+                if challenges.as_slice().len() != params.num_live_blocks {
+                    return Err(AkitaError::InvalidProof);
+                }
+                for challenge in challenges.as_slice() {
+                    challenge.validate::<D_A>()?;
+                }
+            }
             let expected_t_len = params
                 .num_live_blocks
                 .checked_mul(params.inner_commit_matrix.output_rank())
@@ -241,13 +236,9 @@ where
             let num_positions = params.num_positions_per_block;
             let num_digits_inner = params.num_digits_inner;
             let log_basis_inner = params.log_basis_inner;
-            let position_rings = multiplier
-                .position_rings_trusted::<D_A>()
-                .map_err(|error| {
-                    AkitaError::InvalidInput(format!(
-                        "terminal multiplier layout failed: {error:?}"
-                    ))
-                })?;
+            multiplier.ensure_ring_dim::<D_A>().map_err(|error| {
+                AkitaError::InvalidInput(format!("terminal multiplier layout failed: {error:?}"))
+            })?;
             let (consistency, a_rows) = cfg_join!(
                 || {
                     let _span = tracing::info_span!(
@@ -259,10 +250,10 @@ where
                     let folded = {
                         let _span = tracing::info_span!(
                             "terminal_direct_consistency_fold_e",
-                            blocks = challenges.len()
+                            blocks = challenges.as_slice().len()
                         )
                         .entered();
-                        ring_dot(&challenges, e)?
+                        sparse_challenge_dot(challenges, e)?
                     };
                     let reduced = {
                         let _span = tracing::info_span!(
@@ -287,15 +278,11 @@ where
                                 )
                                 .scale(gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
                             }
-                            if let Some(scale) = multiplier.position_constant_coeff(position) {
-                                reduced += z_value.scale(&scale);
-                            } else {
-                                reduced += *position_rings
-                                    .ok_or(AkitaError::InvalidProof)?
-                                    .get(position)
-                                    .ok_or(AkitaError::InvalidProof)?
-                                    * z_value;
-                            }
+                            multiplier.accumulate_position_product(
+                                position,
+                                &z_value,
+                                &mut reduced,
+                            )?;
                         }
                         reduced
                     };
@@ -306,7 +293,7 @@ where
                         setup,
                         t,
                         z_centered,
-                        &challenges,
+                        challenges,
                         n_a,
                         n_a_cols,
                         n_a.checked_mul(n_a_cols).ok_or(AkitaError::InvalidProof)?,
@@ -366,26 +353,33 @@ where
             if claim_e.len() != params.num_live_blocks {
                 return Err(AkitaError::InvalidProof);
             }
-            let mut outer_eval = CyclotomicRing::zero();
-            for (block, value) in claim_e.iter().enumerate() {
-                if let Some(scale) = multiplier.fold_constant_coeff(block) {
+            let claim_opening = if multiplier.as_base().is_none() {
+                claim_e
+                    .iter()
+                    .enumerate()
+                    .try_fold(E::zero(), |opening, (block, value)| {
+                        let weight = multiplier
+                            .fold_subfield_value::<E>(block)?
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let value =
+                            recover_ring_subfield_inner_product::<F, E, D>(value, packed_inner)?;
+                        Ok::<_, AkitaError>(opening + weight * value)
+                    })?
+            } else {
+                let mut outer_eval = CyclotomicRing::zero();
+                for (block, value) in claim_e.iter().enumerate() {
+                    let scale = multiplier
+                        .fold_constant_coeff(block)
+                        .ok_or(AkitaError::InvalidProof)?;
                     outer_eval += value.scale(&scale);
-                } else {
-                    outer_eval += *multiplier
-                        .fold_rings_trusted::<D>()?
-                        .ok_or(AkitaError::InvalidProof)?
-                        .get(block)
-                        .ok_or(AkitaError::InvalidProof)?
-                        * *value;
                 }
-            }
-            let opening =
-                recover_ring_subfield_inner_product::<F, E, D>(&outer_eval, packed_inner)?;
+                recover_ring_subfield_inner_product::<F, E, D>(&outer_eval, packed_inner)?
+            };
             let scale = claim_scales
                 .and_then(|scales| scales.first())
                 .copied()
                 .unwrap_or(global_scale);
-            actual += row_coefficients[0] * scale * opening;
+            actual += row_coefficients[0] * scale * claim_opening;
             Ok::<(), AkitaError>(())
         }
     )?;
@@ -538,20 +532,32 @@ mod tests {
         }
     }
 
+    fn assert_sparse_challenge_product<const D: usize>() {
+        let challenge = SparseChallenge {
+            positions: vec![0, 3, (D - 1) as u32].into(),
+            coeffs: vec![2, -1, -2].into(),
+        };
+        let value = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+            F::from_i64(index as i64 - 9)
+        }));
+        let dense = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+            challenge
+                .positions
+                .iter()
+                .position(|&position| position as usize == index)
+                .map_or_else(F::zero, |position| {
+                    F::from_i64(i64::from(challenge.coeffs[position]))
+                })
+        }));
+        let mut actual = CyclotomicRing::zero();
+        sparse_challenge_mul_accumulate(&challenge, &value, &mut actual)
+            .expect("valid sparse challenge");
+        assert_eq!(actual, dense * value);
+    }
+
     #[test]
-    fn decoded_terminal_witness_rejects_coefficients_outside_i16() {
-        assert_eq!(
-            narrow_terminal_z_i16(vec![i64::from(i16::MIN), 0, i64::from(i16::MAX)])
-                .expect("i16 boundary values"),
-            vec![i16::MIN, 0, i16::MAX]
-        );
-        assert!(matches!(
-            narrow_terminal_z_i16(vec![i64::from(i16::MAX) + 1]),
-            Err(AkitaError::InvalidProof)
-        ));
-        assert!(matches!(
-            narrow_terminal_z_i16(vec![i64::from(i16::MIN) - 1]),
-            Err(AkitaError::InvalidProof)
-        ));
+    fn sparse_challenge_product_matches_schoolbook() {
+        assert_sparse_challenge_product::<64>();
+        assert_sparse_challenge_product::<128>();
     }
 }

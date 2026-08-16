@@ -1,18 +1,18 @@
 use super::*;
-use crate::backend::RecursiveFoldSource;
+use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
-    prewarm_ntt_requirements, CommitmentComputeBackend, ComputeBackendSetup,
-    DigitRowsComputeBackend, LevelProveStacks, NttExecutionRequirements,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    NttExecutionRequirements, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 use crate::RootTensorProjectionPoly;
+use crate::SelectedProverOpeningData;
 use akita_config::{
     effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
-use akita_types::OpeningScheduleSelection;
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
@@ -36,8 +36,7 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
         Tensor = TS,
         RingSwitch = R,
     >,
-    selection: OpeningScheduleSelection,
-    claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
+    opening: SelectedProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     transcript: &mut T,
     basis: BasisMode,
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
@@ -62,7 +61,9 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
@@ -83,8 +84,9 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
+    let (selection, claims) = opening.into_low_level_parts();
     let opening_claims = claims.opening_claims();
-    let opening_batch = opening_claims.layout()?;
+    let opening_batch = claims.opening_layout()?;
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
     let resolved = Cfg::resolve_schedule_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
@@ -164,7 +166,9 @@ where
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
-    C: ComputeBackendSetup<Cfg::Field> + CommitmentComputeBackend<Cfg::Field> + 'a,
+    C: ComputeBackendSetup<Cfg::Field>
+        + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
+        + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
@@ -190,7 +194,7 @@ where
         // Every public group commitment is the fixed terminal F payload. The
         // frozen B geometry derives the complete compression plan and therefore
         // the only accepted coefficient count.
-        let opening_batch = claims.opening_claims().layout()?;
+        let opening_batch = claims.opening_layout()?;
         let commitments = claims.commitments();
         if commitments.len() != opening_batch.num_groups() {
             return Err(AkitaError::InvalidInput(
@@ -241,6 +245,11 @@ where
     .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;
     let next_state = root.next_state;
     let root = root.level_proof;
+
+    // Prepared NTT state belongs to the supplied stack selector. Shared owners
+    // retain it by default; an owner with an isolated root cache may release it
+    // at this exact root/suffix boundary through the lifecycle hook.
+    stacks.after_root_fold()?;
 
     let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
         expanded,

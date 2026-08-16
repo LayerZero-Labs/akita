@@ -8,18 +8,18 @@ use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 #[test]
 fn schedule_catalog_none_without_feature_rejects() {
-    if cfg!(feature = "schedules-fp128-d64-onehot") {
+    if cfg!(feature = "schedules-fp128-onehot") {
         return;
     }
 
     assert!(
-        fp128::D64OneHot::schedule_catalog().is_none(),
+        fp128::OneHot::schedule_catalog().is_none(),
         "schedule feature disabled: schedule_catalog must be None"
     );
 
-    let key = PolynomialGroupLayout::new(28, 1);
+    let key = PolynomialGroupLayout::new(32, 1);
 
-    let err = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+    let err = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key))
         .expect_err("runtime schedule must reject without an enabled catalog");
     assert!(
         matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),

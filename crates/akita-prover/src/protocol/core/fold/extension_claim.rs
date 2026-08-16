@@ -1,7 +1,8 @@
 use super::super::*;
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeOpeningProveBackendFor,
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -47,11 +48,10 @@ where
     TS: ComputeBackendSetup<F>,
     C: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = block_claims
-        .opening_claims()
-        .layout()
+        .opening_layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let tensor = stack.tensor();
     let (protocol_points, row_coefficients, reduction) = if run_eor {

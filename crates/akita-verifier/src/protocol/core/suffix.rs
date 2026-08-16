@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::OpeningClaimsLayout;
+use akita_types::{FoldLinfProtocolBinding, OpeningClaimsLayout};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
@@ -270,12 +270,13 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     if scheduled.response_shape.layout.groups.len() != 1
-        || group.z_admission_linf_cap
-            > params.certified_response_linf_cap(&scheduled.sparse_challenge_config)?
+        || params
+            .validate_terminal_linf_cap(&scheduled.sparse_challenge_config, group.z_linf_cap)
+            .is_err()
     {
         return Err(AkitaError::InvalidProof);
     }
-    params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
+    FoldLinfProtocolBinding::CURRENT.validate_grind_nonce(proof.fold_grind_nonce)?;
 
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if current_state.setup_prefix_opening.is_some() {
@@ -322,15 +323,25 @@ where
         proof.terminal_response(),
         scheduled.response_shape.logical_num_elems(),
     )?;
-    let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
+    let operator_rejection = if params.response_l2_sq_cap().is_some() {
+        Some(
+            akita_challenges::selective_l2_operator_norm_rejection(
+                params.d_a(),
+                &scheduled.sparse_challenge_config,
+            )
+            .ok_or(AkitaError::InvalidProof)?,
+        )
+    } else {
+        None
+    };
+    let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
         params.d_a(),
         0,
         params.num_live_blocks,
         1,
         &scheduled.sparse_challenge_config,
-        &TensorChallengeShape::Flat,
-        witness_fold_challenge_labels(),
         proof.fold_grind_nonce,
+        operator_rejection,
     )?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);
     super::terminal_direct::verify_terminal_ring_relations(

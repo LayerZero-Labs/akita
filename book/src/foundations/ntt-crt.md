@@ -41,7 +41,6 @@ DIT-inverse pairing that avoids bit-reversal.
 
 - Paper App B.2.1-B.2.2 (`sec:akita-crt-profiles`, `tab:akita-crt-profiles`).
 - `crates/akita-algebra/src/ring/crt_ntt_repr.rs`, `ntt/`.
-- `specs/crt-ntt-prime-profiles.md`.
 
 ## Accumulation capacity and chunking
 
@@ -58,22 +57,30 @@ reconstruction is unique exactly under the implemented strict bound
 ```
 
 Balanced base `2^L` digits have `B = 2^(L-1)`. Bases through 8 use i8. The
-large-basis arithmetic path uses i16 for bases 9 through 16 and appends a 12289
-residue only when the existing field profile fails the bound. The extra prime
-supports every protocol ring degree and is a derived, non-serialized cache
-artifact. Prover i8 kernels continue to use only their existing cache. The
-terminal verifier uses one signed-i16 relation kernel for every schedule and
-therefore selects the tail independently from its terminal width; current q32
-terminal schedules do require it.
+large-basis arithmetic path uses i16 for bases 9 through 16. The exact cache
+selector receives the coefficient bound directly as `rhs_abs_bound`; it does
+not rederive the bound from a basis label.
+
+On portable, AVX2, and NEON hosts, exact caches use the field-selected 30-bit
+i32 profile and append a 12289 residue only when that profile fails the bound.
+On AVX-512IFMA hosts at D64 through D512, exact caches may instead use canonical
+50-bit u64 residues: one limb plus the tail for Q32, two limbs for Q64, and
+three limbs plus the tail when needed for Q128. The prepared IFMA matrix owns
+the CRT parameters used to create it, so prime order, twiddles, reconstruction
+constants, and execution cannot diverge. All representations use the same
+strict capacity inequality and centered Garner reconstruction. Cache layout
+and byte count are therefore host-dependent derived state; proof and setup
+bytes are unchanged.
 
 Prover caches store cyclic and negacyclic transforms in separate exact-prefix
 slots. Commitment kernels request only negacyclic entries. Ring-switch kernels
 join their D/B/A cyclic requirements by maximum and request the A negacyclic
-prefix separately. `ExactNegacyclic { width, log_basis }` prepares the terminal
-verifier's minimum exact negacyclic form: base residues alone when they fit,
-otherwise the base plus the 12289 tail. Verifier warming coalesces terminal
-groups into one strongest prefix per ring degree. The base prefix covers every
-group, while the tail prefix covers only groups whose exact bound requires it.
+prefix separately. `ExactNegacyclic { width, rhs_abs_bound }` prepares the
+terminal verifier's minimum exact negacyclic form: base residues alone when
+they fit, otherwise the selected base plus the 12289 tail. Verifier warming
+coalesces terminal groups into one strongest prefix per ring degree. The base
+prefix covers every group, while the tail prefix covers only groups whose exact
+bound requires it.
 
 **Sources to fold in**
 

@@ -35,8 +35,8 @@ the chunked witness model, and ship **new generated schedule tables for
 `D = 64` only**, with a `_multi_chunk` filename suffix.
 
 `ChunkedWitnessCfg` and the per-level `LevelParams.witness_chunk` field are
-**owned by** [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
-(it explicitly *replaced* an earlier `WitnessType`/`witness_shape` enum with this
+**owned by** [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)
+(it replaced an earlier `WitnessType`/`witness_shape` enum with this
 struct). This spec consumes that type rather than introducing a parallel one, and
 only adds planner-facing helpers/validation on it. Prover execution, verifier
 row-MLE evaluation, and witness production are **out of scope here**; they depend
@@ -92,13 +92,13 @@ fields on `AkitaScheduleLookupKey`.
   `policy.witness_chunk.uses_multi_chunk()`. Callers must pass the policy derived
   from the preset they intend to prove under; mismatched preset vs policy is out
   of scope (same as today for `basis_range`, etc.).
-- **Exact balanced ownership.** Multi-chunk candidates require
-  `num_live_blocks >= num_chunks`. The canonical layout assigns
-  `floor(num_live_blocks / num_chunks)` blocks to every chunk and one additional
-  block to each of the first `num_live_blocks % num_chunks` chunks.
+- **Exact balanced ownership.** Chunk `j` owns
+  `[floor(j * num_live_blocks / num_chunks),
+  floor((j + 1) * num_live_blocks / num_chunks))`. When there are more chunks
+  than live blocks, repeated boundaries preserve empty chunk slots.
 - **Power-of-two `num_chunks`.** Initial scope: `num_chunks` is a power of two
   (matching the book's $2^N$ nodes and the verifier chunked fast path in
-  [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)).
+  [`dyadic-chunk-partition.md`](dyadic-chunk-partition.md)).
   Non-power-of-two chunk counts return `InvalidSetup` at plan time.
 - **Single source of truth for witness width.** Chunked ring counts live in
   one new helper in `akita-types`; the planner DP, `schedule_from_entry`, and
@@ -124,9 +124,8 @@ fields on `AkitaScheduleLookupKey`.
 
 - **Prover implementation** (partial commits, local $\mathbf M_j$, node
   orchestration). The planner only emits parameters the prover will later consume.
-- **Verifier row-MLE refactor.** Assumed landed or in flight per
-  `distributed-verifier-row-eval.md`; this spec only requires
-  `LevelParams::witness_chunk` to be set consistently.
+- **Verifier row-MLE refactor.** Owned by `digit-innermost-layout.md`; this spec
+  only requires `LevelParams::witness_chunk` to be set consistently.
 - **Multi-chunk with precommitted commitment groups.** Chunked witness layout
   (`witness_chunk.uses_multi_chunk()`) and multi-group precommitted roots are
   separate axes; mixed-D multi-chunk is rejected at the verifier boundary.
@@ -166,7 +165,7 @@ At the root, `num_polynomials` comes from the lookup key; recursive levels use
 
 ### Chunked (multi-chunk witness)
 
-Per [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md) and
+Per [`digit-innermost-layout.md`](digit-innermost-layout.md) and
 [the distributed prover book chapter](book/src/how/proving/distributed-prover.md),
 a level with `witness_chunk.num_chunks = num_chunks > 1` concatenates
 `num_chunks` chunks followed by a single shared tail
@@ -177,9 +176,9 @@ a level with `witness_chunk.num_chunks = num_chunks > 1` concatenates
 
 with (matching the verifier spec's per-chunk segment ordering and lengths):
 
-- `blocks_in_chunk(j) = floor(num_live_blocks / num_chunks) + 1` for the first
-  `num_live_blocks % num_chunks` chunks, and `floor(num_live_blocks / num_chunks)`
-  for the rest
+- chunk `j` owns
+  `[floor(j * num_live_blocks / num_chunks),
+  floor((j + 1) * num_live_blocks / num_chunks))`
 - $\widehat e^j$, $\widehat t^j$ each cover **only** chunk $j$'s block window
   (partitioned according to its exact block count; still scaled by root
   `num_polynomials` at level 0)
@@ -210,9 +209,9 @@ r_rows  = relation_matrix_row_count_for(num_commitments = 1, 0, layout)  // summ
 rings   = sum_j body(j) + r_rows · r_decomp_levels
 ```
 
-Note `num_chunks · e_chunk` and `num_chunks · t_chunk` equal the single-chunk
-$\widehat e$ / $\widehat t$ totals exactly (the block window is merely
-partitioned), so those segments do not grow.
+The sums of `e_chunk(j)` and `t_chunk(j)` over all chunks equal the single-chunk
+$\widehat e$ and $\widehat t$ totals exactly. Empty chunks contribute zero to
+these sums, so those segments do not grow.
 
 **Growth vs today.** The **only** extra cost is
 $(\texttt{num\_chunks} - 1) · z_chunk$ ring elements per multi-chunk level — the
@@ -254,21 +253,16 @@ This gives a single, unambiguous cutover with no extra round:
 - Level `R + 1` and beyond: single-chunk throughout.
 
 Equivalently, exactly the leading `R` committed witnesses (levels `0 .. R - 1`)
-carry replicated $\widehat z$; each such level requires at least one live block
-per chunk.
+carry replicated $\widehat z$. Every configured chunk keeps its Z slot, even
+when its proportional block range is empty.
 
 If the optimal schedule has fewer than `R` folds, only the executed prefix uses
 chunked pricing; the remaining configured activated levels are a no-op.
 
-**Feasibility floor on chunked levels.** The DP requires
-`num_live_blocks >= num_chunks` at every chunked level `L < R`; a cost-optimal
-split with fewer live blocks is unavailable there.
-If **no** candidate survives at a leading level (e.g. the witness has already
-shrunk below `num_chunks` blocks), the DP finds no chunked schedule for that
-`(key, policy)` and returns the usual "no schedule found" `AkitaError` rather than
-silently falling back to single-chunk mid-prefix — keeping `chunks_at_level(L)`
-and the stamped `witness_chunk` consistent. Presets pick `num_activated_levels`
-so the leading folds always have `≥ num_chunks` blocks (the root is the largest).
+**Empty slots on chunked levels.** The DP keeps `num_chunks` fixed throughout
+the configured prefix, even after the witness shrinks below that count. It
+prices one Z segment for every chunk. The E and T totals still depend only on
+the live blocks because empty chunk ranges contribute no E or T coefficients.
 
 ## Design
 
@@ -283,7 +277,7 @@ not `num_nodes`. A level is "chunked" when `lp.witness_chunk.num_chunks > 1`.
 #### 1. `ChunkedWitnessCfg` (`akita-types`)
 
 `ChunkedWitnessCfg` is **defined by**
-[`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md) and lives in
+[`digit-innermost-layout.md`](digit-innermost-layout.md) and lives in
 `crates/akita-types/src/witness/`, so both `akita-config` and `akita-planner` can
 name it without a circular dependency and the verifier consumes the same type.
 That spec defines:
@@ -444,8 +438,8 @@ chunked vs single-chunk format. Convenience: import `ChunkedWitnessCfg` from
 
 #### 5. `LevelParams.witness_chunk` (`akita-types`)
 
-This spec does **not** add a new layout type to `LevelParams`. The verifier spec
-[`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md) already adds
+This spec does **not** add a new layout type to `LevelParams`. The layout spec
+[`digit-innermost-layout.md`](digit-innermost-layout.md) already adds
 the field
 
 ```rust
@@ -493,16 +487,16 @@ Behavior:
   count uses `num_commitments = 1` (the summed quotient keeps the single-machine
   shape — the horizontal $\mathbf M_j$ stacking adds columns, not rows — so the
   tail is byte-identical to the single-chunk delegate); only $\widehat z$ grows,
-  by $(\texttt{num\_chunks}-1)\cdot z_chunk$. First validate
-  `num_chunks.is_power_of_two()` and `lp.num_live_blocks >= num_chunks`, else
-  `AkitaError::InvalidSetup`.
+  by $(\texttt{num\_chunks}-1)\cdot z_chunk`. Validate that `num_chunks` is a
+  supported power of two. `num_live_blocks < num_chunks` is valid and creates
+  canonical empty ranges.
 
 To keep the single-source-of-truth invariant, the `num_chunks > 1` branch must
 mirror every segment of the delegate ($\widehat e$, $\widehat t$, $\widehat z$,
 $r$). ZK blinding columns are out of scope for the initial non-zk tables.
 
 Unit tests in `akita-types` compare against the chunk offset arithmetic from
-`distributed-verifier-row-eval.md` Stage 1 (`chunk_stride`, `offset_r`).
+`digit-innermost-layout.md` Stage 1 (`chunk_stride`, `offset_r`).
 
 #### 7. Schedule lookup key — no multi-chunk fields
 
@@ -563,21 +557,19 @@ The cutover falls out automatically: level `R` commits a single-chunk witness
 
 At the root-only loop over `(log_basis, block_index_bits)` (absolute level `L = 0`):
 
-1. **Skip** candidates with `num_live_blocks < num_chunks` when
-   `mc.uses_multi_chunk()` (the root commits a chunked witness when `R >= 1`).
-2. Compute `next_w_len` / `next_w_len_terminal` via
+1. Compute `next_w_len` / `next_w_len_terminal` via
    `w_ring_element_count_for_chunks(..., key.num_polynomials, …,
    chunks_at_level(0))` — `num_chunks` when `R >= 1`, else `1` (single-chunk
    policies are unchanged).
-3. Set the root fold step's `witness_chunk` from `chunks_at_level(0)` (i.e.
+2. Set the root fold step's `witness_chunk` from `chunks_at_level(0)` (i.e.
    `num_chunks` when `R >= 1`, else default). Root-direct `LevelParams` stays
    `ChunkedWitnessCfg::default()`.
-4. **`level_proof_bytes`** already scales with `next_w_len` through
+3. **`level_proof_bytes`** already scales with `next_w_len` through
    [`sumcheck_rounds`](../crates/akita-types/src/layout/proof_size.rs) — no formula
    change once `next_w_len` is correct. Keep passing `num_claims =
    key.num_polynomials` at the root (see `resolve.rs`).
 
-#### Step 4 — Suffix DP (`derive_optimal_suffix_schedule`)
+#### Step 4 — Suffix DP (`derive_selected_suffix_schedule`)
 
 The suffix memo key today is `(level, current_w_len, current_witness_len_terminal,
 current_lb)`. Extend **`SuffixCtx`**:
@@ -590,7 +582,7 @@ struct SuffixCtx<'a> {
     key: AkitaScheduleLookupKey,
     // `key` and `policy` are already present today; no new field is needed
     // because the absolute level is the existing `level` argument to
-    // `derive_optimal_suffix_schedule`.
+    // `derive_selected_suffix_schedule`.
 }
 ```
 
@@ -598,7 +590,8 @@ For each suffix fold at absolute level `L` (`L >= 1`; the root `L == 0` is handl
 separately in Step 3), with `mc = policy.witness_chunk`:
 
 1. `num_chunks = chunks_at_level(L)` — the chunk count of the witness committed at
-   this level. Skip candidate `r`-splits whose `num_live_blocks < num_chunks`.
+   this level. Keep candidates with fewer live blocks than chunks and represent
+   their unused machines as empty ranges.
 2. Price `next_w_len` / `next_w_len_terminal` with
    `w_ring_element_count_for_chunks(..., 1, …, num_chunks)`. Use
    `num_polynomials = 1` for recursive suffix folds (same as today).
@@ -682,38 +675,56 @@ For each new multi-chunk family:
    // keys: AkitaScheduleLookupKey::new(num_vars, num_polys) — identical to D64OneHot
    ```
 
-4. **`EmitSpec.policy`**: full `PlannerPolicy` including
-   `witness_chunk: ChunkedWitnessCfg::d64_production()` (via `policy_of`).
+4. **`EmitSpec.policy`**: full `PlannerPolicy` including the selected
+   `MultiChunkProfileId` and inherited ring-dimension schedule (via `policy_of`).
 5. Run the same DP regen hook: `find_schedule(key, &policy, …)`.
 
-#### Step 10 — New `Cfg` types and `ALL_GENERATED_FAMILIES` rows (`akita-config`)
+#### Step 10 — Current `Cfg` types and generated-family rows (`akita-config`)
 
-Add **D = 64 multi-chunk companions** for the existing non-zk D64 families:
+Direct fp128 multi-chunk configs are companions of the canonical adaptive
+families, so they copy `RingDimensionScheduleMode::AdaptiveDimension` as well as
+the field, decomposition, and security policy:
 
-| Base module | Multi-chunk module | Base `Cfg` (pattern) |
-|-------------|-------------------|----------------------|
-| `fp128_d64_onehot` | `fp128_d64_onehot_multi_chunk` | `fp128::D64OneHotMultiChunk` |
-| `fp128_d64_dense` | `fp128_d64_dense_multi_chunk` | `fp128::D64DenseMultiChunk` |
+| Base module | Multi-chunk module | `Cfg` |
+|-------------|-------------------|-------|
+| `fp128_onehot` | `fp128_onehot_multi_chunk` | `fp128::OneHotMultiChunk` (W8R2) |
+| `fp128_onehot` | `fp128_onehot_multi_chunk_w2r2` | `fp128::OneHotMultiChunkW2R2` |
+| `fp128_onehot` | `fp128_onehot_multi_chunk_w4r2` | `fp128::OneHotMultiChunkW4R2` |
+| `fp128_dense` | `fp128_dense_multi_chunk` | `fp128::DenseMultiChunk` (W8R2) |
 
-**Exclude** tensor multi-chunk companions for now. The **tensor** verifier family
-(`fp128_d64_onehot_tensor`) does not get a multi-chunk companion: the
-tensor-shaped root challenge is an orthogonal verifier-cost optimization, kept
-separate from the distributed-prover witness layout for now.
+`impl_multi_chunk_companion!` overrides only the chunk profile and catalog
+function. `policy_of::<Cfg>()` therefore combines the base adaptive search
+domain (`A ∈ {64,128,256}`, `B,D ∈ {64,128}`, two searched levels, then
+uniform D64) with the selected W/R chunk profile. Candidate geometry, witness
+contraction, setup footprint, and proof bytes are all priced with
+`chunks_at_level(level)`.
 
-The companions delegate every layout parameter to their base `Cfg` via the
-`impl_multi_chunk_companion!` helper and override only `chunked_witness_cfg()`
-(→ `ChunkedWitnessCfg::d64_production()`) and `schedule_catalog()`.
+The production recursive W8R2 family uses
+`RecursiveCommitmentConfig<OneHotMultiChunk>`. The recursive suffix DP searches
+the same bounded adaptive role-dimension domain while jointly pricing direct
+and setup-offloaded successors. The legacy
+`RecursiveCommitmentConfig<D64OneHotMultiChunk>` family remains available only
+as an explicit fixed-D64 comparison catalog.
 
-Each multi-chunk `Cfg`:
+The regenerated scalar rows demonstrate that chunking participates in the
+search instead of being stamped on afterward:
 
-- `D = 64`, same field / decomposition / one-hot settings as its base.
-- `chunked_witness_cfg()` returns e.g.
-  `ChunkedWitnessCfg::d64_production()` (`MultiChunkProfileId::W8R2`: 8 chunks, 2
-  production constants — document on the preset).
-- `policy_of::<Cfg>()` picks up the config via the trait method (no override).
-- `schedule_catalog()` points at the `_multi_chunk.rs` table.
-- `runtime_schedule(key)` calls `resolve_schedule(key, &policy_of::<Self>(), …)`;
-  no key mutation — multi-chunk behavior comes entirely from policy + catalog.
+| Family/key | Root A/B/D | Level-1 A/B/D | Partition at root/L1 |
+|------------|------------|----------------|----------------------|
+| one-hot W2R2, nv=14 | 64/64/64 | 64/64/64 | 2 / 2 chunks |
+| one-hot W2R2, nv=32 | 256/64/64 | 256/64/64 | 2 / 2 chunks |
+| one-hot W4R2, nv=32 | 256/64/64 | 256/64/64 | 4 / 4 chunks |
+| one-hot W8R2, nv=32 | 256/64/64 | 256/64/64 | 8 / 8 chunks |
+| dense W8R2, nv=16 | 64/64/64 | 64/64/64 | 8 / 8 chunks |
+
+Level 2 and later use the configured uniform-D64 suffix and a single witness
+chunk. Standalone precommit profiles are generated from the same adaptive
+config, so their selected A dimension can vary with group shape (for example,
+the W2R2 profile grid contains D64, D128, and D256 A commitments while B stays
+D64). Adaptive search is currently scalar-root only: a request containing
+precommitted groups preserves their frozen profiles and uses the existing
+uniform-D64 grouped-root fallback. Recursive setup planning remains out of
+scope.
 
 Wire modules in [`crates/akita-schedules/src/generated/mod.rs`](../crates/akita-schedules/src/generated/mod.rs)
 behind the new feature flags.
@@ -737,14 +748,18 @@ behind the new feature flags.
 #### Step 12 — Regenerate tables
 
 ```bash
-cargo run --release -p akita-config --bin gen_schedule_tables -- \
+cargo run --release -p akita-planner --features catalog-gen \
+  --bin gen_schedule_tables -- \
   crates/akita-schedules/src/generated
 ```
 
-Commit new files:
+Commit the direct adaptive tables and their standalone-precommit companions:
 
-- `crates/akita-schedules/src/generated/fp128_d64_onehot_multi_chunk.rs`
-- `crates/akita-schedules/src/generated/fp128_d64_dense_multi_chunk.rs`
+- `crates/akita-schedules/src/generated/fp128_onehot_multi_chunk.rs`
+- `crates/akita-schedules/src/generated/fp128_onehot_multi_chunk_precommitted.rs`
+- the corresponding W2R2 and W4R2 one-hot pairs
+- `crates/akita-schedules/src/generated/fp128_dense_multi_chunk.rs`
+- `crates/akita-schedules/src/generated/fp128_dense_multi_chunk_precommitted.rs`
 
 Non-zk only in this spec phase.
 
@@ -767,7 +782,7 @@ Non-zk only in this spec phase.
                          ▼
               ┌────────────────────────────────────────┐
               │  Root DP (level 0)                      │
-              │  skip if num_live_blocks < num_chunks        │
+              │  preserve empty ranges if blocks < chunks    │
               │  commit chunks_at_level(0) witness      │
               ├────────────────────────────────────────┤
               │  Suffix DP (levels ≥ 1)                 │
@@ -883,8 +898,8 @@ planner/config/`akita-types`-only otherwise and can land before the prover/verif
 ## References
 
 - Book: [The distributed prover](../book/src/how/proving/distributed-prover.md)
-- Verifier layout spec: [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
+- Verifier layout spec: [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)
 - Planner crate map: [`crates/akita-planner/README.md`](../crates/akita-planner/README.md)
 - Terminal tail sizing: [`crates/akita-types/src/proof/tail_segments.rs`](../crates/akita-types/src/proof/tail_segments.rs)
-- Generated table pipeline: [`specs/schedule-catalog-ownership.md`](schedule-catalog-ownership.md)
+- Generated table pipeline: [`specs/heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md)
 - Prior art (terminal layout split): [`specs/terminal-fold-cutover.md`](terminal-fold-cutover.md)

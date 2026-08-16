@@ -71,7 +71,7 @@ where
         });
     }
     // Bind the low coefficient block shared by every role first, then the
-    // remaining relation lanes. The flat challenge order is unchanged: the
+    // remaining relation lanes. The challenge order is unchanged: the
     // common coefficients are the low Boolean coordinates.
     let geometry = lp.relation_address_geometry(
         opening_batch,

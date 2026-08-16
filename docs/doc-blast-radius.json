@@ -41,7 +41,6 @@
         "book/src/how/proving/opening-points-layout.md",
         "book/src/usage/commitment-api.md",
         "book/src/how/architecture.md",
-        "specs/single-point-opening-batch.md",
         "specs/digit-innermost-layout.md"
       ]
     },
@@ -52,8 +51,7 @@
       "consider_updating": [
         "book/src/how/architecture.md",
         "book/src/how/proving/sumcheck-stages.md",
-        "specs/akita-polyops-cutover.md",
-        "specs/akita-sumcheck-unification.md"
+        "specs/akita-polyops-cutover.md"
       ]
     },
     {
@@ -66,7 +64,6 @@
         "specs/akita-sis-*.md",
         "specs/sis-euclidean-estimator.md",
         "specs/fold-linf-rejection.md",
-        "specs/archive/bounded-l1-sparse-challenge.md",
         "docs/security-posture.md"
       ]
     },

@@ -10,6 +10,15 @@
 | Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection policy remains active |
 | Book-chapter  | book/src/roadmap/verifier-offloading.md    |
 
+> **Commit-API update (2026-08-10).** The public commitment flow is one
+> `AkitaCommitmentScheme::commit` entry point taking a `GroupContext`:
+> `scheduler_without_precommitted_groups()` for each independent prior commitment and
+> `scheduler_with_precommitted_groups` for the grouped final commitment. A recursive
+> companion catalog ships no row without precommitted groups at a precommit layout, so
+> the caller precommits under the base `Cfg` and proves the grouped root under
+> `RecursiveCommitmentConfig<Cfg>`. The recursive planning and setup-offloading
+> contracts in this document are unchanged.
+
 ## Revision authority
 
 The public-matrix derivation, setup-capacity unit, and NTT-cache contracts in
@@ -41,15 +50,16 @@ suffix planning also assumes one commitment group, while complete offloading
 requires the successor to prove two openings together: its newly committed
 folded witness and the setup-prefix commitment selected by the preceding fold.
 
-This design adds `RecursiveCommitmentConfig<Cfg>`, parallel to
-`ConservativeCommitmentConfig<Cfg>`. The ordinary `Cfg` always resolves a
-direct-only schedule. Selecting the recursion adapter activates setup
-offloading only for the planner's genuine multi-group path. Scalar/singular
-keys continue through the ordinary direct planner and ordinary generated
-catalog, even under the recursion adapter.
+This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
+generated `CommittedGroupProfile` and the independent-commit flow specified in
+[`multi-group-batching.md`](multi-group-batching.md); the earlier conservative
+config adapter has been removed. The ordinary `Cfg` resolves a direct-only
+schedule. Selecting the recursion adapter activates setup-aware planning for
+both scalar and genuine multi-group roots. Each family replays rows from its
+own generated catalog.
 
-For each supported nonterminal edge on the genuine multi-group path, the
-planner considers two transitions:
+For each supported nonterminal edge under the recursion adapter, the planner
+considers two transitions:
 
 ```text
 Direct:    successor receives [W]
@@ -59,11 +69,11 @@ Offloaded: successor receives [S_prefix, W]
 An offloaded transition is feasible only when the successor can commit the
 exact prefix, the complete successor witness contracts the entering balanced
 witness by at least threefold, and the resulting suffix strictly reduces the
-first remaining direct setup scan. The planner may select zero, one, or several
+power-of-two capacity of the first remaining direct setup scan. The planner may select zero, one, or several
 offloaded levels. No fold index, contiguity rule, or prefix-size threshold
 decides the count.
 
-The selected schedule minimizes the first remaining direct setup footprint and
+The selected schedule minimizes the padded capacity of the first remaining direct setup footprint and
 then exact estimated proof bytes, including Stage 3. Equal candidates then use
 the smaller total physical setup envelope and the canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
@@ -78,19 +88,18 @@ models.
 
 ### Goal
 
-Provide an explicit recursion config that activates offloading only for
-multi-group batches, makes offload depth a planner decision, guarantees every
-selected recursive edge has a compatible preprocessed setup-prefix commitment,
-and leaves singular planning direct-only.
+Provide an explicit recursion config that activates offloading for scalar and
+multi-group roots, makes offload depth a planner decision, and guarantees every
+selected recursive edge has a compatible preprocessed setup-prefix commitment.
 
 ### Invariants
 
 - **Config selection activates recursion.** Ordinary `Cfg` planning is
-  direct-only. Only the multi-group path under
-  `RecursiveCommitmentConfig<Cfg>` may emit recursive levels.
-- **Singular planning never offloads.** `AkitaScheduleLookupKey` values with no
-  precommitted groups use the existing scalar planner and direct catalog. Every
-  level is `Direct`, including under `RecursiveCommitmentConfig<Cfg>`.
+  direct-only. Scalar and grouped paths under
+  `RecursiveCommitmentConfig<Cfg>` may emit setup-offloaded levels.
+- **Scalar roots use the same carried-opening machinery.** A scalar root may
+  produce a setup-prefix opening; its successor receives
+  `[S_prefix, W]` through the existing two-group recursive representation.
 - **The planner chooses offload depth.** Every supported nonterminal edge has a
   direct alternative and may also have an offloaded alternative. The planner
   may select any number of feasible offloaded edges within the ordinary
@@ -269,6 +278,13 @@ optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
+The selection objective is an explicit catalog-identity input. Recursive setup
+capability and the admitted ring-dimension domain do not infer or rewrite it.
+The recursion adapter selects `MinFirstDirectSetupThenPayload` for genuine
+multi-group planning. Its scalar boundary and standalone precommit planning
+explicitly select `MinEstimatedProofPayload` while disabling recursive setup
+search.
+
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
 It decides from public geometry, then setup construction must materialize every
@@ -294,15 +310,11 @@ ordinary Cfg:
   every recursive fold has incoming_setup_prefix = None
 
 RecursiveCommitmentConfig<Cfg>:
-  scalar key:
-    delegate to Cfg::runtime_schedule(key)
-    use Cfg::schedule_catalog()
-    every recursive fold has incoming_setup_prefix = None
-  genuine multi-group key:
-    planner recursion flag = true
-    use Cfg::recursive_multi_group_schedule_catalog()
-    enumerate direct and feasible offloaded transitions at every nonterminal edge
-    let the selected suffix determine the number of offloaded levels
+  planner recursion flag = true
+  use the recursive companion schedule catalog
+  accept selected scalar and genuine multi-group keys
+  enumerate direct and feasible offloaded transitions at every nonterminal edge
+  let the selected suffix determine the number of offloaded levels
 ```
 
 Add a default-disabled config hook:
@@ -313,11 +325,9 @@ fn recursive_setup_planning() -> bool {
 }
 ```
 
-The adapter overrides it to `true`, but uses that policy only after determining
-that the key is genuinely multi-group. `policy_of::<Self>()` copies the value
-into `PlannerPolicy` for `find_schedule`. Scalar keys delegate
-directly to `Cfg::runtime_schedule` and never invoke the recursion-enabled
-policy.
+The adapter overrides it to `true`. `policy_of::<Self>()` copies the value into
+`PlannerPolicy` for `find_schedule`, including scalar keys selected for the
+recursive companion catalog.
 
 Add a second optional catalog hook:
 
@@ -330,18 +340,15 @@ fn recursive_multi_group_schedule_catalog()
 ```
 
 The base config's `schedule_catalog()` remains the direct table.
-`RecursiveCommitmentConfig<Cfg>` uses
-`Cfg::recursive_multi_group_schedule_catalog()` only for a key with nonempty
-`precommitteds`.
+`RecursiveCommitmentConfig<Cfg>` exposes the separate recursive companion
+catalog for both selected scalar and grouped keys.
 
-Its `runtime_schedule` routing is:
+Its `resolve_catalog_row_for_key` routing is:
 
 ```text
-if key.precommitteds.is_empty():
-    return Cfg::runtime_schedule(key)
-
+validate the SIS modulus profile
 validate recursive D64/non-chunked policy
-resolve_group_batch_schedule(
+resolve_generated_catalog_row_for_key(
     key,
     recursion-enabled policy_of<RecursiveCommitmentConfig<Cfg>>,
     recursive_multi_group_schedule_catalog,
@@ -375,9 +382,10 @@ config type rather than through a prove/verify mode argument.
 
 ### State Transition
 
-These transitions are reachable only from a genuinely multi-group root
-schedule. A scalar root never creates `S_i` and remains on the one-group direct
-path for its entire schedule.
+These transitions are reachable from scalar or genuinely multi-group roots
+selected under the recursion adapter. A scalar root begins with `[W_i]` and may
+create `S_i`; its successor then uses the same two-group path as a grouped
+root.
 
 Let fold `i` enter with either:
 
@@ -618,7 +626,6 @@ ring_d      = SETUP_OFFLOAD_D_SETUP
 log_basis   = successor fold log_basis
 delta_open  = successor fold delta_open
 delta_commit= successor fold delta_commit
-fold shape  = successor fold challenge shape
 ```
 
 It owns:
@@ -691,15 +698,11 @@ Retain the current algorithm: for each `log_basis`,
 `derive_candidate_level_params` scans `block_index_bits` and keeps only the candidate
 with the smallest outgoing witness.
 
-The scalar `find_schedule` path never computes or forwards an outgoing setup
-prefix, and its current DP behavior is preserved. It does not accept an
-incoming setup prefix.
-
-Only `find_schedule` with a genuinely multi-group key and
-`policy.recursive_setup_planning == true` uses the edge logic below. Its suffix
-context retains that root-path fact while planning later folds; setup
-offloading does not become available merely because a scalar suffix happens to
-have two commitments.
+Any `find_schedule` request with `policy.recursive_setup_planning == true`
+uses the edge logic below. This includes a scalar application root: its first
+fold may produce an outgoing setup-prefix claim, and the successor then opens
+the setup prefix and folded witness as two groups. Ordinary scalar families
+retain direct-only planning.
 
 For each existing `block_index_bits` candidate:
 
@@ -710,7 +713,7 @@ For each existing `block_index_bits` candidate:
    precommitted group:
    - `group = PolynomialGroupLayout::singleton(log2(n_prefix))`;
    - `num_live_blocks_prefix * num_positions_per_block_prefix = n_prefix / D_setup`;
-   - `log_basis`, digit depths, fold shape, and ring dimension are shared with
+   - `log_basis`, digit depths, and ring dimension are shared with
      the current fold candidate;
    - `n_a_prefix`, `n_b_prefix`, `A_prefix`, and `B_prefix` are derived for the
      prefix group itself.
@@ -818,8 +821,9 @@ Generate direct and recursive artifacts independently:
 Cfg planner policy
   -> ordinary generated module/table, including scalar keys
 
-RecursiveCommitmentConfig<Cfg> multi-group planner policy
-  -> recursive generated module/table containing only genuine multi-group keys
+RecursiveCommitmentConfig<Cfg> setup-aware planner policy
+  -> recursive generated module/table containing selected scalar and
+     multi-group keys
 ```
 
 Use distinct generated module names and table constructors, for example:
@@ -829,22 +833,21 @@ fp128_d64_onehot
 fp128_d64_onehot_recursive
 ```
 
-The exact suffix follows the existing generator naming policy. Recursive
-multi-group rows must never be appended to or looked up in the ordinary table.
-The recursion adapter continues to use the ordinary table for scalar keys.
+The exact suffix follows the existing generator naming policy. Recursive rows
+must never be appended to or looked up in the ordinary table. The recursion
+adapter resolves both scalar and grouped recursive keys from its companion
+catalog.
 
 Extend generated-family metadata so an eligible family can opt into a recursive
-multi-group companion table. The generator runs the ordinary key grid with the
-ordinary policy, then runs only the supported multi-group key grid with the
-recursion adapter policy. It must not emit duplicate scalar rows into the
-recursive companion. Drift guards independently regenerate and compare both
-catalogs.
+companion table. The generator runs the ordinary key grid with the ordinary
+policy, then runs the selected scalar and grouped recursive key grid with the
+recursion adapter policy. Drift guards independently regenerate and compare
+both catalogs.
 
-The recursive multi-group catalog identity binds the recursion-planning policy
-bit. Supplying a direct catalog to the recursion adapter's multi-group resolver,
-or a recursive catalog to an ordinary multi-group resolver, must fail identity
-validation even if a row key happens to match. Scalar delegation through
-`RecursiveCommitmentConfig<Cfg>` intentionally uses the ordinary catalog.
+The recursive catalog identity binds the recursion-planning policy bit.
+Supplying a direct catalog to the recursion adapter's resolver, or a recursive
+catalog to an ordinary resolver, must fail identity validation even if a row
+key happens to match.
 
 ### Canonical Replay
 
@@ -861,7 +864,7 @@ For each fold it:
 2. If a recursive fold has `incoming_setup_prefix`, reconstructs that prefix
    group's own inner and outer commitment matrices. It must not clone the
    ordinary witness group's matrix parameters.
-3. Recomputes the predecessor's `natural_len` and padded prefix length and
+3. Recomputes the predecessor's `natural_len` and full-prefix length and
    validates them against the stored input.
 4. Recomputes and validates the shared opening-matrix rank, relation rows,
    complete next-witness length, Stage 3 bytes, and total proof bytes.
@@ -881,10 +884,9 @@ and recomputes the policy metrics used for audit output.
 validation already share this walker; no second replay implementation is
 introduced.
 
-On a recursive multi-group table miss, `RecursiveCommitmentConfig<Cfg>` runs
-`find_schedule` fallback with recursion planning enabled. A scalar
-miss delegates to `Cfg::runtime_schedule` and the direct `find_schedule`
-fallback. Table-hit and table-miss behavior therefore remain path-consistent.
+On a recursive table miss, `RecursiveCommitmentConfig<Cfg>` runs
+`find_schedule` fallback with recursion planning enabled for scalar and grouped
+keys. Table-hit and table-miss behavior therefore remain path-consistent.
 
 ## Setup Preprocessing
 
@@ -893,10 +895,9 @@ natural length. Replace that behavior by reusing the generated-key/setup-envelop
 scan already owned by `akita-config`.
 
 Refactor the existing scan so setup-envelope sizing and prefix population visit
-the same deterministic genuine multi-group schedule keys selected under
-`RecursiveCommitmentConfig<Cfg>`. Scalar keys and ordinary `Cfg` setup do not
-populate offloading slots. Do not introduce a second `SetupScheduleCase`
-representation.
+the same deterministic scalar and grouped schedule keys selected under
+`RecursiveCommitmentConfig<Cfg>`. Ordinary `Cfg` setup does not populate
+offloading slots. Do not introduce a second `SetupScheduleCase` representation.
 
 For every selected schedule and every recursive successor whose
 `incoming_setup_prefix` is present:
@@ -958,7 +959,7 @@ Reject:
 - an incoming setup prefix outside the capabilities bound by the selected
   catalog family, including unsupported ring-dimension or witness-partition
   combinations;
-- an incoming setup prefix whose natural or padded length differs from the
+- an incoming setup prefix whose natural support or full-prefix length differs from the
   predecessor's active setup envelope;
 - an incoming setup prefix whose commitment params or group geometry are
   incompatible with the successor;
@@ -1027,10 +1028,10 @@ the candidate score that decides whether and how long to offload.
 ### Acceptance Criteria
 
 - [x] Ordinary `Cfg` schedules are direct-only.
-- [x] `RecursiveCommitmentConfig<Cfg>` activates recursion-aware DP only for
-      genuine multi-group keys.
-- [x] Scalar keys under `RecursiveCommitmentConfig<Cfg>` delegate to the
-      ordinary scalar planner/catalog and contain only direct levels.
+- [x] `RecursiveCommitmentConfig<Cfg>` activates recursion-aware DP for
+      selected scalar and genuine multi-group keys.
+- [x] Scalar recursive rows use the companion catalog and provision every
+      carried setup-prefix opening required by the selected schedule.
 - [x] Every supported nonterminal edge considers a direct successor and may
       consider an offloaded successor; no fixed fold count or prefix threshold
       selects the mode.
@@ -1039,10 +1040,10 @@ the candidate score that decides whether and how long to offload.
       does not impose contiguity as a structural rule.
 - [x] Every selected offloaded edge contracts the entering balanced witness by
       at least threefold after counting both the recursive witness and padded
-      full-field prefix inputs, and strictly reduces the first remaining direct
-      setup scan.
-- [x] The selected schedule lexicographically minimizes first direct setup
-      footprint and exact estimated proof bytes within the supported setup
+      full-field prefix inputs, and strictly reduces the padded capacity of the
+      first remaining direct setup scan.
+- [x] The selected schedule lexicographically minimizes first direct padded setup
+      capacity and exact estimated proof bytes within the supported setup
       envelope.
 - [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.
@@ -1082,9 +1083,9 @@ the candidate score that decides whether and how long to offload.
 
 `akita-planner`:
 
-- scalar `find_schedule` never forwards an incoming prefix and emits only
-  direct transitions;
-- multi-group recursion policy enumerates direct and offloaded alternatives;
+- ordinary scalar `find_schedule` emits only direct transitions;
+- recursive scalar and multi-group policies enumerate direct and offloaded
+  alternatives;
 - incoming prefix participates in memo identity;
 - incompatible local candidates are filtered before minimum selection;
 - threefold contraction boundary and strict direct-setup-reduction boundary;
@@ -1102,17 +1103,14 @@ the candidate score that decides whether and how long to offload.
 `akita-config`:
 
 - recursion adapter delegates algebra/security policy to the base config;
-- recursion adapter delegates scalar keys to the base config's ordinary
-  catalog/runtime planner;
-- recursion adapter selects the recursive companion catalog only for genuine
-  multi-group keys;
+- recursion adapter selects scalar and grouped rows from the recursive
+  companion catalog;
 - ordinary config selects only the direct catalog;
-- unsupported capability combinations reject multi-group offloaded candidates
-  while scalar keys still delegate directly;
-- scalar/direct and multi-group/recursive table misses invoke the matching
-  planner path and policy bit.
-- recursive generated catalog materializes table hits with nonempty
-  `precommitted_groups` whenever `incoming_setup_prefix` is present.
+- unsupported capability combinations reject offloaded candidates;
+- direct and recursive table misses invoke the matching planner path and policy
+  bit;
+- recursive generated rows carry at least one `incoming_setup_prefix`,
+  regardless of whether the application root is scalar or grouped.
 
 `akita-setup`:
 
@@ -1128,8 +1126,9 @@ the candidate score that decides whether and how long to offload.
 
 Prover/verifier end to end:
 
-- scalar root under both ordinary and recursion-adapter configs remains
-  one-group/direct;
+- scalar root under ordinary config remains one-group/direct;
+- scalar root under recursion-adapter config may hand off to a two-group
+  setup-prefix-plus-witness suffix;
 - grouped root to two-group suffix;
 - zero, one, two, and more offloaded levels when chosen by the planner;
 - a two-group direct fold returning to a one-group successor;
@@ -1147,13 +1146,17 @@ Track:
 - proof bytes per fold by mode;
 - Stage 3 bytes per offloaded edge;
 - balanced-witness contraction for every selected offloaded edge;
-- first remaining direct setup footprint;
+- first remaining direct padded setup capacity and natural length;
 - number of selected offloaded edges;
 - verifier cycles saved by eliminating the setup scan;
 - exact selected proof bytes against the direct-only schedule.
 
-The local-minimum suffix heuristic must remain within the existing recursion
-bound. The planner must not enumerate a full split frontier.
+The catalog identity binds `RecursiveSplitSearchPolicy`. Production catalogs
+use `BoundedBalancedExtremesV1`: states through twelve reduced variables are
+exhaustive, while larger states search both extremes and a radius-two window
+around the balance estimate. `Exhaustive` remains available for small-domain
+oracles and audited workloads. Results under the bounded policy are selected
+under that named domain and are not described as globally optimal.
 
 ## Execution
 
@@ -1181,7 +1184,7 @@ The first implementation used a deliberately rigid rule:
 
 ```text
 eligible fold levels = 0 and 1
-mandatory offload when padded prefix > 2^10
+mandatory offload when full prefix > 2^10
 fold levels >= 2 are always direct
 ```
 
@@ -1215,10 +1218,10 @@ transition point.
 
 ### Scalar-Path Offloading
 
-Rejected. The scalar planner remains the stable direct-only path. Setup
-offloading relies on the multi-group machinery to carry the setup-prefix
-commitment beside the folded witness, so recursion-aware planning is entered
-only from a genuinely multi-group root key.
+Accepted under `RecursiveCommitmentConfig<Cfg>`. The scalar root itself remains
+one application group; when it offloads setup, the successor uses the existing
+multi-group machinery to carry the setup-prefix commitment beside the folded
+witness. Ordinary `Cfg` remains the stable direct-only path.
 
 ### Mixing Recursive Rows into Ordinary Tables
 
@@ -1229,13 +1232,14 @@ generated lookup, and DP fallback aligned.
 
 ### Exhaustive suffix candidate frontier
 
-Rejected. Keeping all feasible splits grows quickly with recursion depth. The
-existing locally minimized candidate heuristic remains the bounded planning
-model; setup compatibility is an additional local filter.
+Available as the `Exhaustive` catalog-bound policy for oracle coverage and
+explicit workloads. Production uses `BoundedBalancedExtremesV1` because the
+full frontier grows quickly with recursion depth. The policy tag prevents the
+two search domains from sharing a catalog identity.
 
 ### Generic carried-opening object
 
-Rejected. Folded-witness state has no natural or padded prefix length.
+Rejected. Folded-witness state has no natural support or full-prefix length.
 Setup-prefix metadata already lives in `SetupPrefixSlot`; the existing opening
 batch APIs can combine it with the witness claim.
 
@@ -1255,8 +1259,8 @@ Update the statuses of related specs when their deferred work is completed.
 
 - `STACK.md`
 - `specs/setup-layout-repack.md`
-- `specs/setup-prefix-ladder.md`
-- `specs/batched-stage3-setup-opening.md`
+- `specs/archive/2026-Q3/setup-prefix-ladder.md`
+- `specs/archive/2026-Q3/group-local-opening-points.md`
 - `specs/setup-product-sumcheck.md`
 - `specs/multi-group-batching.md`
 - `specs/planner-incidence-generalization.md`

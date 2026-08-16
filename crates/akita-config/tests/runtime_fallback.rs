@@ -2,27 +2,24 @@
 //!
 //! These cover the behaviors the planner refactor introduces:
 //!
-//! - **Table-miss rejection:** `Cfg::runtime_schedule` rejects a key that no
+//! - **Table-miss rejection:** `Cfg::resolve_catalog_row_for_key` rejects a key that no
 //!   generated table contains.
 //! - **Policy-bridge parity:** `policy_of::<Cfg>()` reproduces the values
 //!   embedded in generated catalog identities (single source of truth).
 //! - **No-panic boundary:** adversarial-but-bounded keys through
-//!   `runtime_schedule` return `Result`, never panic.
+//!   `resolve_catalog_row_for_key` return `Result`, never panic.
 
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{
-    policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::{policy_of, CommitmentConfig};
 use akita_planner::find_schedule;
-use akita_schedules::resolve_schedule;
 use akita_schedules::{
-    resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
-    PlannerPolicy, ResolvedScheduleRow,
+    resolve_generated_catalog_row_for_key, resolve_generated_schedule_selection,
+    PlannerCostModelId, PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
 };
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
@@ -74,8 +71,8 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
         "expected a table miss for the 3-poly key; the table unexpectedly carries it"
     );
 
-    let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
-        .expect_err("runtime_schedule must reject uncataloged keys");
+    let err = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key))
+        .expect_err("resolve_catalog_row_for_key must reject uncataloged keys");
     assert!(
         matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
         "expected UnsupportedSchedule for catalog miss, got {err:?}"
@@ -84,23 +81,22 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
 
 #[test]
 fn catalog_miss_rejects_non_shipped_keys() {
-    check_table_miss_rejection::<fp128::D64OneHot>(14);
-    check_table_miss_rejection::<fp128::D64Dense>(16);
-    check_table_miss_rejection::<fp32::D128OneHot>(16);
+    check_table_miss_rejection::<fp128::OneHot>(27);
+    check_table_miss_rejection::<fp128::Dense>(27);
+    check_table_miss_rejection::<fp32::OneHot>(17);
 }
 
 #[test]
 fn fixed_width_selection_resolves_the_same_exact_generated_row() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
     let key = entry.to_runtime_lookup_key();
-    let selected = select_generated_schedule_row(
+    let selected = resolve_generated_catalog_row_for_key(
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("prover selects exact generated row");
@@ -108,7 +104,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
         selected.selection(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("verifier resolves public row selection");
@@ -127,7 +122,6 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
             unknown,
             &policy_of::<Cfg>(),
             Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
             Some(catalog),
         ),
         Err(akita_field::AkitaError::UnsupportedSchedule(_))
@@ -136,15 +130,14 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
 
 #[test]
 fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
-    let selected = select_generated_schedule_row(
+    let selected = resolve_generated_catalog_row_for_key(
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("prime the materialized-catalog cache");
@@ -157,7 +150,6 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
                 "test runtime-hook drift".to_string(),
             ))
         },
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect_err("a cache hit must still execute the supplied runtime hook");
@@ -187,16 +179,15 @@ fn assert_mutated_row_is_rejected<Cfg: CommitmentConfig>(
 }
 
 #[test]
-fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
-    type Cfg = fp128::D64Dense;
+fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
-    let selected = select_generated_schedule_row(
+    let selected = resolve_generated_catalog_row_for_key(
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("valid generated row");
@@ -225,39 +216,43 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
     );
     assert_mutated_row_is_rejected::<Cfg>(profiles.clone(), low_rank_d);
 
-    let mut low_rank_terminal = selected.schedule().clone();
-    let matrix = &low_rank_terminal
-        .terminal
+    let mut low_rank_a = selected.schedule().clone();
+    let matrix = &low_rank_a
+        .root
         .params
-        .witness
+        .final_group
+        .commitment
         .inner_commit_matrix;
-    low_rank_terminal
-        .terminal
+    let table_key = matrix
+        .sis_table_key()
+        .expect("root A matrix must use the L infinity route");
+    low_rank_a
+        .root
         .params
-        .witness
+        .final_group
+        .commitment
         .inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
-        matrix.security_policy(),
-        matrix.sis_table_key().table_digest,
-        matrix.sis_modulus_profile(),
+        table_key.policy,
+        table_key.table_digest,
+        table_key.modulus_profile,
         0,
         matrix.input_width(),
-        matrix.coeff_linf_bound(),
-        matrix.ring_dimension(),
+        table_key.coeff_linf_bound,
+        table_key.ring_dimension as usize,
     );
-    assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_terminal);
+    assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_a);
 }
 
 #[test]
 fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
     let entry = catalog.entries.first().expect("nonempty generated catalog");
-    let selected = select_generated_schedule_row(
+    let selected = resolve_generated_catalog_row_for_key(
         &entry.to_runtime_lookup_key(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
         Some(catalog),
     )
     .expect("valid generated row");
@@ -294,55 +289,52 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
     }
 }
 
+#[cfg(all(
+    feature = "schedules-fp128-onehot",
+    not(feature = "schedules-fp128-onehot-recursive")
+))]
 #[test]
-fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
-    let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
-        .expect("ordinary scalar schedule must resolve");
-    let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
-        .expect("recursive adapter scalar schedule must resolve");
-    assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
-}
-
-#[test]
-fn adapters_forward_mixed_dimension_policy() {
-    type Base = fp128::MixedDimFp128OneHot;
-    assert_eq!(
-        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
-    );
-    assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
-        Base::RING_DIMENSION_CANDIDATES,
-    );
-    assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::selection_policy(),
-        Base::selection_policy(),
-    );
-    akita_schedules::planner_support::validate_policy(&policy_of::<
-        PrecommittedCommitmentConfig<Base>,
-    >())
-    .expect("precommitted mixed-dimension policy must remain valid");
+#[cfg(not(any(
+    feature = "schedules-fp128-onehot-recursive",
+    feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2"
+)))]
+fn grouped_recursive_catalog_rejects_without_recursive_feature() {
+    let precommitted_group = PolynomialGroupLayout::new(16, 1);
+    let descriptor = fp128::OneHot::profile_without_precommitted_groups(precommitted_group)
+        .expect("base OneHot precommit profile");
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![descriptor, descriptor],
+    };
+    assert!(matches!(
+        akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::resolve_catalog_row_for_key(&key),
+        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+    ));
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selective_l2_response_model:
+            akita_schedules::SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
         selection_policy: Cfg::selection_policy(),
+        recursive_split_search_policy:
+            akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
-        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
+        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
         sis_table_digest: akita_types::SisTableDigest::CURRENT,
-        ring_subfield_norm_bound: Cfg::ring_subfield_embedding_norm_bound(),
+        sis_l2_table_digest: akita_types::SisL2TableDigest::CURRENT,
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
-        basis_range: Cfg::basis_range(),
+        inner_basis_range: Cfg::inner_basis_range(),
+        opening_basis_range: Cfg::opening_basis_range(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
     };
@@ -354,17 +346,16 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 
 #[test]
 fn runtime_rejects_malformed_extension_geometry_without_panicking() {
-    type Cfg = fp128::D64OneHot;
+    type Cfg = fp128::OneHot;
     let catalog = Cfg::schedule_catalog();
-    let key = PolynomialGroupLayout::singleton(14);
+    let key = PolynomialGroupLayout::new(14, 1);
     let reject = |mutate: fn(&mut PlannerPolicy)| {
         let mut policy = policy_of::<Cfg>();
         mutate(&mut policy);
-        resolve_schedule(
-            key,
+        resolve_generated_catalog_row_for_key(
+            &AkitaScheduleLookupKey::single(key),
             &policy,
             Cfg::ring_challenge_config,
-            Cfg::fold_challenge_shape_at_level,
             catalog,
         )
         .expect_err("malformed extension geometry must reject")
@@ -387,29 +378,23 @@ fn runtime_rejects_malformed_extension_geometry_without_panicking() {
 
 #[test]
 fn policy_bridge_matches_cfg_hooks() {
-    assert_policy_matches_cfg::<fp128::D64Dense>();
-    assert_policy_matches_cfg::<fp128::D128Dense>();
-    assert_policy_matches_cfg::<fp128::D64OneHot>();
-    assert_policy_matches_cfg::<fp128::MixedDimFp128OneHot>();
-    assert_policy_matches_cfg::<fp32::D64OneHot>();
+    assert_policy_matches_cfg::<fp128::Dense>();
+    assert_policy_matches_cfg::<fp128::OneHot>();
+    assert_policy_matches_cfg::<fp32::OneHot>();
 }
 
 #[test]
-fn offline_planner_admits_dense_multi_group_roots() {
-    type Cfg = fp128::D64Dense;
+fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
+    type Cfg = fp128::Dense;
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 20;
 
     let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
-    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit opening layout");
-    let pre_params =
-        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-            &pre_layout,
-        )
-        .expect("dense precommit params");
+    let pre_profile =
+        Cfg::profile_without_precommitted_groups(pre_group).expect("dense precommit profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
-        precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
+        precommitteds: vec![pre_profile],
     };
     let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
     let planned = find_schedule(
@@ -418,33 +403,41 @@ fn offline_planner_admits_dense_multi_group_roots() {
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )
-    .expect("dense multi-group schedule");
-
-    assert_eq!(
-        planned.schedule.root.params.precommitted_groups.len(),
-        key.precommitteds.len()
-    );
+    .expect("adaptive dense grouped schedule");
     planned
         .schedule
         .validate_structure()
-        .expect("dense grouped schedule structure");
+        .expect("valid grouped schedule");
+    assert_eq!(
+        planned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .role_dims(),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 64,
+            opening: 64,
+        }
+    );
+    assert_eq!(
+        planned.schedule.root.params.precommitted_groups[0].descriptor,
+        key.precommitteds[0]
+    );
 }
 
 #[test]
 fn root_basis_is_derived_from_existing_policy_inputs() {
-    let fp128 = policy_of::<fp128::D64OneHot>();
-    assert_eq!(fp128.basis_range, (3, 6));
+    let fp128 = policy_of::<fp128::OneHot>();
+    assert_eq!(fp128.opening_basis_range, (3, 6));
     assert_eq!(fp128.decomposition.log_basis, 3);
-    assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
-    assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
 
-    let fp32 = policy_of::<fp32::D64OneHot>();
-    assert_eq!(fp32.basis_range, (3, 6));
+    let fp32 = policy_of::<fp32::OneHot>();
+    assert_eq!(fp32.opening_basis_range, (3, 6));
     assert_eq!(fp32.decomposition.log_basis, 3);
-    assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
-    assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
 }
 
 #[test]
@@ -459,37 +452,31 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.
-        let _ = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
+        let _ = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key));
     }
 }
-
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupProfile {
-    let params = akita_config::committed_group_params::<Cfg>(&group)
-        .expect("heterogeneous group must resolve");
-    CommittedGroupProfile::from_params(group, &params)
+    Cfg::profile_without_precommitted_groups(group).expect("heterogeneous group must resolve")
 }
 
 #[test]
 fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order() {
-    type Cfg = fp128::D64OneHot;
-    let onehot_16 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
-    let dense = committed_descriptor::<fp128::D64Dense>(PolynomialGroupLayout::new(15, 2));
+    type Cfg = fp128::OneHot;
+    let onehot_256 = committed_descriptor::<Cfg>(PolynomialGroupLayout::new(14, 1));
+    let dense = committed_descriptor::<fp128::Dense>(PolynomialGroupLayout::new(15, 2));
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
-        precommitteds: vec![onehot_16, dense],
+        precommitteds: vec![onehot_256, dense],
     };
 
     let precommitted_honest_fold_policies = vec![
         akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
-                Cfg::decomposition().field_bits(),
-                akita_types::sis::FoldWitnessNorms::new(1, 4),
-            ),
+            akita_types::sis::UnitOneHotFoldPolicy::new(Cfg::decomposition().field_bits(), 1, 256),
         ),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-            akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+            akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                 Cfg::decomposition().field_bits(),
                 akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
             ),
@@ -501,15 +488,16 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
     )
     .expect("heterogeneous group batch must plan offline");
 
-    let runtime = Cfg::runtime_schedule(key.clone()).expect("curated mixed catalog row");
+    let runtime = Cfg::resolve_catalog_row_for_key(&key)
+        .expect("curated mixed catalog row")
+        .into_schedule();
     assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
 
     let reordered = AkitaScheduleLookupKey {
-        precommitteds: vec![dense, onehot_16],
+        precommitteds: vec![dense, onehot_256],
         ..key
     };
     assert_ne!(
@@ -519,7 +507,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     );
     assert!(
         matches!(
-            Cfg::runtime_schedule(reordered),
+            Cfg::resolve_catalog_row_for_key(&reordered),
             Err(akita_field::AkitaError::UnsupportedSchedule(_))
         ),
         "an unlisted mixed ordering must reject without runtime planner search"

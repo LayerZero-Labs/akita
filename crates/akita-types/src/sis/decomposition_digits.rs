@@ -49,6 +49,33 @@ pub fn fold_witness_representable_linf_bounds(
     )
 }
 
+/// Minimum balanced-digit depth whose exact signed range contains
+/// `[-cap, cap]`.
+///
+/// Unlike [`num_digits_for_bound`], this function accepts an exact integer
+/// magnitude instead of a power-of-two bit width. The positive reach is the
+/// binding side because balanced digits extend farther in the negative
+/// direction.
+#[inline]
+#[must_use]
+pub fn num_digits_for_linf_cap(cap: u128, field_bits: u32, log_basis: u32) -> usize {
+    assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+    if cap == 0 {
+        return 1;
+    }
+    let signed_bits = (u128::BITS - cap.leading_zeros()).saturating_add(1);
+    if signed_bits >= field_bits {
+        return compute_num_digits_field_width(field_bits, log_basis);
+    }
+    let fallback = num_digits_for_bound(signed_bits, field_bits, log_basis);
+    for digits in 1..fallback {
+        if balanced_digit_max(log_basis, digits) >= cap {
+            return digits;
+        }
+    }
+    fallback
+}
+
 /// Maximum positive value representable by `num_digits` balanced base-`b`
 /// digits, where `b = 2^log_basis`. Each balanced digit lies in
 /// `[-b/2, b/2 - 1]`; the max positive value is the geometric series
@@ -175,13 +202,28 @@ pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> 
 /// level commits the balanced-digit witness, whose commit bound collapses to
 /// `log_basis`.
 pub fn num_digits_inner(decomposition: DecompositionParams, is_root: bool) -> usize {
-    let field_bits = decomposition.field_bits();
     let bound = if is_root {
         decomposition.log_commit_bound
     } else {
         decomposition.log_basis
     };
-    num_digits_for_bound(bound, field_bits, decomposition.log_basis)
+    num_digits_inner_for_bound(decomposition, bound)
+}
+
+/// `δ_commit` for an explicit source coefficient bound.
+///
+/// This is the general planner entry point when the source bound and selected
+/// A decomposition basis are independent. `source_log_bound` follows the same
+/// signed-bound convention as [`num_digits_for_bound`].
+pub fn num_digits_inner_for_bound(
+    decomposition: DecompositionParams,
+    source_log_bound: u32,
+) -> usize {
+    num_digits_for_bound(
+        source_log_bound,
+        decomposition.field_bits(),
+        decomposition.log_basis,
+    )
 }
 
 /// `δ_setup`: digits per coefficient for setup-prefix commitments.
@@ -256,9 +298,7 @@ pub fn projected_role_ring_count(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sis::{
-        fold_witness_digit_plan, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    };
+    use crate::sis::{fold_witness_beta_inf, FoldChallengeNorms, FoldWitnessNorms};
 
     #[test]
     fn balanced_digit_max_cases() {
@@ -275,6 +315,15 @@ mod tests {
         // b = 8, δ = 2 digits represent [-36, 27].
         assert_eq!(balanced_digit_max(3, 2), 27);
         assert_eq!(balanced_digit_abs_max(3, 2), 36);
+    }
+
+    #[test]
+    fn exact_linf_cap_does_not_round_through_a_power_of_two_range() {
+        assert_eq!(num_digits_for_linf_cap(20, 64, 3), 2);
+        assert_eq!(num_digits_for_linf_cap(27, 64, 3), 2);
+        assert_eq!(num_digits_for_linf_cap(28, 64, 3), 3);
+        assert_eq!(num_digits_for_linf_cap(1_755, 128, 3), 4);
+        assert_eq!(num_digits_for_linf_cap(1_756, 128, 3), 5);
     }
 
     #[test]
@@ -358,39 +407,24 @@ mod tests {
         let dense = FoldWitnessNorms::bounded(3, 64);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
         let onehot = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
-        let (dense_digits, _) = fold_witness_digit_plan(
-            8,
-            1,
+        let dense_beta = fold_witness_beta_inf(8, 1, challenge, dense).unwrap();
+        let onehot_beta = fold_witness_beta_inf(8, 1, challenge, onehot).unwrap();
+        let dense_digits =
+            num_digits_for_bound((128 - dense_beta.leading_zeros()).saturating_add(1), 128, 3);
+        let onehot_digits = num_digits_for_bound(
+            (128 - onehot_beta.leading_zeros()).saturating_add(1),
             128,
             3,
-            challenge,
-            dense,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
-        let (onehot_digits, _) = fold_witness_digit_plan(
-            8,
-            1,
-            128,
-            3,
-            challenge,
-            onehot,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        );
         assert!(dense_digits > 0 && onehot_digits > 0);
         assert!(onehot_digits < dense_digits);
         // More claims never reduce the digit count.
-        let (batched_digits, _) = fold_witness_digit_plan(
-            8,
-            4,
+        let batched_beta = fold_witness_beta_inf(8, 4, challenge, dense).unwrap();
+        let batched_digits = num_digits_for_bound(
+            (128 - batched_beta.leading_zeros()).saturating_add(1),
             128,
             3,
-            challenge,
-            dense,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        );
         assert!(batched_digits >= dense_digits);
     }
 
@@ -402,15 +436,6 @@ mod tests {
         };
         let witness = FoldWitnessNorms::bounded(3, 64);
         // A fold must contain at least one live block.
-        assert!(fold_witness_digit_plan(
-            0,
-            1,
-            128,
-            3,
-            challenge,
-            witness,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only()
-        )
-        .is_err());
+        assert!(fold_witness_beta_inf(0, 1, challenge, witness).is_err());
     }
 }

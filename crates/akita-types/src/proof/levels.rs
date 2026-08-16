@@ -22,6 +22,24 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub stages: Vec<AkitaStage1StageProof<F>>,
     /// Claimed evaluation of `S` at the final stage-1 output point.
     pub range_image_evaluation: F,
+    /// Optional schedule-selected proof of the complete physical response
+    /// square sum. Its presence and exact vector lengths are derived from the
+    /// A matrix security route.
+    pub norm_proof: Option<PhysicalL2NormProof<F>>,
+}
+
+/// Stage-1 payload for one schedule-selected physical L2 norm proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhysicalL2NormProof<F: FieldCore> {
+    /// Exact nonnegative integer square sum reconstructed by the verifier.
+    pub response_l2_sq: u128,
+    /// Direct mode leaves this empty. Limb-Gram mode carries the canonical
+    /// block-major, upper-triangular inner-product claims.
+    pub subclaims: Vec<F>,
+    /// Final virtual response or limb evaluations consumed by Stage 2.
+    pub virtual_evaluations: Vec<F>,
+    /// General final-leaf sumcheck batching range and norm terms.
+    pub sumcheck: SumcheckProof<F>,
 }
 
 /// FoldSchedule-shaped outgoing witness binding for an intermediate fold.
@@ -123,7 +141,7 @@ pub struct FoldLevelProof<F: FieldCore, E: FieldCore> {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Terminal compressed opening payload `p_H`.
     pub opening_payload: RingVec<F>,
-    /// Accepted fold-l∞ grind nonce (`0` under deterministic policy).
+    /// Accepted fold-l∞ grind nonce (`0` when the first probe succeeds).
     pub fold_grind_nonce: u32,
     /// Stage-1 norm-check payload.
     pub stage1: AkitaStage1Proof<E>,
@@ -151,7 +169,7 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         }
     }
 
-    /// Accepted fold grind nonce (`0` under deterministic policy).
+    /// Accepted fold grind nonce (`0` when the first probe succeeds).
     pub fn fold_grind_nonce(&self) -> u32 {
         self.fold_grind_nonce
     }
@@ -272,7 +290,7 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
 pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
+    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection.
     pub fold_grind_nonce: u32,
     /// Quotient-free terminal response checked directly by the verifier.
     pub terminal_response: TerminalResponse<F>,

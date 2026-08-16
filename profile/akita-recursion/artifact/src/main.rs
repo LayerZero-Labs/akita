@@ -1,8 +1,8 @@
 //! Generate an Akita verifier-input blob to be consumed by the Jolt guest
 //! program in `profile/akita-recursion/guest`.
 //!
-//! Mirrors `run_profile_onehot_fp128_d64` from `crates/akita-pcs/examples/profile.rs`:
-//! single-poly OneHot polynomial commitment in `D=64` mode at the canonical
+//! Mirrors the fp128 adaptive one-hot profile from `crates/akita-pcs/examples/profile.rs`:
+//! single-poly OneHot polynomial commitment at the canonical
 //! `q=2^128-2^32+22537` prime, opened at one random point. After running the
 //! prover end-to-end we re-run the host verifier as a sanity check, then
 //! serialize all verifier-side state into one contiguous blob via
@@ -10,8 +10,9 @@
 //!
 //! Output paths are controlled via `AKITA_RECURSION_BLOB` (defaults to
 //! `target/akita_recursion_inputs.bin`). Set `AKITA_NUM_VARS` (default 20)
-//! to regenerate at a different polynomial arity. Stick with `D=64 OneHot`
-//! so the guest's hard-coded monomorphization can read the blob.
+//! to regenerate at a different polynomial arity. The Jolt monomorphization
+//! uses the adaptive preset's D256 root envelope; the selected catalog row must
+//! use that A dimension.
 
 #![allow(missing_docs)]
 
@@ -21,14 +22,15 @@ use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly, ProverOpeningData,
+    CommitOutput, ComputeBackendSetup, CpuBackend, GroupContext, OneHotIndex, OneHotPoly,
+    SelectedProverOpeningData,
 };
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
-    CommittedGroupBatchProfile, CommittedGroupParams, GroupBatchStatement, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims,
+    CommittedGroupParams, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
@@ -48,13 +50,13 @@ use tracing_subscriber::EnvFilter;
 struct Args {}
 
 type F = fp128::Field;
-const D: usize = 64;
-type Cfg = fp128::D64OneHot;
+type Cfg = fp128::OneHot;
+const D: usize = <Cfg as CommitmentConfig>::D;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
 
-const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot-d64";
+const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot";
 
 fn onehot_k_for_num_vars(nv: usize) -> usize {
     let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
@@ -101,7 +103,7 @@ where
     .map_err(|err| format!("opening point shape should match layout: {err}"))?;
 
     let opening = OpeningFoldKernel::evaluate_and_fold(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         None,
         poly.opening_view()
             .map_err(|err| format!("opening view: {err}"))?,
@@ -238,14 +240,15 @@ fn run() -> Result<(), String> {
         d = D,
         onehot_k,
         prime = %prime,
-        "generating Akita verifier-input artifact (single-poly OneHot, D=64)"
+        "generating Akita verifier-input artifact (single-poly adaptive OneHot)"
     );
 
     let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
     let layout: CommittedGroupParams =
-        <Cfg as CommitmentConfig>::get_params_for_batched_commitment(&opening_layout)
+        <Cfg as CommitmentConfig>::resolve_catalog_row_for_opening(&opening_layout)
+            .map(|row| row.schedule().root.params.final_group.commitment.clone())
             .expect("layout");
-    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("proof schedule");
+    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout).expect("proof schedule");
     let alpha_bits = D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
@@ -288,11 +291,11 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
         .map_err(|err| format!("prover setup failed: {err}"))?;
-    let prepared = CpuBackend
+    let prepared = CpuBackend::DEFAULT
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &prepared,
         prover_setup.expanded.as_ref(),
     )
@@ -303,39 +306,36 @@ fn run() -> Result<(), String> {
     );
 
     let t0 = Instant::now();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit(
+    let CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit(
         &prover_setup,
         std::slice::from_ref(&onehot_poly),
         &stack,
+        GroupContext::scheduler_without_precommitted_groups(),
     )
     .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
     let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
     let openings = [opening];
-    let schedule_selection =
-        Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
-            final_group: *commitment.profile(),
-            precommitteds: Vec::new(),
-        })
-        .map_err(|err| format!("schedule selection failed: {err}"))?
-        .selection();
-
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let prove_group =
         PolynomialGroupClaims::new(opening_point.clone(), openings.to_vec(), commitment.clone())
             .map_err(|err| format!("invalid prover opening group: {err}"))?;
-    let prove_input = ProverOpeningData::new(
+    let prove_input = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         OpeningClaims::from_groups(vec![prove_group])
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         vec![hint],
         vec![&poly_refs[..]],
     )
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
+    let schedule_selection = prove_input.selection();
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
         &prover_setup,
-        (schedule_selection, prove_input),
+        prove_input,
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -345,7 +345,7 @@ fn run() -> Result<(), String> {
 
     let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
         &prover_setup,
-        &schedule,
+        schedule.schedule(),
         &opening_layout,
     )
     .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;

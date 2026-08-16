@@ -422,7 +422,22 @@ impl Add for Fp128x8i32 {
 impl AddAssign for Fp128x8i32 {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        // In-place NEON: no value round-trip through a stack temporary (the
+        // accumulate kernels call this in their innermost loop).
+        // SAFETY: both arrays contain exactly eight i32 lanes. Each intrinsic
+        // reads or writes four lanes at offset 0 or 4, so every access stays
+        // within its array. NEON vld1q/vst1q allow unaligned pointers. `&mut
+        // self` is exclusive, `rhs` is owned, and the two output halves do not
+        // overlap.
+        unsafe {
+            use std::arch::aarch64::*;
+            let p = self.0.as_mut_ptr();
+            vst1q_s32(p, vaddq_s32(vld1q_s32(p), vld1q_s32(rhs.0.as_ptr())));
+            vst1q_s32(
+                p.add(4),
+                vaddq_s32(vld1q_s32(p.add(4)), vld1q_s32(rhs.0.as_ptr().add(4))),
+            );
+        }
     }
 }
 
@@ -449,7 +464,21 @@ impl Sub for Fp128x8i32 {
 impl SubAssign for Fp128x8i32 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        // In-place NEON; see `AddAssign` for the performance reason.
+        // SAFETY: both arrays contain exactly eight i32 lanes. Each intrinsic
+        // reads or writes four lanes at offset 0 or 4, so every access stays
+        // within its array. NEON vld1q/vst1q allow unaligned pointers. `&mut
+        // self` is exclusive, `rhs` is owned, and the two output halves do not
+        // overlap.
+        unsafe {
+            use std::arch::aarch64::*;
+            let p = self.0.as_mut_ptr();
+            vst1q_s32(p, vsubq_s32(vld1q_s32(p), vld1q_s32(rhs.0.as_ptr())));
+            vst1q_s32(
+                p.add(4),
+                vsubq_s32(vld1q_s32(p.add(4)), vld1q_s32(rhs.0.as_ptr().add(4))),
+            );
+        }
     }
 }
 
@@ -794,6 +823,33 @@ impl<const P: u64> HasWide for Fp64<P> {
 
 impl<const P: u128> HasWide for Fp128<P> {
     type Wide = Fp128x8i32;
+}
+
+/// Associates a field with the accumulator used by unit-scale commitment
+/// streams and the number of additions it can absorb before reduction.
+pub trait HasCommitAccum: FieldCore {
+    /// Accumulator representation used by commitment streams.
+    type CommitAccum: AdditiveGroup + From<Self> + ReduceTo<Self>;
+
+    /// Maximum unit-scale additions before any signed 32-bit limb can overflow.
+    const MAX_COMMIT_ACCUMULATIONS: usize;
+}
+
+const MAX_WIDE_LANE_ACCUMULATIONS: usize = (i32::MAX as usize) / (u16::MAX as usize);
+
+impl<const P: u32> HasCommitAccum for Fp32<P> {
+    type CommitAccum = Fp32x2i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u64> HasCommitAccum for Fp64<P> {
+    type CommitAccum = Fp64x4i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u128> HasCommitAccum for Fp128<P> {
+    type CommitAccum = Fp128x8i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
 }
 
 #[cfg(test)]

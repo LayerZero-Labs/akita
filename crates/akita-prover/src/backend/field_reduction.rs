@@ -1,5 +1,6 @@
 //! Tensor extension-opening packing helpers.
 
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
 use akita_field::{AkitaError, ExtField, FieldCore};
@@ -165,30 +166,71 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: RootTensorProjectionView<'_, F, D>,
+        sources: Vec<RootTensorProjectionView<'_, F, D>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        match source.poly {
-            RootTensorProjectionPoly::Dense(poly) => {
-                RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )
-            }
-            RootTensorProjectionPoly::Sparse(poly) => {
-                RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.as_ref().commit_view()?,
-                    plan,
-                )
-            }
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly, RootTensorProjectionPoly::Dense(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly {
+                    RootTensorProjectionPoly::Dense(poly) => poly.commit_view(),
+                    RootTensorProjectionPoly::Sparse(_) => unreachable!("checked dense group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
         }
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly, RootTensorProjectionPoly::Sparse(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly {
+                    RootTensorProjectionPoly::Sparse(poly) => poly.as_ref().commit_view(),
+                    RootTensorProjectionPoly::Dense(_) => unreachable!("checked sparse group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
+        }
+        cfg_into_iter!(sources)
+            .map(|source| {
+                let committed = match source.poly {
+                    RootTensorProjectionPoly::Dense(poly) => {
+                        RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                            self,
+                            prepared,
+                            vec![poly.commit_view()?],
+                            plan,
+                        )?
+                    }
+                    RootTensorProjectionPoly::Sparse(poly) => {
+                        RootCommitKernel::<SparseRingView<'_, F, D>, F, D>::commit_inner_group(
+                            self,
+                            prepared,
+                            vec![poly.as_ref().commit_view()?],
+                            plan,
+                        )?
+                    }
+                };
+                let [witness] = committed.try_into().map_err(|committed: Vec<_>| {
+                    AkitaError::InvalidSetup(format!(
+                        "child kernel returned {} tensor projections, expected one",
+                        committed.len()
+                    ))
+                })?;
+                Ok(witness)
+            })
+            .collect()
     }
 }
 
@@ -201,7 +243,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RootTensorProjectionView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         match source.poly {
             RootTensorProjectionPoly::Dense(poly) => {
@@ -263,10 +305,7 @@ where
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         let Some(first) = source.polys.first() else {
-            return Ok(match plan {
-                DecomposeFoldBatchPlan::Sparse { .. } => BatchDecomposeFoldOutcome::FallbackPerPoly,
-                DecomposeFoldBatchPlan::Tensor { .. } => BatchDecomposeFoldOutcome::Unsupported,
-            });
+            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
         };
         match *first {
             RootTensorProjectionPoly::Dense(_) => {
@@ -275,14 +314,7 @@ where
                     match *poly {
                         RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
                         _ => {
-                            return Ok(match plan {
-                                DecomposeFoldBatchPlan::Sparse { .. } => {
-                                    BatchDecomposeFoldOutcome::FallbackPerPoly
-                                }
-                                DecomposeFoldBatchPlan::Tensor { .. } => {
-                                    BatchDecomposeFoldOutcome::Unsupported
-                                }
-                            });
+                            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                         }
                     }
                 }
@@ -300,14 +332,7 @@ where
                             sparse_polys.push(inner.as_ref())
                         }
                         _ => {
-                            return Ok(match plan {
-                                DecomposeFoldBatchPlan::Sparse { .. } => {
-                                    BatchDecomposeFoldOutcome::FallbackPerPoly
-                                }
-                                DecomposeFoldBatchPlan::Tensor { .. } => {
-                                    BatchDecomposeFoldOutcome::Unsupported
-                                }
-                            });
+                            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                         }
                     }
                 }
@@ -500,13 +525,87 @@ where
     let (_split_bits, width) = tensor_extension_split::<F, E>("packing")?;
     let packed =
         pack_tensor_base_lift_i8_digits::<D>(logical_w.as_i8_digits(), E::EXT_DEGREE, width)?;
-    RecursiveWitnessFlat::from_i8_digits(packed).align_for_commitment_ring_dim(D)
+    RecursiveWitnessFlat::from_packed_i8_digits(packed, logical_w.live_coeff_len())?
+        .align_for_commitment_ring_dim(D)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{AkitaError, FpExt4, Prime32Offset99};
+    use crate::compute::ComputeBackendSetup;
+    use crate::AkitaProverSetup;
+    use akita_field::{AkitaError, CanonicalField, FpExt4, Prime32Offset99};
+    use akita_types::SetupMatrixCapacity;
+
+    #[test]
+    fn homogeneous_projected_group_matches_one_dense_group_call() {
+        type F = Prime32Offset99;
+        const D: usize = 128;
+
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            7,
+            2,
+            SetupMatrixCapacity {
+                num_field_elements: 4096,
+            },
+        )
+        .unwrap();
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+        let plan = CommitInnerPlan {
+            n_a: 2,
+            num_positions_per_block: 1,
+            num_digits_inner: 1,
+            log_basis_inner: 2,
+        };
+        let dense = [
+            DensePoly::from_field_evals(
+                7,
+                D,
+                (0..128)
+                    .map(|i| F::from_canonical_u128_reduced(i + 1))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+            DensePoly::from_field_evals(
+                7,
+                D,
+                (0..128)
+                    .map(|i| F::from_canonical_u128_reduced(3 * i + 7))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        ];
+        let expected = RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+            &CpuBackend::DEFAULT,
+            &prepared,
+            dense
+                .iter()
+                .map(RootCommitSource::<F, D>::commit_view)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            plan,
+        )
+        .unwrap();
+        let projected = dense.map(RootTensorProjectionPoly::Dense);
+        let actual =
+            RootCommitKernel::<RootTensorProjectionView<'_, F, D>, F, D>::commit_inner_group(
+                &CpuBackend::DEFAULT,
+                &prepared,
+                projected
+                    .iter()
+                    .map(RootCommitSource::<F, D>::commit_view)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                plan,
+            )
+            .unwrap();
+
+        assert_eq!(actual.len(), 2);
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(actual.inner_rows.ring_dim(), expected.inner_rows.ring_dim());
+            assert_eq!(actual.inner_rows.coeffs(), expected.inner_rows.coeffs());
+        }
+    }
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {
@@ -523,5 +622,20 @@ mod tests {
                 actual: 3
             }
         ));
+    }
+
+    #[test]
+    fn recursive_tensor_pack_preserves_logical_live_length() {
+        type F = Prime32Offset99;
+        type E = FpExt4<F>;
+        const D: usize = 128;
+        let logical_len = D + <E as ExtField<F>>::EXT_DEGREE;
+        let witness = RecursiveWitnessFlat::from_i8_digits(vec![1; logical_len]);
+
+        let packed = tensor_pack_recursive_witness::<F, E, D>(&witness).unwrap();
+
+        assert_eq!(packed.live_coeff_len(), logical_len);
+        assert_eq!(packed.as_i8_digits().len(), 2 * D);
+        assert_eq!(packed.committed_coeff_len().unwrap(), 2 * D);
     }
 }

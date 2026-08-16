@@ -417,6 +417,42 @@ impl<'a, E: Clone, F: FieldCore> GroupBatchStatement<'a, E, F> {
     }
 }
 
+impl<'a, E: Clone, F: FieldCore> OpeningClaims<'a, E, &'a CommittedGroup<F>> {
+    /// Layout reconstructed from the frozen commitment profiles.
+    pub fn committed_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        self.check()?;
+        let mut groups = Vec::with_capacity(self.groups.len());
+        for group in &self.groups {
+            let declared = group.commitment.profile().group;
+            if declared.num_vars() != group.point.len()
+                || declared.num_polynomials() != group.evaluations.len()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            groups.push(declared);
+        }
+        OpeningClaimsLayout::from_groups(groups)
+    }
+}
+
+impl<'a, E: Clone, F: FieldCore> OpeningClaims<'a, E, CommittedGroup<F>> {
+    /// Layout reconstructed from the frozen commitment profiles.
+    pub fn committed_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        self.check()?;
+        let mut groups = Vec::with_capacity(self.groups.len());
+        for group in &self.groups {
+            let declared = group.commitment.profile().group;
+            if declared.num_vars() != group.point.len()
+                || declared.num_polynomials() != group.evaluations.len()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            groups.push(declared);
+        }
+        OpeningClaimsLayout::from_groups(groups)
+    }
+}
+
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     /// Build public claims from ordered groups.
     pub fn from_groups(groups: Vec<PolynomialGroupClaims<'a, F, C>>) -> Result<Self, AkitaError> {
@@ -688,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn from_root_groups_appends_final_group_after_precommitteds() {
+    fn from_root_groups_appends_final_group_after_precommitted_groups() {
         let precommitteds = [
             PolynomialGroupLayout::new(2, 1),
             PolynomialGroupLayout::new(3, 2),

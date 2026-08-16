@@ -4,7 +4,8 @@
 //! [`RingRelationProver`].
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, RootOpeningSource,
+    OpeningFoldKernel, OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel,
+    RingSwitchRelationPlan, RootOpeningSource, RuntimeRingSwitchProveBackend,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
@@ -18,15 +19,16 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
+use akita_types::RingMultiplierOpeningPoint;
 use akita_types::{
     assemble_compressed_relation_rhs, assemble_relation_rhs, relation_rhs_layout_for, RingVec,
 };
 use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{CommittedGroupParams, RingRelationInstance};
-use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
+use crate::backend::RingSwitchRelationView;
 
 mod compression_witness;
 mod relation_quotient;
@@ -36,6 +38,11 @@ pub(crate) use compression_witness::{
     CompressionWitnessMaterialization,
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
+
+struct GroupOpeningMaterial<F: FieldCore> {
+    e_hat: DigitBlocks,
+    e_folded: RingVec<F>,
+}
 
 fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     pre_folded_e: &[&[CyclotomicRing<F, D>]],
@@ -69,8 +76,11 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(e_hat)
 }
 
-fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError> {
-    let Some(first) = blocks.first() else {
+fn concat_digit_blocks<'a>(
+    blocks: impl IntoIterator<Item = &'a DigitBlocks>,
+) -> Result<DigitBlocks, AkitaError> {
+    let mut blocks = blocks.into_iter();
+    let Some(first) = blocks.next() else {
         return Err(AkitaError::InvalidInput(
             "multi-group digit concatenation requires at least one group".to_string(),
         ));
@@ -78,7 +88,7 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
     let stride = first.digit_stride();
     let mut digits = Vec::new();
     let mut block_sizes = Vec::new();
-    for block in blocks {
+    for block in std::iter::once(first).chain(blocks) {
         if block.digit_stride() != stride {
             return Err(AkitaError::InvalidInput(
                 "multi-group digit blocks have mixed ring dimensions".to_string(),
@@ -93,55 +103,46 @@ fn concat_digit_blocks(blocks: &[DigitBlocks]) -> Result<DigitBlocks, AkitaError
 pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F>>,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-    let Some((first, rest)) = witnesses.split_first() else {
+    let mut witnesses = witnesses.into_iter();
+    let Some(first) = witnesses.next() else {
         return Err(AkitaError::InvalidInput(
             "batched decompose_fold requires at least one witness".to_string(),
         ));
     };
     first.ensure_ring_dim::<D>()?;
     let row_count = first.row_count();
-    let mut z_folded_rings = first.z_folded_rings_trusted::<D>().to_vec();
-    let mut centered_coeffs = first.centered_coeffs_owned::<D>();
+    let (z_folded_rings, mut centered_coeffs) = first.into_owned_flat_parts();
+    let mut z_folded_coeffs = z_folded_rings.into_coeffs();
 
-    for witness in rest {
+    for witness in witnesses {
         witness.ensure_ring_dim::<D>()?;
         if witness.row_count() != row_count {
             return Err(AkitaError::InvalidInput(
                 "batched decompose_fold witness length mismatch".to_string(),
             ));
         }
-        for (dst, src) in z_folded_rings
+        for (dst, src) in z_folded_coeffs
             .iter_mut()
-            .zip(witness.z_folded_rings_trusted::<D>())
+            .zip(witness.z_folded_rings.coeffs())
         {
             *dst += *src;
         }
         for (dst, src) in centered_coeffs
             .iter_mut()
-            .zip(witness.centered_coeffs_trusted::<D>())
+            .zip(witness.centered_coeffs_flat())
         {
-            for k in 0..D {
-                dst[k] = dst[k].checked_add(src[k]).ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "batched decompose_fold centered coefficient overflow".to_string(),
-                    )
-                })?;
-            }
+            *dst = dst.checked_add(*src).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "batched decompose_fold centered coefficient overflow".to_string(),
+                )
+            })?;
         }
     }
 
-    let centered_inf_norm = centered_coeffs
-        .iter()
-        .flat_map(|coeffs| coeffs.iter())
-        .map(|coeff| coeff.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-
-    Ok(DecomposeFoldWitness::from_parts(
-        z_folded_rings,
+    DecomposeFoldWitness::from_owned_flat_parts::<D>(
+        akita_types::RingVec::from_coeffs_with_ring_dim(z_folded_coeffs, D)?,
         centered_coeffs,
-        centered_inf_norm,
-    ))
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -162,116 +163,47 @@ where
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
         + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
 {
-    match challenges {
-        Challenges::Sparse {
-            challenges: sparse,
-            num_live_blocks_per_claim,
-            ..
-        } => {
-            let mut point_challenges =
-                Vec::with_capacity(point_indices.len() * *num_live_blocks_per_claim);
-            for &claim_idx in point_indices {
-                let start = claim_idx
-                    .checked_mul(*num_live_blocks_per_claim)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
-                    })?;
-                let end = start
-                    .checked_add(*num_live_blocks_per_claim)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
-                    })?;
-                point_challenges.extend_from_slice(sparse.get(start..end).ok_or(
-                    AkitaError::InvalidSize {
-                        expected: end,
-                        actual: sparse.len(),
-                    },
-                )?);
-            }
-            let batch_view = P::opening_batch(point_polys)?;
-            match OpeningBatchKernel::decompose_fold_batch(
-                backend,
-                prepared,
-                batch_view,
-                DecomposeFoldBatchPlan::Sparse {
-                    challenges: &point_challenges,
-                    num_positions_per_block,
-                    num_digits: num_digits_inner,
-                    log_basis: log_basis_inner,
-                },
-            )? {
-                BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
-                BatchDecomposeFoldOutcome::FallbackPerPoly => {
-                    let witnesses: Vec<DecomposeFoldWitness<F>> = point_polys
-                        .iter()
-                        .zip(point_challenges.chunks(*num_live_blocks_per_claim))
-                        .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
-                            OpeningFoldKernel::decompose_fold(
-                                backend,
-                                prepared,
-                                poly.opening_view()?,
-                                DecomposeFoldPlan {
-                                    challenges: poly_challenges,
-                                    num_positions_per_block,
-                                    num_digits: num_digits_inner,
-                                    log_basis: log_basis_inner,
-                                },
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    aggregate_decompose_fold_witnesses::<F, D>(witnesses)
-                }
-                BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
-                    "sparse batched fold is unsupported for this polynomial backend".to_string(),
-                )),
-            }
+    let point_challenges = challenges.select_claims(point_indices)?;
+    let batch_view = P::opening_batch(point_polys)?;
+    match OpeningBatchKernel::decompose_fold_batch(
+        backend,
+        prepared,
+        batch_view,
+        DecomposeFoldBatchPlan::Sparse {
+            challenges: point_challenges.as_slice(),
+            num_positions_per_block,
+            num_digits: num_digits_inner,
+            log_basis: log_basis_inner,
+        },
+    )? {
+        BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
+        BatchDecomposeFoldOutcome::FallbackPerPoly => {
+            let witnesses: Vec<DecomposeFoldWitness<F>> = point_polys
+                .iter()
+                .zip(
+                    point_challenges
+                        .as_slice()
+                        .chunks(point_challenges.num_live_blocks_per_claim()),
+                )
+                .map(|(poly, poly_challenges)| -> Result<_, AkitaError> {
+                    OpeningFoldKernel::decompose_fold(
+                        backend,
+                        prepared,
+                        poly.opening_view()?,
+                        DecomposeFoldPlan {
+                            challenges: poly_challenges,
+                            num_positions_per_block,
+                            num_digits: num_digits_inner,
+                            log_basis: log_basis_inner,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            aggregate_decompose_fold_witnesses::<F, D>(witnesses)
         }
-        Challenges::Tensor { factored: _ } => {
-            let selected = challenges.select_claims::<D>(point_indices)?;
-            let point_factored = match selected {
-                Challenges::Tensor { factored } => factored,
-                Challenges::Sparse { .. } => {
-                    return Err(AkitaError::InvalidSetup(
-                        "tensor claim selection returned sparse challenges".to_string(),
-                    ))
-                }
-            };
-            let batch_view = P::opening_batch(point_polys)?;
-            match OpeningBatchKernel::decompose_fold_batch(
-                backend,
-                prepared,
-                batch_view,
-                DecomposeFoldBatchPlan::Tensor {
-                    tensor: &point_factored,
-                    num_positions_per_block,
-                    num_digits: num_digits_inner,
-                    log_basis: log_basis_inner,
-                },
-            )? {
-                BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),
-                BatchDecomposeFoldOutcome::FallbackPerPoly
-                | BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
-                    "polynomial backend has no tensor-shaped fold kernel".to_string(),
-                )),
-            }
-        }
-    }
-}
-
-/// Convert scalar or multi-group opening-point carriers into the multi-group internal form.
-pub trait IntoRingOpeningPointVec<F: FieldCore> {
-    fn into_vec(self) -> Vec<RingOpeningPoint<F>>;
-}
-
-impl<F: FieldCore> IntoRingOpeningPointVec<F> for RingOpeningPoint<F> {
-    fn into_vec(self) -> Vec<RingOpeningPoint<F>> {
-        vec![self]
-    }
-}
-
-impl<F: FieldCore> IntoRingOpeningPointVec<F> for Vec<RingOpeningPoint<F>> {
-    fn into_vec(self) -> Vec<RingOpeningPoint<F>> {
-        self
+        BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
+            "sparse batched fold is unsupported for this polynomial backend".to_string(),
+        )),
     }
 }
 
@@ -292,38 +224,25 @@ impl<F: FieldCore> IntoRingMultiplierOpeningPointVec<F> for Vec<RingMultiplierOp
     }
 }
 
-fn compute_v_rows<F, B, const D: usize>(
-    backend: &B,
-    prepared: &B::PreparedSetup,
-    row_len: usize,
-    e_hat: &DigitBlocks,
-    log_basis: u32,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    B: DigitRowsComputeBackend<F>,
-{
-    let rows = backend.digit_rows::<D>(prepared, row_len, e_hat.typed_planes::<D>()?, log_basis)?;
-    if rows.len() != row_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(rows)
+struct RelationDRows<F: FieldCore, const D: usize> {
+    reduced: Vec<CyclotomicRing<F, D>>,
+    quotients: Vec<CyclotomicRing<F, D>>,
 }
 
-/// Compute the private D-block rows `v = D * e_hat`.
+/// Compute the private D-block rows `v = D * e_hat` and their relation quotients.
 ///
 /// D-role kernel: `d_row_len` is the D-matrix row count and `e_hat` carries
 /// the opening digits at the D-role ring dimension. Callers extract both from
 /// the schedule; this function must not read schedule types.
-fn compute_relation_v_rows<F, RB, const D: usize>(
+fn compute_relation_d_rows<F, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB>,
     d_row_len: usize,
     log_basis: u32,
     e_hat: &DigitBlocks,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+) -> Result<RelationDRows<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    RB: DigitRowsComputeBackend<F>,
+    F: FieldCore + CanonicalField + HalvingField,
+    RB: RingSwitchProveBackend<F, D>,
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
@@ -332,7 +251,42 @@ where
         e_hat_planes = e_hat.typed_planes::<D>()?.len()
     )
     .entered();
-    compute_v_rows(backend, prepared, d_row_len, e_hat, log_basis)
+    let rows = RingSwitchRelationKernel::relation_rows(
+        backend,
+        prepared,
+        RingSwitchRelationView {
+            e_hat: e_hat.typed_planes::<D>()?,
+            t_hat: &[],
+            z_segment: &[],
+            z_folded_centered_inf_norm: 0,
+        },
+        RingSwitchRelationPlan {
+            n_d: d_row_len,
+            n_b: 0,
+            n_a: 0,
+            log_basis_open: log_basis,
+            log_basis_outer: log_basis,
+        },
+    )?;
+    if rows.d_negacyclic.len() != d_row_len
+        || rows.d_cyclic.len() != d_row_len
+        || !rows.b_cyclic.is_empty()
+        || !rows.a_quotients.is_empty()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let quotients = rows
+        .d_cyclic
+        .iter()
+        .zip(&rows.d_negacyclic)
+        .map(|(cyclic, reduced)| {
+            relation_quotient::quotient_from_cyclic_and_reduced(cyclic, reduced)
+        })
+        .collect();
+    Ok(RelationDRows {
+        reduced: rows.d_negacyclic,
+        quotients,
+    })
 }
 
 /// Validate the chunked-witness configuration at the prover boundary (no-panic
@@ -349,33 +303,27 @@ pub(super) fn window_sparse_challenges(
     challenges: &Challenges,
     fold_range: std::ops::Range<usize>,
 ) -> Result<Challenges, AkitaError> {
-    match challenges {
-        Challenges::Sparse {
-            challenges: sparse,
-            num_live_blocks_per_claim,
-            num_claims,
-        } => {
-            let windowed: Vec<SparseChallenge> = sparse
-                .iter()
-                .enumerate()
-                .map(|(idx, ch)| {
-                    let block = idx % num_live_blocks_per_claim;
-                    if fold_range.contains(&block) {
-                        ch.clone()
-                    } else {
-                        SparseChallenge {
-                            positions: Vec::new(),
-                            coeffs: Vec::new(),
-                        }
-                    }
-                })
-                .collect();
-            Challenges::from_sparse(windowed, *num_live_blocks_per_claim, *num_claims)
-        }
-        Challenges::Tensor { .. } => Err(AkitaError::InvalidSetup(
-            "chunked fold response requires sparse fold challenges".to_string(),
-        )),
-    }
+    let windowed: Vec<SparseChallenge> = challenges
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(index, challenge)| {
+            let block = index % challenges.num_live_blocks_per_claim();
+            if fold_range.contains(&block) {
+                challenge.clone()
+            } else {
+                SparseChallenge {
+                    positions: Vec::new().into(),
+                    coeffs: Vec::new().into(),
+                }
+            }
+        })
+        .collect();
+    Challenges::from_sparse(
+        windowed,
+        challenges.num_live_blocks_per_claim(),
+        challenges.num_claims(),
+    )
 }
 
 /// Prover-side builder for the ring relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$.
@@ -385,8 +333,7 @@ impl RingRelationProver {
     /// Root-level constructor for one or more group-local opening points and
     /// polynomial slots.
     ///
-    /// `group_opening_points` and `group_ring_multiplier_points` contain one
-    /// prepared entry per ordered claim group.
+    /// `group_ring_multiplier_points` contains one prepared entry per ordered claim group.
     /// For the trivial single-claim case use `polys = &[poly]` and
     /// `gamma = vec![F::one()]`.
     ///
@@ -409,7 +356,6 @@ impl RingRelationProver {
     pub fn new<'a, F, PointF, T, P, OB, RB>(
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
-        group_opening_points: impl IntoRingOpeningPointVec<F>,
         group_ring_multiplier_points: impl IntoRingMultiplierOpeningPointVec<F>,
         block_claims: ProverOpeningData<'a, PointF, P, F>,
         pre_folded_e_by_poly: Vec<RingVec<F>>,
@@ -427,19 +373,16 @@ impl RingRelationProver {
             + akita_serialization::AkitaSerialize,
         P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
         OB: DigitRowsComputeBackend<F>,
-        RB: DigitRowsComputeBackend<F>,
+        RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
     {
         let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
         validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
-        let opening_batch = block_claims.opening_claims().layout()?;
+        let opening_batch = block_claims.opening_layout()?;
         let num_groups = block_claims.opening_claims().num_groups();
-        let group_opening_points = group_opening_points.into_vec();
         let group_ring_multiplier_points = group_ring_multiplier_points.into_vec();
-        if group_opening_points.len() != num_groups
-            || group_ring_multiplier_points.len() != num_groups
-        {
+        if group_ring_multiplier_points.len() != num_groups {
             return Err(AkitaError::InvalidInput(
                 "ring relation prover group point count mismatch".to_string(),
             ));
@@ -495,17 +438,9 @@ impl RingRelationProver {
             }
         }
         let commitment_rows = RingVec::from_coeffs(commitment_row_coeffs);
-        for group_index in 0..num_groups {
+        for (group_index, ring_multiplier_point) in group_ring_multiplier_points.iter().enumerate()
+        {
             let group_lp = lp.group_params(&opening_batch, group_index)?;
-            let opening_point = &group_opening_points[group_index];
-            let ring_multiplier_point = &group_ring_multiplier_points[group_index];
-            if opening_point.position_weights.len() != group_lp.num_positions_per_block()
-                || opening_point.live_block_weights.len() != group_lp.num_live_blocks()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover opening-point layout mismatch".to_string(),
-                ));
-            }
             if ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
                 || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
             {
@@ -564,8 +499,7 @@ impl RingRelationProver {
             d_d = dims.d_d(),
         )
         .entered();
-        let mut group_e_hat = Vec::with_capacity(num_groups);
-        let mut group_e_folded = Vec::with_capacity(num_groups);
+        let mut group_openings = Vec::with_capacity(num_groups);
         let mut offset = 0usize;
         for group_index in 0..num_groups {
             let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
@@ -608,32 +542,48 @@ impl RingRelationProver {
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("D-role opening decomposition failed: {err:?}"))
             })?;
-            group_e_hat.push(e_hat_g);
-            group_e_folded.push(e_folded_g);
+            group_openings.push(GroupOpeningMaterial {
+                e_hat: e_hat_g,
+                e_folded: e_folded_g,
+            });
             offset = end;
         }
-        let e_hat = if lp.has_precommitted_groups() {
-            let ordered = opening_batch
-                .root_group_order()?
-                .into_iter()
-                .map(|group_index| group_e_hat[group_index].clone())
-                .collect::<Vec<_>>();
-            concat_digit_blocks(&ordered)?
+        let e_hat_concat = if lp.has_precommitted_groups() {
+            Some(concat_digit_blocks(
+                opening_batch
+                    .root_group_order()?
+                    .into_iter()
+                    .map(|group_index| &group_openings[group_index].e_hat),
+            )?)
         } else {
-            concat_digit_blocks(&group_e_hat)?
+            None
         };
-        let v = dispatch_for_field!(
+        let e_hat = e_hat_concat
+            .as_ref()
+            .or_else(|| group_openings.first().map(|group| &group.e_hat))
+            .ok_or(AkitaError::InvalidProof)?;
+        let (v, d_quotients) = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             dims.d_d(),
             |D_D| {
-                let v_typed = compute_relation_v_rows::<F, RB, D_D>(
-                    ring_switch_ctx,
-                    d_row_len,
-                    d_log_basis,
-                    &e_hat,
-                )?;
-                Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
+                if d_row_len == 0 {
+                    Ok::<_, AkitaError>((
+                        RingVec::from_coeffs(Vec::new()),
+                        RingVec::from_coeffs(Vec::new()),
+                    ))
+                } else {
+                    let d_rows = compute_relation_d_rows::<F, RB, D_D>(
+                        ring_switch_ctx,
+                        d_row_len,
+                        d_log_basis,
+                        e_hat,
+                    )?;
+                    Ok::<_, AkitaError>((
+                        RingVec::from_ring_elems(&d_rows.reduced),
+                        RingVec::from_ring_elems(&d_rows.quotients),
+                    ))
+                }
             }
         )
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
@@ -700,19 +650,6 @@ impl RingRelationProver {
             v.append_flat_to_transcript(ABSORB_OPENING_PAYLOAD, dims.d_d(), transcript)?;
             None
         };
-        // Concatenated folded `e` rows in the same order as the terminal witness.
-        let e_folded_order = if lp.has_precommitted_groups() {
-            opening_batch.root_group_order()?
-        } else {
-            (0..group_e_folded.len()).collect()
-        };
-        let e_folded = RingVec::from_coeffs(
-            e_folded_order
-                .into_iter()
-                .map(|group_index| &group_e_folded[group_index])
-                .flat_map(|block| block.coeffs().iter().copied())
-                .collect(),
-        );
         drop(opening_rows_span);
 
         // Distributed-prover chunked layout: the grind emits one folded response
@@ -733,6 +670,7 @@ impl RingRelationProver {
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
+        let _grind_span = tracing::info_span!("fold_grind_sample").entered();
         let (grind_outputs, fold_grind_nonce) =
             fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, _, OB, T>(
                 opening_ctx,
@@ -743,15 +681,17 @@ impl RingRelationProver {
                 None,
             )
             .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
+        drop(_grind_span);
         let mut group_challenges = Vec::with_capacity(num_groups);
         let mut group_z = Vec::with_capacity(num_groups);
         for output in grind_outputs {
             group_challenges.push(output.challenges);
-            group_z.push((output.witness, output.centered_per_chunk));
+            group_z.push((output.witness, output.coefficients));
         }
         drop(fold_grind_span);
 
-        // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
+        // Relation rhs spans roles (consistency | [A | B]* | D), with each
+        // B group expanded in slice-major then physical-row order.
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();
@@ -782,7 +722,6 @@ impl RingRelationProver {
 
         let instance = RingRelationInstance::new(
             group_challenges,
-            group_opening_points,
             group_ring_multiplier_points,
             opening_batch.clone(),
             gamma,
@@ -803,9 +742,14 @@ impl RingRelationProver {
             if hints.len() != num_groups {
                 return Err(AkitaError::InvalidProof);
             }
-            for (group_index, ((z_folded_rings, z_folded_centered_per_chunk), hint)) in
-                group_z.into_iter().zip(hints).enumerate()
+            for (group_index, ((z_material, hint), opening)) in group_z
+                .into_iter()
+                .zip(hints)
+                .zip(group_openings)
+                .enumerate()
             {
+                let (z_folded_rings, z_folded_coefficients) = z_material;
+                let GroupOpeningMaterial { e_hat, e_folded } = opening;
                 let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
                 let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
                 if hint.ring_dim() != group_dims.d_a() || hint.inner_rows().len() != k_g {
@@ -815,29 +759,34 @@ impl RingRelationProver {
                 }
                 groups.push(RingRelationGroupWitness::from_parts(
                     z_folded_rings,
-                    z_folded_centered_per_chunk,
-                    group_e_hat[group_index].clone(),
-                    group_e_folded[group_index].clone(),
+                    z_folded_coefficients,
+                    e_hat,
+                    e_folded,
                     hint,
                     group_dims,
                 ));
             }
-            RingRelationWitness::from_groups(fold_grind_nonce, groups, compression)
+            RingRelationWitness::from_groups(fold_grind_nonce, groups, d_quotients, compression)
         } else {
             if hints.len() != 1 {
                 return Err(AkitaError::InvalidProof);
             }
             let hint = hints.into_iter().next().ok_or(AkitaError::InvalidProof)?;
-            let (z_folded_rings, z_folded_centered_per_chunk) =
+            let (z_folded_rings, z_folded_coefficients) =
                 group_z.into_iter().next().ok_or(AkitaError::InvalidProof)?;
+            let GroupOpeningMaterial { e_hat, e_folded } = group_openings
+                .into_iter()
+                .next()
+                .ok_or(AkitaError::InvalidProof)?;
             RingRelationWitness::from_flat_parts(
                 z_folded_rings,
-                z_folded_centered_per_chunk,
+                z_folded_coefficients,
                 fold_grind_nonce,
                 e_hat,
                 e_folded,
                 hint,
                 dims,
+                d_quotients,
                 compression,
             )
         };

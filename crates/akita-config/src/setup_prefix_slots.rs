@@ -76,9 +76,8 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
 
 /// Enumerate every exact setup-prefix slot required by selected recursive schedules.
 ///
-/// Selected keys are the bounded catalog/profile set from
-/// `recursive_group_batch_candidates_for_capacity`,
-/// not a dense capacity grid.
+/// Selected keys are the bounded recursive catalog/profile set from
+/// `recursive_group_batch_candidates_for_capacity`, not a dense capacity grid.
 pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -93,11 +92,13 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     for key in
         recursive_group_batch_candidates_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?
     {
-        let Ok(schedule) = Cfg::runtime_schedule(key.clone()) else {
+        let Ok(schedule) = Cfg::resolve_catalog_row_for_key(&key) else {
             continue;
         };
         let root_layout = key.opening_layout()?;
-        for slot_id in extract_setup_prefix_slot_ids_from_schedule(&schedule, &root_layout)? {
+        for slot_id in
+            extract_setup_prefix_slot_ids_from_schedule(schedule.schedule(), &root_layout)?
+        {
             ids.insert(slot_id);
         }
     }
@@ -127,9 +128,6 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     let mut keys = Vec::new();
     if let Some(catalog) = Cfg::schedule_catalog() {
         for entry in catalog.entries {
-            if entry.root.precommitted_groups.is_empty() {
-                continue;
-            }
             let candidate = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
                 precommitteds: entry
@@ -149,27 +147,19 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     Ok(keys)
 }
 
-#[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
+#[cfg(all(test, feature = "schedules-fp128-onehot-recursive"))]
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use crate::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
-    use akita_types::{
-        AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
-    };
+    use crate::{CommitmentConfig, RecursiveCommitmentConfig};
+    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
-    type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
+    type SetupCfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
-        let singleton =
-            OpeningClaimsLayout::new(pre.num_vars(), pre.num_polynomials()).expect("singleton");
-        let pre_params =
-            <PrecommittedCommitmentConfig<SetupCfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )
-            .expect("precommit params");
-        let precommitted = CommittedGroupProfile::from_params(pre, &pre_params);
+        let precommitted =
+            fp128::OneHot::profile_without_precommitted_groups(pre).expect("independent profile");
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
@@ -198,6 +188,20 @@ mod tests {
             candidates.len() <= 4,
             "selected recursive capacity keys must stay bounded, got {}",
             candidates.len()
+        );
+    }
+
+    #[test]
+    fn capacity_candidates_include_scalar_recursive_key() {
+        let scalar_k256 = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(36, 1));
+        let candidates =
+            recursive_group_batch_candidates_for_capacity::<SetupCfg>(36, 1).expect("candidates");
+        assert_eq!(candidates, vec![scalar_k256]);
+
+        let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(36, 1).expect("slots");
+        assert!(
+            !slots.is_empty(),
+            "scalar recursive schedule must provision its carried setup prefix"
         );
     }
 
@@ -258,18 +262,22 @@ mod tests {
     #[test]
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
-        let schedule = SetupCfg::runtime_schedule(key.clone()).expect("recursive schedule");
+        let schedule = SetupCfg::resolve_catalog_row_for_key(&key).expect("recursive schedule");
         let ids = extract_setup_prefix_slot_ids_from_schedule(
-            &schedule,
+            schedule.schedule(),
             &key.opening_layout().expect("layout"),
         )
         .expect("slot ids");
         assert!(!ids.is_empty());
         for slot_id in &ids {
-            assert_eq!(slot_id.d_setup(), 64);
             assert!(slot_id.natural_len > 0);
             assert!(slot_id.n_prefix().expect("n_prefix") >= slot_id.natural_len);
         }
+        let dimensions = ids
+            .iter()
+            .map(SetupPrefixSlotId::d_setup)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(dimensions, BTreeSet::from([256]));
         let unique: BTreeSet<_> = ids.iter().cloned().collect();
         assert_eq!(unique.len(), ids.len());
     }

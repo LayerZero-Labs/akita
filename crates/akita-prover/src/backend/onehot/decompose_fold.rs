@@ -1,5 +1,176 @@
-use super::accumulate::{onehot_accumulate, onehot_accumulate_tensor};
 use super::*;
+
+mod rotations;
+
+use rotations::{add_rotated, prepare_rotations, PreparedRotations};
+
+#[cfg(feature = "parallel")]
+const TASKS_PER_RAYON_WORKER: usize = 4;
+const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
+
+struct DecomposeSource<'a, F: FieldCore, I: OneHotIndex> {
+    poly: &'a OneHotPoly<F, I>,
+    challenge_start: usize,
+    active_blocks: usize,
+    ring_elems: usize,
+}
+
+#[inline]
+fn accumulate_ring_range<F, I, const D: usize>(
+    source: &DecomposeSource<'_, F, I>,
+    ring_start: usize,
+    ring_end: usize,
+    block_start: usize,
+    challenge_idx: usize,
+    dst: &mut [[i32; D]],
+    rotations: &PreparedRotations<'_, D>,
+) where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    let poly = source.poly;
+    let onehot_k = poly.onehot_k;
+    if onehot_k == D {
+        for (ring, hot) in poly.indices[ring_start..ring_end]
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            if let Some(hot) = hot {
+                add_rotated(
+                    &mut dst[ring_start + ring - block_start],
+                    rotations,
+                    challenge_idx,
+                    hot.as_usize(),
+                );
+            }
+        }
+    } else if onehot_k > D {
+        let rings_per_chunk = onehot_k / D;
+        let chunk_start = ring_start / rings_per_chunk;
+        let chunk_end = ring_end.div_ceil(rings_per_chunk);
+        for (chunk, hot) in poly.indices[chunk_start..chunk_end]
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            let Some(hot) = hot else {
+                continue;
+            };
+            let hot = hot.as_usize();
+            let ring = (chunk_start + chunk) * rings_per_chunk + hot / D;
+            if ring_start <= ring && ring < ring_end {
+                add_rotated(
+                    &mut dst[ring - block_start],
+                    rotations,
+                    challenge_idx,
+                    hot % D,
+                );
+            }
+        }
+    } else {
+        let chunks_per_ring = D / onehot_k;
+        let chunk_start = ring_start * chunks_per_ring;
+        let chunk_end = ring_end * chunks_per_ring;
+        for (chunk, hot) in poly.indices[chunk_start..chunk_end]
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            if let Some(hot) = hot {
+                let local_chunk = chunk_start + chunk;
+                let ring = local_chunk / chunks_per_ring;
+                let lane = local_chunk % chunks_per_ring;
+                add_rotated(
+                    &mut dst[ring - block_start],
+                    rotations,
+                    challenge_idx,
+                    lane * onehot_k + hot.as_usize(),
+                );
+            }
+        }
+    }
+}
+
+fn accumulate_indices<F, I, const D: usize>(
+    sources: &[DecomposeSource<'_, F, I>],
+    challenges: &[SparseChallenge],
+    num_positions_per_block: usize,
+) -> Vec<[i32; D]>
+where
+    F: FieldCore,
+    I: OneHotIndex,
+{
+    let rotations = {
+        let _span = tracing::info_span!(
+            "onehot_prepare_rotations",
+            challenges = challenges.len(),
+            ring_dimension = D,
+        )
+        .entered();
+        prepare_rotations::<D>(challenges)
+    };
+    let row_alignment = sources
+        .iter()
+        .map(|source| (source.poly.onehot_k / D).max(1))
+        .max()
+        .unwrap_or(1);
+    #[cfg(feature = "parallel")]
+    let target_tasks = rayon::current_num_threads()
+        .saturating_mul(TASKS_PER_RAYON_WORKER)
+        .min(num_positions_per_block)
+        .max(1);
+    #[cfg(not(feature = "parallel"))]
+    let target_tasks = 1usize;
+    let thread_balanced_chunk = num_positions_per_block
+        .div_ceil(target_tasks)
+        .next_multiple_of(row_alignment);
+    let cache_sized_chunk = (DECOMPOSE_POSITION_WORKING_SET_TARGET
+        / std::mem::size_of::<[i32; D]>())
+    .max(row_alignment)
+    .next_multiple_of(row_alignment);
+    let position_chunk = thread_balanced_chunk
+        .min(cache_sized_chunk)
+        .min(num_positions_per_block);
+    let position_tasks = num_positions_per_block.div_ceil(position_chunk);
+    let _span = tracing::info_span!(
+        "onehot_accumulate_indices",
+        sources = sources.len(),
+        challenges = challenges.len(),
+        ring_dimension = D,
+        rotation_kind = rotations.kind(),
+        position_tasks,
+        position_chunk,
+    )
+    .entered();
+    let mut compressed = vec![[0i32; D]; num_positions_per_block];
+    cfg_chunks_mut!(&mut compressed, position_chunk)
+        .enumerate()
+        .for_each(|(position_task, dst)| {
+            let position_start = position_task * position_chunk;
+            let position_end = position_start + dst.len();
+            for source in sources {
+                for block in 0..source.active_blocks {
+                    let block_base = block * num_positions_per_block;
+                    let ring_start = (block_base + position_start).min(source.ring_elems);
+                    let ring_end = (block_base + position_end).min(source.ring_elems);
+                    if ring_start >= ring_end {
+                        continue;
+                    }
+                    accumulate_ring_range(
+                        source,
+                        ring_start,
+                        ring_end,
+                        block_base + position_start,
+                        source.challenge_start + block,
+                        dst,
+                        &rotations,
+                    );
+                }
+            }
+        });
+    compressed
+}
 
 fn expand_onehot_accum<const D: usize>(
     compressed: Vec<[i32; D]>,
@@ -19,7 +190,7 @@ fn expand_onehot_accum<const D: usize>(
     expanded
 }
 
-fn finish_decompose_fold<F: CanonicalField, const D: usize>(
+pub(super) fn finish_decompose_fold<F: CanonicalField, const D: usize>(
     compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
 ) -> DecomposeFoldWitness<F> {
@@ -32,55 +203,8 @@ fn finish_decompose_fold<F: CanonicalField, const D: usize>(
     build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
 }
 
-fn decompose_fold_from_views<E, F, const D: usize>(
-    block_views: &[&[E]],
-    challenges: &[SparseChallenge],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-    num_digits: usize,
-) -> DecomposeFoldWitness<F>
-where
-    E: OneHotEntry,
-    F: CanonicalField,
-{
-    let compressed_accum = {
-        let _span = tracing::info_span!("onehot_accumulate").entered();
-        onehot_accumulate::<E, D>(
-            block_views,
-            challenges,
-            num_live_blocks,
-            num_positions_per_block,
-        )
-    };
-    finish_decompose_fold(compressed_accum, num_digits)
-}
-
 impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
-    pub(super) fn decompose_fold_onehot<E, const D: usize>(
-        &self,
-        blocks: &FlatBlocks<E>,
-        challenges: &[SparseChallenge],
-        num_positions_per_block: usize,
-        num_digits: usize,
-    ) -> DecomposeFoldWitness<F>
-    where
-        E: OneHotEntry,
-        F: CanonicalField,
-    {
-        let num_live_blocks = challenges.len().min(blocks.num_live_blocks());
-        let block_views: Vec<&[E]> = (0..blocks.num_live_blocks())
-            .map(|i| blocks.block(i))
-            .collect();
-        decompose_fold_from_views::<E, F, D>(
-            &block_views,
-            challenges,
-            num_live_blocks,
-            num_positions_per_block,
-            num_digits,
-        )
-    }
-
-    pub(super) fn decompose_fold_batched_single_chunk_onehot<const D: usize>(
+    pub(super) fn decompose_fold_batched_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
         num_positions_per_block: usize,
@@ -89,153 +213,33 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     where
         F: CanonicalField,
     {
-        let total_blocks = challenges.len();
-        let cached_blocks = polys
-            .iter()
-            .map(|poly| poly.blocks_for(D, num_positions_per_block).ok())
-            .collect::<Option<Vec<_>>>()?;
-        let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(total_blocks);
-        for cached in &cached_blocks {
-            let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
-                return None;
-            };
-            for i in 0..blocks.num_live_blocks() {
-                flat_blocks.push(blocks.block(i));
+        let mut challenge_start = 0usize;
+        let mut sources = Vec::with_capacity(polys.len());
+        for &poly in polys {
+            if challenge_start == challenges.len() {
+                break;
             }
+            let (ring_elems, num_blocks) = poly.view_layout(D, num_positions_per_block).ok()?;
+            let active_blocks = num_blocks.min(challenges.len() - challenge_start);
+            if active_blocks == 0 {
+                continue;
+            }
+            sources.push(DecomposeSource {
+                poly,
+                challenge_start,
+                active_blocks,
+                ring_elems,
+            });
+            challenge_start += active_blocks;
         }
-        if flat_blocks.is_empty() {
+        if challenge_start == 0 {
             return None;
         }
-        let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views::<SingleChunkEntry, F, D>(
-            &flat_blocks,
-            challenges,
-            active_blocks,
+        let compressed = accumulate_indices::<F, I, D>(
+            &sources,
+            &challenges[..challenge_start],
             num_positions_per_block,
-            num_digits,
-        ))
-    }
-
-    pub(super) fn decompose_fold_batched_multi_chunk_onehot<const D: usize>(
-        polys: &[&Self],
-        challenges: &[SparseChallenge],
-        num_positions_per_block: usize,
-        num_digits: usize,
-    ) -> Option<DecomposeFoldWitness<F>>
-    where
-        F: CanonicalField,
-    {
-        let total_blocks = challenges.len();
-        let cached_blocks = polys
-            .iter()
-            .map(|poly| poly.blocks_for(D, num_positions_per_block).ok())
-            .collect::<Option<Vec<_>>>()?;
-        let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(total_blocks);
-        for cached in &cached_blocks {
-            let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
-                return None;
-            };
-            for i in 0..blocks.num_live_blocks() {
-                flat_blocks.push(blocks.block(i));
-            }
-        }
-        if flat_blocks.is_empty() {
-            return None;
-        }
-        let active_blocks = flat_blocks.len().min(total_blocks);
-        Some(decompose_fold_from_views::<MultiChunkEntry, F, D>(
-            &flat_blocks,
-            challenges,
-            active_blocks,
-            num_positions_per_block,
-            num_digits,
-        ))
-    }
-
-    /// Tensor-shaped batched decompose-fold for one-hot polynomials.
-    pub(super) fn decompose_fold_batched_tensor_onehot<const D: usize>(
-        polys: &[&Self],
-        tensor: &TensorChallengeSet,
-        num_positions_per_block: usize,
-        num_digits: usize,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError>
-    where
-        F: CanonicalField,
-    {
-        let Some(first) = polys.first() else {
-            return Ok(None);
-        };
-        let first_blocks = first
-            .blocks_for(D, num_positions_per_block)
-            .expect("OneHotPoly::decompose_fold_batched_tensor_onehot: invalid num_positions_per_block for first polynomial");
-        let expected_blocks = tensor.total_blocks()?;
-        validate_tensor_blocks::<D>(tensor, expected_blocks)?;
-        let modulus = (-F::one()).to_canonical_u128() + 1;
-
-        let cached_blocks = polys
-            .iter()
-            .map(|poly| poly.blocks_for(D, num_positions_per_block))
-            .collect::<Result<Vec<_>, _>>()?;
-        let witness = match first_blocks.as_ref() {
-            OneHotBlocks::SingleChunk(_) => {
-                let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for cached in &cached_blocks {
-                    let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
-                        return Ok(None);
-                    };
-                    for i in 0..blocks.num_live_blocks() {
-                        flat_blocks.push(blocks.block(i));
-                    }
-                }
-                if flat_blocks.len() != expected_blocks {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected_blocks,
-                        actual: flat_blocks.len(),
-                    });
-                }
-                let coeff_accum_i64 = {
-                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
-                    onehot_accumulate_tensor::<SingleChunkEntry, D>(
-                        &flat_blocks,
-                        tensor,
-                        expected_blocks,
-                        num_positions_per_block,
-                    )?
-                };
-                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
-                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
-                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
-            }
-            OneHotBlocks::MultiChunk(_) => {
-                let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for cached in &cached_blocks {
-                    let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
-                        return Ok(None);
-                    };
-                    for i in 0..blocks.num_live_blocks() {
-                        flat_blocks.push(blocks.block(i));
-                    }
-                }
-                if flat_blocks.len() != expected_blocks {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected_blocks,
-                        actual: flat_blocks.len(),
-                    });
-                }
-                let coeff_accum_i64 = {
-                    let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
-                    onehot_accumulate_tensor::<MultiChunkEntry, D>(
-                        &flat_blocks,
-                        tensor,
-                        expected_blocks,
-                        num_positions_per_block,
-                    )?
-                };
-                let compressed_accum = narrow_tensor_accum_to_i32::<D>(coeff_accum_i64)?;
-                let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
-                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
-            }
-        };
-        Ok(Some(witness))
+        );
+        Some(finish_decompose_fold(compressed, num_digits))
     }
 }

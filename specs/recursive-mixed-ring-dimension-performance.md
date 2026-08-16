@@ -275,55 +275,47 @@ local cost. The planner must retain alternatives that differ in:
 Prematurely dropping a locally larger candidate can lose the globally best
 schedule after a later transition.
 
-## Planner implementation status on `feat/planner-per-matrix-d`
+## Planner implementation status
 
-The first planner-native cut is an opt-in offline scalar search. The canonical
-`find_schedule` entry point reads the catalog-bound dimension domain directly
-from `PlannerPolicy`.
+The declarative planner supersedes the original tuple-domain implementation.
+The canonical `find_schedule` entry point reads
+`PlannerPolicy::ring_dimension_schedule_mode` directly.
 
 Implemented:
 
-- `PlannerPolicy::ring_dimension_candidates` carries strictly sorted, unique
-  `(d_a, d_b, d_d)` tuples. Policy validation checks native role-projection
-  geometry and requires
-  every role dimension to divide `PlannerPolicy::ring_dimension`, the setup
-  generation dimension.
-- `find_schedule` searches that policy-bound domain. An exact uniform
-  setup-generation singleton retains the historical proof-payload objective.
+- `AdaptiveDimension` carries strictly sorted, unique A/B/D capability lists
+  and a sorted suffix domain. Policy validation requires every scheduled tuple
+  to have role-specific dispatch and SIS coverage.
+- `find_schedule` enumerates exact A/B/D tuples. `UniformDimension` retains the
+  historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
   dimensions. B and D physical widths include `d_a / d_role` projection
   subcolumns; candidates are built directly rather than retargeted afterward.
-- The mixed search enumerates every admitted tuple and valid block split only
-  at L0 and L1. Tuples are component-wise non-increasing, L2 through the
-  terminal are uniform D64. Rank-one dimension pruning remains disabled until
-  an equivalence key is proved against the unpruned traversal.
+- The adaptive search enumerates every admitted tuple and every split in the
+  catalog-bound split domain at L0 and L1. A/B/D are independently selected
+  and component-wise non-increasing. L2 through the terminal use the
+  catalog-bound uniform-tuple suffix domain.
 - Mixed-boundary suffix states retain the required `(setup, proof)`
   alternatives per exact first `CommittedGroupParams`, because the parent
-  proof formula sees that first step. Once dimensions freeze at L2, candidate
-  split derivation reuses the existing uniform-D64 planner path.
+  proof formula sees that first step. Once the suffix domain starts at L2,
+  candidate split derivation uses the same catalog-bound split policy.
 - Setup scoring uses exact physical base-field elements and converts once to
   ring elements at the setup-generation dimension. A canonical
   `akita-types` schedule helper now exposes the physical envelope.
-- Recursive setup planning is rejected by the mixed entry point. Grouped,
-  setup-offloaded, and existing multi-chunk catalog generation continue
-  through the unchanged singleton-D planner.
-- Regenerating all shipped schedule tables after these changes produces no
-  generated-file diff.
+- Grouped, setup-offloaded, and multi-chunk catalog generation use the same
+  exact tuple planner and replay the generated schedule without a runtime
+  planner fallback.
+- fp32 certifies A-role search through D1024 and fp64 through D512. Production
+  B/D search stops at D256 because larger B/D candidates did not win the
+  exhaustive comparison. fp32 uses a D64/D128 suffix domain; fp64 and fp128
+  use D64.
 
-Still pending:
-
-- a catalog-bound mixed-D policy and selection-policy identity;
-- generated-row expansion/replay for planner-selected mixed dimensions;
-- setup/config separation of generation D from admitted candidate domains;
-- planner-native mixed multi-group roots and recursive setup prefixes;
-- a versioned verifier-work objective, if latency rather than setup footprint
-  is the product metric;
-- retirement of synthetic profile builders after an adaptive catalog fully
-  replaces their coverage.
-
-Therefore this cut makes direct scalar mixed-D schedules searchable and
-testable, but it is not yet a shipped adaptive runtime family and does not
-claim recursive mixed-D planner completion.
+Remaining follow-up work is limited to a versioned verifier-work objective, if
+latency rather than setup footprint becomes the product metric, and retirement
+of any synthetic profile builders whose coverage is fully replaced by adaptive
+catalogs. Mixed-D policy identity, generated replay, setup/config separation,
+grouped roots, recursive setup prefixes, and shipped adaptive runtime families
+are implemented.
 
 ## Required experiments
 

@@ -209,7 +209,6 @@ where
                     .try_fold(0usize, |expected_start, (expected_chunk, unit)| {
                         if unit.chunk_index() != expected_chunk
                             || unit.global_block_start() != expected_start
-                            || unit.num_live_blocks() == 0
                         {
                             return Err(AkitaError::InvalidSetup(
                                 "trace witness chunks do not form one ordered block partition"

@@ -3,7 +3,7 @@
 //! Each kernel dispatches a source-typed view to the dense or one-hot backend,
 //! falling back to a per-polynomial path for truly mixed batches.
 
-use akita_field::unreduced::HasWide;
+use akita_field::unreduced::{HasCommitAccum, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
@@ -29,33 +29,74 @@ use super::poly::{
 impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: MultilinearPolynomialView<'_, F, D, I>,
+        sources: Vec<MultilinearPolynomialView<'_, F, D, I>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        source.dispatch(
-            |poly| {
-                RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )
-            },
-            |poly| {
-                RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner(
-                    self,
-                    prepared,
-                    poly.commit_view()?,
-                    plan,
-                )
-            },
-        )
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly(), MultilinearPolynomial::Dense(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly() {
+                    MultilinearPolynomial::Dense(poly) => poly.commit_view(),
+                    MultilinearPolynomial::OneHot(_) => unreachable!("checked dense group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
+        }
+        if sources
+            .iter()
+            .all(|source| matches!(source.poly(), MultilinearPolynomial::OneHot(_)))
+        {
+            let views = sources
+                .into_iter()
+                .map(|source| match source.poly() {
+                    MultilinearPolynomial::OneHot(poly) => poly.commit_view(),
+                    MultilinearPolynomial::Dense(_) => unreachable!("checked one-hot group"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner_group(
+                self, prepared, views, plan,
+            );
+        }
+        let mut witnesses = Vec::with_capacity(sources.len());
+        for source in sources {
+            let committed = match source.poly() {
+                MultilinearPolynomial::Dense(poly) => {
+                    RootCommitKernel::<DenseView<'_, F, D>, F, D>::commit_inner_group(
+                        self,
+                        prepared,
+                        vec![poly.commit_view()?],
+                        plan,
+                    )?
+                }
+                MultilinearPolynomial::OneHot(poly) => {
+                    RootCommitKernel::<OneHotView<'_, F, D, I>, F, D>::commit_inner_group(
+                        self,
+                        prepared,
+                        vec![poly.commit_view()?],
+                        plan,
+                    )?
+                }
+            };
+            let [witness] = committed.try_into().map_err(|committed: Vec<_>| {
+                AkitaError::InvalidSetup(format!(
+                    "child kernel returned {} mixed-group sources, expected one",
+                    committed.len()
+                ))
+            })?;
+            witnesses.push(witness);
+        }
+        Ok(witnesses)
     }
 }
 
@@ -69,7 +110,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: MultilinearPolynomialView<'_, F, D, I>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         source.dispatch(
             |poly| {
@@ -131,22 +172,12 @@ where
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         let Some(first) = source.polys().first() else {
-            return Ok(match plan {
-                DecomposeFoldBatchPlan::Sparse { .. } => BatchDecomposeFoldOutcome::FallbackPerPoly,
-                DecomposeFoldBatchPlan::Tensor { .. } => BatchDecomposeFoldOutcome::Unsupported,
-            });
+            return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
         };
         match first {
             MultilinearPolynomial::Dense(_) => {
                 let Some(dense_polys) = source.homogeneous_dense_polys() else {
-                    return Ok(match plan {
-                        DecomposeFoldBatchPlan::Sparse { .. } => {
-                            BatchDecomposeFoldOutcome::FallbackPerPoly
-                        }
-                        DecomposeFoldBatchPlan::Tensor { .. } => {
-                            BatchDecomposeFoldOutcome::Unsupported
-                        }
-                    });
+                    return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                 };
                 let dense_view =
                     <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_polys)?;
@@ -156,14 +187,7 @@ where
             }
             MultilinearPolynomial::OneHot(_) => {
                 let Some(onehot_polys) = source.homogeneous_onehot_polys() else {
-                    return Ok(match plan {
-                        DecomposeFoldBatchPlan::Sparse { .. } => {
-                            BatchDecomposeFoldOutcome::FallbackPerPoly
-                        }
-                        DecomposeFoldBatchPlan::Tensor { .. } => {
-                            BatchDecomposeFoldOutcome::Unsupported
-                        }
-                    });
+                    return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                 };
                 let onehot_view =
                     <OneHotPoly<F, I> as RootOpeningSource<F, D>>::opening_batch(&onehot_polys)?;

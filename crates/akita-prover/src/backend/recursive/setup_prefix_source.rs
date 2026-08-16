@@ -1,12 +1,12 @@
-use std::array::from_fn;
 use std::sync::Arc;
 
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
+use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_types::{AkitaExpandedSetup, FpExtEncoding, SetupPrefixSlot};
+use akita_types::{AkitaExpandedSetup, FlatMatrix, FpExtEncoding, SetupPrefixSlot};
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
@@ -76,6 +76,16 @@ impl<F: FieldCore> RootPolyMeta<F> for RecursiveFoldSource<F> {
             Self::Witness(witness) => RootPolyMeta::<F>::num_vars(witness.as_ref()),
         }
     }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
+        match self {
+            Self::SetupPrefix { .. } => None,
+            Self::Witness(witness) => {
+                RootPolyMeta::<F>::exact_integer_coeff_l2_sq(witness.as_ref())
+            }
+        }
+    }
 }
 
 impl<F: FieldCore, const D: usize> RootPolyShape<F, D> for RecursiveFoldSource<F> {
@@ -139,31 +149,25 @@ impl<F: FieldCore, const D: usize> RootTensorSource<F, D> for RecursiveFoldSourc
     }
 }
 
-fn setup_prefix_field_evals<F: FieldCore>(
-    expanded: &AkitaExpandedSetup<F>,
-    slot: &SetupPrefixSlot<F>,
-) -> Result<Vec<F>, AkitaError> {
-    let n_prefix = slot.id.n_prefix()?;
-    let fields = expanded.shared_matrix().as_field_slice();
-    if slot.natural_len > fields.len() || slot.natural_len > n_prefix {
+fn checked_setup_prefix_ring_count<const D: usize>(
+    natural_len: usize,
+    n_prefix: usize,
+) -> Result<usize, AkitaError> {
+    if D == 0 || natural_len > n_prefix || !n_prefix.is_multiple_of(D) {
         return Err(AkitaError::InvalidSetup(
-            "setup-prefix slot exceeds shared setup matrix".to_string(),
+            "setup-prefix length is incompatible with its ring layout".to_string(),
         ));
     }
-    let mut evals = vec![F::zero(); n_prefix];
-    evals[..slot.natural_len].copy_from_slice(&fields[..slot.natural_len]);
-    Ok(evals)
+    Ok(n_prefix / D)
 }
 
 fn setup_prefix_rings<F: FieldCore, const D: usize>(
-    expanded: &AkitaExpandedSetup<F>,
-    slot: &SetupPrefixSlot<F>,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-    let evals = setup_prefix_field_evals(expanded, slot)?;
-    Ok(evals
-        .chunks_exact(D)
-        .map(|chunk| CyclotomicRing::from_coefficients(from_fn(|idx| chunk[idx])))
-        .collect())
+    matrix: &FlatMatrix<F>,
+    natural_len: usize,
+    n_prefix: usize,
+) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+    let ring_count = checked_setup_prefix_ring_count::<D>(natural_len, n_prefix)?;
+    Ok(matrix.ring_view::<D>(1, ring_count)?.as_slice())
 }
 
 fn setup_prefix_fold_geometry<const D: usize>(
@@ -197,13 +201,13 @@ fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(
     scalars: &[F],
     num_positions_per_block: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    (0..coeffs.len().div_ceil(num_positions_per_block))
+    cfg_into_iter!(0..coeffs.len().div_ceil(num_positions_per_block))
         .map(|block_idx| {
             let start = block_idx * num_positions_per_block;
             let end = (start + num_positions_per_block).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
             for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
-                acc += ring.scale(scalar);
+                ring.scale_accumulate_into(&mut acc, *scalar);
             }
             acc
         })
@@ -215,12 +219,12 @@ fn fold_setup_prefix_blocks_ring<F: FieldCore + CanonicalField, const D: usize>(
     scalars: &[CyclotomicRing<F, D>],
     num_positions_per_block: usize,
 ) -> Vec<CyclotomicRing<F, D>> {
-    (0..coeffs.len().div_ceil(num_positions_per_block))
+    cfg_into_iter!(0..coeffs.len().div_ceil(num_positions_per_block))
         .map(|block_idx| {
             let start = block_idx * num_positions_per_block;
             let end = (start + num_positions_per_block).min(coeffs.len());
             let mut acc = CyclotomicRing::<F, D>::zero();
-            for (ring, scalar) in coeffs[start..end].iter().zip(scalars.iter()) {
+            for (ring, scalar) in coeffs[start..end].iter().zip(scalars) {
                 ring.mul_accumulate_sparse_rhs_into(scalar, &mut acc);
             }
             acc
@@ -231,9 +235,13 @@ fn fold_setup_prefix_blocks_ring<F: FieldCore + CanonicalField, const D: usize>(
 fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     slot: &SetupPrefixSlot<F>,
-    plan: OpeningFoldPlan<'_, F, D>,
+    plan: OpeningFoldPlan<'_, F>,
 ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-    let coeffs = setup_prefix_rings::<F, D>(expanded, slot)?;
+    let coeffs = setup_prefix_rings::<F, D>(
+        expanded.shared_matrix(),
+        slot.id.natural_len,
+        slot.id.n_prefix()?,
+    )?;
     let num_positions_per_block = plan.num_positions_per_block();
     let (expected_positions, num_live_blocks) =
         setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
@@ -243,7 +251,7 @@ fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>
             actual: num_positions_per_block,
         });
     }
-    plan.validate(num_live_blocks)?;
+    plan.validate::<D>(num_live_blocks)?;
     match plan {
         OpeningFoldPlan::Base {
             live_block_weights,
@@ -251,23 +259,24 @@ fn setup_prefix_evaluate_and_fold<F: FieldCore + CanonicalField, const D: usize>
             num_positions_per_block,
         } => {
             let folded =
-                fold_setup_prefix_blocks(&coeffs, position_weights, num_positions_per_block);
+                fold_setup_prefix_blocks(coeffs, position_weights, num_positions_per_block);
             let (eval, folded) = crate::backend::poly_helpers::fused_evaluate_and_fold_base(
                 folded,
                 live_block_weights,
             );
             Ok(OpeningFoldOutput { eval, folded })
         }
-        OpeningFoldPlan::Ring {
-            live_block_weights,
-            position_weights,
+        OpeningFoldPlan::Subfield {
+            multipliers,
             num_positions_per_block,
         } => {
+            let position_weights = multipliers.materialize_position_rings::<D>()?;
+            let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
             let folded =
-                fold_setup_prefix_blocks_ring(&coeffs, position_weights, num_positions_per_block);
-            let (eval, folded) = crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
+                fold_setup_prefix_blocks_ring(coeffs, &position_weights, num_positions_per_block);
+            let (eval, folded) = crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
                 folded,
-                live_block_weights,
+                &live_block_weights,
             );
             Ok(OpeningFoldOutput { eval, folded })
         }
@@ -279,7 +288,11 @@ fn setup_prefix_decompose_fold<F: CanonicalField, const D: usize>(
     slot: &SetupPrefixSlot<F>,
     plan: DecomposeFoldPlan<'_>,
 ) -> Result<crate::DecomposeFoldWitness<F>, AkitaError> {
-    let coeffs = setup_prefix_rings::<F, D>(expanded, slot)?;
+    let coeffs = setup_prefix_rings::<F, D>(
+        expanded.shared_matrix(),
+        slot.id.natural_len,
+        slot.id.n_prefix()?,
+    )?;
     let (num_positions_per_block, num_live_blocks) =
         setup_prefix_fold_geometry::<D>(slot, coeffs.len())?;
     if plan.num_positions_per_block != num_positions_per_block
@@ -301,7 +314,7 @@ fn setup_prefix_decompose_fold<F: CanonicalField, const D: usize>(
         overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
     };
     let centered = balanced_ring_decompose_fold_partitioned::<F, D>(
-        &coeffs,
+        coeffs,
         plan.challenges,
         plan.num_positions_per_block,
         plan.num_digits,
@@ -318,19 +331,29 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         match source {
             RecursiveFoldView::SetupPrefix { expanded, slot } => {
+                let _span = tracing::info_span!(
+                    "fold_recursive_source",
+                    source_kind = "setup_prefix",
+                    ring_dimension = D
+                )
+                .entered();
                 setup_prefix_evaluate_and_fold(expanded, slot, plan)
             }
-            RecursiveFoldView::Witness(view) => <CpuBackend as OpeningFoldKernel<
-                SuffixWitnessView<'_, F, D>,
-                F,
-                D,
-            >>::evaluate_and_fold(
-                self, prepared, view, plan
-            ),
+            RecursiveFoldView::Witness(view) => {
+                let _span = tracing::info_span!(
+                    "fold_recursive_source",
+                    source_kind = "small_balanced_digits",
+                    ring_dimension = D
+                )
+                .entered();
+                <CpuBackend as OpeningFoldKernel<SuffixWitnessView<'_, F, D>, F, D>>::evaluate_and_fold(
+                    self, prepared, view, plan,
+                )
+            }
         }
     }
 
@@ -490,5 +513,102 @@ where
         <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::sparse_linear_combination(
             self, prepared, batch, coeffs,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallenge;
+    use akita_field::Prime128OffsetA7F7;
+
+    #[test]
+    fn setup_prefix_q128_base_fold_matches_separate_oracle() {
+        type F = Prime128OffsetA7F7;
+        const D: usize = 8;
+        let coeffs: Vec<CyclotomicRing<F, D>> = (0..5)
+            .map(|row| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|column| {
+                    F::from_u64((row * D + column + 1) as u64)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let weights = (2..6).map(F::from_u64).collect::<Vec<_>>();
+        let expected = coeffs
+            .chunks(4)
+            .map(|block| {
+                block
+                    .iter()
+                    .zip(&weights)
+                    .fold(CyclotomicRing::zero(), |acc, (ring, weight)| {
+                        acc + ring.scale(weight)
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(fold_setup_prefix_blocks(&coeffs, &weights, 4), expected);
+    }
+
+    #[test]
+    fn setup_prefix_ring_view_is_borrowed_and_checked() {
+        type F = Prime128OffsetA7F7;
+        const D: usize = 4;
+        let fields = (1..=8).map(F::from_u64).collect::<Vec<_>>();
+        let matrix = FlatMatrix::from_flat_data(fields);
+
+        let rings = setup_prefix_rings::<F, D>(&matrix, 7, 8).unwrap();
+        assert_eq!(rings.len(), 2);
+        assert_eq!(rings.as_ptr().cast::<F>(), matrix.as_field_slice().as_ptr());
+
+        let undersized = FlatMatrix::from_flat_data(vec![F::zero(); 7]);
+        assert!(setup_prefix_rings::<F, D>(&undersized, 7, 8).is_err());
+        assert!(setup_prefix_rings::<F, D>(&matrix, 9, 8).is_err());
+        assert!(setup_prefix_rings::<F, D>(&matrix, 7, 7).is_err());
+    }
+
+    #[test]
+    fn setup_prefix_large_geometry_needs_no_storage() {
+        assert_eq!(
+            checked_setup_prefix_ring_count::<256>(1 << 24, 1 << 24),
+            Ok(1 << 16)
+        );
+        assert_eq!(
+            checked_setup_prefix_ring_count::<256>(1 << 26, 1 << 26),
+            Ok(1 << 18)
+        );
+    }
+
+    #[test]
+    fn borrowed_setup_prefix_feeds_both_fold_consumers() {
+        type F = Prime128OffsetA7F7;
+        const D: usize = 4;
+        let fields = (1..=16).map(F::from_u64).collect::<Vec<_>>();
+        let matrix = FlatMatrix::from_flat_data(fields);
+        let borrowed = setup_prefix_rings::<F, D>(&matrix, 16, 16).unwrap();
+        let owned = borrowed.to_vec();
+        let weights = [F::from_u64(2), F::from_u64(3)];
+        assert_eq!(
+            fold_setup_prefix_blocks(borrowed, &weights, 2),
+            fold_setup_prefix_blocks(&owned, &weights, 2)
+        );
+
+        let challenges = [SparseChallenge {
+            positions: vec![0, 3].into(),
+            coeffs: vec![1, -1].into(),
+        }];
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let params = DecomposeParams {
+            threshold: decompose_centering_threshold(1, 8, q),
+            q,
+            mask: 255,
+            half_b: 128,
+            b_val: 256,
+            log_basis: 8,
+            overflow_possible: false,
+        };
+        assert_eq!(
+            balanced_ring_decompose_fold_partitioned::<F, D>(borrowed, &challenges, 4, 1, &params,),
+            balanced_ring_decompose_fold_partitioned::<F, D>(&owned, &challenges, 4, 1, &params,)
+        );
     }
 }

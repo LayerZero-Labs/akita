@@ -1,6 +1,6 @@
 //! Setup-product sumcheck for a dense table against two disjoint factors.
 //!
-//! The table is laid out as `left * fold_low_len + right`. The right factor is
+//! The table is laid out as `left * right_len + right`. The right factor is
 //! bound first, then the left factor. This matches setup products of the form
 //! `S(i, y) * setup_index_weight(i) * alpha(y)` without materializing the full
 //! `setup_index_weight(i) * alpha(y)` table.
@@ -18,10 +18,11 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, PreparedRelationAddress, RelationAddressGeometry,
-    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, setup_prefix_coverage_eval_len, shared_setup_fold_gadget,
+    AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding, PreparedRelationAddress,
+    RelationAddressGeometry, RingRelationInstance, SetupContributionGroupInputs,
+    SetupContributionPlan, SetupPrefixProverRegistry, SetupProjectionGeometry,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
@@ -177,71 +178,63 @@ where
         )?
     };
 
-    let required = geometry.required();
+    let active_weight_rows = geometry.required();
     let ring_d = geometry.base_ring_dim();
     let _source_span = tracing::info_span!(
         "stage3_setup_source_select",
-        required_rows = required,
+        active_weight_rows,
         ring_dim = ring_d,
     )
     .entered();
-    ensure_setup_envelope(expanded, required, ring_d)?;
+    ensure_setup_envelope(expanded, active_weight_rows, ring_d)?;
     let natural_field_len = geometry.natural_field_len();
-    let setup_len = expanded.shared_matrix().num_field_elements() / ring_d;
-    let setup_eval_len = if next_fold_level_params.setup_prefix.is_some() {
-        let setup_prefix_selection = select_setup_prefix_slot(
-            Some(expanded.shared_matrix().num_field_elements()),
-            |slot_id| {
-                prefix_slots
-                    .get(slot_id)
-                    .map(|slot| (slot, slot.natural_len, slot.padded_len))
-            },
-            next_fold_level_params,
-            natural_field_len,
-            ring_d,
-            "selected setup-prefix slot does not cover setup product",
-        )?;
-        if let Some((slot, setup_eval_len)) = setup_prefix_selection {
-            transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
-            setup_eval_len
-        } else if next_fold_level_params.setup_prefix.is_some() {
-            return Err(AkitaError::InvalidSetup(
-                "planned setup-prefix slot is missing from prover setup".to_string(),
-            ));
-        } else {
-            setup_len
-        }
-    } else {
-        setup_len
-    };
+    let selected_slot_id = next_fold_level_params
+        .setup_prefix
+        .as_ref()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
+        })?;
+    let slot = prefix_slots.get(selected_slot_id).ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "planned setup-prefix slot is missing from prover setup".to_string(),
+        )
+    })?;
+    let setup_eval_len = setup_prefix_coverage_eval_len(
+        Some(expanded.shared_matrix().num_field_elements()),
+        &slot.id,
+        next_fold_level_params,
+        natural_field_len,
+        ring_d,
+        "selected setup-prefix slot does not cover setup product",
+    )?;
+    transcript.append_serde(ABSORB_SETUP_PREFIX_SLOT, &slot.id);
     // Ring elements at `ring_d` are `ring_d` consecutive field coefficients of
     // the flat shared matrix; read them directly instead of building a typed
-    // ring view that would immediately be flattened back into the table. A
-    // setup-prefix slot may have a padded evaluation domain larger than this
-    // source: only `required` natural rows are read, and the table remainder is
-    // explicit zero padding.
+    // ring view that would immediately be flattened back into the table. The
+    // setup weight is zero after `active_weight_rows`, but the committed and
+    // opened setup source is the actual full power-of-two prefix.
     let setup_field = expanded.shared_matrix().as_field_slice();
-    if required > setup_eval_len {
+    let setup_idx_len = active_weight_rows
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
+    if setup_idx_len > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
             "setup product exceeds selected setup view".to_string(),
         ));
     }
 
-    let setup_idx_len = required
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup product index length overflow".into()))?;
     setup_index_weight.resize(setup_idx_len, E::zero());
-    let required_source_len = required
+    let source_len = setup_idx_len
         .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product source length overflow".into()))?;
-    let setup_source = setup_field.get(..required_source_len).ok_or_else(|| {
+    let setup_source = setup_field.get(..source_len).ok_or_else(|| {
         AkitaError::InvalidSetup("setup source is shorter than product view".into())
     })?;
     drop(_source_span);
 
     RectangularSetupProductTerm::new(
         setup_source,
-        required,
+        active_weight_rows,
         setup_index_weight,
         alpha_pows.to_vec(),
     )
@@ -308,7 +301,7 @@ where
         let group_layout = opening_batch.group_layout(group_index)?;
         let num_claims = group_layout.num_polynomials();
         let n_a = group_lp.a_rows_len();
-        let n_b = group_lp.b_rows_len();
+        let n_b = group_lp.logical_b_rows_len()?;
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a || b_range.len() != n_b {

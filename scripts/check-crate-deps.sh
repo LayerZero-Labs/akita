@@ -43,8 +43,14 @@ fi
 
 # Walk both the default-feature graph and the all-features graph so an
 # opt-in feature can't sneak a forbidden crate into a downstream build.
-default_tree="$(cargo tree -p "${pkg}" --edges normal)"
-all_features_tree="$(cargo tree -p "${pkg}" --edges normal --all-features)"
+# Verifier tests must also remain independent of the prover and PCS layers;
+# otherwise test-only reverse edges can conceal a production layering error.
+edge_kinds="normal"
+if [ "${pkg}" = "akita-verifier" ]; then
+  edge_kinds="normal,dev"
+fi
+default_tree="$(cargo tree -p "${pkg}" --edges "${edge_kinds}")"
+all_features_tree="$(cargo tree -p "${pkg}" --edges "${edge_kinds}" --all-features)"
 
 for label in default all-features; do
   case "${label}" in

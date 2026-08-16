@@ -2,7 +2,10 @@
 
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
-use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::{
+    eq_poly::EqPolynomial,
+    offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
+};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
@@ -30,6 +33,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
+    physical_l2_claim: E,
+    physical_l2_families: Vec<EqPairTensorFamily<E>>,
     _marker: std::marker::PhantomData<F>,
 }
 
@@ -60,6 +65,8 @@ where
         evaluation_trace: PreparedEvaluationTrace<E>,
         evaluation_trace_row_weight: E,
         evaluation_trace_opening_claim: E,
+        physical_l2_claim: E,
+        physical_l2_families: Vec<EqPairTensorFamily<E>>,
     ) -> Result<Self, AkitaError> {
         let num_rounds = col_bits.checked_add(ring_bits).ok_or_else(|| {
             AkitaError::InvalidSetup("stage-2 variable count overflow".to_string())
@@ -69,6 +76,9 @@ where
                 expected: num_rounds,
                 actual: stage1_point.len(),
             });
+        }
+        if physical_l2_families.is_empty() && !physical_l2_claim.is_zero() {
+            return Err(AkitaError::InvalidProof);
         }
         Ok(Self {
             batching_coeff,
@@ -87,6 +97,8 @@ where
             evaluation_trace,
             evaluation_trace_row_weight,
             evaluation_trace_opening_claim,
+            physical_l2_claim,
+            physical_l2_families,
             _marker: std::marker::PhantomData,
         })
     }
@@ -109,6 +121,7 @@ where
         self.batching_coeff * self.range_image_evaluation
             + self.relation_claim
             + self.evaluation_trace_opening_claim
+            + self.physical_l2_claim
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
@@ -148,17 +161,30 @@ where
             let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;
             self.evaluation_trace_row_weight * w_eval * trace_weight
         };
+        let physical_l2_oracle = if self.physical_l2_families.is_empty() {
+            E::zero()
+        } else {
+            let weight_eval = eval_boolean_pair_tensor_families::<_, false, false>(
+                challenges,
+                &self.stage1_point,
+                &self.physical_l2_families,
+            )?;
+            w_eval * weight_eval
+        };
 
         // A zero batching challenge removes the virtual term. Avoid the
         // unnecessary EqPolynomial evaluation in that degenerate case.
         if self.batching_coeff.is_zero() {
-            return Ok(relation_oracle + trace_oracle);
+            return Ok(relation_oracle + trace_oracle + physical_l2_oracle);
         }
         let virtual_oracle = {
             let _span = tracing::info_span!("stage2_virtual_oracle").entered();
             let eq_val = EqPolynomial::mle(&self.stage1_point, challenges)?;
             eq_val * w_eval * (w_eval + E::one())
         };
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle + trace_oracle)
+        Ok(self.batching_coeff * virtual_oracle
+            + relation_oracle
+            + trace_oracle
+            + physical_l2_oracle)
     }
 }

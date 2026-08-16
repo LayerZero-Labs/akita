@@ -9,11 +9,11 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
 use akita_types::{
-    AkitaScheduleInputs, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
+    CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout, SETUP_PREFIX_CONTENT_TAG,
 };
 
 use crate::generated::{
@@ -21,7 +21,7 @@ use crate::generated::{
     GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix, GeneratedScheduleCatalogIdentity,
     GeneratedScheduleTable, GeneratedWitnessPartition,
 };
-use crate::PlannerPolicy;
+use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -48,20 +48,24 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(sis_modulus_profile_tag(policy.sis_modulus_profile));
     h.write_u64(u64::from(policy.sis_security_policy.tag()));
     h.write_bytes(&policy.sis_table_digest.0);
+    h.write_bytes(&policy.sis_l2_table_digest.0);
+    h.write_u64(u64::from(policy.selective_l2_response_model.tag()));
     h.write_u64(policy.uniform_ring_dimension as u64);
     h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
-    write_ring_dimension_candidates(&mut h, policy.ring_dimension_candidates);
+    write_ring_dimension_schedule_mode(&mut h, policy.ring_dimension_schedule_mode);
     write_decomposition(&mut h, policy.decomposition);
-    h.write_u64(u64::from(policy.ring_subfield_norm_bound));
     h.write_u64(policy.claim_ext_degree as u64);
     h.write_u64(policy.chal_ext_degree as u64);
-    h.write_u64(u64::from(policy.basis_range.0));
-    h.write_u64(u64::from(policy.basis_range.1));
+    h.write_u64(u64::from(policy.inner_basis_range.0));
+    h.write_u64(u64::from(policy.inner_basis_range.1));
+    h.write_u64(u64::from(policy.opening_basis_range.0));
+    h.write_u64(u64::from(policy.opening_basis_range.1));
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
+    h.write_u64(u64::from(policy.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, policy.setup_field_budget);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
@@ -78,34 +82,31 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(sis_modulus_profile_tag(identity.sis_modulus_profile));
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
     h.write_bytes(&identity.sis_table_digest.0);
+    h.write_bytes(&identity.sis_l2_table_digest.0);
+    h.write_u64(u64::from(identity.selective_l2_response_model.tag()));
     h.write_u64(identity.uniform_ring_dimension as u64);
     h.write_u64(identity.setup_prefix_inner_ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
-    h.write_u64(u64::from(identity.ring_subfield_norm_bound));
     h.write_u64(identity.claim_ext_degree as u64);
     h.write_u64(identity.chal_ext_degree as u64);
-    h.write_u64(u64::from(identity.basis_range.0));
-    h.write_u64(u64::from(identity.basis_range.1));
+    h.write_u64(u64::from(identity.inner_basis_range.0));
+    h.write_u64(u64::from(identity.inner_basis_range.1));
+    h.write_u64(u64::from(identity.opening_basis_range.0));
+    h.write_u64(u64::from(identity.opening_basis_range.1));
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
+    h.write_u64(u64::from(identity.recursive_split_search_policy.tag()));
     write_optional_usize(&mut h, identity.setup_field_budget);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
-    match identity.root_fold_shape {
-        TensorChallengeShape::Flat => h.write_u64(0),
-        TensorChallengeShape::Tensor { fold_low_len } => {
-            h.write_u64(1);
-            h.write_u64(fold_low_len as u64);
-        }
-    }
     h.write_u64(identity.ring_dimensions.len() as u64);
     for &d in identity.ring_dimensions {
         h.write_u64(d as u64);
     }
-    write_ring_dimension_candidates(&mut h, identity.ring_dimension_candidates);
+    write_ring_dimension_schedule_mode(&mut h, identity.ring_dimension_schedule_mode);
     h.write_u64(identity.ring_challenge_config_digest);
     h.write_u64(identity.key_count as u64);
     h.write_u64(identity.key_digest);
@@ -133,24 +134,26 @@ struct CatalogIdentityExpectation {
     family_name: &'static str,
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
+    selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     selection_policy: crate::SelectionPolicyId,
+    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     setup_field_budget: Option<usize>,
     min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
+    sis_l2_table_digest: akita_types::SisL2TableDigest,
     uniform_ring_dimension: usize,
     setup_prefix_inner_ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
-    ring_subfield_norm_bound: u32,
     claim_ext_degree: usize,
     chal_ext_degree: usize,
-    basis_range: (u32, u32),
+    inner_basis_range: (u32, u32),
+    opening_basis_range: (u32, u32),
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
-    root_fold_shape: TensorChallengeShape,
-    ring_dimension_candidates: Vec<CommitmentRingDims>,
+    ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ring_dimensions: Vec<usize>,
     ring_challenge_config_digest: u64,
     key_count: usize,
@@ -164,24 +167,26 @@ impl CatalogIdentityExpectation {
             family_name: identity.family_name,
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
+            selective_l2_response_model: identity.selective_l2_response_model,
             selection_policy: identity.selection_policy,
+            recursive_split_search_policy: identity.recursive_split_search_policy,
             setup_field_budget: identity.setup_field_budget,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
+            sis_l2_table_digest: identity.sis_l2_table_digest,
             uniform_ring_dimension: identity.uniform_ring_dimension,
             setup_prefix_inner_ring_dimension: identity.setup_prefix_inner_ring_dimension,
             decomposition: identity.decomposition,
-            ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
-            basis_range: identity.basis_range,
+            inner_basis_range: identity.inner_basis_range,
+            opening_basis_range: identity.opening_basis_range,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
-            root_fold_shape: identity.root_fold_shape,
-            ring_dimension_candidates: identity.ring_dimension_candidates.to_vec(),
+            ring_dimension_schedule_mode: identity.ring_dimension_schedule_mode,
             ring_dimensions: identity.ring_dimensions.to_vec(),
             ring_challenge_config_digest: identity.ring_challenge_config_digest,
             key_count: identity.key_count,
@@ -194,48 +199,41 @@ fn intern_ring_dimensions(dimensions: Vec<usize>) -> &'static [usize] {
     Box::leak(dimensions.into_boxed_slice())
 }
 
-fn intern_ring_dimension_candidates(
-    candidates: Vec<CommitmentRingDims>,
-) -> &'static [CommitmentRingDims] {
-    Box::leak(candidates.into_boxed_slice())
-}
-
 fn catalog_identity_expectation(
     family_name: &'static str,
     policy: &PlannerPolicy,
     entries: &[GeneratedFoldScheduleEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<CatalogIdentityExpectation, AkitaError> {
-    let root_fold_shape = root_fold_shape_for_entries(entries, &fold_challenge_shape_at_level)?;
-    validate_entry_candidate_dimensions(entries, policy.ring_dimension_candidates)?;
-    let ring_dimension_candidates = policy.ring_dimension_candidates.to_vec();
+    validate_entry_dimensions(entries, policy.ring_dimension_schedule_mode)?;
     let ring_dimensions = collect_ring_dimensions(entries);
-    let challenge_ring_dimensions = candidate_a_dimensions(policy.ring_dimension_candidates);
+    let challenge_ring_dimensions = challenge_a_dimensions(policy.ring_dimension_schedule_mode);
     let ring_challenge_config_digest =
         ring_challenge_config_digest(&challenge_ring_dimensions, &ring_challenge_config)?;
     Ok(CatalogIdentityExpectation {
         family_name,
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
+        selective_l2_response_model: policy.selective_l2_response_model,
         selection_policy: policy.selection_policy,
+        recursive_split_search_policy: policy.recursive_split_search_policy,
         setup_field_budget: policy.setup_field_budget,
         min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
+        sis_l2_table_digest: policy.sis_l2_table_digest,
         uniform_ring_dimension: policy.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension: policy.setup_prefix_inner_ring_dimension,
         decomposition: policy.decomposition,
-        ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
-        basis_range: policy.basis_range,
+        inner_basis_range: policy.inner_basis_range,
+        opening_basis_range: policy.opening_basis_range,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
-        root_fold_shape,
-        ring_dimension_candidates,
+        ring_dimension_schedule_mode: policy.ring_dimension_schedule_mode,
         ring_dimensions,
         ring_challenge_config_digest,
         key_count: entries.len(),
@@ -250,39 +248,33 @@ pub fn expected_catalog_identity(
     policy: &PlannerPolicy,
     entries: &[GeneratedFoldScheduleEntry],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedScheduleCatalogIdentity, AkitaError> {
-    let expected = catalog_identity_expectation(
-        family_name,
-        policy,
-        entries,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )?;
+    let expected =
+        catalog_identity_expectation(family_name, policy, entries, ring_challenge_config)?;
     Ok(GeneratedScheduleCatalogIdentity {
         family_name: expected.family_name,
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
+        selective_l2_response_model: expected.selective_l2_response_model,
         selection_policy: expected.selection_policy,
+        recursive_split_search_policy: expected.recursive_split_search_policy,
         setup_field_budget: expected.setup_field_budget,
         min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,
+        sis_l2_table_digest: expected.sis_l2_table_digest,
         uniform_ring_dimension: expected.uniform_ring_dimension,
         setup_prefix_inner_ring_dimension: expected.setup_prefix_inner_ring_dimension,
         decomposition: expected.decomposition,
-        ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
-        basis_range: expected.basis_range,
+        inner_basis_range: expected.inner_basis_range,
+        opening_basis_range: expected.opening_basis_range,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
-        root_fold_shape: expected.root_fold_shape,
-        ring_dimension_candidates: intern_ring_dimension_candidates(
-            expected.ring_dimension_candidates,
-        ),
+        ring_dimension_schedule_mode: expected.ring_dimension_schedule_mode,
         ring_dimensions: intern_ring_dimensions(expected.ring_dimensions),
         ring_challenge_config_digest: expected.ring_challenge_config_digest,
         key_count: expected.key_count,
@@ -295,7 +287,6 @@ pub fn validate_catalog_identity(
     catalog: &GeneratedScheduleTable,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     let cache_key = CatalogValidationCacheKey {
         entries_ptr: catalog.entries.as_ptr() as usize,
@@ -304,19 +295,10 @@ pub fn validate_catalog_identity(
         policy_digest: policy_digest(policy),
     };
     if lock_validated_catalogs()?.contains(&cache_key) {
-        return verify_runtime_hooks_on_cache_hit(
-            catalog,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        );
+        return verify_runtime_hooks_on_cache_hit(catalog, ring_challenge_config);
     }
 
-    validate_catalog_identity_impl(
-        catalog,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )?;
+    validate_catalog_identity_impl(catalog, policy, ring_challenge_config)?;
 
     lock_validated_catalogs()?.insert(cache_key);
     Ok(())
@@ -326,7 +308,6 @@ fn validate_catalog_identity_impl(
     catalog: &GeneratedScheduleTable,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     validate_catalog_keys(catalog.entries)?;
     let embedded = catalog.identity;
@@ -335,7 +316,6 @@ fn validate_catalog_identity_impl(
         policy,
         catalog.entries,
         ring_challenge_config,
-        fold_challenge_shape_at_level,
     )?;
     if CatalogIdentityExpectation::from_embedded(&embedded) != expected {
         return Err(catalog_identity_mismatch_error(
@@ -349,17 +329,8 @@ fn validate_catalog_identity_impl(
 fn verify_runtime_hooks_on_cache_hit(
     catalog: &GeneratedScheduleTable,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<(), AkitaError> {
     verify_ring_challenge_config_digest_on_cache_hit(&catalog.identity, ring_challenge_config)?;
-    let root_fold_shape =
-        root_fold_shape_for_entries(catalog.entries, &fold_challenge_shape_at_level)?;
-    if root_fold_shape != catalog.identity.root_fold_shape {
-        return Err(catalog_identity_mismatch_error(
-            catalog.identity.family_name,
-            "root_fold_shape",
-        ));
-    }
     Ok(())
 }
 
@@ -367,7 +338,7 @@ fn verify_ring_challenge_config_digest_on_cache_hit(
     identity: &GeneratedScheduleCatalogIdentity,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<(), AkitaError> {
-    let challenge_ring_dimensions = candidate_a_dimensions(identity.ring_dimension_candidates);
+    let challenge_ring_dimensions = challenge_a_dimensions(identity.ring_dimension_schedule_mode);
     let recomputed =
         ring_challenge_config_digest(&challenge_ring_dimensions, ring_challenge_config)?;
     if recomputed != identity.ring_challenge_config_digest {
@@ -402,42 +373,6 @@ fn catalog_identity_mismatch_error(family_name: &str, field: &str) -> AkitaError
     ))
 }
 
-fn root_fold_shape_for_key(
-    key: PolynomialGroupLayout,
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<TensorChallengeShape, AkitaError> {
-    let input_witness_len = 1usize
-        .checked_shl(key.num_vars() as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-    Ok(fold_challenge_shape_at_level(AkitaScheduleInputs {
-        num_vars: key.num_vars(),
-        level: 0,
-        input_witness_len,
-    }))
-}
-
-fn root_fold_shape_for_entries(
-    entries: &[GeneratedFoldScheduleEntry],
-    fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<TensorChallengeShape, AkitaError> {
-    let first = entries
-        .first()
-        .map(|e| e.root.final_group.layout)
-        .ok_or_else(|| AkitaError::InvalidSetup("empty schedule catalog".to_string()))?;
-    let expected = root_fold_shape_for_key(first, fold_challenge_shape_at_level)?;
-    for entry in entries.iter().skip(1) {
-        let actual =
-            root_fold_shape_for_key(entry.root.final_group.layout, fold_challenge_shape_at_level)?;
-        if actual != expected {
-            return Err(AkitaError::InvalidSetup(format!(
-                "schedule catalog family has mixed root fold shapes: first key {:?} uses {:?}, key {:?} uses {:?}",
-                first, expected, entry.root.final_group.layout, actual
-            )));
-        }
-    }
-    Ok(expected)
-}
-
 fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize> {
     let mut dims = Vec::new();
     for entry in entries {
@@ -447,7 +382,14 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             entry.root.open_commit_matrix.ring_dimension as usize,
         );
         for group in entry.root.precommitted_groups {
-            collect_group_ring_dimensions(group.commitment, &mut dims);
+            push_unique(
+                &mut dims,
+                group.descriptor.inner_commit_matrix.ring_dimension(),
+            );
+            push_unique(
+                &mut dims,
+                group.descriptor.outer_commit_matrix.ring_dimension(),
+            );
         }
         for fold in entry.recursive_folds {
             collect_group_ring_dimensions(fold.witness, &mut dims);
@@ -465,51 +407,114 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
     dims
 }
 
-fn candidate_a_dimensions(candidates: &[CommitmentRingDims]) -> Vec<usize> {
-    let mut dimensions = candidates.iter().map(|dims| dims.d_a()).collect::<Vec<_>>();
-    dimensions.sort_unstable();
-    dimensions.dedup();
-    dimensions
+fn challenge_a_dimensions(mode: RingDimensionScheduleMode) -> Vec<usize> {
+    match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => vec![ring_dimension],
+        RingDimensionScheduleMode::AdaptiveDimension {
+            potential_a_dimensions,
+            ..
+        } => potential_a_dimensions.to_vec(),
+    }
 }
 
-fn validate_entry_candidate_dimensions(
+fn validate_entry_dimensions(
     entries: &[GeneratedFoldScheduleEntry],
-    candidates: &[CommitmentRingDims],
+    mode: RingDimensionScheduleMode,
 ) -> Result<(), AkitaError> {
-    let admitted = |group: GeneratedCommittedGroup, opening: u32| {
-        let dims = CommitmentRingDims {
-            inner: group.inner_commit_matrix.ring_dimension as usize,
-            outer: group.outer_commit_matrix.ring_dimension as usize,
-            opening: opening as usize,
-        };
-        candidates.contains(&dims).then_some(dims)
+    let dimensions = |group: GeneratedCommittedGroup, opening: u32| CommitmentRingDims {
+        inner: group.inner_commit_matrix.ring_dimension as usize,
+        outer: group.outer_commit_matrix.ring_dimension as usize,
+        opening: opening as usize,
     };
     for entry in entries {
-        admitted(
+        let root = dimensions(
             entry.root.final_group.commitment,
             entry.root.open_commit_matrix.ring_dimension,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "generated root dimensions are outside the catalog candidate domain for key {:?}",
-                entry.root.final_group.layout
-            ))
-        })?;
-        for fold in entry.recursive_folds {
-            admitted(fold.witness, fold.open_commit_matrix.ring_dimension).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "generated recursive dimensions are outside the catalog candidate domain for key {:?}",
-                    entry.root.final_group.layout
-                ))
-            })?;
+        );
+        validate_level_dimensions(mode, 0, root, None, entry.root.final_group.layout)?;
+        let mut previous = root;
+        for (index, fold) in entry.recursive_folds.iter().enumerate() {
+            let current = dimensions(fold.witness, fold.open_commit_matrix.ring_dimension);
+            validate_level_dimensions(
+                mode,
+                index + 1,
+                current,
+                Some(previous),
+                entry.root.final_group.layout,
+            )?;
+            previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;
-        if !candidates.iter().any(|dims| dims.d_a() == terminal_d) {
+        let terminal_is_admitted = match mode {
+            RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+                terminal_d == ring_dimension
+            }
+            RingDimensionScheduleMode::AdaptiveDimension {
+                suffix_dimensions, ..
+            } => suffix_dimensions.contains(&terminal_d),
+        };
+        if !terminal_is_admitted {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal dimension D{terminal_d} is outside the catalog candidate domain for key {:?}",
+                "generated terminal D{terminal_d} is outside the policy suffix domain for key {:?}",
                 entry.root.final_group.layout
             )));
         }
+        if matches!(mode, RingDimensionScheduleMode::AdaptiveDimension { .. })
+            && terminal_d > previous.d_a()
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated terminal D{terminal_d} exceeds predecessor A dimension D{} for key {:?}",
+                previous.d_a(),
+                entry.root.final_group.layout
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_level_dimensions(
+    mode: RingDimensionScheduleMode,
+    level: usize,
+    dimensions: CommitmentRingDims,
+    previous: Option<CommitmentRingDims>,
+    key: PolynomialGroupLayout,
+) -> Result<(), AkitaError> {
+    let admitted = match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            dimensions == CommitmentRingDims::uniform(ring_dimension)
+        }
+        RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            suffix_dimensions,
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+        } => {
+            if level < num_search_levels {
+                potential_a_dimensions.contains(&dimensions.d_a())
+                    && potential_b_dimensions.contains(&dimensions.d_b())
+                    && potential_d_dimensions.contains(&dimensions.d_d())
+                    && previous.is_none_or(|ceiling| {
+                        dimensions.d_a() <= ceiling.d_a()
+                            && dimensions.d_b() <= ceiling.d_b()
+                            && dimensions.d_d() <= ceiling.d_d()
+                    })
+            } else {
+                dimensions.d_a() == dimensions.d_b()
+                    && dimensions.d_b() == dimensions.d_d()
+                    && suffix_dimensions.contains(&dimensions.d_a())
+                    && previous.is_none_or(|ceiling| {
+                        dimensions.d_a() <= ceiling.d_a()
+                            && dimensions.d_b() <= ceiling.d_b()
+                            && dimensions.d_d() <= ceiling.d_d()
+                    })
+            }
+        }
+    };
+    if !admitted {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated dimensions {dimensions:?} at level {level} are outside policy for key {key:?}"
+        )));
     }
     Ok(())
 }
@@ -536,7 +541,19 @@ pub fn key_digest(keys: &[PolynomialGroupLayout]) -> u64 {
     h.finish()
 }
 
+fn write_setup_prefix_content_mode_full_prefix(h: &mut Fnv64) {
+    h.write_bytes(SETUP_PREFIX_CONTENT_TAG);
+    h.write_bytes(&[0; 4]);
+}
+
 fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
+    entries_key_digest_with_setup_prefix_content_mode(entries, true)
+}
+
+fn entries_key_digest_with_setup_prefix_content_mode(
+    entries: &[GeneratedFoldScheduleEntry],
+    write_full_prefix_content_mode: bool,
+) -> u64 {
     let mut entries = entries.to_vec();
     entries.sort_by(generated_schedule_key_cmp);
     let mut h = Fnv64::new();
@@ -548,7 +565,6 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
-            write_generated_group(&mut h, group.commitment);
             h.write_u64(u64::from(group.num_digits_fold));
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
@@ -560,6 +576,9 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
             write_generated_partition(&mut h, fold.witness_partition);
             h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
             if let Some(prefix) = fold.incoming_setup_prefix {
+                if write_full_prefix_content_mode {
+                    write_setup_prefix_content_mode_full_prefix(&mut h);
+                }
                 h.write_u64(prefix.natural_len);
                 write_generated_group(&mut h, prefix.commitment);
             }
@@ -567,6 +586,8 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
         write_generated_geometry(&mut h, entry.terminal.geometry);
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.log_basis));
+        h.write_u64(u64::from(entry.terminal.fold_log_basis));
+        h.write_u64(u64::from(entry.terminal.fold_digit_count));
     }
     h.finish()
 }
@@ -583,13 +604,12 @@ fn write_generated_group(h: &mut Fnv64, value: GeneratedCommittedGroup) {
     h.write_u64(u64::from(value.inner_commit_matrix.log_basis));
     h.write_u64(u64::from(value.outer_commit_matrix.ring_dimension));
     h.write_u64(u64::from(value.outer_commit_matrix.log_basis));
-    h.write_u64(u64::from(value.outer_commit_matrix.slice_count));
+    h.write_u64(u64::from(value.outer_slice_count));
 }
 
 fn write_generated_open_matrix(h: &mut Fnv64, value: GeneratedOpenCommitMatrix) {
     h.write_u64(u64::from(value.ring_dimension));
     h.write_u64(u64::from(value.log_basis));
-    h.write_u64(u64::from(value.slice_count));
 }
 
 fn write_generated_partition(h: &mut Fnv64, value: GeneratedWitnessPartition) {
@@ -624,12 +644,36 @@ pub fn ring_challenge_config_digest(
     Ok(h.finish())
 }
 
-fn write_ring_dimension_candidates(h: &mut Fnv64, candidates: &[CommitmentRingDims]) {
-    h.write_u64(candidates.len() as u64);
-    for dims in candidates {
-        h.write_u64(dims.d_a() as u64);
-        h.write_u64(dims.d_b() as u64);
-        h.write_u64(dims.d_d() as u64);
+fn write_ring_dimension_schedule_mode(h: &mut Fnv64, mode: RingDimensionScheduleMode) {
+    match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            h.write_u64(0);
+            h.write_u64(ring_dimension as u64);
+        }
+        RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            suffix_dimensions,
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+        } => {
+            h.write_u64(1);
+            h.write_u64(num_search_levels as u64);
+            h.write_u64(suffix_dimensions.len() as u64);
+            for &dimension in suffix_dimensions {
+                h.write_u64(dimension as u64);
+            }
+            for dimensions in [
+                potential_a_dimensions,
+                potential_b_dimensions,
+                potential_d_dimensions,
+            ] {
+                h.write_u64(dimensions.len() as u64);
+                for &dimension in dimensions {
+                    h.write_u64(dimension as u64);
+                }
+            }
+        }
     }
 }
 
@@ -686,5 +730,60 @@ impl Fnv64 {
 
     fn finish(self) -> u64 {
         self.state
+    }
+}
+
+#[cfg(all(test, feature = "fp128-onehot-recursive"))]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+
+    #[test]
+    fn full_prefix_catalog_identity_rejects_old_zero_padded_digest() {
+        let table = crate::generated::fp128_onehot_recursive_table();
+        let old_digest = entries_key_digest_with_setup_prefix_content_mode(table.entries, false);
+        assert_ne!(
+            old_digest, table.identity.key_digest,
+            "full-prefix setup content mode must change the generated key digest"
+        );
+
+        let stale = GeneratedScheduleTable {
+            identity: GeneratedScheduleCatalogIdentity {
+                key_digest: old_digest,
+                ..table.identity
+            },
+            ..table
+        };
+        let policy = PlannerPolicy {
+            cost_model: stale.identity.cost_model,
+            selective_l2_response_model: stale.identity.selective_l2_response_model,
+            selection_policy: stale.identity.selection_policy,
+            recursive_split_search_policy: stale.identity.recursive_split_search_policy,
+            setup_field_budget: stale.identity.setup_field_budget,
+            min_offloaded_witness_contraction: stale.identity.min_offloaded_witness_contraction,
+            sis_modulus_profile: stale.identity.sis_modulus_profile,
+            sis_security_policy: stale.identity.sis_security_policy,
+            sis_table_digest: stale.identity.sis_table_digest,
+            sis_l2_table_digest: stale.identity.sis_l2_table_digest,
+            uniform_ring_dimension: stale.identity.uniform_ring_dimension,
+            setup_prefix_inner_ring_dimension: stale.identity.setup_prefix_inner_ring_dimension,
+            decomposition: stale.identity.decomposition,
+            claim_ext_degree: stale.identity.claim_ext_degree,
+            chal_ext_degree: stale.identity.chal_ext_degree,
+            inner_basis_range: stale.identity.inner_basis_range,
+            opening_basis_range: stale.identity.opening_basis_range,
+            witness_chunk: stale.identity.witness_chunk,
+            recursive_setup_planning: stale.identity.recursive_setup_planning,
+            ring_dimension_schedule_mode: stale.identity.ring_dimension_schedule_mode,
+        };
+        let err = validate_catalog_identity(&stale, &policy, |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        })
+        .expect_err("old zero-padded catalog identity must reject");
+        assert!(err
+            .to_string()
+            .contains("schedule catalog identity mismatch"));
     }
 }

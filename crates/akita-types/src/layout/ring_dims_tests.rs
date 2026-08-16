@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    CommittedGroupParams, FoldSchedule, RecursiveFoldParams, RecursiveFoldStep,
     RootFinalGroupParams, RootFoldParams, RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
     WitnessPartition,
@@ -28,7 +28,6 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
@@ -51,7 +50,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
                             z_coords: ring_dimension,
                             e_field_elems: ring_dimension,
                             t_field_elems: ring_dimension,
-                            z_admission_linf_cap: 1,
+                            z_linf_cap: Some(1),
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],
@@ -82,7 +81,6 @@ fn rejects_recursive_shared_d_matrix_mismatch() {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: root_params.clone(),
                 },
                 precommitted_groups: Vec::new(),
@@ -115,7 +113,7 @@ fn rejects_recursive_shared_d_matrix_mismatch() {
                             z_coords: terminal_params.d_a(),
                             e_field_elems: terminal_params.d_a(),
                             t_field_elems: terminal_params.d_a(),
-                            z_admission_linf_cap: 1,
+                            z_linf_cap: Some(1),
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],

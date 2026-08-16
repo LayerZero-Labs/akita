@@ -1,11 +1,8 @@
 use super::*;
 use akita_algebra::{
-    offset_eq::{
-        eval_affine_digit_intervals, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
-    },
+    offset_eq::{eval_affine_digit_intervals, AffineWeightProduct},
     ring::scalar_powers_with_stride,
 };
-use std::collections::BTreeMap;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Contract one group's structured E/T/Z terms through its canonical
@@ -112,6 +109,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             {
                 return Err(AkitaError::InvalidProof);
             }
+            // E and T share the block-claim index space, so they stay one
+            // fused fold gated on their combined width, and Z keeps its own
+            // gate. Splitting E from T would drop the multi-core reduce
+            // whenever each side alone sits under the threshold but the pair
+            // clears it.
             let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
                 let e_start = block_claim
                     .checked_mul(e_stride)
@@ -144,21 +146,21 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 Ok(acc? + block_challenge * (group.consistency_weight * e + t))
             };
             const PARALLEL_THRESHOLD: usize = 1 << 14;
-            let et_work = weights
-                .e
-                .len()
-                .checked_add(weights.t.len())
-                .ok_or(AkitaError::InvalidProof)?;
-            let et = if et_work >= PARALLEL_THRESHOLD {
-                cfg_fold_reduce!(
-                    0..block_claims,
-                    || Ok(E::zero()),
-                    fold_et,
-                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-                )
-            } else {
-                (0..block_claims).fold(Ok(E::zero()), fold_et)
-            }?;
+            let et_work = e_len
+                .checked_add(t_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("structured E/T width overflow".into()))?;
+            let run_et = || -> Result<E, AkitaError> {
+                if et_work >= PARALLEL_THRESHOLD {
+                    cfg_fold_reduce!(
+                        0..block_claims,
+                        || Ok(E::zero()),
+                        fold_et,
+                        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                    )
+                } else {
+                    (0..block_claims).fold(Ok(E::zero()), fold_et)
+                }
+            };
             let fold_z = |acc: Result<E, AkitaError>, position: usize| {
                 let start = position
                     .checked_mul(group.depth_witness)
@@ -174,23 +176,39 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .zip(&witness_gadget)
                     .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
                 Ok(acc?
-                    + group.consistency_weight
-                        * *opening_a_evals
-                            .get(position)
-                            .ok_or(AkitaError::InvalidProof)?
+                    + *opening_a_evals
+                        .get(position)
+                        .ok_or(AkitaError::InvalidProof)?
                         * inner)
             };
-            let z = if weights.z.len() >= PARALLEL_THRESHOLD {
-                cfg_fold_reduce!(
-                    0..group.num_positions_per_block,
-                    || Ok(E::zero()),
-                    fold_z,
-                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-                )
+            let run_z = || -> Result<E, AkitaError> {
+                if z_cols >= PARALLEL_THRESHOLD {
+                    cfg_fold_reduce!(
+                        0..group.num_positions_per_block,
+                        || Ok(E::zero()),
+                        fold_z,
+                        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                    )
+                } else {
+                    (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
+                }
+            };
+            // Running E/T against Z costs one `rayon::join`, and that cost
+            // grows with the pool size, so it has to be repaid by both sides
+            // at once. Requiring the smaller of the two to clear the same
+            // threshold its own reduce uses keeps the fork on groups where
+            // each side is independently worth a parallel reduce; a group
+            // with one large and one small side runs them in sequence.
+            let (et, z) = if et_work.min(z_cols) >= PARALLEL_THRESHOLD {
+                let (et, z) = cfg_join!(run_et, run_z);
+                (et?, z?)
             } else {
-                (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
-            }?;
-            return Ok(et + z);
+                (run_et()?, run_z()?)
+            };
+            // Z carries the group's consistency weight on every position;
+            // applying it once after reduction drops one field multiplication
+            // per position and leaves the contracted equation auditable.
+            return Ok(et + group.consistency_weight * z);
         }
 
         let point = self.relation_address.point();
@@ -216,140 +234,77 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .as_deref()
             .unwrap_or(&commitment_gadget);
 
-        if group.num_claims == 0
-            || group.num_live_blocks == 0
-            || !group.d_tensors.len().is_multiple_of(group.num_claims)
-        {
+        if group.num_claims == 0 || group.num_live_blocks == 0 {
             return Err(AkitaError::InvalidSetup(
                 "structured role tensor families disagree".into(),
             ));
         }
-        if (group.n_b == 0 && !group.b_tensors.is_empty())
-            || (group.n_b != 0 && group.b_tensors.len() != group.d_tensors.len())
-        {
-            return Err(AkitaError::InvalidSetup(
-                "structured B tensor families disagree".into(),
-            ));
-        }
-
-        let mut b_by_unit = BTreeMap::new();
-        for tensor in &group.b_tensors {
-            let key = canonical_unit_tensor_key(
-                tensor,
-                t_stride,
-                group.b_ratio,
-                group.num_claims,
-                group.num_live_blocks,
-                "structured B tensor",
-            )?;
-            if b_by_unit.insert(key, tensor).is_some() {
-                return Err(AkitaError::InvalidSetup(
-                    "structured B tensor unit is duplicated".into(),
-                ));
-            }
-        }
-        let mut unit_families = Vec::with_capacity(group.d_tensors.len());
-        for tensor in &group.d_tensors {
-            let key = canonical_unit_tensor_key(
-                tensor,
-                e_stride,
-                group.d_ratio,
-                group.num_claims,
-                group.num_live_blocks,
-                "structured D tensor",
-            )?;
-            let b_tensor = if group.n_b == 0 {
-                None
-            } else {
-                Some(b_by_unit.remove(&key).ok_or_else(|| {
-                    AkitaError::InvalidSetup("structured D/B tensor units disagree".into())
-                })?)
-            };
-            unit_families.push((key, tensor, b_tensor));
-        }
-        if !b_by_unit.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "structured B tensor has no matching D unit".into(),
-            ));
-        }
-        unit_families.sort_unstable_by_key(|(key, _, _)| *key);
-        let mut claim_coverage = vec![0usize; group.num_claims];
-        for (key, _, _) in &unit_families {
-            let (claim, block_start, unit_blocks) = *key;
-            let cursor = claim_coverage
-                .get_mut(claim)
-                .ok_or(AkitaError::InvalidProof)?;
-            if *cursor != block_start {
-                return Err(AkitaError::InvalidSetup(
-                    "structured tensor units do not form a block partition".into(),
-                ));
-            }
-            *cursor = cursor
-                .checked_add(unit_blocks)
-                .ok_or(AkitaError::InvalidProof)?;
-        }
-        if claim_coverage
-            .iter()
-            .any(|&covered| covered != group.num_live_blocks)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "structured tensors do not cover every live block".into(),
-            ));
-        }
-        let partition = unit_families
-            .iter()
-            .take_while(|((claim, _, _), _, _)| *claim == 0)
-            .map(|((_, block_start, unit_blocks), _, _)| (*block_start, *unit_blocks))
-            .collect::<Vec<_>>();
-        if partition.is_empty() {
+        let active_unit_count = group.active_unit_ranges.len();
+        if active_unit_count == 0 || group.num_physical_units == 0 {
             return Err(AkitaError::InvalidSetup(
                 "structured tensor partition is empty".into(),
             ));
         }
-        for claim in 1..group.num_claims {
-            if !unit_families
-                .iter()
-                .filter(|((family_claim, _, _), _, _)| *family_claim == claim)
-                .map(|((_, block_start, unit_blocks), _, _)| (*block_start, *unit_blocks))
-                .eq(partition.iter().copied())
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "structured claims disagree on the chunk partition".into(),
-                ));
-            }
-        }
-        let unit_count = partition.len();
-        if group.a_tensors.len() != usize::from(group.n_a != 0) * unit_count {
+        let family_count = group
+            .num_claims
+            .checked_mul(active_unit_count)
+            .ok_or(AkitaError::InvalidProof)?;
+        if group.d_tensors.len() != family_count
+            || group.physical_b.relation_tensors.len()
+                != usize::from(group.physical_b.logical_rows()? != 0) * family_count
+            || group.a_tensors.len() != usize::from(group.n_a != 0) * group.num_physical_units
+        {
             return Err(AkitaError::InvalidSetup(
-                "structured A tensor families disagree".into(),
+                "structured tensor families disagree with compiled active and physical units"
+                    .into(),
             ));
         }
 
-        let t_high_weights = (0..group.num_claims)
-            .map(|claim| {
-                let block_start = claim
-                    .checked_mul(group.num_live_blocks)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let challenges = checked_slice(
-                    block_challenges,
-                    block_start,
-                    group.num_live_blocks,
-                    "structured T block factors",
-                )?;
-                Ok(challenges
-                    .iter()
-                    .flat_map(|&challenge| {
-                        group.a_row_weights.iter().map(move |&row| challenge * row)
-                    })
-                    .collect::<Vec<_>>())
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-
+        // `build_group_role_tensors` emits D/B families unit-major with claim
+        // inside each unit. The evaluation fold itself is claim-major, so this
+        // explicit conversion is the single ordering boundary between them.
         let fold_family = |acc: Result<E, AkitaError>, family_index: usize| {
-            let (key, d_tensor, b_tensor) = unit_families
-                .get(family_index)
+            let claim = family_index / active_unit_count;
+            let unit_index = family_index % active_unit_count;
+            let tensor_index = unit_index
+                .checked_mul(group.num_claims)
+                .and_then(|index| index.checked_add(claim))
                 .ok_or(AkitaError::InvalidProof)?;
-            let (claim, global_block_start, unit_blocks) = *key;
+            let d_tensor = group
+                .d_tensors
+                .get(tensor_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let b_tensor = if group.physical_b.logical_rows()? == 0 {
+                None
+            } else {
+                Some(
+                    group
+                        .physical_b
+                        .relation_tensors
+                        .get(tensor_index)
+                        .ok_or(AkitaError::InvalidProof)?,
+                )
+            };
+            let unit = group
+                .active_unit_ranges
+                .get(unit_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let global_block_start = unit.global_block_start;
+            let unit_blocks = unit.num_live_blocks;
+            let setup_block = claim
+                .checked_mul(group.num_live_blocks)
+                .and_then(|block| block.checked_add(global_block_start))
+                .ok_or(AkitaError::InvalidProof)?;
+            let expected_d_offset = setup_block
+                .checked_mul(e_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            debug_assert_eq!(d_tensor.left_offset, expected_d_offset);
+            if let Some(b_tensor) = b_tensor {
+                let expected_b_offset = setup_block
+                    .checked_mul(t_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                debug_assert_eq!(b_tensor.left_offset, expected_b_offset);
+            }
             let claim_start = claim
                 .checked_mul(group.num_live_blocks)
                 .ok_or(AkitaError::InvalidProof)?;
@@ -380,6 +335,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 )?;
 
             if let Some(b_tensor) = b_tensor {
+                let t_high_weights =
+                    AffineWeightProduct::new(claim_challenges, &group.a_row_weights)?;
                 let t_outer_start = global_block_start
                     .checked_mul(group.n_a)
                     .and_then(|start| start.checked_mul(outer_subcolumns))
@@ -396,18 +353,18 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     commitment_digits.len(),
                     1,
                     commitment_digits,
-                    t_high_weights.get(claim).ok_or(AkitaError::InvalidProof)?,
+                    &t_high_weights,
                     outer_low,
                     &[],
                 )?;
             }
             Ok(acc? + contribution)
         };
-        let evaluation = if unit_families.len() == 1 {
+        let evaluation = if family_count == 1 {
             fold_family(Ok(E::zero()), 0)
         } else {
             cfg_fold_reduce!(
-                0..unit_families.len(),
+                0..family_count,
                 || Ok(E::zero()),
                 fold_family,
                 |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
@@ -426,27 +383,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         } else {
             group.fold_gadget.iter().map(|&fold| -fold).collect()
         };
-        let fold_weights = group
-            .fold_gadget
-            .iter()
-            .map(|&fold| -fold)
-            .collect::<Vec<E>>();
-        for tensor in &group.a_tensors {
-            let expected = EqPairTensorFamily::new(
-                0,
-                tensor.right_offset,
-                E::one(),
-                vec![
-                    EqPairTensorAxis::unit(z_cols, 1, fold_digits.len()),
-                    EqPairTensorAxis::dense(0, group.a_ratio, fold_weights.clone()),
-                ],
-            )?;
-            if tensor != &expected {
-                return Err(AkitaError::InvalidSetup(
-                    "structured A tensor disagrees with canonical geometry".into(),
-                ));
-            }
-        }
         let a_base_offsets = group
             .a_tensors
             .iter()
@@ -527,62 +463,4 @@ where
 fn checked_product(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
     lhs.checked_mul(rhs)
         .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
-}
-
-fn tensor_coordinate_count<E: FieldCore>(
-    tensor: &EqPairTensorFamily<E>,
-) -> Result<usize, AkitaError> {
-    tensor.axes.iter().try_fold(1usize, |count, axis| {
-        count
-            .checked_mul(axis.len)
-            .ok_or_else(|| AkitaError::InvalidSetup("structured tensor size overflow".into()))
-    })
-}
-
-fn canonical_unit_tensor_key<E: FieldCore>(
-    tensor: &EqPairTensorFamily<E>,
-    semantic_stride: usize,
-    role_ratio: usize,
-    num_claims: usize,
-    num_live_blocks: usize,
-    context: &'static str,
-) -> Result<(usize, usize, usize), AkitaError> {
-    let coordinates = tensor_coordinate_count(tensor)?;
-    let unit_blocks = coordinates
-        .checked_div(semantic_stride)
-        .filter(|&count| count != 0 && coordinates.is_multiple_of(semantic_stride))
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} is not a complete unit")))?;
-    let semantic_start = tensor
-        .left_offset
-        .checked_div(semantic_stride)
-        .filter(|_| tensor.left_offset.is_multiple_of(semantic_stride))
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} is not column aligned")))?;
-    let claim = semantic_start / num_live_blocks;
-    let block_start = semantic_start % num_live_blocks;
-    if claim >= num_claims
-        || block_start
-            .checked_add(unit_blocks)
-            .is_none_or(|end| end > num_live_blocks)
-    {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{context} is outside the group block domain"
-        )));
-    }
-    let expected = EqPairTensorFamily::new(
-        tensor.left_offset,
-        tensor.right_offset,
-        E::one(),
-        vec![EqPairTensorAxis {
-            len: coordinates,
-            left_stride: 1,
-            right_stride: role_ratio,
-            weights: EqPairTensorWeights::Unit,
-        }],
-    )?;
-    if tensor != &expected {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{context} disagrees with canonical affine geometry"
-        )));
-    }
-    Ok((claim, block_start, unit_blocks))
 }

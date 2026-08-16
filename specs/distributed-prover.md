@@ -74,9 +74,11 @@ $(X^d+1)$ quotient. (See `crates/akita-types/src/proof/ring_relation.rs`.)
 
 ### The modified relation, parameterized by `num_chunks = W`
 
-Partition the block index set $[B]$ into $W$ balanced contiguous windows. Let
-$q = \lfloor B/W\rfloor$ and $r = B\bmod W$; the first $r$ windows contain
-$q+1$ blocks and the rest contain $q$. Require $B\ge W$ and $W$ a power of two.
+Partition the block index set $[B]$ into $W$ balanced contiguous windows with
+boundary $s_i = \lfloor iB/W\rfloor$. Window $i$ owns $[s_i,s_{i+1})$.
+Require $B>0$ and $W$ a supported power of two. When $B<W$, consecutive
+boundaries may be equal, so some windows are empty. This rule makes every
+partition at $2W$ windows refine the partition at $W$ windows.
 Window $i$ gets its **own** sub-witness
 $\mathbf w_i = (\widehat{\mathbf e}_i,\widehat{\mathbf t}_i,\mathbf z_i)$ where:
 
@@ -112,13 +114,13 @@ within each window, with the single shared quotient appended:
 
 This is the layout the [planner](distributed-planner.md) prices
 (`w_ring_element_count_for_chunks`) and the
-[verifier](distributed-verifier-row-eval.md) evaluates (`segment_layout` /
+[verifier](digit-innermost-layout.md) evaluates (`segment_layout` /
 `eval_flat_at_point`). The per-window segment lengths are:
 
 - `z_len_i = num_digits_fold · num_digits_inner · num_positions_per_block` (replicated, full),
 - `e_len_i = num_digits_open · num_claims · blocks_in_chunk(i)` (partitioned),
 - `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_in_chunk(i)` (partitioned),
-- per-window stride `L = z_len_i + e_len_i + t_len_i`,
+- per-window length `L_i = z_len_i + e_len_i + t_len_i`,
 - one shared `r̂` tail of `num_rows · r_decomp_levels(log_basis)` after window $W-1$,
   where `num_rows` is the **single-machine** relation row count (the windows stack
   horizontally — same rows, partitioned columns — and the partial quotients sum,
@@ -148,10 +150,10 @@ In `prove_fold` (`crates/akita-prover/src/protocol/core/fold.rs`), read the chun
 count the planner stamped and derive the windows:
 
 ```rust
-let num_chunks = lp.witness_chunk.num_chunks;        // W; 1 on non-modified levels
-let base_blocks = lp.num_live_blocks / num_chunks;
-let extra_blocks = lp.num_live_blocks % num_chunks;
-// the first extra_blocks windows own base_blocks + 1; the rest own base_blocks
+let chunk_ranges = dyadic_block_ranges(
+    lp.num_live_blocks,
+    lp.witness_chunk.num_chunks,
+)?;
 ```
 
 Validate at this boundary, before any witness math (no-panic contract):
@@ -160,7 +162,6 @@ Validate at this boundary, before any witness math (no-panic contract):
 |------|-------|
 | `num_chunks == 0` | `InvalidSetup` |
 | `num_chunks > 1` and not a power of two | `InvalidSetup` |
-| `num_chunks > lp.num_live_blocks` | `InvalidSetup` |
 | `num_chunks > 1` under `feature = "zk"` | `InvalidSetup` |
 
 (`zk` blinding segments are not specified for the chunked witness yet; reject
@@ -184,10 +185,11 @@ Each $\mathbf z_i$ is the same full `inner_width` size as the single fold (it is
 partial sum, not a $1/W$ slice) and is decomposed by `num_digits_fold` exactly as
 today. The fold challenge $\mathbf c$ is the **same single transcript-sampled
 vector**; window $i$ uses the slice $c_j, j\in\mathcal I_i$ indexed by the
-**global** block (so the verifier reads $c_\alpha$ at global block
-$iB_{\mathsf{loc}}+\text{block\_local}$). The fold-grind L∞ cap is unchanged: each
-$\mathbf z_i$ is a sub-sum of the global fold under the same challenge, so it
-respects the same per-fold cap the planner sized.
+**global** block. If `block_local` indexes window $i$, the global block is
+$s_i+\text{block\_local}$. An empty window has an empty challenge slice and the
+honest prover emits the all-zero $\mathbf z_i$. The fold-grind L∞ cap is
+unchanged: each nonempty $\mathbf z_i$ is a sub-sum of the global fold under the
+same challenge, so it respects the same per-fold cap the planner sized.
 
 Output: `z_folded_rings_per_chunk: Vec<Vec<CyclotomicRing<F,D>>>` of length $W$
 (the $W = 1$ case is a one-element vector = today's single `z_folded_rings`).
@@ -242,7 +244,7 @@ prover-internal column evaluation `compute_relation_matrix_col_evals`
   $\mathbf A$ acts identically on every $\mathbf z_i$.
 
 This is the column-MLE counterpart of the verifier's chunked row-MLE
-(specified in [`distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)).
+(specified in [`digit-innermost-layout.md`](digit-innermost-layout.md)).
 The prover and verifier share checked `WitnessLayout` geometry while the verifier's
 structured contraction is owned by
 `crates/akita-types/src/setup_contribution/plan/structured.rs`; chunked support is a
@@ -317,7 +319,8 @@ quotient tail.
   and each $\mathbf z_i$ is full `inner_width`. (The witness keeps the $W$ responses
   separate; the identity is a correctness check on Step 1.)
 - **Global fold challenge.** $\mathbf c$ is the same single transcript-sampled
-  vector; window $i$ uses its global-block-indexed slice.
+  vector; window $i$ uses its global-block-indexed slice beginning at $s_i$.
+  An empty slice produces the canonical all-zero honest fold response.
 - **Quotient unchanged.** $\widehat{\mathbf r}$ is identical to the original
   relation's quotient — one shared tail with the **single-machine** row count,
   computed once ($\widehat{\mathbf r} = \sum_i\widehat{\mathbf r}_i$, not scaled
@@ -420,8 +423,11 @@ the same preset for `W ∈ {1,2,4,8}`, `num_positions_per_block` pow2 (root) and
    chunked relation row.
 4. **Proof-size parity** vs the planner schedule.
 5. **End-to-end roundtrip** (gated on verifier landing).
-6. **Determinism** and **no-panic negatives** (bad `num_chunks`,
-   `num_chunks > num_live_blocks`, zk+chunked).
+6. **Empty-window positive:** `num_live_blocks = 4`, `num_chunks = 8` uses the
+   exact proportional boundaries, preserves all eight `z` segments, and emits
+   empty `e` and `t` segments for empty windows.
+7. **Determinism** and **no-panic negatives** (zero or unsupported
+   `num_chunks`, zk+chunked).
 
 ### Performance
 
@@ -439,7 +445,7 @@ do not grow); the verifier's dominant cost is unchanged (verifier spec).
   [`book/src/how/verifying/distributed-relation-verifier.md`](../book/src/how/verifying/distributed-relation-verifier.md)
   (partitioned vs replicated components).
 - Planner (prices the relation): [`specs/distributed-planner.md`](distributed-planner.md)
-- Verifier (evaluates the relation): [`specs/distributed-verifier-row-eval.md`](distributed-verifier-row-eval.md)
+- Verifier (evaluates the relation): [`specs/digit-innermost-layout.md`](digit-innermost-layout.md)
 - Prover surfaces: `crates/akita-prover` (`protocol/core/fold.rs`,
   `protocol/ring_switch/{coeffs,evals,finalize}.rs`, `protocol/ring_relation.rs`,
   `backend/poly_helpers/decompose_fold_partitioned.rs`)

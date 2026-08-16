@@ -5,8 +5,8 @@
 | Author(s) | Quang Dao |
 | Created | 2026-07-21 |
 | Status | active |
-| Branch | `quang/large-inner-basis-infra` |
-| PR | pending |
+| Branch | `codex/ntt-architecture` |
+| PR | [#358](https://github.com/LayerZero-Labs/akita/pull/358) |
 | Supersedes | the 2026-07 large-basis extension notes in `crt-ntt-accumulation-safety.md` |
 | Superseded-by | |
 | Book-chapter | book/src/foundations/ntt-crt.md |
@@ -30,17 +30,19 @@ The implementation also cuts the terminal verifier's `A * z` relation over to
 one signed-`i16` NTT matvec. Decoded terminal coefficients outside `i16` are
 rejected; there is no two-pass `i8` fallback. Exact CRT reconstruction is
 selected from the actual field, ring degree, matrix width, and signed bound.
-The existing homogeneous `i32` CRT profile is retained when sufficient;
-otherwise exactly one 14-bit residue modulo 12289 is added. This tail is a
-derived, lazy, non-serialized prepared representation.
+Portable, AVX2, and NEON hosts retain the homogeneous i32 CRT profile and add
+one 14-bit residue modulo 12289 only when required. AVX-512IFMA hosts at D64
+through D512 may instead use the exact homogeneous 50-bit profile selected for
+Q32, Q64, or Q128, again adding the tail only when required. Every form is
+derived, lazy, and non-serialized.
 
 The branch implements the arithmetic, terminal cutover, SIMD kernels,
 exactness selection, lazy verifier warming, unified NTT cache, and removal of
 obsolete partial-split/strided kernel families. The final cache API has one
-preparation function and two request modes. It derives exactly three physical
-layouts: base negacyclic plus cyclic transforms, exact base-only negacyclic
-transforms, or exact negacyclic transforms with one i16 tail. CPU cache storage
-remains outside protocol and compute-backend traits.
+preparation function and four domain/exactness request modes. It materializes
+only the requested cyclic and/or negacyclic domains; exact negacyclic requests
+select either a base-only representation or a base plus one i16 tail. CPU cache
+storage remains outside protocol and compute-backend traits.
 
 ## Intent
 
@@ -112,6 +114,11 @@ The canonical base profiles are:
 | Q64 | `3 x i32` | 1024 | `12289` as `i16` |
 | Q128 | `5 x i32` | 512 | `12289` as `i16` |
 
+For exact caches on AVX-512IFMA hosts, the corresponding base residues are
+`1 x u64` for Q32, `2 x u64` for Q64, and `3 x u64` for Q128. They store
+canonical 50-bit residues but share the same capacity and centered-Garner
+contracts as the portable profiles.
+
 `12289 - 1 = 3 * 2^12`, so the tail admits a primitive root for every
 negacyclic ring degree through `D = 2048`. It is coprime to every base profile
 prime and adds about 13.59 bits of reconstruction range. It is preferred over
@@ -174,8 +181,10 @@ The final caller-selected preparation API has two modes:
 
 ```rust
 pub enum NttCacheMode {
+    Negacyclic,
+    Cyclic,
     BothTransforms,
-    ExactNegacyclic { width: usize, log_basis: u32 },
+    ExactNegacyclic { width: usize, rhs_abs_bound: u64 },
 }
 
 pub fn prepare_ntt_cache<F, const D: usize>(
@@ -184,30 +193,34 @@ pub fn prepare_ntt_cache<F, const D: usize>(
 ) -> Result<PreparedNttCache<D>, AkitaError>;
 ```
 
-`BothTransforms` is the prover quotient/commitment representation: base-profile
-negacyclic and cyclic transforms are both present. `ExactNegacyclic` is the
-bounded signed-coefficient representation: it validates `width` and
-`log_basis`, derives `B = 2^(log_basis-1)`, and selects base-only or base plus
-tail from the canonical inequality.
+`Negacyclic`, `Cyclic`, and `BothTransforms` materialize the requested domains
+for ordinary prover kernels. `ExactNegacyclic` is the bounded
+signed-coefficient representation: it validates `width` and the caller's
+already-derived `rhs_abs_bound`, then selects the minimum exact base or
+base-plus-tail representation from the canonical inequality.
 
 The three supported prepared layouts are named:
 
 | Layout | Negacyclic base | Cyclic base | i16 tail | Consumer |
 | --- | --- | --- | --- | --- |
 | `BothTransforms` | required | required | absent | prover quotient/commitment kernels |
-| `Negacyclic` | required | absent | absent | exact base-only matvec |
+| `Negacyclic` | required | absent | absent | prover negacyclic matvec |
+| `Cyclic` | absent | required | absent | prover cyclic matvec |
 | `NegacyclicWithTail` | required | absent | required | exact matvec needing 12289 |
 
-There is deliberately no cyclic-only layout and no cyclic-plus-tail layout.
-The protocol has no consumer for either. Constructors remain private, and a
+There is deliberately no cyclic-plus-tail layout. Constructors remain private, and a
 cheap internal validation checks the option combination and vector lengths at
 the preparation boundary.
 
-Field-profile erasure uses one enum. Each variant owns the same logical fields;
-the CRT limb count remains statically typed:
+Field-profile erasure uses one opaque public cache. A private representation
+enum owns the matrices and parameters; read-only typed accessors let prover
+kernels in another crate retain static limb dispatch without exposing mutable
+prepared state:
 
 ```rust
-pub enum PreparedNttCache<const D: usize> {
+pub struct PreparedNttCache<const D: usize>(PreparedNttCacheRepr<D>);
+
+enum PreparedNttCacheRepr<const D: usize> {
     Q32 {
         neg: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
         cyc: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
@@ -216,6 +229,8 @@ pub enum PreparedNttCache<const D: usize> {
         exact: bool,
     },
     // Q64 and Q128 have the same fields with their canonical limb counts.
+    // Exact-only IFMA52 variants own one prepared matrix whose private state
+    // binds its 50-bit primes, twiddles, and Garner constants.
 }
 ```
 
@@ -225,7 +240,9 @@ remain private. It keeps the 12289 parameters, negacyclic tail transforms, and
 mixed reconstruction constants together. The base and tail remain physically
 homogeneous arrays so scalar, AVX2, AVX-512, NEON, Metal, and CUDA
 implementations can choose native kernels independently. There is no public
-mixed-residue element type.
+mixed-residue element type. Accelerated kernel plans are likewise opaque:
+callers can detect a host plan but cannot manufacture a target-feature plan or
+mutate the plan stored in `CrtNttParamSet`.
 
 Runtime `D` erasure uses standard Rust type erasure:
 
@@ -277,11 +294,11 @@ layout without implementing Akita's CPU structs or reproducing its cache
 registry. Correctness is the named operation output plus the exactness
 contract, not a particular row-major/AoS/SoA buffer.
 
-The final implementation uses separate homogeneous base and tail vectors. This
-preserves the existing mixed-matvec arithmetic while allowing the tail prefix
-to be shorter than the base prefix. Future private tiling or batching may
-change that physical layout, but it must preserve the single public cache
-contract and the exactness selector.
+The final implementation uses a homogeneous base matrix plus a separate tail
+vector. The base is homogeneous i32 or u64 according to the selected host
+representation. This allows the tail prefix to be shorter than the base
+prefix. Future private tiling or batching may change that physical layout, but
+it must preserve the single public cache contract and the exactness selector.
 
 ### Invariants
 
@@ -309,10 +326,10 @@ contract and the exactness selector.
     negacyclic modes never allocate them.
 11. Prepared caches are derived and non-serialized. Proof, transcript, setup,
     and descriptor bytes remain unchanged.
-12. Scalar, AVX2, and NEON implementations are differential-equivalent.
-    AVX-512-capable hosts may use the supported AVX2 i16 path unless a dedicated
-    AVX-512 kernel is separately measured and added. Accelerated kernels are
-    optional; scalar behavior is authoritative.
+12. Scalar, AVX2, NEON, and AVX-512IFMA implementations are
+    differential-equivalent. IFMA52 exact caches are selected only at D64
+    through D512 when the required CPU features are detected. Accelerated
+    kernels are optional; scalar behavior is authoritative.
 13. Verifier-reachable malformed inputs fail with `AkitaError` and do not
     panic.
 14. The cache API has one canonical constructor and one canonical exactness
@@ -332,8 +349,9 @@ contract and the exactness selector.
 2. Supporting balanced bases above 16 or coefficients wider than `i16` in the
    terminal relation.
 3. Adding the tail unconditionally to Q64/Q128 or to every `i16` operation.
-4. Replacing a base 30-bit prime with multiple 14-bit primes. The production
-   profile remains a homogeneous `i32` prefix plus an optional exactness tail.
+4. Replacing a base 30-bit prime with multiple 14-bit primes. Portable profiles
+   remain homogeneous i32 prefixes; IFMA52 hosts may use homogeneous 50-bit u64
+   prefixes. Either representation may add one 12289 exactness tail.
 5. Restoring partial-split NTT multiplication, strided digit kernels, or legacy
    verifier fallbacks.
 6. Changing the proof format, transcript labels/order, Fiat-Shamir sampling,
@@ -658,21 +676,26 @@ footprint: a tail adds exactly `tail_prefix_len * D * 2` bytes, and base-only
 schedules allocate zero tail bytes. Cache construction may grow only in
 proportion to transforms actually requested.
 
-### Deferred kernel hypotheses and future work
+### Completed NEON follow-up and future work
 
-These items are deliberately outside this PR. They are hypotheses to test with
-component benchmarks before changing arithmetic or prepared layout.
+The AArch64 follow-up implements the production-12289 fused forward tail and
+inverse head, direct signed-`i16` Montgomery ingress for both residue widths,
+and scalar differential coverage at the supported protocol dimensions. Its
+benchmark grid covers Q32/Q64 D64 through D1024, Q128 D64 through D512, and
+ranks 1, 2, 4, and 8.
+
+The remaining items are hypotheses to test with component benchmarks before
+changing arithmetic or prepared layout.
 
 | Direction | Hypothesis and required evidence |
 | --- | --- |
-| component benchmark grid | Add forward, inverse, pointwise, LUT conversion, reconstruction, and complete-matvec measurements for D64/D128/D256/D512, i32 base primes, and production 12289. Use longer alternating SIMD/scalar runs before drawing a ring-degree conclusion. |
-| NEON i16 small stages | A fused vector forward tail for `len = 2, 1` can remove `D` scalar Montgomery products per RHS transform and the final full-array reduction. A vector inverse head should be evaluated separately because terminal widths make forward work dominant. |
+| isolated component attribution | The broad transform and complete-matvec grid is implemented. Add isolated LUT-conversion and reconstruction measurements, and use longer alternating SIMD/scalar runs before drawing a ring-degree conclusion. |
 | NEON lane scheduling | Unrolling independent four-lane widening operations may hide multiply latency without the D64 regression observed for blanket eight-lane butterflies. Test eight-lane direct arithmetic first on streaming twists and then only on selected wide stages. |
 | batched RHS columns | Preparing and accumulating several columns together may reduce accumulator traffic and expose independent Montgomery chains, especially for rank-1 D512. Measure register pressure and temporary-cache footprint for each field tier. |
 | validated LUT access | `CenteredMontLut` exactly covers the data-derived bound, so an internally unchecked lookup after boundary validation may remove redundant per-coefficient `Option` handling. Preserve verifier rejection at the outer boundary. |
 | AVX2 i32 stages | The pointwise path already has an eight-lane Montgomery primitive. Evaluate eight lanes for transform stages `len >= 8`, four lanes at `len = 4`, and the existing fused tail. |
 | AVX2/AVX-512 i16 | Replace AVX2 scalar stages below `len = 16` with width-aware or fused stages before considering a 32-lane AVX-512BW kernel. AVX-512 frequency effects require machine-specific measurement. |
-| backend tests | Extend production-prime i16 differential tests through D512, add D512 AVX-512 transform coverage, and keep scalar arithmetic authoritative. |
+| backend tests | Production-prime NEON i16 differential tests cover the scalar-fallback geometry and D64 through D1024; IFMA52 differential coverage includes nonzero matvecs through D512. Add D512 AVX-512 i32 transform coverage, and keep scalar ring arithmetic authoritative. |
 
 No future optimization may bake one common ring degree into the abstraction,
 make the tail unconditional, expose CPU storage through backend traits, or
@@ -776,7 +799,7 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 | Review concern | Primary files |
 | --- | --- |
 | digit mathematics and storage | `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs`, `book/src/foundations/gadget-decomposition.md` |
-| prime/order and SIMD arithmetic | `crates/akita-algebra/src/ntt/tables.rs`, `ntt/avx/`, `ntt/neon.rs`, `ntt/butterfly.rs` |
+| prime/order and SIMD arithmetic | `crates/akita-algebra/src/ntt/tables.rs`, `crates/akita-algebra/src/ntt/avx/`, `crates/akita-algebra/src/ntt/neon/i16_kernels.rs`, `crates/akita-algebra/src/ntt/neon/i32_kernels.rs`, `crates/akita-algebra/src/ntt/neon/tests.rs`, `crates/akita-algebra/src/ntt/butterfly.rs` |
 | CRT exactness and reconstruction | `crates/akita-algebra/src/ring/crt_ntt_repr/`, `crates/akita-types/src/ntt_cache.rs` |
 | cache API and type erasure | `crates/akita-types/src/ntt_cache.rs`, `crates/akita-types/src/proof/setup.rs` |
 | terminal verifier and no-panic behavior | `crates/akita-verifier/src/protocol/core/terminal_direct.rs`, `terminal_ntt.rs`, `verify.rs` |
@@ -790,7 +813,7 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 
 - `specs/crt-ntt-accumulation-safety.md` — original exact chunking and
   reconstruction contract (PR #134).
-- `specs/crt-ntt-prime-profiles.md` — production base-prime choices and SIMD
+- `book/src/foundations/ntt-crt.md` — production base-prime choices and CRT
   profile history.
 - `specs/terminal-direct-ring-relations-cutover.md` — direct terminal relation
   and predecessor-bound `t` semantics.

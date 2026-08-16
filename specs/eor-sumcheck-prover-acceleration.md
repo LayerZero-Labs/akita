@@ -307,6 +307,5 @@ Widening to `u128` is the safe fallback at extreme `num_vars` with very few thre
 
 - Profile: `AKITA_MODE=onehot_fp32_d32 AKITA_NUM_VARS=32 RUSTFLAGS="-C target-cpu=native" cargo run --release --example profile -p akita-pcs`
 - Benchmark harness: `scripts/profile_bench_report.py`.
-- Related specs: `specs/small-field-prover-opening-optimization.md`,
-  `specs/fp16-small-field-support.md`, `specs/extension-field-opening-batching.md`,
-  `specs/fp31-field-optimization-retrospective.md`.
+- Related specs: `specs/extension-field-opening-batching.md`,
+  `specs/remove-fp16.md`, `specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`.

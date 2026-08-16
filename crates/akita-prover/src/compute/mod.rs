@@ -9,13 +9,13 @@
 //!
 //! Split by stable capability cluster (see `akita-polyops-cutover` spec), not by
 //! call-site helper. Representation-specific views and kernel impls stay in
-//! `backend/*`; this directory owns traits, shared plans, and the CPU row
-//! helpers.
+//! `backend/*`; this directory owns traits, scalar operation plans, and shared
+//! CPU arithmetic.
 //!
 //! | Sibling module | Role |
 //! | --- | --- |
-//! | `plans` | Legacy row/commit plan structs and `FlatBlockTable` |
-//! | `backend` | Internal trait ladder (`ComputeBackendSetup` … `ProverComputeBackend`); not re-exported at crate root |
+//! | `plans` | Internal CPU inputs and named operation outputs |
+//! | `backend` | Prepared setup, digit-row, compression, and ring-switch capabilities |
 //! | `cpu` | `CpuBackend` / `CpuPreparedSetup` and standard row-kernel impls |
 //! | `operation_plans` | PO1 scalar operation parameters (`CommitInnerPlan`, `OpeningFoldPlan`, …) |
 //! | `kernels` | Source-typed operation kernel traits generic over view `S` |
@@ -32,44 +32,44 @@ mod operation_plans;
 mod plans;
 mod poly;
 mod requirements;
+mod runtime_capabilities;
 mod stack;
 
 pub use backend::{
-    CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
-    ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
-    ProverComputeBackend, RingSwitchComputeBackend,
+    CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend, NttCacheOwnerId,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
-    BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel,
-    RingSwitchRelationKernel, RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
+    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchQuotientPlan, RingSwitchRelationPlan,
+    RingSwitchRelationPlan,
 };
-pub use plans::{
-    DenseCommitInput, DenseCommitRowsPlan, FlatBlockTable, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
-};
+pub(crate) use plans::DenseCommitInput;
+pub use plans::RingSwitchRelationRows;
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{
     CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
     ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend,
     RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
-    RootTensorSource, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
-    RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
-    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,
-    RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    TensorBackendFor,
+};
+pub use runtime_capabilities::{
+    RootProveFlowBackend, RuntimeCommitBackendFor, RuntimeCommitSource,
+    RuntimeOpeningProveBackendFor, RuntimeOpeningSource, RuntimeProveBackendFor,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor, RuntimeTensorSource,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 pub use stack::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,
-    PlannedNttCacheOwnerMetric, ProverComputeStack, TieredProveStacks, UniformProverStack,
+    PlannedNttCacheOwnerMetric, ProverComputeStack, ReleaseRootNttAfterFold, TieredProveStacks,
+    UniformProverStack,
 };

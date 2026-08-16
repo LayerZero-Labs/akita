@@ -1,5 +1,6 @@
 //! Source-typed views and `CpuBackend` kernels for [`super::SparseRingPoly`].
 
+use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
@@ -7,13 +8,14 @@ use akita_field::{
 };
 use akita_types::FpExtEncoding;
 
-use super::SparseRingPoly;
+use super::{column_sweep_sparse, SparseRingPoly};
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
+    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -128,13 +130,36 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
     F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
 {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: SparseRingView<'_, F, D>,
+        sources: Vec<SparseRingView<'_, F, D>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        source.poly.commit_inner::<_, D>(self, prepared, plan)
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        let active_a_cols = plan
+            .num_positions_per_block
+            .checked_mul(plan.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
+        let a_view = self
+            .prepared_expanded_setup(prepared)
+            .shared_matrix
+            .ring_view::<D>(plan.n_a, active_a_cols)?;
+        cfg_into_iter!(sources)
+            .map(|source| {
+                let blocks = source.poly.blocks_for(D, plan.num_positions_per_block)?;
+                let block_slices = (0..blocks.num_live_blocks())
+                    .map(|block_idx| blocks.block(block_idx))
+                    .collect::<Vec<_>>();
+                Ok(CommitInnerWitness::from_rows(column_sweep_sparse(
+                    &a_view,
+                    &block_slices,
+                    plan.n_a,
+                    plan.num_positions_per_block,
+                    plan.num_digits_inner,
+                    self.commit_scratch_bytes_per_worker(),
+                )?))
+            })
+            .collect()
     }
 }
 
@@ -147,10 +172,10 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SparseRingView<'_, F, D>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
         let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
-        plan.validate(blocks.num_live_blocks())?;
+        plan.validate::<D>(blocks.num_live_blocks())?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -161,15 +186,12 @@ where
                 position_weights,
                 num_positions_per_block,
             ),
-            OpeningFoldPlan::Ring {
-                live_block_weights,
-                position_weights,
+            OpeningFoldPlan::Subfield {
+                multipliers,
                 num_positions_per_block,
-            } => source.poly.evaluate_and_fold_ring::<D>(
-                live_block_weights,
-                position_weights,
-                num_positions_per_block,
-            ),
+            } => source
+                .poly
+                .evaluate_and_fold_subfield::<D>(multipliers, num_positions_per_block)?,
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -197,27 +219,10 @@ where
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
-        source: SparseRingBatchView<'_, F, D>,
-        plan: DecomposeFoldBatchPlan<'_>,
+        _source: SparseRingBatchView<'_, F, D>,
+        _plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-        match plan {
-            DecomposeFoldBatchPlan::Sparse { .. } => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
-            DecomposeFoldBatchPlan::Tensor {
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            } => match SparseRingPoly::decompose_fold_tensor_batched::<D>(
-                source.polys,
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            )? {
-                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
-            },
-        }
+        Ok(BatchDecomposeFoldOutcome::FallbackPerPoly)
     }
 }
 

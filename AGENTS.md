@@ -33,6 +33,7 @@ graphs differ:
 ```bash
 cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
 cargo clippy --all --all-targets --release --no-default-features -- -D warnings
+cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics -- -D warnings
 cargo clippy -p akita-field --all-targets --release --features jolt-compat -- -D warnings
 ```
 
@@ -87,6 +88,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - `parallel` — Rayon parallelization (default)
 - `disk-persistence` — disk-backed persistence for some commitment flows
 - `logging-transcript` — `LoggingTranscript` schedule events and smell checks
+- `response-model-diagnostics` — expensive source and response energy measurements for model calibration
 
 Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 
@@ -98,6 +100,6 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | Core API types | [`book/src/how/architecture.md`](book/src/how/architecture.md#core-types) |
 | CI test timing | [`docs/ci-test-timing.md`](docs/ci-test-timing.md) |
 | Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
-| Transcript hardening | [`specs/transcript-hardening.md`](specs/transcript-hardening.md) |
+| Transcript hardening | [`book/src/how/transcript.md`](book/src/how/transcript.md) |
 | Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example infinity_width_table -- --format rust-split --profile local-minimum` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |

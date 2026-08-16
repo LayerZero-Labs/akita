@@ -11,118 +11,82 @@ fn batched_commit_matches_individual_commits() {
     let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
-        .map(|group| Scheme::commit::<_, _>(&setup, group, &stack))
+        .map(|group| {
+            Scheme::commit::<_, _>(
+                &setup,
+                group,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+        })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .into_iter()
+        .map(|output| (output.committed_group, output.hint))
         .unzip();
-    let (commitment_a, hint_a) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_a), &stack).unwrap();
-    let (commitment_b, hint_b) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly_b), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment_a,
+        hint: hint_a,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly_a),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment_b,
+        hint: hint_b,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly_b),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .unwrap();
 
     assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
     assert_eq!(batched_hints, vec![hint_a, hint_b]);
 }
 
 #[test]
-fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
-    let alpha = D.trailing_zeros() as usize;
+fn commit_rejects_mixed_group_arity() {
     let layout = singleton_layout::<Cfg>(16);
-    let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
-    let len = 1usize << num_vars;
-    let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
-    let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
-    let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
-    let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
+    let num_vars =
+        layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
+    let evals = vec![F::one(); 1usize << num_vars];
+    let smaller_evals = vec![F::one(); 1usize << (num_vars - 1)];
+    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
+    let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, D, &smaller_evals).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-    let poly_group = [&poly_a, &poly_b];
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, &[poly_a.clone(), poly_b.clone()], &stack).unwrap();
-    let commitments = [commitment];
-    let hints = vec![hint];
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
 
-    let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 9) as u64)).collect();
-    let openings = [
-        dense_opening(&evals_a, &opening_point),
-        dense_opening(&evals_b, &opening_point),
-    ];
-
-    const TRANSCRIPT_LABEL: &[u8] = b"test/batched-prove";
-
-    let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let proof = Scheme::batched_prove::<_, _, _>(
+    // An empty precommitted group prefix is unrepresentable, so no grouped context
+    // can carry one. `PrecommittedGroupProfiles` owns that rejection; see
+    // `precommitted_group_profiles_reject_an_empty_prefix`.
+    let error = Scheme::commit(
         &setup,
-        prover_claims(
-            &opening_point[..],
-            &poly_group[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+        &[poly, smaller],
         &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
-    .unwrap();
-
-    let mut bytes = Vec::new();
-    let shape = proof.shape();
-    proof.serialize_uncompressed(&mut bytes).unwrap();
-    let proof = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
-
-    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-    Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    )
-    .expect("batched verify should accept consistent openings");
-
-    let mut wrong_openings = openings;
-    wrong_openings[1] += F::one();
-    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let wrong_opening_result = Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    );
-    assert!(wrong_opening_result.is_err());
-
-    let mut oversized_proof = proof.clone();
-    {
-        let fold = &mut oversized_proof.root;
-        let mut oversized_v_coeffs = fold.opening_payload.coeffs().to_vec();
-        oversized_v_coeffs.extend(vec![F::zero(); D]);
-        fold.opening_payload = RingVec::from_coeffs(oversized_v_coeffs);
-    }
-
-    let mut oversized_openings = openings.to_vec();
-    oversized_openings.push(F::zero());
-    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let oversized_result = Scheme::batched_verify(
-        &oversized_proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &oversized_openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    );
-
-    assert!(oversized_result.is_err());
+    .expect_err("one committed group must be homogeneous");
+    assert!(matches!(error, AkitaError::InvalidInput(_)));
 }

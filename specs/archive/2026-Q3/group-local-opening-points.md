@@ -6,7 +6,7 @@
 | Created       | 2026-07-22 |
 | Status        | archived |
 | PR            | #322 |
-| Supersedes    | Point-model portions of [`shared-opening-claims-api.md`](../../shared-opening-claims-api.md), [`multi-group-batching.md`](../../multi-group-batching.md), and the shared-point witness carry in [`batched-stage3-setup-opening.md`](../../batched-stage3-setup-opening.md) |
+| Supersedes    | Point-model portions of `shared-opening-claims-api.md` (deleted), [`multi-group-batching.md`](../../multi-group-batching.md), and the shared-point witness carry in `batched-stage3-setup-opening.md` (deleted) |
 | Superseded-by | |
 | Book-chapter  | book/src/how/architecture.md |
 
@@ -837,7 +837,7 @@ above and run the representative end-to-end profile:
 
 ```bash
 cargo run -p akita-pcs --release --no-default-features \
-  --features parallel,profile-onehot-fp128-d64 \
+  --features parallel,profile-onehot-fp128 \
   --example profile
 ```
 
@@ -1254,9 +1254,9 @@ recursive offloading proves exactly the setup statement it is responsible for.
 
 ## References
 
-- [`shared-opening-claims-api.md`](../../shared-opening-claims-api.md)
+- `shared-opening-claims-api.md` (deleted in the 2026-Q3 stale-spec pass)
 - [`multi-group-batching.md`](../../multi-group-batching.md)
-- [`batched-stage3-setup-opening.md`](../../batched-stage3-setup-opening.md)
+- `batched-stage3-setup-opening.md` (deleted in the 2026-Q3 stale-spec pass)
 - [`distributed-setup-offloading.md`](../../distributed-setup-offloading.md)
 - [`setup-offloading-planner.md`](../../setup-offloading-planner.md)
 - [PR #320: Stage 3 setup products and witness reduction](https://github.com/LayerZero-Labs/akita/pull/320)

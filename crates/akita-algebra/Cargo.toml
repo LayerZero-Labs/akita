@@ -30,6 +30,10 @@ rand = "0.8"
 name = "crt_ntt_ops"
 harness = false
 
+[[bench]]
+name = "offset_eq_window"
+harness = false
+
 [features]
 default = []
 parallel = ["dep:rayon", "akita-field/parallel"]

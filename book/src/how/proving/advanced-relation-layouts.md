@@ -1,8 +1,10 @@
 # Advanced relation layouts
 
-The [basic relations in an Akita fold](./akita-fold.md) start with one
-commitment group, one witness chunk, and one common ring dimension. This page
-extends that basic case along three independent layout axes:
+The [semantic relations in an Akita fold](./akita-fold.md) start with one
+commitment group, one witness chunk, and one common ring dimension, while the
+[realizations page](./akita-fold-realizations.md) turns those relations into
+physical rows. This page extends that basic case along three independent layout
+axes:
 
 1. multiple commitment groups add group-local relation rows and witness
    segments to the root fold;
@@ -11,10 +13,10 @@ extends that basic case along three independent layout axes:
 3. different ring dimensions let each physical row retain the native ring of
    its matrix role.
 
-None of these extensions changes the four physical relation families. They
-change which rows and columns belong to each group, chunk, or native ring. The
-physical opening-commitment relation remains distinct from the field-valued
-evaluation trace, just as in the basic setting.
+None of these extensions changes the four semantic relation families. They
+change which physical rows and columns belong to each group, chunk, or native
+ring. The physical opening-commitment relation remains distinct from the
+field-valued evaluation trace, just as in the basic setting.
 
 ## Contents
 
@@ -208,7 +210,7 @@ responses or relation rows.
 - `crates/akita-types/src/layout/params.rs` (`relation_witness_carrier_ring_dimension`).
 - `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`.
 - `crates/akita-verifier/src/protocol/ring_switch/prepared_relation_point.rs`.
-- `crates/akita-verifier/src/protocol/ring_switch/mixed_relation.rs`.
+- `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
 
 With the logical relation layout established, [Opening points and
 digit-innermost layout](./opening-points-layout.md) specifies how its segments

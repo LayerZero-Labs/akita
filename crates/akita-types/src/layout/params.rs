@@ -4,7 +4,7 @@
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
-use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField};
 
 use crate::descriptor_bytes::{push_u32, push_usize};
@@ -14,7 +14,6 @@ use crate::proof::{
     CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
     SetupPrefixSlotId,
 };
-use crate::CompressionChainPlan;
 
 pub use crate::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,
@@ -61,8 +60,9 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
 mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
-use descriptor::append_tensor_challenge_shape_descriptor_bytes;
-pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
+pub use precommitted::{
+    LevelParamsLike, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+};
 
 /// Gadget basis used by opening-digit segments in the shared D product.
 ///
@@ -104,12 +104,9 @@ pub struct CommittedGroupParams {
     pub num_positions_per_block: usize,
     /// Exact number of live blocks (`B = ceil(N / M)`).
     pub num_live_blocks: usize,
+    /// Number of logical B inputs committed through one physical B matrix.
+    pub outer_slice_count: crate::CommitmentSliceCount,
     pub fold_challenge_config: SparseChallengeConfig,
-    /// Shape of the stage-1 fold-round challenge vector at this level.
-    ///
-    /// Defaults to [`TensorChallengeShape::Flat`]. Tensor presets set selected
-    /// levels to [`TensorChallengeShape::Tensor`] during schedule construction.
-    pub fold_challenge_shape: TensorChallengeShape,
     /// Gadget decomposition depth for A/source coefficients.
     pub num_digits_inner: usize,
     /// Gadget decomposition depth for B/`t_hat` values.
@@ -139,12 +136,25 @@ pub struct CommittedGroupParams {
 }
 
 impl CommittedGroupParams {
+    /// Canonical byte encoding used to order semantically distinct level candidates.
+    ///
+    /// This is an ordering descriptor, not a wire encoding or transcript commitment.
+    #[must_use]
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     /// Checked wire geometry for this level's final-group B image.
     pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        let logical_rows = self
+            .outer_slice_count
+            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
         crate::CommitmentPayloadGeometry::for_mode(
             self.payload_mode,
             self.outer_commit_matrix.sis_modulus_profile(),
-            self.outer_commit_matrix.output_rank(),
+            logical_rows,
             self.role_dims().d_b(),
         )
     }
@@ -164,12 +174,11 @@ impl CommittedGroupParams {
         if !self.payload_mode.is_compressed() {
             return Ok(true);
         }
-        let final_outer = self
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(self.role_dims().d_b())
-            .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
-        if CompressionChainPlan::try_for_complete_source(
+        let final_outer = self.outer_slice_count.complete_source_coefficients(
+            self.outer_commit_matrix.output_rank(),
+            self.role_dims().d_b(),
+        )?;
+        if crate::CompressionChainPlan::try_for_complete_source(
             self.outer_commit_matrix.sis_modulus_profile(),
             final_outer,
         )?
@@ -180,13 +189,12 @@ impl CommittedGroupParams {
         for group in self.precommitted_group_iter() {
             let source = group
                 .layout
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(group.layout.outer_commit_matrix.ring_dimension())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("precommitted B compression shape overflow".into())
-                })?;
-            if CompressionChainPlan::try_for_complete_source(
+                .outer_slice_count
+                .complete_source_coefficients(
+                    group.layout.outer_commit_matrix.output_rank(),
+                    group.layout.outer_commit_matrix.ring_dimension(),
+                )?;
+            if crate::CompressionChainPlan::try_for_complete_source(
                 group.layout.outer_commit_matrix.sis_modulus_profile(),
                 source,
             )?
@@ -200,7 +208,7 @@ impl CommittedGroupParams {
             .output_rank()
             .checked_mul(self.role_dims().d_d())
             .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
-        Ok(CompressionChainPlan::try_for_complete_source(
+        Ok(crate::CompressionChainPlan::try_for_complete_source(
             self.open_commit_matrix.sis_modulus_profile(),
             opening,
         )?
@@ -279,8 +287,8 @@ impl CommittedGroupParams {
             num_live_ring_elements_per_claim: 0,
             num_positions_per_block: 0,
             num_live_blocks: 0,
+            outer_slice_count: crate::CommitmentSliceCount::ONE,
             fold_challenge_config,
-            fold_challenge_shape: TensorChallengeShape::Flat,
             num_digits_inner: 0,
             num_digits_outer: 0,
             num_digits_open: 0,
@@ -341,23 +349,19 @@ impl CommittedGroupParams {
     /// Worst-case L1 mass of the fold-round challenge.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
-        self.fold_challenge_shape
-            .effective_l1_mass(&self.fold_challenge_config)
+        self.fold_challenge_config.l1_norm()
     }
 
-    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level,
-    /// accounting for the challenge shape (flat vs tensor).
+    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level.
     #[inline]
     pub fn challenge_infinity_norm(&self) -> usize {
-        self.fold_challenge_shape
-            .effective_infinity_norm(&self.fold_challenge_config)
+        self.fold_challenge_config.infinity_norm() as usize
     }
 
     /// Effective per-block worst-case `‖c‖_2²` upper bound at this fold level.
     #[inline]
     pub fn challenge_l2_sq_max(&self) -> u128 {
-        self.fold_challenge_shape
-            .effective_l2_sq_max(&self.fold_challenge_config)
+        self.fold_challenge_config.challenge_l2_sq_max()
     }
 
     /// Fold-challenge coefficient count `inner_width · D`.
@@ -366,28 +370,18 @@ impl CommittedGroupParams {
         (self.inner_width() as u128).saturating_mul(self.d_a() as u128)
     }
 
-    /// Validate the shared fold nonce from schedule-owned challenge policies.
+    /// Validate the shared fold nonce against the protocol-wide attempt cap.
     ///
     /// This verifier boundary deliberately does not reconstruct an honest
     /// source model or an honest folded-response cap. Those values guide the
-    /// prover's search only; nonce admission is fixed by each selected
-    /// group's challenge family, shape, and native A dimension.
+    /// prover's search only.
     pub fn validate_fold_grind_nonce(
         &self,
         opening_batch: &OpeningClaimsLayout,
-        max_grind_attempts: u32,
         fold_grind_nonce: u32,
     ) -> Result<(), AkitaError> {
         self.validate_opening_batch(opening_batch)?;
-        if max_grind_attempts == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "fold grind attempt budget must be positive".to_string(),
-            ));
-        }
-        if fold_grind_nonce >= max_grind_attempts {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
+        crate::FoldLinfProtocolBinding::CURRENT.validate_grind_nonce(fold_grind_nonce)
     }
 
     /// Exact scheduled gadget decomposition depth for the folded witness.
@@ -406,36 +400,27 @@ impl CommittedGroupParams {
         params: &(impl LevelParamsLike + ?Sized),
     ) -> Result<u128, AkitaError> {
         let inner_commit_matrix = params.inner_commit_matrix_params();
-        if inner_commit_matrix.sis_table_key().role != crate::sis::SisMatrixRole::Inner {
+        let table_key = inner_commit_matrix.sis_table_key().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "terminal response requires an L-infinity A-role matrix".to_string(),
+            )
+        })?;
+        if table_key.role != crate::sis::SisMatrixRole::Inner {
             return Err(AkitaError::InvalidSetup(
                 "terminal response requires an A-role inner matrix".to_string(),
             ));
         }
-        let collision_capacity =
-            inner_commit_matrix
-                .max_secure_collision_linf()
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "terminal inner matrix has no supported SIS collision capacity".to_string(),
-                    )
-                })?;
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &self.fold_challenge_config,
-            params.fold_challenge_shape(),
-        );
-        crate::sis::max_response_linf_for_role_a_collision(
-            collision_capacity,
-            challenge.l1_norm,
-            inner_commit_matrix
-                .sis_modulus_profile()
-                .ring_subfield_embedding_norm_bound(),
-        )
-        .filter(|&limit| limit > 0)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "terminal inner matrix cannot certify a nonzero folded response".to_string(),
-            )
-        })
+        // Bind the terminal wire to the selected SIS bucket. A larger bucket
+        // that the same rank happens to support is unused schedule slack.
+        let collision_capacity = table_key.coeff_linf_bound;
+        let challenge = crate::sis::FoldChallengeNorms::new(&self.fold_challenge_config);
+        crate::sis::max_response_linf_for_role_a_collision(collision_capacity, challenge.l1_norm)
+            .filter(|&limit| limit > 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "terminal inner matrix cannot certify a nonzero folded response".to_string(),
+                )
+            })
     }
 
     /// Number of Boolean coordinates in the block-index domain.
@@ -488,6 +473,97 @@ impl CommittedGroupParams {
         Ok(())
     }
 
+    /// Validate the exact A/B geometry executed by one commitment request.
+    ///
+    /// This binds the concrete polynomial arity and fold level to the same B
+    /// width, slice policy, and complete-source compression cap used for SIS
+    /// pricing and descriptor construction.
+    pub fn validate_commitment_request(
+        &self,
+        fold_level: usize,
+        num_polynomials: usize,
+    ) -> Result<crate::CommitmentSliceGeometry, AkitaError> {
+        if num_polynomials == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment request requires at least one polynomial".into(),
+            ));
+        }
+        self.validate_block_geometry()?;
+        self.outer_slice_count.validate_for_commitment(
+            fold_level,
+            self.payload_mode,
+            self.num_live_blocks,
+        )?;
+        let expected_a_width = self
+            .num_positions_per_block
+            .checked_mul(self.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
+        if self.inner_commit_matrix.input_width() != expected_a_width {
+            return Err(AkitaError::InvalidSetup(
+                "commitment A matrix width disagrees with request geometry".into(),
+            ));
+        }
+        let geometry = crate::CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            self.num_live_blocks,
+            num_polynomials,
+            self.inner_commit_matrix.output_rank(),
+            self.num_digits_outer,
+            self.role_dims().d_a(),
+            self.role_dims().d_b(),
+        )?;
+        if self.outer_commit_matrix.input_width() != geometry.physical_input_width() {
+            return Err(AkitaError::InvalidSetup(
+                "commitment B matrix width disagrees with sliced request geometry".into(),
+            ));
+        }
+        if self.payload_mode.is_compressed() {
+            let source_coefficients = geometry
+                .logical_output_rows(self.outer_commit_matrix.output_rank())?
+                .checked_mul(self.role_dims().d_b())
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("commitment B source size overflow".into())
+                })?;
+            if crate::CompressionChainPlan::try_for_complete_source(
+                self.outer_commit_matrix.sis_modulus_profile(),
+                source_coefficients,
+            )?
+            .is_none()
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "commitment B source exceeds the compression cap".into(),
+                ));
+            }
+        }
+        Ok(geometry)
+    }
+
+    /// Polynomial arity encoded by the exact physical B width.
+    pub fn commitment_polynomial_count(&self) -> Result<usize, AkitaError> {
+        let one_polynomial_width = crate::CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            self.num_live_blocks,
+            1,
+            self.inner_commit_matrix.output_rank(),
+            self.num_digits_outer,
+            self.role_dims().d_a(),
+            self.role_dims().d_b(),
+        )?
+        .physical_input_width();
+        self.outer_commit_matrix
+            .input_width()
+            .checked_div(one_polynomial_width)
+            .filter(|count| {
+                *count != 0
+                    && self.outer_commit_matrix.input_width() == *count * one_polynomial_width
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "commitment B width does not encode an exact polynomial count".into(),
+                )
+            })
+    }
+
     /// Width of inner matrix A (column count of the A-key).
     #[inline]
     pub fn inner_width(&self) -> usize {
@@ -534,8 +610,8 @@ impl CommittedGroupParams {
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
+        self.outer_slice_count.append_descriptor_bytes(bytes);
         append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
-        append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
@@ -661,10 +737,9 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
-        if self.log_basis_open < self.log_basis_inner || self.log_basis_open < self.log_basis_outer
-        {
+        if self.log_basis_open < self.log_basis_outer {
             return Err(AkitaError::InvalidSetup(
-                "certified opening basis must dominate level inner/outer bases".to_string(),
+                "certified opening basis must dominate the level outer basis".to_string(),
             ));
         }
         if opening_batch.num_groups() != self.group_count() {
@@ -766,11 +841,17 @@ impl CommittedGroupParams {
     ) -> Result<usize, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index == final_group_index {
-            return Ok(self.outer_commit_matrix.output_rank());
+            return self
+                .outer_slice_count
+                .logical_output_rows(self.outer_commit_matrix.output_rank());
         }
-        self.precommitted_group_params(group_index)
-            .map(|group| group.layout.outer_commit_matrix.output_rank())
-            .ok_or(AkitaError::InvalidProof)
+        let group = self
+            .precommitted_group_params(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        group
+            .layout
+            .outer_slice_count
+            .logical_output_rows(group.layout.outer_commit_matrix.output_rank())
     }
 
     /// Group-local parameter view for folded opening work.
@@ -801,8 +882,11 @@ impl CommittedGroupParams {
         let mut rows = 1usize
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
+        let final_b_rows = self
+            .outer_slice_count
+            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
         rows = rows
-            .checked_add(self.outer_commit_matrix.output_rank())
+            .checked_add(final_b_rows)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for group in self.precommitted_group_iter() {
             rows = rows
@@ -811,8 +895,12 @@ impl CommittedGroupParams {
             rows = rows
                 .checked_add(group.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
+            let group_b_rows = group
+                .layout
+                .outer_slice_count
+                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?;
             rows = rows
-                .checked_add(group.layout.outer_commit_matrix.output_rank())
+                .checked_add(group_b_rows)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         let base = rows
@@ -846,7 +934,10 @@ impl CommittedGroupParams {
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         start = start
-            .checked_add(self.outer_commit_matrix.output_rank())
+            .checked_add(
+                self.outer_slice_count
+                    .logical_output_rows(self.outer_commit_matrix.output_rank())?,
+            )
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior_index in 0..group_index {
             let prior = self
@@ -859,7 +950,12 @@ impl CommittedGroupParams {
                 .checked_add(prior.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.layout.outer_commit_matrix.output_rank())
+                .checked_add(
+                    prior
+                        .layout
+                        .outer_slice_count
+                        .logical_output_rows(prior.layout.outer_commit_matrix.output_rank())?,
+                )
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         start
@@ -901,14 +997,16 @@ impl CommittedGroupParams {
         final_group_index: usize,
     ) -> Result<usize, AkitaError> {
         if group_index == final_group_index {
-            Ok(self.outer_commit_matrix.output_rank())
+            self.outer_slice_count
+                .logical_output_rows(self.outer_commit_matrix.output_rank())
         } else {
-            Ok(self
+            let group = self
                 .precommitted_group_params(group_index)
-                .ok_or(AkitaError::InvalidProof)?
+                .ok_or(AkitaError::InvalidProof)?;
+            group
                 .layout
-                .outer_commit_matrix
-                .output_rank())
+                .outer_slice_count
+                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())
         }
     }
 
@@ -952,6 +1050,18 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
+        self.output_witness_len_for_field_bits(F::modulus_bits(), opening_batch)
+    }
+
+    /// Exact live next-witness length using an explicit base-field bit width.
+    ///
+    /// Generated schedule replay uses the catalog-bound field width without
+    /// monomorphizing on a concrete field type.
+    pub fn output_witness_len_for_field_bits(
+        &self,
+        field_bits: u32,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
         self.validate_opening_batch(opening_batch)?;
@@ -959,7 +1069,7 @@ impl CommittedGroupParams {
             self,
             opening_batch,
             self.witness_chunk.num_chunks,
-            crate::r_decomp_levels::<F>(self.log_basis_open),
+            crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_open),
         )?;
         Ok(witness_layout.live_coeff_len())
     }
@@ -985,9 +1095,10 @@ impl CommittedGroupParams {
             .a_start()
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        let commitment_rows = self
-            .outer_commit_matrix
-            .output_rank()
+        let logical_b_rows = self
+            .outer_slice_count
+            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
+        let commitment_rows = logical_b_rows
             .checked_mul(num_commitments)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         let after_commitment = after_a
@@ -1071,12 +1182,16 @@ impl CommittedGroupParams {
         let inner_width = num_positions_per_block
             .checked_mul(num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = self
-            .inner_commit_matrix
-            .output_rank()
-            .checked_mul(num_digits_outer)
-            .and_then(|x| x.checked_mul(num_live_blocks))
-            .ok_or_else(|| AkitaError::InvalidSetup("outer width overflow".to_string()))?;
+        let outer_width = crate::CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            num_live_blocks,
+            1,
+            self.inner_commit_matrix.output_rank(),
+            num_digits_outer,
+            self.inner_commit_matrix.ring_dimension(),
+            self.outer_commit_matrix.ring_dimension(),
+        )?
+        .physical_input_width();
         let d_matrix_width = num_digits_open
             .checked_mul(num_live_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
@@ -1085,15 +1200,7 @@ impl CommittedGroupParams {
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                self.inner_commit_matrix.security_policy(),
-                self.inner_commit_matrix.sis_table_key().table_digest,
-                self.inner_commit_matrix.sis_modulus_profile(),
-                self.inner_commit_matrix.output_rank,
-                inner_width,
-                self.inner_commit_matrix.coeff_linf_bound(),
-                self.inner_commit_matrix.ring_dimension(),
-            ),
+            inner_commit_matrix: self.inner_commit_matrix.try_with_input_width(inner_width)?,
             outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
                 self.outer_commit_matrix.security_policy(),
                 self.outer_commit_matrix.sis_table_key().table_digest,
@@ -1115,8 +1222,8 @@ impl CommittedGroupParams {
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
+            outer_slice_count: self.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
-            fold_challenge_shape: self.fold_challenge_shape,
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
@@ -1150,15 +1257,9 @@ impl CommittedGroupParams {
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                self.inner_commit_matrix.security_policy(),
-                self.inner_commit_matrix.sis_table_key().table_digest,
-                self.inner_commit_matrix.sis_modulus_profile(),
-                self.inner_commit_matrix.output_rank,
-                other.inner_commit_matrix.input_width,
-                self.inner_commit_matrix.coeff_linf_bound(),
-                self.inner_commit_matrix.ring_dimension(),
-            ),
+            inner_commit_matrix: self
+                .inner_commit_matrix
+                .try_with_input_width(other.inner_commit_matrix.input_width)?,
             outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
                 self.outer_commit_matrix.security_policy(),
                 self.outer_commit_matrix.sis_table_key().table_digest,
@@ -1180,8 +1281,8 @@ impl CommittedGroupParams {
             num_live_ring_elements_per_claim: other.num_live_ring_elements_per_claim,
             num_positions_per_block: other.num_positions_per_block,
             num_live_blocks: other.num_live_blocks,
+            outer_slice_count: other.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
-            fold_challenge_shape: other.fold_challenge_shape,
             num_digits_inner: other.num_digits_inner,
             num_digits_outer: other.num_digits_outer,
             num_digits_open: other.num_digits_open,

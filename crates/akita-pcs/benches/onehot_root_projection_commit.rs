@@ -3,25 +3,27 @@
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_config::CommitmentConfig;
+use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{RootTensorSource, TensorProjectionKernel};
-use akita_prover::{commit_with_params, OneHotPoly, RootTensorProjectionPoly};
+use akita_prover::{AkitaProverSetup, GroupContext, OneHotPoly, RootTensorProjectionPoly};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_types::{FpExtEncoding, OpeningClaimsLayout};
+use akita_types::{
+    accumulate_matrix_field_elements_for_level, AkitaScheduleLookupKey, FpExtEncoding,
+    PolynomialGroupLayout, SetupMatrixCapacity,
+};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};
 
-const DEFAULT_NUM_VARS: usize = 26;
-const DEFAULT_NUM_POLYS: usize = 4;
+const DEFAULT_NUM_VARS: usize = 28;
+const DEFAULT_NUM_POLYS: usize = 1;
 const MAX_ONEHOT_K: usize = 256;
 
 fn env_usize(name: &str, default: usize) -> usize {
@@ -93,6 +95,7 @@ where
         + HasWide
         + HalvingField
         + PseudoMersenneField
+        + akita_field::unreduced::HasCommitAccum
         + AkitaSerialize
         + Valid
         + 'static,
@@ -110,28 +113,38 @@ where
     let num_vars = env_usize("AKITA_ROOT_COMMIT_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_ROOT_COMMIT_NUM_POLYS", DEFAULT_NUM_POLYS);
     let indices = make_onehot_indices(num_vars, num_polys);
-    let onehot_polys = build_onehot_polys::<F, D>(num_vars, &indices);
-    let transformed_polys: Vec<RootTensorProjectionPoly<F>> = onehot_polys
-        .iter()
-        .map(|poly| {
-            let view = poly.tensor_view()?;
-            TensorProjectionKernel::<_, F, Cfg::ExtField, D>::root_projection(
-                &CpuBackend,
-                None,
-                view,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .expect("benchmark root projection");
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(num_vars, num_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
-    let opening_batch =
-        OpeningClaimsLayout::new(num_vars, num_polys).expect("benchmark opening_batch");
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch)
-        .expect("benchmark commitment params");
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polys));
+    let params = akita_planner::find_schedule(
+        &key,
+        honest_fold_policy_of::<Cfg>(),
+        &[],
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+    .expect("benchmark commitment schedule")
+    .schedule
+    .root
+    .params
+    .final_group
+    .commitment;
+    let mut num_setup_field_elements = 0;
+    accumulate_matrix_field_elements_for_level(&params, &mut num_setup_field_elements)
+        .expect("benchmark setup capacity");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        num_vars,
+        num_polys,
+        SetupMatrixCapacity {
+            num_field_elements: num_setup_field_elements,
+        },
+    )
+    .expect("benchmark setup");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
 
     let mut group = c.benchmark_group(format!(
         "onehot_root_projection_commit/{label}/nv{num_vars}_np{num_polys}"
@@ -149,7 +162,7 @@ where
                     .map(|poly| {
                         let view = poly.tensor_view()?;
                         TensorProjectionKernel::<_, F, Cfg::ExtField, D>::root_projection(
-                            &CpuBackend,
+                            &CpuBackend::DEFAULT,
                             None,
                             view,
                         )
@@ -163,34 +176,23 @@ where
         })
     });
 
-    group.bench_function("commit_transformed_roots", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let start = Instant::now();
-                let committed = commit_with_params::<F, RootTensorProjectionPoly<F>, CpuBackend>(
-                    &transformed_polys,
-                    setup.expanded.as_ref(),
-                    stack.commit(),
-                    &params,
-                )
-                .expect("benchmark transformed commitment");
-                total += start.elapsed();
-                black_box(committed);
-            }
-            total
-        })
-    });
-
-    group.bench_function("scheme_commit_uncached_projection", |b| {
+    group.bench_function("commit_onehot_with_planned_params", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let polys = build_onehot_polys::<F, D>(num_vars, &indices);
                 let start = Instant::now();
-                let committed =
-                    AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
-                        .expect("benchmark scheme commitment");
+                // This is an intentionally nonsecurable fixed D64 kernel
+                // benchmark. Runtime PCS entrypoints reject its missing
+                // generated proof schedule, so pass the offline planned root
+                // parameters directly to the canonical commitment operation.
+                let committed = akita_prover::commit::<Cfg, OneHotPoly<F, u8>, CpuBackend>(
+                    &polys,
+                    setup.expanded.as_ref(),
+                    &stack,
+                    GroupContext::explicit_without_precommitted_groups(&params),
+                )
+                .expect("benchmark one hot commitment");
                 total += start.elapsed();
                 black_box(committed);
             }
@@ -202,8 +204,8 @@ where
 }
 
 fn bench_onehot_root_projection_commit(c: &mut Criterion) {
-    bench_case::<fp32::Field, fp32::D64OneHot, 64>(c, "fp32_d64");
-    bench_case::<fp64::Field, fp64::D64OneHot, 64>(c, "fp64_d64");
+    bench_case::<fp32::Field, fp32::OneHot, 256>(c, "fp32_adaptive");
+    bench_case::<fp64::Field, fp64::OneHot, 256>(c, "fp64_adaptive");
 }
 
 criterion_group! {

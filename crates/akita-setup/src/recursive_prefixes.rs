@@ -1,9 +1,10 @@
 use akita_config::CommitmentConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend, NttExecutionRequirements,
+    commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
+    NttExecutionRequirements, RuntimeCommitBackendFor,
 };
+use akita_serialization::Valid;
 use akita_types::{dispatch_for_field, SetupPrefixSlotId};
 use std::collections::BTreeSet;
 
@@ -14,8 +15,8 @@ fn commit_setup_prefix_slot<F, B>(
     id: &SetupPrefixSlotId,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    B: CommitmentComputeBackend<F>,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
+    B: RuntimeCommitBackendFor<F, DensePoly<F>>,
 {
     if setup.prefix_slots.get(id).is_some() {
         return Ok(());
@@ -47,8 +48,8 @@ pub(crate) fn materialize_setup_prefix_slots<F, B>(
     slot_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    B: CommitmentComputeBackend<F>,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
+    B: RuntimeCommitBackendFor<F, DensePoly<F>>,
 {
     let mut requirements = NttExecutionRequirements::default();
     for slot_id in slot_ids {
@@ -87,7 +88,7 @@ pub(crate) fn populate_required_setup_prefix_slots<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
     if !Cfg::recursive_setup_planning() {
@@ -97,7 +98,7 @@ where
         max_num_vars,
         max_num_batched_polys,
     )?;
-    let backend = CpuBackend;
+    let backend = CpuBackend::DEFAULT;
     let prepared = backend.prepare_setup(setup)?;
     materialize_setup_prefix_slots(setup, &backend, &prepared, &required_ids)?;
     validate_prefix_registry_complete(&setup.prefix_slots, &required_ids)?;

@@ -1,23 +1,28 @@
-# Basic relations in an Akita fold
+# Semantic relations in an Akita fold
 
-This page describes the ring-valued relations proved by one non-terminal
-Akita fold. The presentation starts with one polynomial group, one opening
-claim, and one common ring dimension:
+This page derives the four ring-valued semantic relation families proved by
+one non-terminal Akita fold. The presentation starts with one polynomial
+group, one opening claim, and one common ring dimension for the four source
+relations:
 
 $$
 R=F[X]/(X^D+1).
 $$
 
 The current implementation also supports more elaborate physical layouts —
-commitment groups, witness chunks, and different ring dimensions — but those
-extensions do not change the four core relations developed below. This page
-establishes only the basic case; [Advanced relation
-layouts](./advanced-relation-layouts.md) extends it along those three axes.
+commitment groups, witness chunks, and different ordinary $\mathbf A$,
+$\mathbf B$, and $\mathbf D$ ring dimensions — but those extensions do not
+change the four core relations developed below. This page establishes only the
+basic case; advanced layouts are outside its scope. The [raw and compressed
+realizations](./akita-fold-realizations.md) use the same semantic relations;
+the compression realization introduces its own smaller ring dimensions.
 
-The Akita paper presents a more general matrix with additional compression
-relations. Its basic Greyhound relation motivates the four row families here;
-the current implementation is the source of truth for the rows and witness
-layout documented on this page.
+The four equations below are the semantic source relations. The current
+implementation realizes the $\mathbf B$ and $\mathbf D$ commitment relations
+either by transmitting their semantic commitments as raw payloads or by
+binding those commitments to smaller terminal payloads through compression
+relations. This choice changes their physical realization, not the four
+semantic constraints derived here.
 
 The goal of the fold is to replace the current polynomial blocks by a smaller
 digit witness while proving that the new witness is consistent with:
@@ -26,11 +31,11 @@ digit witness while proving that the new witness is consistent with:
 2. the inner and outer commitments; and
 3. the random fold of the old polynomial blocks.
 
-These statements form the **physical ring relation**. The scalar evaluation
-claim from [Field-to-ring evaluation
+These statements form the semantic core of the **physical ring relation**.
+The scalar evaluation claim from [Field-to-ring evaluation
 reduction](./field-ring-reduction.md) is a separate field-valued relation. It
-is fused with the physical rows later, but it is not a row of the ring matrix
-described on this page.
+is fused with the physical rows later, but it is not one of the four
+ring-valued semantic relation families derived on this page.
 
 ## Contents
 
@@ -40,15 +45,11 @@ described on this page.
   - [Polynomial blocks and commitment hint](#polynomial-blocks-and-commitment-hint)
   - [Partial evaluations and opening digits](#partial-evaluations-and-opening-digits)
   - [The folded response and its digitization](#the-folded-response-and-its-digitization)
-- [The four physical relation families](#the-four-physical-relation-families)
+- [The four semantic relation families](#the-four-semantic-relation-families)
   - [Fold-evaluation consistency](#1-fold-evaluation-consistency)
   - [Inner-commitment consistency](#2-inner-commitment-consistency)
   - [Outer-commitment consistency](#3-outer-commitment-consistency)
   - [Opening-commitment consistency](#4-opening-commitment-consistency)
-- [Assemble the ring relation](#assemble-the-ring-relation)
-- [Lift the ring relation before sumcheck](#lift-the-ring-relation-before-sumcheck)
-- [The scalar opening claim is a virtual row](#the-scalar-opening-claim-is-a-virtual-row)
-- [Code reference](#code-reference)
 
 ## Inputs and objects derived in the fold
 
@@ -58,14 +59,17 @@ $$
 \widetilde f(r)=v
 $$
 
-for a polynomial whose commitment $\mathbf u$ is already fixed. At a recursive
-level, $\mathbf u$ is the next-witness commitment produced by the preceding
-level; at the root, the original polynomial commitment plays the same role.
+for a polynomial whose commitment payload is already fixed. We call
+$\mathbf u=\mathbf B\hat{\mathbf t}$ the semantic commitment behind that
+payload. In raw mode, $\mathbf u$ itself is transmitted; in compressed mode,
+the payload is the smaller terminal commitment $p_F$, which is bound to
+$\mathbf u$ by the compression relations on the [realizations
+page](./akita-fold-realizations.md#compressed-realization).
 
 The prover and verifier have different views of these inputs. The prover holds
 the polynomial blocks, their inner-digit representation, the commitment hint
-generated when $\mathbf u$ was formed, and the public commitment itself. The
-verifier knows $\mathbf u$ and the opening claim, but receives neither the
+generated when the commitment was formed, and the public commitment payload.
+The verifier knows that payload and the opening claim, but receives neither the
 blocks nor the hint.
 
 From these inputs, the current fold derives two new representations of the
@@ -179,12 +183,12 @@ z_{p,a}(X)
 \end{aligned}
 $$
 
-The first two identities describe commitment-side data already fixed by
-$\mathbf u$: $\mathbf s_b$ is the incoming inner-digit representation, and
-$\hat{\mathbf t}$ is reconstructed from the incoming hint. The latter two
-digit families, $\hat{\mathbf e}$ and $\hat{\mathbf z}$, are newly derived from
-the opening point and fold challenges. We now place each identity in its
-protocol context.
+The first two identities describe commitment-side data already fixed by the
+incoming commitment payload: $\mathbf s_b$ is the incoming inner-digit
+representation, and $\hat{\mathbf t}$ is reconstructed from the incoming hint.
+The latter two digit families, $\hat{\mathbf e}$ and $\hat{\mathbf z}$, are
+newly derived from the opening point and fold challenges. We now place each
+identity in its protocol context.
 
 ### Polynomial blocks and commitment hint
 
@@ -222,7 +226,7 @@ $$
 
 where $\rho$ selects a row of $\mathbf A$. Stack these digits over all blocks
 to obtain $\hat{\mathbf t}$. The outer commitment matrix $\mathbf B$ then gives
-the public commitment
+the semantic commitment
 
 $$
 \mathbf u
@@ -235,11 +239,11 @@ The two matrices have distinct roles: $\mathbf A$ forms one inner image per
 block, whereas $\mathbf B$ commits the digit-decomposed inner images across all
 blocks. The prover's commitment hint stores the recomposed inner images
 $\mathbf t_b$; this fold decomposes them to recover $\hat{\mathbf t}$. At a
-recursive level, the polynomial blocks, hint, and $\mathbf u$ were produced by
-the preceding level. At the root, they come from the original commitment. The
-verifier receives only $\mathbf u$ from this commitment-side data. Equations
-(1)--(4) describe the hidden opening that the later relation rows bind to that
-public value.
+recursive level, the polynomial blocks, hint, and public payload were produced
+by the preceding level. At the root, they come from the original commitment.
+The semantic commitment $\mathbf u$ fixes this commitment-side data.
+Equations (1)--(4) describe its hidden opening, which the later relation rows
+bind to $\mathbf u$.
 
 ### Partial evaluations and opening digits
 
@@ -266,7 +270,7 @@ E_b(X)
 $$
 
 The fold witness contains the digit rings $\hat e$, not a second copy of the
-recomposed $E_b$. To bind those digits, Akita computes an opening commitment
+recomposed $E_b$. Their semantic opening commitment is
 
 $$
 \mathbf v_D
@@ -275,6 +279,8 @@ $$
 \tag{7}
 $$
 
+Here $\mathbf D$ commits to the digit-decomposed partial evaluations.
+
 The subscript in $\mathbf v_D$ distinguishes this ring-vector commitment from
 the scalar opening target $v$ and its trace-form counterpart
 $v_{\mathrm{tr}}$. Equation (7) binds the newly derived opening digits; it does
@@ -282,10 +288,10 @@ not by itself prove the scalar evaluation claim.
 
 ### The folded response and its digitization
 
-The opening commitment $\mathbf v_D$ binds the prover to
-$\hat{\mathbf e}$, but it does not by itself show that the corresponding
-partial evaluations were computed from the incoming polynomial blocks. For
-every block $b$, correctness requires
+The semantic opening commitment $\mathbf v_D$ commits the prover to
+$\hat{\mathbf e}$. It does not by itself show that the corresponding partial
+evaluations were computed from the incoming polynomial blocks. For every block
+$b$, correctness requires
 
 $$
 \boxed{
@@ -299,7 +305,7 @@ E_b
 $$
 
 Equation (8) connects the partial evaluation derived in this fold to the
-incoming block witness $\mathbf s_b$. The public commitment $\mathbf u$
+incoming block witness $\mathbf s_b$. The semantic commitment $\mathbf u$
 creates a second consistency requirement. Equation (4),
 $\mathbf u=\mathbf B\hat{\mathbf t}$, binds the outer digits
 $\hat{\mathbf t}$, which recompose the inner images $\mathbf t_b$ through
@@ -309,10 +315,11 @@ link is the blockwise relation $\mathbf t_b=\mathbf A\mathbf s_b$ from
 Equation (2).
 
 Checking both relations separately for every live block would retain the block
-index in the next proof. Instead, after $\mathbf u$ and $\mathbf v_D$ have
-been fixed, the transcript samples one sparse ring-valued challenge $c_b(X)$
-for each live block. These challenges are separate from the query weights
-$B_b$. The prover folds the incoming block witnesses into one response:
+index in the next proof. Instead, after the public payloads binding
+$\mathbf u$ and $\mathbf v_D$ have been fixed, the transcript samples one
+sparse ring-valued challenge $c_b(X)$ for each live block. These challenges
+are separate from the query weights $B_b$. The prover folds the incoming block
+witnesses into one response:
 
 $$
 z_{p,a}(X)
@@ -419,15 +426,16 @@ They have different origins:
 | $\hat{\mathbf e}$ | the position-folded rings $E_b$ | carries the opening data into the fold |
 | $\hat{\mathbf t}$ | the inner images $\mathbf t_b$ | binds the folded response to the existing commitment |
 
-## The four physical relation families
+## The four semantic relation families
 
 Equation (11) specifies how the three digit segments are assembled, but it
 does not impose any algebraic relation among them. Substituting the balanced
 recompositions from Equations (3), (6), and (10) into the recomposed identities
 (9a) and (9b) gives two relations among the private witness segments.
-Equations (4) and (7) provide two additional relations that anchor those
-segments to the public commitments. Together, these give four families of
-linear equations over
+Equations (4) and (7) provide two additional relations that define the
+semantic commitments $\mathbf u$ and $\mathbf v_D$ computed by $\mathbf B$
+and $\mathbf D$, respectively. Together, these give four families of linear
+equations over
 
 $$
 R=F[X]/(X^D+1).
@@ -435,8 +443,8 @@ $$
 
 Every sum, product, and equality in this section is computed in $R$; vector
 equations are interpreted coordinatewise in $R$. The first two families
-connect the private witness segments to one another. The last two anchor those
-segments to the public commitments $\mathbf u$ and $\mathbf v_D$.
+connect the private witness segments to one another. The last two define the
+semantic commitments $\mathbf u$ and $\mathbf v_D$.
 
 ### 1. Fold-evaluation consistency
 
@@ -485,10 +493,9 @@ columns are indexed by $(p,a)$.
 
 ### 3. Outer-commitment consistency
 
-The first two families compare private witness segments but do not yet tie
-them to the commitment seen by the verifier. The outer-commitment relation
-provides that public anchor by requiring $\hat{\mathbf t}$ to open the
-commitment that entered this fold:
+The first two families compare private witness segments but do not yet define
+the commitment produced by the outer commitment matrix. The semantic
+outer-commitment relation is
 
 $$
 \boxed{
@@ -499,14 +506,18 @@ $$
 \tag{14}
 $$
 
-This is a direct commitment check and therefore does not use the fold
-challenges.
+Here $\mathbf u\in R^{n_B}$, where $n_B$ is the output rank of $\mathbf B$.
+Equation (14) binds the private outer digits $\hat{\mathbf t}$ to the semantic
+commitment $\mathbf u$ and does not use the fold challenges. In the raw
+realization, the prover proves this equation directly against the public
+$\mathbf u$. In the compressed realization, $\mathbf u$ remains the semantic
+intermediate value: the prover recommits it through an $\mathbf F$ chain and
+proves that the chain ends at the smaller public payload $p_F$.
 
 ### 4. Opening-commitment consistency
 
-Finally, the opening-commitment relation anchors $\hat{\mathbf e}$ to the
-public ring vector $\mathbf v_D$ that was absorbed before the fold challenges
-were sampled:
+Likewise, the semantic opening-commitment relation defines the commitment to
+the opening digits under $\mathbf D$:
 
 $$
 \boxed{
@@ -517,289 +528,25 @@ $$
 \tag{15}
 $$
 
-Because $\mathbf v_D$ is fixed before the fold challenges are sampled, this
-relation, together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
-binding, prevents the prover from adapting the partial-evaluation digits after
-learning those challenges. Like the other three families, it is a relation
-over $R$; it is distinct from the field-valued scalar evaluation claim.
+Here $\mathbf v_D\in R^{n_D}$, where $n_D$ is the output rank of $\mathbf D$.
+Equation (15) similarly binds the private opening digits
+$\hat{\mathbf e}$ to the semantic opening commitment $\mathbf v_D$. In the
+raw realization, the prover proves this equation directly against the public
+$\mathbf v_D$. In the compressed realization, $\mathbf v_D$ remains the
+semantic intermediate value: the prover recommits it through an $\mathbf H$
+chain and proves that the chain ends at the smaller public payload $p_H$.
 
-## Assemble the ring relation
+The public value binding this relation is absorbed before the fold challenges
+are sampled: raw mode absorbs $\mathbf v_D$, whereas compressed mode absorbs
+$p_H$. Together with the boundedness of $\hat{\mathbf e}$ and Module-SIS
+binding, this prevents the prover from adapting the partial-evaluation digits
+after learning those challenges. Like the other three families, Equation (15)
+is a ring-valued relation distinct from the field-valued scalar evaluation
+claim.
 
-Define the pre-switch witness
-
-$$
-\mathbf w_0
-=
-\hat{\mathbf z}
-\;\Vert\;
-\hat{\mathbf e}
-\;\Vert\;
-\hat{\mathbf t}.
-\tag{16}
-$$
-
-The four relation families can be written as one matrix equation
-
-$$
-\boxed{
-\mathbf M_0\mathbf w_0=\mathbf y
-\quad\text{over }R.
-}
-\tag{17}
-$$
-
-Let $n_A$, $n_B$, and $n_D$ denote the row counts of $\mathbf A$,
-$\mathbf B$, and $\mathbf D$, respectively. In the basic one-group layout,
-the four relation families occupy $1+n_A+n_B+n_D$ physical rows. Their order
-and right-hand sides are:
-
-| Physical rows | Count | Meaning | Right-hand side |
-|---|---:|---|---|
-| `consistency` | $1$ | Equation (12) | $0$ |
-| $\mathbf A$ rows | $n_A$ | Equation (13) | $\mathbf 0$ |
-| $\mathbf B$ rows | $n_B$ | Equation (14) | $\mathbf u$ |
-| $\mathbf D$ rows | $n_D$ | Equation (15) | $\mathbf v_D$ |
-
-Consequently,
-
-$$
-\mathbf y
-=
-0
-\;\Vert\;
-\mathbf 0_{\mathbf A}
-\;\Vert\;
-\mathbf u
-\;\Vert\;
-\mathbf v_D.
-\tag{18}
-$$
-
-The matrix is usually not materialized as one dense object. Its entries come
-from the fold challenges, opening weights, gadget weights, and the setup
-matrices $\mathbf A$, $\mathbf B$, and $\mathbf D$. The code generates these
-contributions directly from the canonical witness layout.
-
-## Lift the ring relation before sumcheck
-
-Equation (17) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
-identity. Choose the canonical representatives of degree less than $D$ for
-all ring elements. There is then one quotient polynomial for every physical
-row:
-
-$$
-\widetilde{\mathbf M}_0(X)\widetilde{\mathbf w}_0(X)
--
-\widetilde{\mathbf y}(X)
-=
-(X^D+1)\mathbf r(X).
-\tag{19}
-$$
-
-Digit-decompose the quotient vector:
-
-$$
-\mathbf r(X)
-=
-\mathbf G_r\hat{\mathbf r}(X),
-\tag{20}
-$$
-
-and append its digits to the committed witness:
-
-$$
-\boxed{
-\mathbf w
-=
-\hat{\mathbf z}
-\;\Vert\;
-\hat{\mathbf e}
-\;\Vert\;
-\hat{\mathbf t}
-\;\Vert\;
-\hat{\mathbf r}.
-}
-\tag{21}
-$$
-
-Move the denominator term to the left and define
-
-$$
-\mathbf M_{\mathrm{ext}}(X)
-=
-\left[
-\widetilde{\mathbf M}_0(X)
-\;\middle|\;
--(X^D+1)\mathbf G_r
-\right].
-\tag{22}
-$$
-
-The extended relation is the exact polynomial identity
-
-$$
-\boxed{
-\mathbf M_{\mathrm{ext}}(X)\widetilde{\mathbf w}(X)
-=
-\widetilde{\mathbf y}(X).
-}
-\tag{23}
-$$
-
-This distinction is important: Equation (19) uses the quotient
-$\mathbf r$, while Equation (23) already includes the quotient digits
-$\hat{\mathbf r}$ inside $\mathbf w$. The denominator term must not be added
-to the right-hand side a second time.
-
-Ring switching now samples $\alpha$ and evaluates Equation (23):
-
-$$
-\mathbf M_{\mathrm{ext}}(\alpha)\mathbf w(\alpha)
-=
-\mathbf y(\alpha).
-\tag{24}
-$$
-
-Equation (24) is the field relation consumed by Stage 2. The
-[Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck) page
-explains how $\tau_1$ batches its physical rows and how the resulting relation
-is proved over the flat witness address.
-
-## The scalar opening claim is a virtual row
-
-Two different statements involve $\hat e$, and they should not be conflated:
-
-| Statement | Form | Physical ring row? | Ring-switch quotient? |
-|---|---|---:|---:|
-| opening commitment | $\mathbf D\hat{\mathbf e}=\mathbf v_D$ | yes | yes |
-| evaluation correctness | $\sum_xw(x)T(x)=v_{\mathrm{tr}}$ | no | no |
-
-The second statement is derived in [Field-to-ring evaluation
-reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-claim).
-It is already a linear equation over the field coefficients of the committed
-witness. Akita therefore treats it as an `EvaluationTrace` virtual row after
-the physical rows. It reuses the same row-batching challenge $\tau_1$, but it
-is absent from $\mathbf M_0$, $\mathbf y$, and the quotient vector
-$\mathbf r$.
-
-[Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck)
-continues from Equation (24) and fuses the physical relation, the virtual
-evaluation row, and the range-image binding into one Stage-2 sumcheck.
-
-## Code reference
-
-The current prover uses canonical entry points that also support more general
-layouts. With one group, one chunk, and one common ring dimension, they reduce
-to the construction above:
-
-1. **Build the partial-evaluation and fold witnesses.**
-   [`RingRelationProver::new`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation.rs#L433-L760)
-   decomposes $E_b$ into $\hat e$, computes
-   $\mathbf v_D=\mathbf D\hat{\mathbf e}$, samples the fold challenges, and
-   builds $\mathbf z$.
-2. **Assemble the public relation statement.**
-   [`assemble_relation_rhs`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/relation.rs#L286-L353)
-   lays out $\mathbf y$ as
-   `consistency | A | B | D`, while
-   [`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/ring_relation.rs#L82-L220)
-   carries the public challenges, points, and right-hand side.
-3. **Prepare the digit segments.**
-   [`ring_switch_build_w`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_switch/coeffs.rs#L253-L455)
-   extracts $\hat t$ from the commitment hint and prepares
-   $\hat z\Vert\hat e\Vert\hat t$ in the canonical witness layout.
-4. **Compute the row quotients.**
-   [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs#L412-L690)
-   computes one quotient for each `consistency`, $\mathbf A$, $\mathbf B$, and
-   $\mathbf D$ row. Despite its general name, this is also the canonical
-   single-group path. `ring_switch_build_w` decomposes the quotients and
-   appends $\hat r$.
-5. **Evaluate the extended relation.**
-   [`build_relation_weight_events`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L398-L870)
-   emits the contributions of all four row families and the quotient columns
-   after evaluation at $\alpha$ and batching by $\tau_1$.
-
-The main data flow is:
-
-```text
-old polynomial blocks and commitment hints
-                  |
-                  v
-RingRelationProver::new
-|-- position-folded rings E_b --> e_hat
-|-- inner-image hints ----------> t_hat
-|-- fold challenges ------------> z
-|-- D * e_hat ------------------> v_D
-`-- [0 | 0_A | u | v_D] -------> relation rhs y
-                  |
-                  v
-ring_switch_build_w
-|-- compute relation quotients ----------> r
-|-- decompose z -------------------------> z_hat
-|-- decompose r -------------------------> r_hat
-`-- emit [z_hat | e_hat | t_hat | r_hat] --> committed witness w
-                  |
-                  v
-build_relation_weight_events
-`-- M_ext(alpha), row-batched by tau_1 ------> Stage 2
-```
-
-### Public statement: `RingRelationInstance`
-
-[`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/ring_relation.rs#L82-L220)
-contains the public relation statement. It contains only values that the
-verifier can reconstruct:
-
-| Field | Mathematical meaning |
-|---|---|
-| `group_challenges()[0]` | fold challenges $c_b$ |
-| `group_opening_point(0)` | ordinary opening weights, including $Q_p$ and $B_b$ |
-| `group_ring_multiplier_point(0)` | ring multipliers used by the physical consistency row |
-| `rhs()` | $\mathbf y=[0\mid\mathbf 0_A\mid\mathbf u\mid\mathbf v_D]$ in the basic setting |
-| `v()` | $\mathbf v_D=\mathbf D\hat{\mathbf e}$ |
-
-### Prover witness: `RingRelationWitness`
-
-[`RingRelationWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L141-L220)
-is the prover-only aggregate witness. In the basic setting, its `groups`
-vector contains one
-[`RingRelationGroupWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L8-L140):
-
-| Field | Mathematical meaning |
-|---|---|
-| `z_folded_rings` | folded response $\mathbf z$, before decomposition into $\hat z$ |
-| `e_folded` | recomposed position-folded rings $E_b$ |
-| `e_hat` | opening digits $\hat{\mathbf e}$ |
-| `hint` | commitment hint containing $\hat{\mathbf t}$ |
-
-The quotient output $\mathbf r$ is computed after these structures are built.
-Its digits are appended when `ring_switch_build_w` emits the flat
-$\hat z\Vert\hat e\Vert\hat t\Vert\hat r$ witness.
-
-### Verifier reconstruction
-
-The verifier does not receive a serialized `RingRelationInstance`. In
-[`verify_fold`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-verifier/src/protocol/core/fold.rs#L646-L741),
-it reconstructs the public instance from the transcript and public proof data:
-
-```text
-public commitment rows, opening points, v_D, and transcript
-                            |
-                            v
-rederive the fold challenges
-                            |
-                            v
-assemble_relation_rhs
-                            |
-                            v
-RingRelationInstance::new
-                            |
-                            v
-ring_switch_verifier --------------------------------------> Stage 2 verifier
-```
-
-Only the public instance is reconstructed on the verifier. The
-`RingRelationWitness` remains prover-only. [Advanced relation
-layouts](./advanced-relation-layouts.md) describes the generalized logical
-layout. [Opening points and digit-innermost
-layout](./opening-points-layout.md#witness-order) specifies the canonical
-physical source and digit order used by the implementation.
+The four families above determine the algebraic constraints of a valid fold,
+but they do not yet determine which commitment values are transmitted, which
+additional witness segments are required, or which native-ring rows appear in
+the proved matrix relation. [Raw and compressed realizations of an Akita
+fold](./akita-fold-realizations.md) makes those choices explicit while
+preserving Equations (12)--(15) as their common semantic source.

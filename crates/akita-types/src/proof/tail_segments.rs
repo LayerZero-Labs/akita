@@ -11,8 +11,7 @@ use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::golomb_rice::{
     golomb_rice_decode_vec, golomb_rice_encode_vec, golomb_rice_max_quotient_for_cap,
-    golomb_rice_total_wire_bits, golomb_rice_values_within_cap, golomb_rice_zigzag_width,
-    tail_z_planner_bits_per_coord,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width, tail_z_planner_bits_per_coord,
 };
 use crate::layout::field_bytes;
 use crate::proof::{DigitBlocks, RingVec, TerminalWitnessTranscriptParts};
@@ -39,8 +38,12 @@ pub struct TailSegmentGroupLayout {
     pub z_coords: usize,
     pub e_field_elems: usize,
     pub t_field_elems: usize,
-    /// Maximum raw absolute coefficient accepted by the verifier.
-    pub z_admission_linf_cap: u128,
+    /// Verifier-enforced coefficient cap for a terminal Linf route.
+    ///
+    /// `None` means the terminal uses the complete L2 check instead. The wire
+    /// still requires canonical Golomb-Rice encoding within `z_payload_bytes`
+    /// and the signed-i16 coefficient representation.
+    pub z_linf_cap: Option<u128>,
     /// Exact Golomb-Rice remainder width used on the wire.
     pub z_rice_low_bits: u32,
     /// Scheduled byte budget for this group's Golomb-coded z payload.
@@ -85,7 +88,7 @@ impl TailSegmentLayout {
             push_usize(bytes, group.z_coords);
             push_usize(bytes, group.e_field_elems);
             push_usize(bytes, group.t_field_elems);
-            push_u128(bytes, group.z_admission_linf_cap);
+            push_u128(bytes, group.z_linf_cap.unwrap_or(0));
             push_u32(bytes, group.z_rice_low_bits);
             push_usize(bytes, group.z_payload_bytes);
         }
@@ -133,7 +136,7 @@ impl TailSegmentLayout {
                     scheduled.z_coords == realized.z_coords
                         && scheduled.e_field_elems == realized.e_field_elems
                         && scheduled.t_field_elems == realized.t_field_elems
-                        && scheduled.z_admission_linf_cap == realized.z_admission_linf_cap
+                        && scheduled.z_linf_cap == realized.z_linf_cap
                         && scheduled.z_rice_low_bits == realized.z_rice_low_bits
                         && realized.z_payload_bytes <= scheduled.z_payload_bytes
                 })
@@ -164,7 +167,7 @@ impl Valid for TailSegmentLayout {
                     "tail segment group has zero z_coords".to_string(),
                 ));
             }
-            if group.z_admission_linf_cap == 0 || group.z_rice_low_bits >= 64 {
+            if group.z_linf_cap == Some(0) || group.z_rice_low_bits >= 64 {
                 return Err(SerializationError::InvalidData(
                     "tail segment group has invalid z wire parameters".to_string(),
                 ));
@@ -228,7 +231,8 @@ impl AkitaSerialize for TailSegmentGroupLayout {
             .serialize_with_mode(&mut writer, compress)?;
         self.t_field_elems
             .serialize_with_mode(&mut writer, compress)?;
-        self.z_admission_linf_cap
+        self.z_linf_cap
+            .unwrap_or(0)
             .serialize_with_mode(&mut writer, compress)?;
         self.z_rice_low_bits
             .serialize_with_mode(&mut writer, compress)?;
@@ -241,7 +245,7 @@ impl AkitaSerialize for TailSegmentGroupLayout {
         self.z_coords.serialized_size(compress)
             + self.e_field_elems.serialized_size(compress)
             + self.t_field_elems.serialized_size(compress)
-            + self.z_admission_linf_cap.serialized_size(compress)
+            + 0u128.serialized_size(compress)
             + self.z_rice_low_bits.serialized_size(compress)
             + self.z_payload_bytes.serialized_size(compress)
     }
@@ -260,12 +264,10 @@ impl AkitaDeserialize for TailSegmentGroupLayout {
             z_coords: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
             e_field_elems: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
             t_field_elems: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            z_admission_linf_cap: u128::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
+            z_linf_cap: match u128::deserialize_with_mode(&mut reader, compress, validate, &())? {
+                0 => None,
+                cap => Some(cap),
+            },
             z_rice_low_bits: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
             z_payload_bytes: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
@@ -317,13 +319,17 @@ impl AkitaDeserialize for TailSegmentLayout {
 impl TerminalResponseShape {
     /// Derive the scalar terminal response directly from raw response
     /// coordinates. No `t`/`e` gadget-plane equivalent is introduced.
+    ///
+    /// `encoding_scale` selects the frozen Golomb parameters and payload byte
+    /// budget. It is also the verifier cap for a Linf route. An L2 route emits
+    /// no Linf cap and enforces only its complete response energy.
     pub fn derive(
         params: &TerminalCommittedGroupParams,
-        admission_cap: u128,
+        encoding_scale: u128,
     ) -> Result<Self, AkitaError> {
-        if admission_cap == 0 {
+        if encoding_scale == 0 {
             return Err(AkitaError::InvalidSetup(
-                "terminal response admission cap must be nonzero".to_string(),
+                "terminal response encoding scale must be nonzero".to_string(),
             ));
         }
         let d = params.d_a();
@@ -340,8 +346,8 @@ impl TerminalResponseShape {
             .checked_mul(params.inner_commit_matrix.output_rank())
             .and_then(|value| value.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
-        let z_rice_low_bits = wire_rice_low_bits(admission_cap);
-        let z_payload_bytes = z_payload_budget_from_cap(z_coords, admission_cap);
+        let z_rice_low_bits = wire_rice_low_bits(encoding_scale);
+        let z_payload_bytes = z_payload_budget_from_cap(z_coords, encoding_scale);
         let logical_num_elems = z_coords
             .checked_add(e_field_elems)
             .and_then(|value| value.checked_add(t_field_elems))
@@ -355,7 +361,10 @@ impl TerminalResponseShape {
                     z_coords,
                     e_field_elems,
                     t_field_elems,
-                    z_admission_linf_cap: admission_cap,
+                    z_linf_cap: match params.inner_commit_matrix.security_route() {
+                        crate::sis::InnerCommitSecurityRoute::Linf(_) => Some(encoding_scale),
+                        crate::sis::InnerCommitSecurityRoute::L2 { .. } => None,
+                    },
                     z_rice_low_bits,
                     z_payload_bytes,
                 }],
@@ -639,34 +648,38 @@ where
     Ok(out)
 }
 
-/// Decode terminal `z` with the exact schedule-owned admission and wire shape.
+/// Decode terminal `z` with the exact schedule-owned norm route and wire shape.
 pub fn decode_terminal_z_golomb_payload(
     payload: &[u8],
     group: &TailSegmentGroupLayout,
-) -> Result<Vec<i64>, AkitaError> {
+) -> Result<Vec<i16>, AkitaError> {
     if payload.len() > group.z_payload_bytes {
         return Err(AkitaError::InvalidProof);
     }
-    let cap = group.z_admission_linf_cap;
+    let wire_abs_bound = group.z_linf_cap.unwrap_or(i16::MAX as u128);
     let rice_low_bits = group.z_rice_low_bits;
-    let zigzag_w = golomb_rice_zigzag_width(cap);
-    let max_quotient = golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w)?;
+    let zigzag_w = golomb_rice_zigzag_width(wire_abs_bound);
+    let max_quotient = golomb_rice_max_quotient_for_cap(wire_abs_bound, rice_low_bits, zigzag_w)?;
     let values = golomb_rice_decode_vec(
         payload,
         group.z_coords,
         rice_low_bits,
         zigzag_w,
         max_quotient,
+        |value| {
+            if group
+                .z_linf_cap
+                .is_some_and(|cap| i128::from(value).unsigned_abs() > cap)
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            i16::try_from(value).map_err(|_| AkitaError::InvalidProof)
+        },
     )?;
-    golomb_rice_values_within_cap(&values, cap)?;
-    let budget_bits = group
-        .z_payload_bytes
-        .checked_mul(8)
-        .ok_or(AkitaError::InvalidProof)?;
-    let total_bits = golomb_rice_total_wire_bits(&values, rice_low_bits, zigzag_w)?;
-    if total_bits > budget_bits {
-        return Err(AkitaError::InvalidProof);
-    }
+    // Canonical decoding rejects nonzero padding and trailing bytes. Therefore
+    // the exact wire bit length is at most `payload.len() * 8`, and the byte
+    // bound above enforces the same rounded schedule budget without another
+    // pass that re-encodes every decoded value.
     Ok(values)
 }
 
@@ -749,7 +762,7 @@ fn tail_segment_layout_from_groups<'a>(
             z_coords,
             e_field_elems,
             t_field_elems,
-            z_admission_linf_cap: z_cap,
+            z_linf_cap: Some(z_cap),
             z_rice_low_bits: wire_rice_low_bits(z_cap),
             z_payload_bytes,
         });
@@ -925,14 +938,17 @@ where
             .groups
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        if group_layout.z_admission_linf_cap > security_cap {
+        let z_cap = group_layout.z_linf_cap.ok_or_else(|| {
+            AkitaError::InvalidSetup("legacy terminal group requires a Linf cap".into())
+        })?;
+        if z_cap > security_cap {
             return Err(AkitaError::InvalidSetup(
                 "terminal response cap exceeds its matrix-certified capacity".into(),
             ));
         }
-        golomb_rice_values_within_cap(&z_centered_i64, group_layout.z_admission_linf_cap)
+        golomb_rice_values_within_cap(&z_centered_i64, z_cap)
             .map_err(|_| AkitaError::InvalidInput("terminal response exceeds its cap".into()))?;
-        let zigzag_w_z = golomb_rice_zigzag_width(group_layout.z_admission_linf_cap);
+        let zigzag_w_z = golomb_rice_zigzag_width(z_cap);
         let z_payload =
             golomb_rice_encode_vec(&z_centered_i64, group_layout.z_rice_low_bits, zigzag_w_z)?;
         if z_payload.len() > group_layout.z_payload_bytes {
@@ -984,7 +1000,6 @@ pub fn build_terminal_response<F>(
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
 {
-    let _ = sparse;
     let group = scheduled_shape
         .layout
         .groups
@@ -998,20 +1013,17 @@ where
             "terminal response segment length mismatch".into(),
         ));
     }
-    let certified_cap = params.certified_response_linf_cap(sparse)?;
-    if group.z_admission_linf_cap > certified_cap {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled terminal admission exceeds the matrix-certified capacity".into(),
-        ));
-    }
+    params.validate_terminal_linf_cap(sparse, group.z_linf_cap)?;
     let z_values = z_folded_centered_flat
         .iter()
         .map(|value| i64::from(*value))
         .collect::<Vec<_>>();
-    golomb_rice_values_within_cap(&z_values, group.z_admission_linf_cap).map_err(|_| {
-        AkitaError::InvalidInput("terminal response exceeds its scheduled admission cap".into())
-    })?;
-    let zigzag_width = golomb_rice_zigzag_width(group.z_admission_linf_cap);
+    if let Some(cap) = group.z_linf_cap {
+        golomb_rice_values_within_cap(&z_values, cap).map_err(|_| {
+            AkitaError::InvalidInput("terminal response exceeds its scheduled Linf cap".into())
+        })?;
+    }
+    let zigzag_width = golomb_rice_zigzag_width(group.z_linf_cap.unwrap_or(i16::MAX as u128));
     let z_payload = golomb_rice_encode_vec(&z_values, group.z_rice_low_bits, zigzag_width)?;
     if z_payload.len() > group.z_payload_bytes {
         return Err(AkitaError::InvalidInput(

@@ -1,11 +1,14 @@
-use super::fold::{fold_onehot_block, fold_onehot_block_ring};
+#[cfg(test)]
+use super::fold::fold_onehot_block_ring;
+use super::fold::{fold_onehot_block, fold_onehot_block_subfield};
 use super::*;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
-    BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
+    DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel,
+    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
 
@@ -24,7 +27,24 @@ const ONEHOT_TENSOR_PARTIALS_INNER_BITS: usize = 12;
 /// and the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
 pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
-    poly: &'a OneHotPoly<F, I>,
+    pub(super) poly: &'a OneHotPoly<F, I>,
+}
+
+impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
+    /// Per-chunk hot positions. `None` denotes an all-zero chunk.
+    pub fn indices(&self) -> &'a [Option<I>] {
+        &self.poly.indices
+    }
+
+    /// Number of field-evaluation slots in each one-hot chunk.
+    pub fn onehot_k(&self) -> usize {
+        self.poly.onehot_k
+    }
+
+    /// Number of variables in the logical multilinear polynomial.
+    pub fn num_vars(&self) -> usize {
+        self.poly.num_vars
+    }
 }
 
 /// Same-point batch view over several one-hot polynomials.
@@ -33,6 +53,20 @@ pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> 
 #[derive(Debug, Clone, Copy)]
 pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, I>],
+}
+
+impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotBatchView<'a, F, D, I> {
+    /// Validated semantic views in source order.
+    pub fn views(&self) -> impl ExactSizeIterator<Item = OneHotView<'a, F, D, I>> + '_ {
+        self.polys.iter().map(|&poly| OneHotView { poly })
+    }
+}
+
+impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+    fn source_view<const D: usize>(&self) -> Result<OneHotView<'_, F, D, I>, AkitaError> {
+        self.validate_ring_dimension(D)?;
+        Ok(OneHotView { poly: self })
+    }
 }
 
 impl<F, I> RootPolyMeta<F> for OneHotPoly<F, I>
@@ -46,6 +80,10 @@ where
 
     fn num_vars(&self) -> usize {
         self.num_vars
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        Some(self.onehot_k)
     }
 }
 
@@ -78,7 +116,7 @@ where
         Self: 'a;
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        Ok(OneHotView { poly: self })
+        self.source_view()
     }
 }
 
@@ -98,10 +136,13 @@ where
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        Ok(OneHotView { poly: self })
+        self.source_view()
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+        for poly in polys {
+            poly.validate_ring_dimension(D)?;
+        }
         Ok(OneHotBatchView { polys })
     }
 }
@@ -122,26 +163,48 @@ where
         Self: 'a;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        Ok(OneHotView { poly: self })
+        self.source_view()
     }
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        for poly in polys {
+            poly.validate_ring_dimension(D)?;
+        }
         Ok(OneHotBatchView { polys })
     }
 }
 
 impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
     I: OneHotIndex,
 {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: OneHotView<'_, F, D, I>,
+        sources: Vec<OneHotView<'_, F, D, I>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError> {
-        source.poly.commit_inner::<_, D>(self, prepared, plan)
+    ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+        let active_a_cols = plan
+            .num_positions_per_block
+            .checked_mul(plan.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".into()))?;
+        let a_view = self
+            .prepared_expanded_setup(prepared)
+            .shared_matrix
+            .ring_view::<D>(plan.n_a, active_a_cols)?;
+        let rows = column_sweep_ajtai_onehot_multi::<F, D, I>(
+            &a_view,
+            &sources,
+            plan.n_a,
+            active_a_cols,
+            plan.num_digits_inner,
+            self.commit_scratch_bytes_per_worker(),
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(CommitInnerWitness::from_rows::<D>)
+            .collect())
     }
 }
 
@@ -154,10 +217,14 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotView<'_, F, D, I>,
-        plan: OpeningFoldPlan<'_, F, D>,
+        plan: OpeningFoldPlan<'_, F>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
-        plan.validate(blocks.num_live_blocks())?;
+        // Count-only validation: building (and caching) every block here
+        // would defeat the lazy per-block folds below.
+        let num_live_blocks = source
+            .poly
+            .num_live_blocks_for(D, plan.num_positions_per_block())?;
+        plan.validate::<D>(num_live_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -168,15 +235,12 @@ where
                 position_weights,
                 num_positions_per_block,
             ),
-            OpeningFoldPlan::Ring {
-                live_block_weights,
-                position_weights,
+            OpeningFoldPlan::Subfield {
+                multipliers,
                 num_positions_per_block,
-            } => source.poly.evaluate_and_fold_ring::<D>(
-                live_block_weights,
-                position_weights,
-                num_positions_per_block,
-            ),
+            } => source
+                .poly
+                .evaluate_and_fold_subfield::<D>(multipliers, num_positions_per_block)?,
         };
         Ok(OpeningFoldOutput { eval, folded })
     }
@@ -207,37 +271,21 @@ where
         source: OneHotBatchView<'_, F, D, I>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-        match plan {
-            DecomposeFoldBatchPlan::Sparse {
-                challenges,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            } => match OneHotPoly::decompose_fold_batched::<D>(
-                source.polys,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            ) {
-                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-                None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
-            },
-            DecomposeFoldBatchPlan::Tensor {
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            } => match OneHotPoly::decompose_fold_tensor_batched::<D>(
-                source.polys,
-                tensor,
-                num_positions_per_block,
-                num_digits,
-                log_basis,
-            )? {
-                Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
-                None => Ok(BatchDecomposeFoldOutcome::Unsupported),
-            },
+        let DecomposeFoldBatchPlan::Sparse {
+            challenges,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+        } = plan;
+        match OneHotPoly::decompose_fold_batched::<D>(
+            source.polys,
+            challenges,
+            num_positions_per_block,
+            num_digits,
+            log_basis,
+        ) {
+            Some(witness) => Ok(BatchDecomposeFoldOutcome::Fused(witness)),
+            None => Ok(BatchDecomposeFoldOutcome::FallbackPerPoly),
         }
     }
 }
@@ -322,37 +370,50 @@ where
         scalars: &[F],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let blocks = self
-            .blocks_for(D, num_positions_per_block)
-            .expect("OneHotPoly::fold_blocks: invalid num_positions_per_block for this polynomial");
-        let num_live_blocks = blocks.num_live_blocks();
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-        }
+        let (num_rings, num_live_blocks) = self
+            .view_layout(D, num_positions_per_block)
+            .expect("valid one hot fold layout");
+        cfg_into_iter!(0..num_live_blocks)
+            .map(|block_idx| {
+                let ring_start = block_idx * num_positions_per_block;
+                let ring_end = (ring_start + num_positions_per_block).min(num_rings);
+                fold_onehot_block::<F, I, D>(self, ring_start..ring_end, scalars)
+            })
+            .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn fold_blocks_ring<const D: usize>(
         &self,
         scalars: &[CyclotomicRing<F, D>],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let blocks = self.blocks_for(D, num_positions_per_block).expect(
-            "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
-        );
-        let num_live_blocks = blocks.num_live_blocks();
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-        }
+        let num_live_blocks = self
+            .num_live_blocks_for(D, num_positions_per_block)
+            .expect("valid one hot fold layout");
+        cfg_into_iter!(0..num_live_blocks)
+            .map(|block_idx| {
+                let materialized = self
+                    .materialize_block_range(D, num_positions_per_block, block_idx..block_idx + 1)
+                    .expect("in-range single block build");
+                fold_onehot_block_ring(materialized.block(0), scalars, num_positions_per_block)
+            })
+            .collect()
+    }
+
+    pub(crate) fn fold_blocks_subfield<const D: usize>(
+        &self,
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
+        num_positions_per_block: usize,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        let (num_rings, num_live_blocks) = self.view_layout(D, num_positions_per_block)?;
+        cfg_into_iter!(0..num_live_blocks)
+            .map(|block_idx| {
+                let ring_start = block_idx * num_positions_per_block;
+                let ring_end = (ring_start + num_positions_per_block).min(num_rings);
+                fold_onehot_block_subfield(self, ring_start..ring_end, multipliers)
+            })
+            .collect()
     }
 
     pub(crate) fn evaluate_and_fold<const D: usize>(
@@ -367,15 +428,14 @@ where
         )
     }
 
-    pub(crate) fn evaluate_and_fold_ring<const D: usize>(
+    pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        live_block_weights: &[CyclotomicRing<F, D>],
-        position_weights: &[CyclotomicRing<F, D>],
+        multipliers: &akita_types::SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(position_weights, num_positions_per_block),
-            live_block_weights,
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        crate::backend::poly_helpers::fused_evaluate_and_fold_subfield(
+            self.fold_blocks_subfield::<D>(multipliers, num_positions_per_block)?,
+            multipliers,
         )
     }
 
@@ -750,23 +810,20 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F> {
-        let blocks = self.blocks_for(D, num_positions_per_block).expect(
-            "OneHotPoly::decompose_fold: invalid num_positions_per_block for this polynomial",
-        );
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(blocks) => self.decompose_fold_onehot::<SingleChunkEntry, D>(
-                blocks,
-                challenges,
-                num_positions_per_block,
+        self.view_layout(D, num_positions_per_block)
+            .expect("OneHotPoly::decompose_fold: invalid block layout");
+        Self::decompose_fold_batched_onehot::<D>(
+            &[self],
+            challenges,
+            num_positions_per_block,
+            num_digits,
+        )
+        .unwrap_or_else(|| {
+            super::decompose_fold::finish_decompose_fold(
+                vec![[0i32; D]; num_positions_per_block],
                 num_digits,
-            ),
-            OneHotBlocks::MultiChunk(blocks) => self.decompose_fold_onehot::<MultiChunkEntry, D>(
-                blocks,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            ),
-        }
+            )
+        })
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_batched")]
@@ -778,62 +835,16 @@ where
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F>> {
         let first = polys.first()?;
-        let first_blocks = first.blocks_for(D, num_positions_per_block).expect(
+        first
+            .num_live_blocks_for(D, num_positions_per_block)
+            .expect(
             "OneHotPoly::decompose_fold_batched: invalid num_positions_per_block for first polynomial",
         );
-        match first_blocks.as_ref() {
-            OneHotBlocks::SingleChunk(_) => Self::decompose_fold_batched_single_chunk_onehot::<D>(
-                polys,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            ),
-            OneHotBlocks::MultiChunk(_) => Self::decompose_fold_batched_multi_chunk_onehot::<D>(
-                polys,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            ),
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold_tensor_batched")]
-    pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
-        polys: &[&Self],
-        tensor: &TensorChallengeSet,
-        num_positions_per_block: usize,
-        num_digits: usize,
-        _log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        Self::decompose_fold_batched_tensor_onehot::<D>(
+        Self::decompose_fold_batched_onehot::<D>(
             polys,
-            tensor,
+            challenges,
             num_positions_per_block,
             num_digits,
         )
-    }
-
-    #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
-    pub(crate) fn commit_inner<B, const D: usize>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let blocks = self.blocks_for(D, plan.num_positions_per_block)?;
-        let t = backend.onehot_commit_rows::<D>(
-            prepared,
-            OneHotCommitRowsPlan {
-                n_a: plan.n_a,
-                num_positions_per_block: plan.num_positions_per_block,
-                num_digits_inner: plan.num_digits_inner,
-                blocks: blocks.commit_plan_blocks(),
-            },
-        )?;
-
-        Ok(CommitInnerWitness::from_rows(t))
     }
 }

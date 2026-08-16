@@ -30,12 +30,12 @@ The generated artifact stores scalar cutoffs with key
 ring dimension. The role determines which ring dimensions, coefficient bounds,
 and ranks the generator must cover directly.
 
-A, B, D, and F do not share one forced geometry. B and D often use the current
-ring dimension or a smaller dimension. This includes dimension 32 for a 128 bit
-field. A currently uses dimension 64 or larger and may use dimensions above the
-other matrices. The generator filters requests through the canonical role
-coverage, then deduplicates two requests only when they produce the same
-scalar SIS key.
+A, B, D, and compression do not share one forced geometry. Production B and D commitment
+matrices use ring dimensions 64 or larger. A currently uses dimension 64 or
+larger and may use dimensions above the other matrices. Smaller dimensions are
+limited to the separate fixed compression cells. The generator filters requests
+through the canonical role coverage, then deduplicates two requests only when
+they produce the same scalar SIS key.
 
 Policy identifier:
 
@@ -53,25 +53,27 @@ The implementation pinned by this specification uses ADPS16 quantum exponent
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
 modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
 
-The canonical role coverage has A dimensions `64, 128, 256` for every modulus
-profile, plus q128 Inner/A dimension `512`. B and D have dimensions
-`32, 64, 128, 256`, and F has dimensions `32, 64, 128, 256`. Every cell has
-maximum module rank `20`. A uses the
-explicit planner bucket set
+The canonical role coverage has Inner/A dimensions `64, 128, 256` for every
+modulus profile, plus q128 Inner/A dimension `512`. Outer/B and Open/D have
+dimensions `64, 128, 256`. The separate fixed compression cells use their
+protocol-specific dimensions. Every commitment-matrix cell has maximum module
+rank `20`. Inner/A uses the explicit planner bucket set
 `2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
 32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
-16777215, 33554431, 67108863`. B, D, and F use the exact gadget anchors
+16777215, 33554431, 67108863, 134217727, 268435455, 536870911, 1073741823,
+2147483647, 4294967295, 8589934591, 17179869183, 34359738367`.
+Outer/B and Open/D use the exact gadget anchors
 `3, 7, 15, 31, 63, 127, 255`.
 
 The generator accepts the complete rectangular CLI domain for reproducibility,
-then discards every dimension and bound pair that is not reachable from A, B,
-D, or F in the canonical coverage. The checked-in Rust files contain the
-resulting scalar union. The checked-in audit is scalar-key based, so role
-origins are reconstructed from the canonical coverage rather than repeated in
-each audit row. This keeps runtime identity role-aware while equal scalar
-cells are stored once.
+then discards every dimension and bound pair that is not reachable from the
+three commitment-matrix roles or the fixed compression cells. The checked-in
+Rust files contain the resulting scalar union. The checked-in audit records
+each ring origin, including its accepted and rejected boundary witnesses. The
+runtime projection takes the minimum scalar cutoff when different ring origins
+map to the same scalar key.
 
-The q128 Inner/512 cell adds 520 direct estimator requests: 26 coefficient
+The q128 Inner/512 cell adds 700 direct estimator requests: 35 coefficient
 buckets times 20 module ranks. The distinct extension digest gates these
 slices; the original digest cannot authorize D512.
 
@@ -95,12 +97,15 @@ For a candidate scalar instance `(modulus_profile, B, n, m)`, run the infinity
 norm LGSA optimizer under the dedicated ADPS16 quantum cost model with exponent
 `0.2650`.
 
-Base-table generation may use `local-minimum` discovery, but certifies its
-accepted boundary and immediate rejected successor with the exhaustive
-configured beta/zeta search. The additive D512 table uses the pinned
-lattice-estimator-compatible local-minimum beta/zeta search directly because
-its wide zeta domain is outside the exhaustive implementation's supported
-range. That profile distinction is committed by the D512 extension digest.
+Base-table generation uses `local-minimum` discovery, then certifies its
+accepted boundary and immediate rejected successor with proven-pruned beta and
+full-domain zeta search. The beta search visits values from 40 through the
+capped Euclidean baseline and stops once the monotone ADPS16 reduction-cost
+lower bound exceeds the best complete candidate. For fixed beta under ADPS16/LGSA,
+the modeled attack minimum occurs at the complete-profile transition or its
+immediate predecessor, with the zero-coordinate boundary represented by
+`zeta = 0` and `zeta = 1`. Checking those candidates covers the wide D512
+domain without changing its width policy.
 
 A candidate passes only when the certified estimate returns a finite score or
 an explicit above-target lower bound. A finite score or represented lower bound
@@ -213,10 +218,9 @@ Runtime callers use this canonical key:
 
 ```rust
 pub enum SisMatrixRole {
-    A,
-    B,
-    D,
-    F,
+    Inner,
+    Outer,
+    Open,
 }
 
 pub struct SisTableKey {
@@ -252,19 +256,20 @@ pub struct SisRoleCell {
 The initial coverage follows these rules:
 
 - B and D include every ring dimension that the planner may assign to those
-  matrices. For the 128 bit field this includes dimension 32.
+  matrices. Their minimum production commitment dimension is 64.
 - A includes every ring dimension that the planner may assign to A. Its current
   minimum is 64. Its cells may use larger dimensions than B and D.
 - Q128 additionally exposes Inner/A dimension 512 for future mixed-ring use.
   This cell has ranks `1..=20` and is gated by its extension digest.
-- F has its own list. It does not inherit A, B, or D coverage without an
-  explicit equality in the planner contract.
+- Compression has its own fixed cells outside `SisMatrixRole`. It does not
+  inherit commitment-matrix coverage.
 - A new mixed dimension planner choice must update the matching role coverage
   and generated cells in the same change.
 
-The spec does not force the four role cell sets to be equal. The implementation
-must use the actual planner domain as the source of truth. It must not form an
-extra product of all dimensions and bounds within one role.
+The spec does not force the three role cell sets or compression cells to be
+equal. The implementation must use the actual planner domain as the source of
+truth. It must not form an extra product of all dimensions and bounds within
+one role.
 
 ### Stored scalar shape
 
@@ -398,10 +403,10 @@ Generation provenance includes:
 - coefficient cell rules and role coverage;
 - search caps and review margins.
 
-The checked in table and audit artifact must have a shared digest. The current
-compact audit does not duplicate beta and zeta witnesses or role labels on
-every scalar row; those details remain generator-side evidence and the
-certificate status is committed in the audit and digest.
+The checked in table and audit artifact must have a shared digest. The audit
+records accepted and rejected beta and zeta witnesses for every generated ring
+origin. Role admission remains canonical runtime data and is committed
+indirectly through the set of generated origins and the policy review.
 
 The digest is SHA3-256 over the fixed UTF-8 domain tag
 `akita-sis-table-digest-adps16-quantum-128bit\0`, followed in this order by the generated files
@@ -414,10 +419,11 @@ The additive q128 Inner/512 coverage uses a separate digest without replacing
 the base artifact identity. SHA3-256 commits to the domain tag
 `akita-sis-table-q128-inner-d512-direct-v1\0`, the 32-byte base digest, the
 exact q128 modulus as a little-endian `u128`, then `(d, search_cap, max_rank)`
-as little-endian `(u32, u64, u32)`, followed by the coefficient-bucket count,
+as little-endian `(u32, u64, u32)`, followed by the coefficient-bucket count as
+an unsigned little-endian `u64`,
 the buckets as little-endian `u128`s, and all widths in bucket/rank order as
 little-endian `u64`s. The resulting digest is
-`c2027a80d84b01dbbffae571cb9bf0e9686db6e762c5a4202d5e53a306e6cace`.
+`267f1d1fd2cd64fac57fb61d2a2ece92eb0e7b7dc22af4dd0229c0f28a9e1d8b`.
 Existing schedules retain the base digest.
 
 ## Invariants
@@ -460,10 +466,9 @@ Existing schedules retain the base digest.
 - [x] The policy ID commits to all acceptance semantics.
 - [x] Exact modulus profiles replace size only family selection.
 - [x] Role coverage comes from the planner domain.
-- [x] B and D cover every supported lower dimension, including dimension 32 for
-      the 128 bit field.
+- [x] B and D cover every supported commitment dimension, starting at 64.
 - [x] A covers dimension 64 and every larger dimension the planner may choose.
-- [x] F has explicit coverage.
+- [x] Compression has explicit fixed-cell coverage.
 - [x] The scalar table is the deduplicated union of canonical reachable role
       cells.
 - [x] The generator filters unreachable rectangular CLI requests before
@@ -494,7 +499,7 @@ Test these cases:
 - security that does not increase as `m` grows;
 - exact scalar equivalence across two role origins;
 - exact modulus mismatch rejection;
-- Q128 B and D requests at dimension 32;
+- rejection of B and D commitment requests below dimension 64;
 - A requests at dimension 64 and above;
 - role specific coefficient rounding;
 - a missing required role cell;
@@ -507,10 +512,10 @@ Test these cases:
 
 Runtime performs static table lookup only.
 
-Offline generation estimates one copy of each reachable scalar cell. Base
-cells retain exhaustive boundary certification. D512 discovery and boundary
-evaluation use the pinned lattice-estimator-compatible local search. The
-checked-in artifact is generated offline; runtime never invokes the estimator.
+Offline generation certifies every reachable ring origin. The runtime
+projection deduplicates equal scalar keys. Every cell retains exhaustive-beta,
+proven-pruned-zeta boundary certification. The checked-in artifact is generated
+offline; runtime never invokes the estimator.
 
 ## Design notes
 
@@ -586,5 +591,5 @@ Durable narrative belongs in `book/src/how/security.md`.
   `third_party/lattice-estimator` checkout used by the estimator goldens.
 - Langlois, Stehle, *Worst Case to Average Case Reductions for Module Lattices*,
   [IACR ePrint 2012/090](https://eprint.iacr.org/2012/090).
-- [`sis-infinity-estimator-crate.md`](sis-infinity-estimator-crate.md), Rust
-  infinity estimator profiles and reduction model APIs.
+- `crates/akita-sis-estimator/` — Rust infinity estimator profiles and
+  reduction model APIs.

@@ -16,7 +16,7 @@ Active hardening pillars:
 | **P2** | Use `AkitaTranscript` plus production-ZST labels only as diagnostics |
 | **P3** | `LoggingTranscript` tests enforce prover/verifier event-stream equality and wire-before-squeeze discipline |
 
-Deferred work (prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, NARG migration): [`specs/transcript-hardening.md`](../../../specs/transcript-hardening.md).
+Deferred work: prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, NARG migration.
 
 Implementation: `crates/akita-transcript/`.
 Tests: `crates/akita-pcs/tests/transcript_hardening.rs`.
@@ -27,7 +27,7 @@ The canonical descriptor binds algebra, setup, plan, and call shape.
 Prover and verifier share one helper:
 
 - `crates/akita-config/src/transcript_binding.rs` — `bind_transcript_instance_descriptor`
-- `crates/akita-types/src/instance_descriptor.rs` — descriptor shape and serialization
+- `crates/akita-types/src/instance_descriptor/mod.rs` — descriptor shape and serialization
 
 Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
 

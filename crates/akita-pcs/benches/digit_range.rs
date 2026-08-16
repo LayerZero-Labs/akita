@@ -48,7 +48,7 @@ fn bench_digit_range(c: &mut Criterion) {
                             |(prover, mut transcript)| {
                                 black_box(
                                     prover
-                                        .prove(&mut transcript)
+                                        .prove(&mut transcript, None)
                                         .expect("benchmark proof succeeds"),
                                 );
                             },
@@ -71,7 +71,7 @@ fn bench_digit_range(c: &mut Criterion) {
                                 black_box(
                                     input
                                         .build()
-                                        .prove(&mut transcript)
+                                        .prove(&mut transcript, None)
                                         .expect("benchmark proof succeeds"),
                                 );
                             },
@@ -85,7 +85,7 @@ fn bench_digit_range(c: &mut Criterion) {
                 let (proof, _) = case
                     .prover_input()
                     .build()
-                    .prove(&mut prover_transcript)
+                    .prove(&mut prover_transcript, None)
                     .expect("benchmark reference proof");
                 group.bench_with_input(
                     BenchmarkId::new("verify", &case_name),

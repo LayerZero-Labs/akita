@@ -1,16 +1,17 @@
 //! Generate schedule tables using the offline DP planner.
 
+use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
-    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, ALL_GENERATED_FAMILIES,
+    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
+    ALL_GENERATED_FAMILIES,
 };
 use akita_planner::{
-    refresh_generated_wiring, run_regen_fmt, write_family_module,
-    write_precommitted_profiles_module, EmitSpec,
+    publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
 };
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Default)]
 struct ExplicitRows {
@@ -21,6 +22,7 @@ struct ExplicitRows {
 struct ParsedArgs {
     base_dir: PathBuf,
     wiring_only: bool,
+    check_catalog: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
 }
@@ -44,7 +46,8 @@ fn generator_command() -> &'static str {
 
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
-     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [family_module_name ...] \
+     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
+     [family_module_name ...] \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
      [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
@@ -118,6 +121,7 @@ fn parse_args() -> Result<ParsedArgs, String> {
     }
     let base_dir = PathBuf::from(&raw_args[0]);
     let mut wiring_only = false;
+    let mut check_catalog = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
     let mut i = 1;
@@ -125,6 +129,10 @@ fn parse_args() -> Result<ParsedArgs, String> {
         match raw_args[i].as_str() {
             "--wiring-only" => {
                 wiring_only = true;
+                i += 1;
+            }
+            "--check-catalog" => {
+                check_catalog = true;
                 i += 1;
             }
             "--final-group" => {
@@ -198,12 +206,110 @@ fn parse_args() -> Result<ParsedArgs, String> {
     if wiring_only && family_filter.is_some() {
         return Err("--wiring-only does not accept family filters or explicit rows".to_string());
     }
+    if check_catalog && (wiring_only || explicit_rows.final_group.is_some()) {
+        return Err("--check-catalog requires ordinary generated rows".to_string());
+    }
+    if check_catalog && !cfg!(feature = "catalog-check") {
+        return Err("--check-catalog requires the `catalog-check` feature".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
+        check_catalog,
         family_filter,
         explicit_rows,
     })
+}
+
+fn validate_materialized_catalog(
+    spec: &EmitSpec,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<(), String> {
+    let family = family_by_name(spec.module_name)
+        .ok_or_else(|| format!("unknown generated family: {}", spec.module_name))?;
+    if (family.schedule_catalog)().is_none() {
+        return Err(format!(
+            "{}: compiled catalog is unavailable; build with all schedule features",
+            spec.module_name
+        ));
+    }
+    for (key, expected) in entries {
+        let actual = (family.resolve_catalog_row_for_key)(key.clone())
+            .map_err(|error| format!("{}: resolve {key:?}: {error}", spec.module_name))?;
+        if actual != *expected {
+            return Err(format!(
+                "{}: compiled catalog row {key:?} disagrees with the planner",
+                spec.module_name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolved_output_path(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| format!("read current directory: {error}"))?
+            .join(path)
+    };
+    let mut resolved = PathBuf::new();
+    let mut missing = Vec::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let removed = if missing.is_empty() {
+                    resolved.pop()
+                } else {
+                    missing.pop();
+                    true
+                };
+                if !removed {
+                    return Err(format!(
+                        "output path escapes the filesystem root: {}",
+                        path.display()
+                    ));
+                }
+            }
+            Component::Normal(name) if missing.is_empty() => {
+                let candidate = resolved.join(name);
+                if candidate.exists() {
+                    resolved = fs::canonicalize(&candidate)
+                        .map_err(|error| format!("resolve {}: {error}", candidate.display()))?;
+                } else {
+                    missing.push(name.to_os_string());
+                }
+            }
+            Component::Normal(name) => missing.push(name.to_os_string()),
+            Component::Prefix(_) | Component::RootDir => resolved.push(component.as_os_str()),
+        }
+    }
+    for component in missing {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+fn validate_explicit_output_isolation(
+    base_dir: &Path,
+    explicit_rows: &ExplicitRows,
+) -> Result<(), String> {
+    if explicit_rows.final_group.is_none() {
+        return Ok(());
+    }
+    let checked_in_generated_dir = resolved_output_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-schedules/src/generated"),
+    )?;
+    let requested_dir = resolved_output_path(base_dir)?;
+    if requested_dir.starts_with(&checked_in_generated_dir) {
+        return Err(format!(
+            "explicit schedule sweeps must use an isolated output directory outside {}",
+            checked_in_generated_dir.display()
+        ));
+    }
+    Ok(())
 }
 
 impl ExplicitRows {
@@ -249,12 +355,6 @@ fn push_unique_name(names: &mut Vec<String>, name: &str) {
     }
 }
 
-fn push_unique_profile(profiles: &mut Vec<CommittedGroupProfile>, profile: CommittedGroupProfile) {
-    if !profiles.contains(&profile) {
-        profiles.push(profile);
-    }
-}
-
 fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: PolynomialGroupLayout) {
     if !layouts.contains(&layout) {
         layouts.push(layout);
@@ -277,6 +377,7 @@ fn push_unique_group_batch_key(
 }
 
 fn expand_precommitted_choices(
+    preplans: &GenerationPreplans,
     groups: &[ExplicitGroup],
 ) -> Result<
     Vec<
@@ -296,7 +397,7 @@ fn expand_precommitted_choices(
                 .layouts()
                 .into_iter()
                 .map(|layout| {
-                    (precommitted_family.explicit_precommitted_group)(layout)
+                    (precommitted_family.explicit_precommitted_group)(preplans, layout)
                         .map_err(|e| format!("{}: explicit precommitted group: {e}", group.family))
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -332,15 +433,21 @@ fn push_precommitted_combinations(
 
 fn emit_spec_with_overrides(
     family: &GeneratedFamily,
+    preplans: &GenerationPreplans,
     base_dir: PathBuf,
     explicit_rows: &ExplicitRows,
     generator_command: &'static str,
 ) -> Result<EmitSpec, String> {
-    let mut spec = emit_spec_for_family(family, base_dir, generator_command)
-        .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
     if !explicit_rows.has_family(family) {
-        return Ok(spec);
+        return emit_spec_for_family(family, preplans, base_dir, generator_command)
+            .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
     }
+
+    // Explicit sweeps replace the catalog key set. Start from the cheap wiring
+    // shape so a one-key diagnostic does not first plan every default grouped
+    // root merely to discard those rows below.
+    let mut spec = wiring_emit_spec(family, base_dir);
+    spec.generator_command = generator_command;
 
     let final_group = explicit_rows
         .final_group
@@ -348,7 +455,6 @@ fn emit_spec_with_overrides(
         .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
     spec.keys.clear();
     spec.group_batch_keys.clear();
-    spec.precommitted_profiles.clear();
     let final_layouts = final_group.layouts();
 
     if explicit_rows.precommitted_groups.is_empty() {
@@ -360,7 +466,8 @@ fn emit_spec_with_overrides(
         return Ok(spec);
     }
 
-    let precommitted_choices = expand_precommitted_choices(&explicit_rows.precommitted_groups)?;
+    let precommitted_choices =
+        expand_precommitted_choices(preplans, &explicit_rows.precommitted_groups)?;
     let mut precommitted_combinations = Vec::new();
     push_precommitted_combinations(
         &precommitted_choices,
@@ -371,9 +478,6 @@ fn emit_spec_with_overrides(
     );
 
     for (precommitteds, precommitted_honest_fold_policies) in precommitted_combinations {
-        for profile in &precommitteds {
-            push_unique_profile(&mut spec.precommitted_profiles, *profile);
-        }
         for final_layout in &final_layouts {
             push_unique_group_batch_key(
                 &mut spec.group_batch_keys,
@@ -387,13 +491,12 @@ fn emit_spec_with_overrides(
             );
         }
     }
-    spec.precommitted_profiles
-        .sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
     Ok(spec)
 }
 
 fn main() -> Result<(), String> {
     let args = parse_args()?;
+    validate_explicit_output_isolation(&args.base_dir, &args.explicit_rows)?;
     fs::create_dir_all(&args.base_dir)
         .map_err(|e| format!("create {}: {e}", args.base_dir.display()))?;
     let families_to_write = ALL_GENERATED_FAMILIES
@@ -405,43 +508,150 @@ fn main() -> Result<(), String> {
         })
         .collect::<Vec<_>>();
 
-    if !args.wiring_only {
+    let specs = if args.wiring_only {
+        Vec::new()
+    } else {
         let generator_command = generator_command();
-        let specs = families_to_write
+        let preplans = GenerationPreplans::default();
+        let indexed_families = families_to_write
             .iter()
-            .map(|family| {
-                emit_spec_with_overrides(
-                    family,
-                    args.base_dir.clone(),
-                    &args.explicit_rows,
-                    generator_command,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for spec in &specs {
-            let dest = write_family_module(spec)
-                .map_err(|e| format!("{}: write family module: {e}", spec.module_name))?;
-            println!("wrote {}", dest.display());
-            let dest = write_precommitted_profiles_module(spec).map_err(|e| {
-                format!("{}: write precommit registry module: {e}", spec.module_name)
-            })?;
-            println!("wrote {}", dest.display());
+            .enumerate()
+            .map(|(index, family)| (index, *family))
+            .collect::<Vec<_>>();
+        let family_count = indexed_families.len();
+        let workers = offline_planning_worker_count(family_count);
+        let mut specs = bounded_parallel_filter_map(&indexed_families, workers, |item| {
+            let (index, family) = *item;
+            eprintln!(
+                "planning schedule family {}/{}: {}",
+                index + 1,
+                family_count,
+                family.module_name
+            );
+            emit_spec_with_overrides(
+                family,
+                &preplans,
+                args.base_dir.clone(),
+                &args.explicit_rows,
+                generator_command,
+            )
+            .map(Some)
+        })?;
+        for (family, spec) in families_to_write.iter().zip(&mut specs) {
+            preplans.attach_to_spec(family, spec);
         }
-    }
+        drop(preplans);
+        specs
+    };
 
     let mod_path = args.base_dir.join("mod.rs");
     let wiring_specs = ALL_GENERATED_FAMILIES
         .iter()
         .map(|family| wiring_emit_spec(family, args.base_dir.clone()))
         .collect::<Vec<_>>();
-    if mod_path.exists() {
-        refresh_generated_wiring(&sorted_unique_specs(&wiring_specs), &mod_path)?;
-        println!("updated {}", mod_path.display());
+    let mod_path = if mod_path.exists() {
+        Some(mod_path)
     } else if args.wiring_only {
         return Err(format!("missing {}", mod_path.display()));
     } else {
         println!("skipped missing {}", mod_path.display());
+        None
+    };
+    let check_catalog = args.check_catalog;
+    let outputs = render_generated_outputs_with_validation(
+        &specs,
+        &sorted_unique_specs(&wiring_specs),
+        mod_path.as_deref(),
+        |spec, entries| {
+            if check_catalog {
+                validate_materialized_catalog(spec, entries)
+            } else {
+                Ok(())
+            }
+        },
+    )?;
+    for destination in publish_generated_outputs(outputs)? {
+        println!("wrote {}", destination.display());
     }
-    run_regen_fmt()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_scalar_sweep_replaces_default_catalog_work() {
+        let family = family_by_name("fp128_onehot").expect("known family");
+        let explicit_rows = ExplicitRows {
+            final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
+            precommitted_groups: Vec::new(),
+        };
+
+        let spec = emit_spec_with_overrides(
+            family,
+            &GenerationPreplans::default(),
+            PathBuf::from("generated"),
+            &explicit_rows,
+            "generator command",
+        )
+        .expect("explicit emit spec");
+
+        assert_eq!(spec.keys, vec![PolynomialGroupLayout::new(14, 1)]);
+        assert!(spec.group_batch_keys.is_empty());
+        assert_eq!(spec.generator_command, "generator command");
+    }
+
+    #[test]
+    fn explicit_group_rejects_source_metadata() {
+        assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
+    }
+
+    #[test]
+    fn explicit_sweeps_reject_the_checked_in_generated_tree() {
+        let explicit_rows = ExplicitRows {
+            final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
+            precommitted_groups: Vec::new(),
+        };
+        let checked_in_generated_dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-schedules/src/generated");
+
+        let error = validate_explicit_output_isolation(
+            &checked_in_generated_dir.join("diagnostic"),
+            &explicit_rows,
+        )
+        .expect_err("checked-in generated tree must be protected");
+        assert!(error.contains("isolated output directory"));
+
+        let isolated = env::temp_dir().join(format!(
+            "akita-explicit-schedule-test-{}",
+            std::process::id()
+        ));
+        validate_explicit_output_isolation(&isolated, &explicit_rows)
+            .expect("isolated explicit output");
+        validate_explicit_output_isolation(&checked_in_generated_dir, &ExplicitRows::default())
+            .expect("ordinary full regeneration may target the checked-in catalog");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_resolution_applies_parent_after_resolving_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = env::temp_dir().join(format!(
+            "akita-schedule-path-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let target = root.join("real/deep");
+        fs::create_dir_all(&target).expect("create symlink target");
+        symlink(&target, root.join("link")).expect("create test symlink");
+
+        let resolved = resolved_output_path(&root.join("link/../isolated"))
+            .expect("resolve output through symlink");
+        let canonical_root = fs::canonicalize(&root).expect("canonical test root");
+        assert_eq!(resolved, canonical_root.join("real/isolated"));
+
+        fs::remove_dir_all(&root).expect("remove test directory");
+    }
 }

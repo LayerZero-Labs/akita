@@ -8,7 +8,6 @@ mod group_batch;
 mod resolve;
 mod runtime;
 
-pub use akita_challenges::TensorChallengeShape;
 pub use akita_types::{
     suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,
     SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
@@ -19,23 +18,26 @@ pub use catalog_identity::{
 };
 pub use generated::*;
 pub use resolve::{
-    estimate_proof_bytes, resolve_generated_precommitted_group_profile,
-    resolve_generated_schedule_selection, resolve_group_batch_schedule, resolve_schedule,
-    schedule_from_entry, select_generated_schedule_row, select_generated_schedule_row_for_profiles,
-    ResolvedScheduleRow,
+    estimate_proof_bytes, resolve_generated_catalog_row_for_key,
+    resolve_generated_catalog_row_for_profiles, resolve_generated_schedule_selection,
+    schedule_from_entry, ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, PlannerCostModelId, PlannerPolicy, RuntimeSchedulePolicy,
-    SelectionPolicyId,
+    default_sis_security_policy, validate_policy, PlannerCostModelId, PlannerPolicy,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, RuntimeSchedulePolicy,
+    SelectionPolicyId, SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.
 #[doc(hidden)]
 pub mod planner_support {
-    pub use crate::candidate::{projected_collision_role_price, sis_key_at_dimension};
+    pub use crate::candidate::{
+        projected_collision_role_price, selective_l2_inner_matrix, sis_key_at_dimension,
+        SelectiveL2CandidateGeometry,
+    };
     pub use crate::runtime::{
-        grouped_segment_rings, materialize_candidate_schedule, optimize_fold_challenge_shape,
-        planned_next_witness_len, stage3_payload_bytes_for_successor, validate_policy,
-        CandidateFoldStep, CandidateTerminalResponse,
+        grouped_segment_rings, materialize_candidate_schedule, planned_next_witness_len,
+        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
+        CandidateTerminalResponse, MAX_RECURSION_DEPTH,
     };
 }

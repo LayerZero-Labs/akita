@@ -14,6 +14,18 @@
 //! the transcript layer or the sampler.
 
 use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use smallvec::SmallVec;
+
+use crate::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
+
+/// Inline capacity chosen for the heaviest production family, D64 `(31, 10)`.
+/// Every other production ring dimension has weight at most 31 and also fits.
+pub const INLINE_SPARSE_WEIGHT: usize = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+
+/// Public storage type for sparse challenge positions.
+pub type SparseChallengePositions = SmallVec<[u32; INLINE_SPARSE_WEIGHT]>;
+/// Public storage type for sparse challenge coefficients.
+pub type SparseChallengeCoefficients = SmallVec<[i8; INLINE_SPARSE_WEIGHT]>;
 
 #[inline]
 pub(crate) fn accumulate_small_signed<F, E>(acc: &mut E, value: E, coeff: i64)
@@ -46,10 +58,11 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SparseChallenge {
     /// Coefficient indices (powers of `X`) where the polynomial is non-zero.
-    pub positions: Vec<u32>,
+    /// Production challenges fit inline; custom heavier families spill to the heap.
+    pub positions: SparseChallengePositions,
     /// Small integer coefficients at the corresponding positions. Stored
     /// as `i8` since every shipping sampling family caps `|coeff| <= 8`.
-    pub coeffs: Vec<i8>,
+    pub coeffs: SparseChallengeCoefficients,
 }
 
 impl SparseChallenge {
@@ -164,8 +177,8 @@ mod tests {
     #[test]
     fn eval_at_pows_evaluates_sparse_terms() {
         let challenge = SparseChallenge {
-            positions: vec![0, 2],
-            coeffs: vec![1, -2],
+            positions: vec![0, 2].into(),
+            coeffs: vec![1, -2].into(),
         };
 
         let got = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap();
@@ -179,8 +192,8 @@ mod tests {
         // The ring dimension is `alpha_pows.len()`; a position that fits the
         // nominal D but not the supplied power table must be rejected.
         let challenge = SparseChallenge {
-            positions: vec![D as u32 - 1],
-            coeffs: vec![1],
+            positions: vec![D as u32 - 1].into(),
+            coeffs: vec![1].into(),
         };
 
         let err = challenge
@@ -193,8 +206,8 @@ mod tests {
     #[test]
     fn eval_at_pows_rejects_out_of_range_position() {
         let challenge = SparseChallenge {
-            positions: vec![D as u32],
-            coeffs: vec![1],
+            positions: vec![D as u32].into(),
+            coeffs: vec![1].into(),
         };
 
         let err = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap_err();
@@ -205,8 +218,8 @@ mod tests {
     #[test]
     fn eval_at_pows_rejects_mismatched_terms() {
         let challenge = SparseChallenge {
-            positions: vec![0, 1],
-            coeffs: vec![1],
+            positions: vec![0, 1].into(),
+            coeffs: vec![1].into(),
         };
 
         let err = challenge.eval_at_pows::<F, F>(&alpha_pows()).unwrap_err();
@@ -217,8 +230,8 @@ mod tests {
     #[test]
     fn validate_rejects_duplicate_positions() {
         let challenge = SparseChallenge {
-            positions: vec![1, 1],
-            coeffs: vec![1, -1],
+            positions: vec![1, 1].into(),
+            coeffs: vec![1, -1].into(),
         };
 
         let err = challenge.validate::<D>().unwrap_err();

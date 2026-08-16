@@ -52,13 +52,55 @@ impl<'a> BitReader<'a> {
         if self.remaining_bits() < needed {
             return Err(AkitaError::InvalidProof);
         }
-        let mut out = 0u64;
-        for i in 0..needed {
-            if self.read_bit()? {
-                out |= 1u64 << i;
+        let end_bit = self
+            .bit_pos
+            .checked_add(needed)
+            .ok_or(AkitaError::InvalidProof)?;
+        let byte_start = self.bit_pos / 8;
+        let byte_end = end_bit.div_ceil(8);
+        let bytes = self
+            .bytes
+            .get(byte_start..byte_end)
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut word = 0u128;
+        for (index, &byte) in bytes.iter().enumerate() {
+            word |= u128::from(byte) << (index * 8);
+        }
+        let shift = self.bit_pos % 8;
+        let mask = (1u128 << count) - 1;
+        self.bit_pos = end_bit;
+        Ok(((word >> shift) & mask) as u64)
+    }
+
+    fn read_unary_ones(&mut self, max_quotient: u64) -> Result<u64, AkitaError> {
+        let mut quotient = 0u64;
+        loop {
+            if self.remaining_bits() == 0 {
+                return Err(AkitaError::InvalidProof);
+            }
+            let byte_index = self.bit_pos / 8;
+            let bit_index = self.bit_pos % 8;
+            let byte = *self.bytes.get(byte_index).ok_or(AkitaError::InvalidProof)?;
+            let available = 8usize - bit_index;
+            let ones = ((byte >> bit_index).trailing_ones() as usize).min(available);
+            quotient = quotient
+                .checked_add(ones as u64)
+                .ok_or(AkitaError::InvalidProof)?;
+            if quotient > max_quotient {
+                return Err(AkitaError::InvalidProof);
+            }
+            self.bit_pos = self
+                .bit_pos
+                .checked_add(ones)
+                .ok_or(AkitaError::InvalidProof)?;
+            if ones < available {
+                self.bit_pos = self
+                    .bit_pos
+                    .checked_add(1)
+                    .ok_or(AkitaError::InvalidProof)?;
+                return Ok(quotient);
             }
         }
-        Ok(out)
     }
 }
 
@@ -195,25 +237,13 @@ pub fn sample_optimal_rice_low_bits(values: &[i64], zigzag_w: u32, low_bits_hi: 
         .unwrap_or(0)
 }
 
-/// Payload byte length for each `rice_low_bits` in `0..=low_bits_hi` on a realized `z` sample.
-pub fn golomb_rice_low_bits_sweep_payload_bytes(
-    values: &[i64],
-    zigzag_w: u32,
-    low_bits_hi: u32,
-) -> Result<Vec<(u32, usize)>, AkitaError> {
-    (0..=low_bits_hi)
-        .map(|rice_low_bits| {
-            let bits = golomb_rice_total_bits(values, rice_low_bits, zigzag_w)?;
-            Ok((rice_low_bits, bits.div_ceil(8)))
-        })
-        .collect()
-}
-
 /// Distribution summary for terminal fold-response `z` coefficients.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZFoldEncodingStats {
     pub coord_count: usize,
-    pub witness_linf_cap: u128,
+    /// Scale used only for the planner comparison below. This is not a
+    /// verifier Linf cap for an L2 terminal route.
+    pub encoding_scale: u128,
     pub observed_max_abs: u64,
     pub mean_abs: f64,
     pub median_abs: u64,
@@ -251,14 +281,14 @@ fn percentile_abs(sorted_abs: &[u64], p_num: usize, p_den: usize) -> u64 {
 /// `values` are centered fold-response ring coefficients (one per `z_coord`).
 pub fn analyze_z_fold_golomb_encoding(
     values: &[i64],
-    witness_linf_cap: u128,
+    encoding_scale: u128,
+    rice_low_bits_wire: u32,
     zigzag_w: u32,
     depth_fold: usize,
     log_basis: u32,
     actual_payload_bytes: usize,
 ) -> Result<ZFoldEncodingStats, AkitaError> {
-    let rice_low_bits_cap = cap_rice_low_bits(witness_linf_cap);
-    let rice_low_bits_wire = wire_rice_low_bits(witness_linf_cap);
+    let rice_low_bits_cap = cap_rice_low_bits(encoding_scale);
     let low_bits_search_hi = rice_low_bits_cap.saturating_add(4);
     let rice_low_bits_sample = sample_optimal_rice_low_bits(values, zigzag_w, low_bits_search_hi);
 
@@ -284,7 +314,7 @@ pub fn analyze_z_fold_golomb_encoding(
 
     Ok(ZFoldEncodingStats {
         coord_count: values.len(),
-        witness_linf_cap,
+        encoding_scale,
         observed_max_abs,
         mean_abs,
         median_abs: percentile_abs(&abs_vals, 50, 100),
@@ -349,13 +379,13 @@ pub fn golomb_rice_coord_wire_bits(
 }
 
 /// Total standard Golomb wire bits for a coefficient vector.
-pub fn golomb_rice_total_wire_bits(
-    values: &[i64],
+pub fn golomb_rice_total_wire_bits<T: Copy + Into<i64>>(
+    values: &[T],
     rice_low_bits: u32,
     zigzag_w: u32,
 ) -> Result<usize, AkitaError> {
     values.iter().try_fold(0usize, |acc, &n| {
-        golomb_rice_coord_wire_bits(n, rice_low_bits, zigzag_w)?
+        golomb_rice_coord_wire_bits(n.into(), rice_low_bits, zigzag_w)?
             .checked_add(acc)
             .ok_or(AkitaError::InvalidSetup(
                 "golomb-rice total wire bits overflow".to_string(),
@@ -363,10 +393,36 @@ pub fn golomb_rice_total_wire_bits(
     })
 }
 
+/// Conservative planner estimate for an L2-bounded Golomb-Rice payload.
+///
+/// The zigzag magnitude is at most `2 * |z_i|`. Cauchy-Schwarz gives
+/// `sum_i |z_i| <= floor(sqrt(num_values * l2_sq_cap))`, which bounds the
+/// complete unary-quotient contribution without a distributional assumption.
+/// This estimate does not replace the scheduled payload cap enforced on wire.
+#[must_use]
+pub fn golomb_rice_l2_planner_payload_bytes(
+    num_values: usize,
+    l2_sq_cap: u128,
+    rice_low_bits: u32,
+) -> Option<usize> {
+    let num_values_u128 = u128::try_from(num_values).ok()?;
+    let sum_abs_bound = num_values_u128.checked_mul(l2_sq_cap)?.isqrt();
+    let quotient_sum_bound = sum_abs_bound.checked_mul(2)?.checked_shr(rice_low_bits)?;
+    let fixed_bits = num_values.checked_mul(rice_low_bits as usize + 1)?;
+    let quotient_bits = usize::try_from(quotient_sum_bound).ok()?;
+    fixed_bits
+        .checked_add(quotient_bits)?
+        .checked_add(7)
+        .map(|bits| bits / 8)
+}
+
 /// Whether every coefficient lies in `[-cap, cap]`.
-pub fn golomb_rice_values_within_cap(values: &[i64], cap: u128) -> Result<(), AkitaError> {
+pub fn golomb_rice_values_within_cap<T: Copy + Into<i64>>(
+    values: &[T],
+    cap: u128,
+) -> Result<(), AkitaError> {
     for &n in values {
-        if i128::from(n).unsigned_abs() > cap {
+        if i128::from(n.into()).unsigned_abs() > cap {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -510,20 +566,7 @@ fn golomb_rice_decode_one_from(
     zigzag_w: u32,
     max_quotient: u64,
 ) -> Result<i64, AkitaError> {
-    let mut quotient = 0u64;
-    loop {
-        if reader.remaining_bits() == 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        if reader.read_bit()? {
-            quotient += 1;
-            if quotient > max_quotient {
-                return Err(AkitaError::InvalidProof);
-            }
-            continue;
-        }
-        break;
-    }
+    let quotient = reader.read_unary_ones(max_quotient)?;
     let u = if rice_low_bits == 0 {
         quotient
     } else {
@@ -561,26 +604,28 @@ pub fn golomb_rice_encode_vec(
     Ok(writer.finish())
 }
 
-/// Decode a fixed number of Golomb-Rice integers from `bytes`.
+/// Decode and convert a fixed number of Golomb-Rice integers from `bytes`.
 ///
 /// Rejects unary quotients above `max_quotient`, non-zero trailing bits, and any byte padding
-/// beyond the minimal length for the encoded bitstream.
-pub fn golomb_rice_decode_vec(
+/// beyond the minimal length for the encoded bitstream. Conversion is fused
+/// into decoding so callers can validate and store a narrower representation
+/// without allocating an intermediate `Vec<i64>`.
+pub fn golomb_rice_decode_vec<T>(
     bytes: &[u8],
     count: usize,
     rice_low_bits: u32,
     zigzag_w: u32,
     max_quotient: u64,
-) -> Result<Vec<i64>, AkitaError> {
+    mut convert: impl FnMut(i64) -> Result<T, AkitaError>,
+) -> Result<Vec<T>, AkitaError> {
     let mut reader = BitReader::new(bytes);
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::new();
+    out.try_reserve_exact(count)
+        .map_err(|_| AkitaError::InvalidProof)?;
     for _ in 0..count {
-        out.push(golomb_rice_decode_one_from(
-            &mut reader,
-            rice_low_bits,
-            zigzag_w,
-            max_quotient,
-        )?);
+        let value =
+            golomb_rice_decode_one_from(&mut reader, rice_low_bits, zigzag_w, max_quotient)?;
+        out.push(convert(value)?);
     }
     golomb_rice_consume_canonical_padding(&mut reader)?;
     Ok(out)
@@ -600,6 +645,55 @@ mod tests {
     }
 
     #[test]
+    fn l2_planner_payload_bound_contains_actual_encodings() {
+        let rice_low_bits = 4;
+        let cases = [
+            vec![0i64; 64],
+            vec![7i64; 64],
+            {
+                let mut sparse = vec![0i64; 64];
+                sparse[0] = 127;
+                sparse[17] = -31;
+                sparse
+            },
+            (0..64)
+                .map(|index| if index % 2 == 0 { 15 } else { -16 })
+                .collect(),
+        ];
+
+        for values in cases {
+            let l2_sq_cap = values.iter().fold(0u128, |acc, &value| {
+                acc + i128::from(value).unsigned_abs().pow(2)
+            });
+            let zigzag_w = golomb_rice_zigzag_width(
+                values
+                    .iter()
+                    .map(|&value| i128::from(value).unsigned_abs())
+                    .max()
+                    .unwrap_or(0),
+            );
+            let encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).expect("encode");
+            let estimate =
+                golomb_rice_l2_planner_payload_bytes(values.len(), l2_sq_cap, rice_low_bits)
+                    .expect("planner estimate");
+            assert!(
+                encoded.len() <= estimate,
+                "actual payload {} exceeds L2 estimate {estimate}",
+                encoded.len()
+            );
+        }
+    }
+
+    #[test]
+    fn l2_planner_payload_estimate_tracks_energy() {
+        let low =
+            golomb_rice_l2_planner_payload_bytes(1024, 1 << 20, 9).expect("low-energy estimate");
+        let high =
+            golomb_rice_l2_planner_payload_bytes(1024, 1 << 30, 9).expect("high-energy estimate");
+        assert!(low < high);
+    }
+
+    #[test]
     fn golomb_rice_round_trips_cap_range_at_wire_low_bits() {
         for cap in [504u128, 1008, 1568, 2016] {
             let rice_low_bits = wire_rice_low_bits(cap);
@@ -611,7 +705,7 @@ mod tests {
                 let encoded =
                     golomb_rice_encode_vec(&[n], rice_low_bits, zigzag_w).expect("encode");
                 let decoded =
-                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient)
+                    golomb_rice_decode_vec(&encoded, 1, rice_low_bits, zigzag_w, max_quotient, Ok)
                         .expect("decode");
                 assert_eq!(decoded, [n], "cap={cap} n={n}");
             }
@@ -642,6 +736,7 @@ mod tests {
             rice_low_bits,
             zigzag_w,
             max_quotient,
+            Ok,
         )
         .unwrap();
         assert_eq!(decoded, values);
@@ -658,7 +753,8 @@ mod tests {
         let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0xff);
         assert!(
-            golomb_rice_decode_vec(&encoded, 2, rice_low_bits, zigzag_w, max_quotient).is_err()
+            golomb_rice_decode_vec(&encoded, 2, rice_low_bits, zigzag_w, max_quotient, Ok,)
+                .is_err()
         );
     }
 
@@ -671,7 +767,8 @@ mod tests {
         let mut encoded = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
         encoded.push(0x00);
         assert!(
-            golomb_rice_decode_vec(&encoded, 3, rice_low_bits, zigzag_w, max_quotient).is_err()
+            golomb_rice_decode_vec(&encoded, 3, rice_low_bits, zigzag_w, max_quotient, Ok,)
+                .is_err()
         );
     }
 
@@ -693,12 +790,14 @@ mod tests {
         writer.write_bit(false);
         writer.write_bits(0, rice_low_bits);
         let bytes = writer.finish();
-        assert!(golomb_rice_decode_vec(&bytes, 1, rice_low_bits, zigzag_w, max_quotient).is_err());
+        assert!(
+            golomb_rice_decode_vec(&bytes, 1, rice_low_bits, zigzag_w, max_quotient, Ok,).is_err()
+        );
     }
 
     #[test]
     fn golomb_rice_decode_is_total_on_empty_prefix() {
-        assert!(golomb_rice_decode_vec(&[], 1, 0, 4, 0).is_err());
+        assert!(golomb_rice_decode_vec(&[], 1, 0, 4, 0, Ok).is_err());
     }
 
     #[test]

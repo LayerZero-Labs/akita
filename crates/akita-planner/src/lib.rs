@@ -2,9 +2,9 @@
 //!
 //! This crate is a **pure, `Cfg`-free DP library**. The DP entry point
 //! is [`find_schedule`], which runs an exhaustive dynamic program to
-//! minimize proof size for a schedule lookup key. Every per-preset input is
-//! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
-//! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
+//! optimize a schedule lookup key under its catalog-bound selection policy.
+//! Every per-preset input is carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
+//! ring-challenge closure, so the planner names no `CommitmentConfig`
 //! types and depends only on `akita-schedules` / `akita-types` /
 //! `akita-challenges` / `akita-field`.
 //! Scalar and mixed-D planning are selected internally by the grouped gate from
@@ -16,29 +16,31 @@
 //! preset-free.
 
 pub use akita_schedules::{
-    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy, SelectionPolicyId,
-    SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
+    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
+    SelectiveL2ResponseModelId, SisModulusProfileId, SisSecurityPolicyId,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
 mod planner;
+mod policy;
+mod response_model;
 pub mod schedule_params;
 
-pub use akita_challenges::TensorChallengeShape;
 pub use akita_schedules::{
     catalog_entries_sorted_for_lookup, estimate_proof_bytes, expected_catalog_identity,
-    identity_digest, key_digest, policy_digest, resolve_group_batch_schedule, resolve_schedule,
-    ring_challenge_config_digest, runtime_schedule_key_cmp, schedule_from_entry,
-    validate_catalog_identity, validate_generated_schedule_entry,
-    validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
+    identity_digest, key_digest, policy_digest, ring_challenge_config_digest,
+    runtime_schedule_key_cmp, schedule_from_entry, validate_catalog_identity,
+    validate_generated_schedule_entry, validate_generated_schedule_table,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
 pub use emit::{
-    refresh_generated_wiring, run_regen_fmt, write_family_module,
-    write_precommitted_profiles_module, EmitSpec,
+    publish_generated_outputs, render_generated_outputs, render_generated_outputs_with_validation,
+    EmitSpec, GeneratedOutput,
 };
 pub use planner::find_schedule;
-pub use schedule_params::{
-    derive_standalone_precommit_profile, suffix_opening_layout, RingDimensionSearchDomain,
-};
+pub use policy::InnerBasisSource;
+pub use schedule_params::suffix_opening_layout;

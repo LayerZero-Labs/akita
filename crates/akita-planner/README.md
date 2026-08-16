@@ -4,7 +4,7 @@ The `akita-planner` crate is responsible for computing the parameters of each fo
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
-The planner covers the parameter-selection features supported by Akita, including batching, tensor challenges, and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
+The planner covers the parameter-selection features supported by Akita, including batching and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
 
 The planner can also generate schedule values when a preset wants a table-backed runtime path. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search.
 
@@ -20,7 +20,7 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 ## Inputs And Outputs
 
 The public search entry point is
-`find_schedule(&key, &precommitted_fold_witness_norms, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+`find_schedule(&key, final_honest_fold_policy, &precommitted_honest_fold_policies, &policy, ring_challenge_config)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
@@ -44,21 +44,24 @@ multiplicity is always `1`; multi-group roots derive those counts from
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
 - Ring-subfield norm bound.
-- One-hot chunk size.
 
-The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_challenge_shape_at_level` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
+Source laws are separate planner-only values. For example, the one-hot policy
+owns its exact chunk size while runtime schedule keys retain only public group
+geometry.
+
+The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
 
 ## Resolution Flow
 
-Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, not the DP directly. Resolution is the strict table entry point:
+Most runtime callers use `resolve_generated_catalog_row_for_key`, not the DP directly. Resolution is the strict table entry point:
 
 1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
-2. If a catalog is supplied, `resolve_schedule` validates its embedded identity against the runtime policy and hook closures.
+2. If a catalog is supplied, `resolve_generated_catalog_row_for_key` validates its embedded identity against the runtime policy and hook closures.
 3. If the validated table contains the lookup key, it expands the compact
    `GeneratedFoldScheduleEntry` with `schedule_from_entry`.
 4. If there is no catalog or no matching entry, the request is unsupported.
 
-Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
+Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and ring-challenge closure. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
 
 ## Search Model
 
@@ -178,8 +181,8 @@ One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. 
 ## Generated Tables
 
 The planner owns the generated schedule-table representation and expansion
-logic. Generated table data is emitted into the `akita-schedules` crate during
-local/CI bootstrap. Compact entries mirror the protocol topology:
+logic. Deterministic generated table data is tracked in the `akita-schedules`
+crate. Compact entries mirror the protocol topology:
 
 - `GeneratedRootFold` records the root-only challenge form, exact fold digits
   and cap, ordered precommitted groups, final-group commitment, open matrix,
@@ -212,6 +215,29 @@ To regenerate schedule tables:
 scripts/generate-schedule-tables.sh
 ```
 
+One generator run reuses a successful scalar schedule when grouped key
+construction and scalar row emission need the same producer configuration and
+layout. The cache lasts for one run and stores the complete selected
+`FoldSchedule`. Before parallel row planning starts, the generator copies the
+cached results into the family specifications and drops the mutable cache.
+The generator also prepares independent families in parallel. When two
+families need the same producer schedule, one computes it and the other waits
+for that exact result.
+
+The remaining scalar and grouped requests from every selected family are
+flattened into one ordered queue. `AKITA_SCHEDULE_GEN_JOBS` bounds the number of
+complete planner searches in the batch generator and defaults to `3`.
+Each search stays sequential. The generator puts each result back in its input
+family and sorts each family by the runtime lookup order. Worker completion
+order therefore does not affect generated bytes.
+
+The generated-table drift guard uses the same worker bound while comparing
+tracked rows with fresh DP results.
+
+Generic CI and Jolt smoke jobs compile the tracked tables directly. The
+dedicated all-schedules drift job is the sole CI regeneration owner and rejects
+any byte difference from the tracked catalog.
+
 The family list is in
 `akita_planner::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the
 emitter and drift-guard tests so generated entries and regeneration hooks stay
@@ -227,9 +253,9 @@ of precommitted groups:
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
-  --final-group fp128_d64_onehot:32:2 \
-  --precommitted-group fp128_d64_onehot:16:1 \
-  --precommitted-group fp128_d64_dense:15:2
+  --final-group fp128_onehot:32:2 \
+  --precommitted-group fp128_onehot:16:1 \
+  --precommitted-group fp128_dense:15:2
 ```
 
 The explicit flags are:
@@ -245,9 +271,9 @@ Each numeric slot accepts either a single value or an inclusive range written as
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
-  --final-group fp128_d64_onehot:30..=32:2..=4 \
-  --precommitted-group fp128_d64_onehot:14..=16:1 \
-  --precommitted-group fp128_d64_dense:15:1..=2
+  --final-group fp128_onehot:30..=32:2..=4 \
+  --precommitted-group fp128_onehot:14..=16:1 \
+  --precommitted-group fp128_dense:15:1..=2
 ```
 
 The generator expands the cartesian product of the final-group range and every
@@ -265,12 +291,6 @@ The lookup key carries the root vector counts needed for batched openings. Root 
 
 Recursive levels are always single-claim levels: after the root fold, the next witness is one packed object that is folded or shipped.
 
-### Tensor Challenges
-
-Some presets use a tensor-shaped level-0 fold challenge. Catalog identity records the root fold shape, so tensor and flat tables cannot be accidentally interchanged when both policies otherwise have the same field and ring dimension.
-
-Recursive levels use the flat fold shape in the current planner search.
-
 ### Extension Fields
 
 `PlannerPolicy` carries both claim and challenge extension degrees. When the claim field is an extension, the planner adds the extension-opening reduction proof bytes at the root and recursive levels.
@@ -285,7 +305,7 @@ akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_schedules::resolve_schedule`. Runtime resolution is strict and never invokes planner search.
+`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::resolve_catalog_row_for_key` to strict generated-row resolution. Runtime resolution never invokes planner search.
 
 This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.
 

@@ -109,6 +109,17 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         Self { coeffs: out }
     }
 
+    /// Fused scalar multiply and accumulate: `dst += self * k`.
+    ///
+    /// This avoids a temporary ring and lets fields combine multiplication,
+    /// addition, and modular reduction when they have a specialized path.
+    #[inline]
+    pub fn scale_accumulate_into(&self, dst: &mut Self, k: F) {
+        for (d, s) in dst.coeffs.iter_mut().zip(self.coeffs.iter().copied()) {
+            *d = s.mul_add(k, *d);
+        }
+    }
+
     /// Apply the cyclotomic automorphism `sigma_k: X -> X^k` for odd `k`.
     ///
     /// In `Z_q[X]/(X^D + 1)`, this permutes/sign-flips coefficients using
@@ -255,7 +266,7 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
         let (lo, hi) = dst.coeffs.split_at_mut(k);
         let (self_lo, self_hi) = self.coeffs.split_at(D - k);
         for (d, s) in hi.iter_mut().zip(self_lo) {
-            *d += *s * scale; // i + k < D
+            *d = s.mul_add(scale, *d); // i + k < D
         }
         for (d, s) in lo.iter_mut().zip(self_hi) {
             *d -= *s * scale; // i + k >= D
@@ -354,5 +365,20 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
             }
         }
         Self { coeffs }
+    }
+}
+
+impl<F: FieldCore + CanonicalField, const D: usize> CyclotomicRing<F, D> {
+    pub(crate) fn centered_coefficients_i128(&self) -> [i128; D] {
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let half_modulus = modulus / 2;
+        self.coeffs.map(|coefficient| {
+            let canonical = coefficient.to_canonical_u128();
+            if canonical > half_modulus {
+                -((modulus - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        })
     }
 }

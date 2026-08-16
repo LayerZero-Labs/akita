@@ -3,6 +3,68 @@
 How the verifier replays the proof level by level, and the no-panic contract
 that governs every verifier-reachable line.
 
+## Reading this section
+
+The verifier has several checks because one recursive fold must bind a public
+opening claim, a digit witness, a ring relation, and the public setup at the
+same time. Read the chapters in this order:
+
+1. [Matrix evaluation at a point](./verifying/matrix_evaluation.md)
+   defines the physical rows and columns.
+2. [The Stage 2 fused check](./verifying/stage2.md) shows how the relation,
+   range image, and opening trace share one final witness evaluation.
+3. [Evaluation trace](./verifying/evaluation_trace.md) explains how opening
+   claims bind to the `E` digits without a prover-sized verifier table.
+4. [Setup contribution and Stage 3](./verifying/setup_contribution.md) explains
+   direct setup evaluation and recursive setup offloading.
+5. [The distributed relation verifier](./verifying/distributed-relation-verifier.md)
+   explains exact dyadic ownership and unequal chunks.
+6. [Terminal verification](./verifying/terminal.md) explains the final direct
+   checks after recursion stops.
+
+The proving section owns the derivation of the ring relations and the logical
+multi-group layout. These verifier chapters start from those relations and
+explain how one verifier replays them at sampled points. This separation keeps
+the mathematical definition and the optimized verifier implementation from
+becoming competing sources of truth.
+
+The book describes shipped behavior. The files under `specs/` record design
+history and pending changes, so they may describe alternatives that are not
+active in the verifier.
+
+## Verifier data flow
+
+For each nonterminal level, the verifier follows this order:
+
+```text
+validated schedule and setup
+        |
+        v
+fold replay and outgoing witness binding
+        |
+        v
+ring switch: sample alpha, tau0, and tau1
+        |
+        +--> prepare relation matrix evaluator
+        +--> prepare compression weights
+        +--> prepare evaluation trace
+        |
+        v
+Stage 1: digit range product
+        |
+        v
+Stage 2: range image + relation + evaluation trace
+        |
+        v
+Stage 3: setup product when the setup claim is deferred
+        |
+        v
+next recursive level or terminal direct checks
+```
+
+Preparation validates public geometry once. The final point kernels then use
+typed prepared state and return errors for any remaining mismatch.
+
 ## Per-level replay
 
 `batched_verify` (in `crates/akita-verifier/src/protocol/core/verify.rs`) is
@@ -20,7 +82,9 @@ At a high level:
    every recursive fold, using the schedule-selected `LevelParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
-   block, D block, or quotient sumcheck.
+   block, D block, or quotient sumcheck. If the terminal A matrix uses an L2
+   route, the verifier also computes the decoded response's exact integer
+   squared norm and compares it with the scheduled cap.
 
 At each nonterminal fold, the verifier checks fixed 128-byte `p_H` and `p_F`
 payload shapes, reconstructs the B, D, F, and H relation right hand sides, and
@@ -28,6 +92,12 @@ folds the compression relations at their native ring dimensions. It derives
 the negative-binary support from `WitnessLayout` and evaluates the stage-1
 equality table restricted to those intervals; compression roles never enlarge
 or shrink the ordinary A/B/D common address block.
+
+An L2 fold at D64 or D128 also replays operator norm rejection from the
+transcript. The schedule fixes the sparse challenge family and both the true
+subset threshold and strict integer threshold. A challenge is accepted only
+when the integer interval calculation proves that every spectral magnitude is
+within the strict threshold.
 
 Root replay reads each commitment group's point directly from
 `PolynomialGroupClaims`.
@@ -76,7 +146,7 @@ replay, it:
    canonical security table, role, modulus, rank, width, bound, and ring
    dimension;
 5. checks root, recursive, setup-prefix, challenge, witness-partition, terminal
-   response, and full terminal infinity-norm-cap geometry;
+   response, and full terminal norm cap geometry;
 6. checks that the schedule fits the setup field capacity; and only then
 7. binds the instance descriptor and replays the proof.
 

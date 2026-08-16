@@ -1,13 +1,9 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{
-    proof_optimized::fp128::D64OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
-};
+use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
 use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
-use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
-};
+use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
@@ -38,7 +34,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         ring_dimension: 64,
     }];
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
-        &crate::compute::CpuBackend,
+        &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
@@ -85,7 +81,7 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
 
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
-        &crate::compute::CpuBackend,
+        &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
@@ -108,17 +104,15 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
-    let pre_params =
-        PrecommittedCommitmentConfig::<D64OneHot>::get_params_for_batched_commitment(&pre_layout)
-            .expect("precommit params");
     let precommitted =
-        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
-    let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey {
+        OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
+            .expect("independent profile");
+    let schedule = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     })
-    .expect("multi-group schedule");
+    .expect("multi-group schedule")
+    .into_schedule();
     let root_params = schedule.root.params.final_group.commitment.clone();
     assert_eq!(root_params.precommitted_groups.len(), 2);
     for precommitted in &root_params.precommitted_groups {

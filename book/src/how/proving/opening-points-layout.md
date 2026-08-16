@@ -44,7 +44,7 @@ physical unit is
 [z_hat | e_hat | t_hat]
 ```
 
-and one shared `r_hat` quotient tail follows every unit. The logical orders are
+The logical orders are
 
 ```text
 z_hat[position][commit_digit][fold_digit][A_coefficient]
@@ -67,30 +67,83 @@ t_hat[claim][block_idx][A_row][B_subcolumn][outer_digit][B_coefficient]
 Only live subcolumns are stored. When every role dimension equals A, the
 subcolumn axis has length one and the byte order is the uniform layout.
 
-`WitnessLayout` is the range authority shared by planning, proving, setup,
-relation evaluation, recursive handoff, and verification. Units are ordered by
-chunk and then authenticated relation group. Each unit records its exact
-`global_block_start`, `num_live_blocks`, and coefficient ranges. The one shared
-native quotient tail follows all units. Any successor alignment and Boolean
-padding is one zero suffix after the complete live prefix.
+[`WitnessLayout`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/witness.rs)
+is the range authority shared by planning, proving, setup, relation evaluation,
+recursive handoff, and verification. Units are ordered by chunk and then
+authenticated relation group. Each unit records its exact
+`global_block_start`, `num_live_blocks`, and coefficient ranges.
 
-## Chunks and tensor challenges
-
-Chunks own contiguous ranges of the exact `F` live blocks. Internal allocation
-balances blocks directly: each chunk receives `floor(F / num_chunks)` blocks,
-and the first `F mod num_chunks` chunks receive one additional block. The ranges
-stay exact and contain no padding.
-
-A flat fold challenge has `F` independent coefficients. A tensor challenge
-chooses a power-of-two low-factor width `Q` and derives
+The complete physical order depends on the realization:
 
 ```text
-H = ceil(F / Q)
-coefficient(b) = fold_high[b / Q] * fold_low[b % Q]
+raw:
+  [chunk-major, relation-group-ordered Z | E | T units]
+  [ordinary consistency, A, B, and D quotient rows]
+
+compressed:
+  [chunk-major, relation-group-ordered Z | E | T units]
+  [ordinary consistency, A, B, and D quotient rows]
+  [alignment to the common relation coefficient block]
+  for compression layer l = 1, 2:
+    [alignment to the largest native F_l or H_l ring dimension]
+    [F_l digit spans, one per group in relation order]
+    [the shared H_l digit span]
+    [F_l quotient rows, in the same group order]
+    [the H_l quotient row]
+  [suffix alignment to the common relation coefficient block]
 ```
 
-Only the first `F` products are live, so the last high-factor row may be
-partial. Each commitment group owns its own flat-or-tensor shape.
+Thus `r_hat` is logically one quotient family in relation-row order, but its
+compression rows are physically interleaved with the corresponding digit
+layer rather than stored in one contiguous quotient tail. Every alignment
+range is zero. Boolean padding, if needed by a later flat-table sumcheck, is a
+separate zero suffix after the complete live witness.
+
+In compressed mode, the negative-binary constraint is active exactly on one
+interval per layer, from that layer's first `F` digit through the end of its
+shared `H` digit. These intervals include the padded `F` and `H` digit spans,
+but exclude all ordinary and compression quotient rows and all alignment
+ranges. Raw mode has no compression layers or such support intervals.
+
+## Chunks and fold challenges
+
+Chunks own contiguous ranges of the exact `F` live blocks. For chunk `i` of
+`P`, the canonical range is
+
+```text
+[floor(i * F / P), floor((i + 1) * F / P))
+```
+
+The ranges stay exact and contain no padding. Their lengths differ by at most
+one block. If `P > F`, repeated boundaries give empty ranges while preserving
+all `P` machine slots. An empty slot has no E or T coefficients, but it keeps
+the full replicated Z segment and the honest prover fills that segment with
+zero. All supported chunk counts are powers of two. Therefore, every finer
+chunk partition refines every coarser partition.
+
+Each commitment group owns a fold challenge with `F` independent sparse
+coefficients, one for every live block.
+
+## B slices and chunks
+
+B slicing uses the same proportional block ranges as witness chunking. For
+slice `i` of `S`, the range is
+
+```text
+[floor(i * F / S), floor((i + 1) * F / S))
+```
+
+Unlike chunks, B slices must be nonempty, so `S <= F`. Both `S` and the witness
+chunk count are powers of two. One partition therefore refines the other. The
+intersection of a B slice and a witness chunk is either empty or exactly one
+range of the finer partition. The protocol selects `S` and the chunk count
+independently. It does not create a product partition.
+
+Slicing does not change the opening point, block indices, or fold challenge
+coordinates. It only changes how the existing block-ordered T input is sent
+through B. Relation B rows are ordered by slice and then by physical B row.
+Shorter slices keep the same physical column order. Each polynomial-major
+segment gets its own zero suffix before the next polynomial segment begins.
 
 ## Validation boundary
 

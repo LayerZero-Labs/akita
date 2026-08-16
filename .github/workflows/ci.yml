@@ -26,8 +26,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           components: rustfmt
-      - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -60,13 +58,13 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
-          components: clippy,rustfmt
-      - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
+          components: clippy
       - name: Clippy (transparent default features)
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
       - name: Clippy (no default features)
         run: cargo clippy --all --all-targets --release --no-default-features -- -D warnings
+      - name: Clippy (response model diagnostics)
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -81,10 +79,6 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-        with:
-          components: rustfmt
-      - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
       - name: Install cargo-machete
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # cargo-machete
         with:
@@ -128,15 +122,12 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           cache: false
-          components: rustfmt
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: ci-test-release
           add-job-id-key: false
           cache-on-failure: true
-      - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
       - name: Install cargo-nextest
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # carg-nextest
         with:
@@ -187,21 +178,32 @@ jobs:
           shared-key: ci-test-all-schedules-drift
           add-job-id-key: false
           cache-on-failure: true
-      - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh
-      - name: Drift guard (all-schedules)
+      # Every other job consumes the tracked tables. This is the sole CI
+      # regeneration owner and the merge gate for planner/table drift.
+      - name: Committed catalog guards
+        # Runs the whole file rather than named filters, so a new guard is
+        # covered the moment it is written. `every_grouped_prior_descriptor_has
+        # _a_generated_producer` is the only check that a grouped row's frozen
+        # prior descriptor is reachable through `profile_without_prior_groups`.
         run: |
-          cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_key_planner
+          cargo test --release -p akita-config --features all-schedules --test generated_tables
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh --check-catalog
+      - name: Committed schedule tables match the generator
+        run: git diff --exit-code -- crates/akita-schedules/src/generated
       - name: Recursive setup-prefix slots
         run: |
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
       - name: Dense multi-chunk PCS e2e
         run: |
-          cargo test --release -p akita-pcs --no-default-features --features parallel,schedules-fp128-d64-dense-multi-chunk chunked_multi_chunk_prove_verify
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-multi-chunk -- --exact fp128_dense_mc
+      - name: One-hot multi-chunk catalog wiring
+        run: |
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-onehot-multi-chunk -- --exact fp128_onehot_mc_catalog_resolves
       - name: Schedule catalog wiring
         run: |
           cargo test --release -p akita-config --no-default-features --test schedule_catalog_feature_off
-          cargo test --release -p akita-config --features schedules-fp128-d64-onehot,schedules-fp128-d64-dense --test schedule_catalog_miswire
+          cargo test --release -p akita-config --features schedules-fp128-onehot,schedules-fp128-dense --test schedule_catalog_miswire
 
   test-timing:
     name: Test timing
