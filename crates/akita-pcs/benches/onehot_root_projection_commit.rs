@@ -2,7 +2,7 @@
 
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp31, fp32, fp63, fp64};
 use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
@@ -204,7 +204,9 @@ where
 }
 
 fn bench_onehot_root_projection_commit(c: &mut Criterion) {
+    bench_case::<fp31::Field, fp31::OneHot, 256>(c, "fp31_adaptive");
     bench_case::<fp32::Field, fp32::OneHot, 256>(c, "fp32_adaptive");
+    bench_case::<fp63::Field, fp63::OneHot, 256>(c, "fp63_adaptive");
     bench_case::<fp64::Field, fp64::OneHot, 256>(c, "fp64_adaptive");
 }
 

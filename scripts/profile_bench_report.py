@@ -168,8 +168,12 @@ CASE_METADATA: dict[str, CaseMetadata] = {
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "multi-chunk W4R2"
     ),
     # Small-field modes replay their catalog-selected adaptive dimensions.
+    "dense_fp31": CaseMetadata("fp31", "dense", "dense", "adaptive"),
+    "onehot_fp31": CaseMetadata("fp31", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
     "dense_fp32": CaseMetadata("fp32", "dense", "dense", "adaptive"),
     "onehot_fp32": CaseMetadata("fp32", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
+    "dense_fp63": CaseMetadata("fp63", "dense", "dense", "adaptive"),
+    "onehot_fp63": CaseMetadata("fp63", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
     "dense_fp64": CaseMetadata("fp64", "dense", "dense", "adaptive"),
     "onehot_fp64": CaseMetadata("fp64", "onehot", ONEHOT_WORKLOAD_LABEL, "adaptive"),
 }
@@ -179,7 +183,7 @@ def case_metadata(mode: str) -> CaseMetadata:
     if mode in CASE_METADATA:
         return CASE_METADATA[mode]
     field_family = "fp128"
-    for family in ("fp32", "fp64", "fp128"):
+    for family in ("fp31", "fp32", "fp63", "fp64", "fp128"):
         if family in mode:
             field_family = family
             break
@@ -843,7 +847,7 @@ def extract_summary(
                 # Merge-base binaries before the flat-setup cutover report a
                 # D-chunked count. Recover the comparable flat count from the
                 # byte footprint instead of comparing incompatible units.
-                field_bytes = {"fp32": 4, "fp64": 8, "fp128": 16}[
+                field_bytes = {"fp31": 4, "fp32": 4, "fp63": 8, "fp64": 8, "fp128": 16}[
                     metadata.field_family
                 ]
                 if setup_vector_bytes % field_bytes != 0:
@@ -2207,8 +2211,8 @@ def field_family_bits(field_family: object) -> int | None:
 
 
 def field_family_sort_key(case: dict[str, object]) -> int:
-    """Order report rows by field width so fp32/fp64 lead and every fp128 case
-    groups together. Non-`fp<bits>` families sort last; ties keep input order
+    """Order report rows by field width so subword/full-word pairs lead and
+    every fp128 case groups together. Non-`fp<bits>` families sort last; ties keep input order
     because Python's sort is stable."""
     bits = field_family_bits(case.get("field_family", ""))
     return bits if bits is not None else 1 << 30

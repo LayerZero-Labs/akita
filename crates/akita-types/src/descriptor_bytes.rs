@@ -19,5 +19,7 @@ pub(crate) fn sis_modulus_profile_tag(family: SisModulusProfileId) -> u8 {
         SisModulusProfileId::Q32Offset99 => 0,
         SisModulusProfileId::Q64Offset59 => 1,
         SisModulusProfileId::Q128OffsetA7F7 => 2,
+        SisModulusProfileId::Q31Offset19 => 3,
+        SisModulusProfileId::Q63Offset259 => 4,
     }
 }

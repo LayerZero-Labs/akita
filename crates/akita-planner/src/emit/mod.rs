@@ -531,7 +531,9 @@ fn emit_decomposition(d: akita_types::DecompositionParams) -> String {
 
 fn emit_sis_modulus_profile(family: akita_types::SisModulusProfileId) -> &'static str {
     match family {
+        akita_types::SisModulusProfileId::Q31Offset19 => "SisModulusProfileId::Q31Offset19",
         akita_types::SisModulusProfileId::Q32Offset99 => "SisModulusProfileId::Q32Offset99",
+        akita_types::SisModulusProfileId::Q63Offset259 => "SisModulusProfileId::Q63Offset259",
         akita_types::SisModulusProfileId::Q64Offset59 => "SisModulusProfileId::Q64Offset59",
         akita_types::SisModulusProfileId::Q128OffsetA7F7 => "SisModulusProfileId::Q128OffsetA7F7",
     }

@@ -31,7 +31,9 @@ pub static COEFF_LINF_BUCKETS: LazyLock<Vec<u64>> = LazyLock::new(|| {
 
 fn estimator_profile(profile: akita_types::sis::SisModulusProfileId) -> AkitaModulusProfileId {
     match profile {
+        akita_types::sis::SisModulusProfileId::Q31Offset19 => AkitaModulusProfileId::Q31Offset19,
         akita_types::sis::SisModulusProfileId::Q32Offset99 => AkitaModulusProfileId::Q32Offset99,
+        akita_types::sis::SisModulusProfileId::Q63Offset259 => AkitaModulusProfileId::Q63Offset259,
         akita_types::sis::SisModulusProfileId::Q64Offset59 => AkitaModulusProfileId::Q64Offset59,
         akita_types::sis::SisModulusProfileId::Q128OffsetA7F7 => {
             AkitaModulusProfileId::Q128OffsetA7F7

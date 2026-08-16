@@ -57,8 +57,12 @@ pub const fn protocol_dispatch_tier_for_sis_profile(
 ) -> ProtocolRingDispatchTierId {
     match profile {
         SisModulusProfileId::Q128OffsetA7F7 => ProtocolRingDispatchTierId::Fp128,
-        SisModulusProfileId::Q64Offset59 => ProtocolRingDispatchTierId::Fp64,
-        SisModulusProfileId::Q32Offset99 => ProtocolRingDispatchTierId::Fp32,
+        SisModulusProfileId::Q63Offset259 | SisModulusProfileId::Q64Offset59 => {
+            ProtocolRingDispatchTierId::Fp64
+        }
+        SisModulusProfileId::Q31Offset19 | SisModulusProfileId::Q32Offset99 => {
+            ProtocolRingDispatchTierId::Fp32
+        }
     }
 }
 

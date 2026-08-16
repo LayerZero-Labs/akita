@@ -3,7 +3,10 @@
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_field::{CanonicalField, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_field::{
+    CanonicalField, Prime128OffsetA7F7, Prime31Offset19, Prime32Offset99, Prime63Offset259,
+    Prime64Offset59,
+};
 use akita_prover::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, balanced_tight_digit_fold_partitioned,
     DecomposeParams,
@@ -116,12 +119,28 @@ fn suffix_case<const D: usize>(c: &mut Criterion) {
 }
 
 fn bench_decompose_fold(c: &mut Criterion) {
+    dense_case::<Prime31Offset19, 64>(c, "fp31", 31, 8);
+    dense_case::<Prime31Offset19, 128>(c, "fp31", 31, 8);
+    dense_case::<Prime31Offset19, 256>(c, "fp31", 31, 8);
+    dense_case::<Prime31Offset19, 512>(c, "fp31", 31, 8);
+    dense_case::<Prime31Offset19, 1024>(c, "fp31", 31, 8);
+    dense_case::<Prime31Offset19, 2048>(c, "fp31", 31, 8);
+
     dense_case::<Prime32Offset99, 64>(c, "fp32", 32, 8);
     dense_case::<Prime32Offset99, 128>(c, "fp32", 32, 8);
     dense_case::<Prime32Offset99, 256>(c, "fp32", 32, 8);
     dense_case::<Prime32Offset99, 512>(c, "fp32", 32, 8);
     dense_case::<Prime32Offset99, 1024>(c, "fp32", 32, 8);
     dense_case::<Prime32Offset99, 2048>(c, "fp32", 32, 8);
+
+    dense_case::<Prime63Offset259, 64>(c, "fp63", 63, 6);
+    dense_case::<Prime63Offset259, 128>(c, "fp63", 63, 6);
+    dense_case::<Prime63Offset259, 256>(c, "fp63", 63, 6);
+    dense_case::<Prime63Offset259, 512>(c, "fp63", 63, 6);
+    dense_case::<Prime63Offset259, 1024>(c, "fp63", 63, 6);
+    dense_case::<Prime63Offset259, 2048>(c, "fp63", 63, 6);
+    dense_case::<Prime63Offset259, 128>(c, "fp63", 63, 10);
+    dense_case::<Prime63Offset259, 512>(c, "fp63", 63, 11);
 
     dense_case::<Prime64Offset59, 64>(c, "fp64", 64, 6);
     dense_case::<Prime64Offset59, 128>(c, "fp64", 64, 6);

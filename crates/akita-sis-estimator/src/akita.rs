@@ -4,14 +4,20 @@ use num_bigint::BigUint;
 
 use crate::{
     error::{EstimatorError, Result},
-    params::{akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameters},
+    params::{
+        akita_q128, akita_q31, akita_q32, akita_q63, akita_q64, Bound, SisNorm, SisParameters,
+    },
 };
 
 /// Supported Akita exact modulus profiles for golden and table generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AkitaModulusProfileId {
+    /// `2^31 - 19`.
+    Q31Offset19,
     /// `2^32 - 99`.
     Q32Offset99,
+    /// `2^63 - 259`.
+    Q63Offset259,
     /// `2^64 - 59`.
     Q64Offset59,
     /// `2^128 - (2^32 - 22537)`.
@@ -26,7 +32,9 @@ impl AkitaModulusProfileId {
     /// Returns an error when the label is unknown.
     pub fn parse(label: &str) -> Result<Self> {
         match label {
+            "q31" | "Q31Offset19" => Ok(Self::Q31Offset19),
             "q32" | "Q32Offset99" => Ok(Self::Q32Offset99),
+            "q63" | "Q63Offset259" => Ok(Self::Q63Offset259),
             "q64" | "Q64Offset59" => Ok(Self::Q64Offset59),
             "q128" | "Q128OffsetA7F7" => Ok(Self::Q128OffsetA7F7),
             _ => Err(EstimatorError::InvalidParameter {
@@ -40,7 +48,9 @@ impl AkitaModulusProfileId {
     #[must_use]
     pub fn modulus(self) -> BigUint {
         match self {
+            Self::Q31Offset19 => akita_q31(),
             Self::Q32Offset99 => akita_q32(),
+            Self::Q63Offset259 => akita_q63(),
             Self::Q64Offset59 => akita_q64(),
             Self::Q128OffsetA7F7 => akita_q128(),
         }
@@ -50,7 +60,9 @@ impl AkitaModulusProfileId {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Q31Offset19 => "q31",
             Self::Q32Offset99 => "q32",
+            Self::Q63Offset259 => "q63",
             Self::Q64Offset59 => "q64",
             Self::Q128OffsetA7F7 => "q128",
         }

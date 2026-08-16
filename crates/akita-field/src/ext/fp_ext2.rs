@@ -21,6 +21,8 @@ impl<F: FieldCore> FpExt2Config<F> for NegOneNr {
 pub struct TwoNr;
 
 impl<F: FieldCore + FromPrimitiveInt> FpExt2Config<F> for TwoNr {
+    const IS_TWO: bool = true;
+
     fn non_residue() -> F {
         F::from_u64(2)
     }
@@ -42,6 +44,12 @@ pub trait FpExt2Config<F: FieldCore> {
     /// When `true`, multiplication by the non-residue is a free negation and
     /// the Karatsuba/squaring routines can avoid a base-field multiply.
     const IS_NEG_ONE: bool = false;
+
+    /// Whether the non-residue is exactly 2.
+    ///
+    /// Sub-word `Fp64` packings use this to fuse extension multiplication
+    /// into four raw products and two reductions.
+    const IS_TWO: bool = false;
 
     /// Non-residue `NR` such that `u^2 = NR`.
     fn non_residue() -> F;
@@ -500,6 +508,19 @@ pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
     b: [Fp64<P>; 2],
 ) -> FpExt2Fp64ProductAccum {
+    if !C::IS_NEG_ONE && !C::IS_TWO {
+        // An arbitrary non-residue can make NR*p11 wider than the two-limb
+        // coefficient accumulator. Reduce this uncommon configuration first,
+        // then lift the canonical coordinates into the exact split-limb sum.
+        let product = FpExt2::<Fp64<P>, C>::new(a[0], a[1]) * FpExt2::new(b[0], b[1]);
+        return FpExt2Fp64ProductAccum([
+            product.coeffs[0].0 as u128,
+            0,
+            product.coeffs[1].0 as u128,
+            0,
+        ]);
+    }
+
     let p00: u128 = a[0].mul_wide(b[0]);
     let p11 = a[1].mul_wide(b[1]);
     let p01 = a[0].mul_wide(b[1]);
@@ -514,6 +535,7 @@ pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
         let hi_carry = (carry_add as u128) - (borrow as u128);
         fp64_accum_limbs(diff, hi_carry)
     } else {
+        debug_assert!(C::IS_TWO);
         // c0 = p00 + 2*p11, < 3*p^2 < 2^130 (carry in {0, 1, 2}).
         let (sum1, carry1) = p00.overflowing_add(p11);
         let (sum2, carry2) = sum1.overflowing_add(p11);

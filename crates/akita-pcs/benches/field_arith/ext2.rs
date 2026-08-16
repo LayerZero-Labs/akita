@@ -1,5 +1,7 @@
 use akita_field::packed::{HasPacking, PackedFpExt2};
-use akita_field::{FpExt2, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoNr};
+use akita_field::{
+    FpExt2, Prime31Offset19, Prime32Offset99, Prime63Offset259, Prime64Offset59, TwoNr,
+};
 use criterion::Criterion;
 
 use super::arithmetic::bench_arithmetic_case;
@@ -20,6 +22,11 @@ pub(crate) fn bench_ext2_matrix(c: &mut Criterion) {
     type PF64 = <F64 as HasPacking>::Packing;
     type F64FpExt2 = FpExt2<F64, TwoNr>;
     type PF64FpExt2 = PackedFpExt2<F64, TwoNr, PF64>;
+
+    type F63 = Prime63Offset259;
+    type PF63 = <F63 as HasPacking>::Packing;
+    type F63FpExt2 = FpExt2<F63, TwoNr>;
+    type PF63FpExt2 = PackedFpExt2<F63, TwoNr, PF63>;
 
     let params = ArithmeticBenchParams::from_env("AKITA_BENCH_EXT2_ARITH", 512, 128);
 
@@ -42,6 +49,13 @@ pub(crate) fn bench_ext2_matrix(c: &mut Criterion) {
         "ext2",
         "prime64_offset59_fp_ext2",
         0xe200_0064,
+        params,
+    );
+    bench_arithmetic_case::<F63FpExt2, PF63FpExt2>(
+        c,
+        "ext2",
+        "prime63_offset259_fp_ext2",
+        0xe200_0063,
         params,
     );
 }

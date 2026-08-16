@@ -3,7 +3,7 @@
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp31, fp32, fp63, fp64};
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
@@ -491,8 +491,14 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 #[test]
 fn small_field_dense_uncataloged_roots_fail_fast() {
     for result in [
+        fp31::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
+        )),
         fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
+        )),
+        fp63::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),
         )),
         fp64::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),

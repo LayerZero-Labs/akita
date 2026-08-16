@@ -10,15 +10,17 @@
 // Optimizer profile: local-minimum+proven-pruned-certification.
 
 mod q128;
+mod q31;
 mod q32;
+mod q63;
 mod q64;
 
 use super::{SisModulusProfileId, SisSecurityPolicyId};
 
 /// SHA3-256 identity of the generated table and provenance files.
 pub(super) const SIS_TABLE_DIGEST: [u8; 32] = [
-    0xf2, 0xe4, 0x77, 0x6d, 0x21, 0x19, 0xe7, 0x2b, 0xcb, 0x8c, 0x0b, 0x5d, 0x39, 0x0f, 0x93, 0xea,
-    0x50, 0xa7, 0x07, 0xf2, 0xb2, 0xd2, 0x1d, 0x95, 0x78, 0x67, 0xf9, 0x32, 0x2e, 0x20, 0xe1, 0x6d,
+    0xc3, 0xde, 0x13, 0x98, 0xc1, 0x8e, 0xb6, 0xb3, 0xe7, 0xf5, 0x51, 0xe6, 0x44, 0xaf, 0x84, 0x4c,
+    0x43, 0x0c, 0xe2, 0x11, 0x6a, 0xf8, 0xa7, 0x9f, 0xb9, 0x40, 0x74, 0xc5, 0x74, 0x25, 0x3d, 0x9f,
 ];
 
 /// Generated SIS max-width table for the named security policy.
@@ -36,7 +38,9 @@ pub(crate) fn sis_max_widths(
         return None;
     }
     match modulus_profile {
+        SisModulusProfileId::Q31Offset19 => q31::sis_max_widths(d, coeff_linf_bound),
         SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, coeff_linf_bound),
+        SisModulusProfileId::Q63Offset259 => q63::sis_max_widths(d, coeff_linf_bound),
         SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, coeff_linf_bound),
         SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, coeff_linf_bound),
     }

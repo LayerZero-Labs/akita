@@ -1,6 +1,6 @@
 use akita_field::{
     Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59, Prime56Offset27,
-    Prime64Offset59,
+    Prime63Offset259, Prime64Offset59,
 };
 use criterion::Criterion;
 
@@ -51,6 +51,13 @@ pub(crate) fn bench_base_field_matrix(c: &mut Criterion) {
         "base",
         PRIME56_OFFSET27,
         0xba5e_0056,
+        params,
+    );
+    bench_arithmetic_case::<Prime63Offset259, P63O259>(
+        c,
+        "base",
+        PRIME63_OFFSET259,
+        0xba5e_0063,
         params,
     );
     bench_arithmetic_case::<Prime64Offset59, P64O59>(

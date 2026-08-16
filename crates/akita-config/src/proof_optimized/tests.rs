@@ -2,6 +2,8 @@ use super::*;
 
 #[cfg(feature = "schedules-default")]
 use crate::proof_optimized::{fp128, fp32, fp64};
+#[cfg(feature = "all-schedules")]
+use crate::proof_optimized::{fp31, fp63};
 #[cfg(feature = "schedules-default")]
 use crate::CommitmentConfig;
 #[cfg(feature = "schedules-default")]
@@ -248,8 +250,12 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
         );
     }
 
+    assert_selected_l2::<fp31::Dense>();
+    assert_selected_l2::<fp31::OneHot>();
     assert_selected_l2::<fp32::Dense>();
     assert_selected_l2::<fp32::OneHot>();
+    assert_selected_l2::<fp63::Dense>();
+    assert_selected_l2::<fp63::OneHot>();
     assert_selected_l2::<fp64::Dense>();
     assert_selected_l2::<fp64::OneHot>();
     assert_selected_l2::<fp128::Dense>();

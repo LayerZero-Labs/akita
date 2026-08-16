@@ -18,12 +18,15 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
     let mut group = c.benchmark_group("field_arith/kernel/packed_macc");
     group.throughput(Throughput::Elements(n));
 
-    use akita_field::{Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime64Offset59};
+    use akita_field::{
+        Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime63Offset259, Prime64Offset59,
+    };
 
     sumcheck_bench::<Prime31Offset19, P31O19>(&mut group, PRIME31_OFFSET19, &mut rng, n);
     sumcheck_bench::<Mersenne31, PackedMersenne31>(&mut group, MERSENNE31, &mut rng, n);
     sumcheck_bench::<Prime32Offset99, P32O99>(&mut group, PRIME32_OFFSET99, &mut rng, n);
     sumcheck_bench::<Prime40Offset195, P40O195>(&mut group, PRIME40_OFFSET195, &mut rng, n);
+    sumcheck_bench::<Prime63Offset259, P63O259>(&mut group, PRIME63_OFFSET259, &mut rng, n);
     sumcheck_bench::<Prime64Offset59, P64O59>(&mut group, PRIME64_OFFSET59, &mut rng, n);
     sumcheck_bench::<F128, P128O275>(&mut group, PRIME128_OFFSET275, &mut rng, n);
 

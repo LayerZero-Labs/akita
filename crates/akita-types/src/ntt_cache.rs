@@ -277,10 +277,10 @@ pub fn centered_quotient_requires_i16_tail(
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
     let capacity = match profile {
-        SisModulusProfileId::Q32Offset99 => {
+        SisModulusProfileId::Q31Offset19 | SisModulusProfileId::Q32Offset99 => {
             CrtCapacity::from_prime_moduli(Q32_PRIMES.map(|prime| prime.p as u128))
         }
-        SisModulusProfileId::Q64Offset59 => {
+        SisModulusProfileId::Q63Offset259 | SisModulusProfileId::Q64Offset59 => {
             CrtCapacity::from_prime_moduli(Q64_PRIMES.map(|prime| prime.p as u128))
         }
         SisModulusProfileId::Q128OffsetA7F7 => {

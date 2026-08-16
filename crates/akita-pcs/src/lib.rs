@@ -56,9 +56,9 @@ pub use akita_field::{
     FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FromPrimitiveInt, HalvingField,
     Invertible, LiftBase, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
     Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99,
-    Prime40Offset195, Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
-    PseudoMersenneField, RandomSampling, SmoothFftField, PRIME_OFFSET_IMPLEMENTED_MAX_BITS,
-    PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    Prime40Offset195, Prime48Offset59, Prime56Offset27, Prime63Offset259, Prime64Offset59,
+    PrimeOffsetSpec, PseudoMersenneField, RandomSampling, SmoothFftField,
+    PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use akita_prover::{
     CommitOutput, ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,

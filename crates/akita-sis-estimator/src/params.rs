@@ -239,10 +239,22 @@ pub fn akita_q32() -> BigUint {
     BigUint::from(4_294_967_197u64)
 }
 
+/// Exact modulus for Akita q31 tables: `2^31 - 19`.
+#[must_use]
+pub fn akita_q31() -> BigUint {
+    BigUint::from(2_147_483_629u64)
+}
+
 /// Representative modulus for Akita q64 tables: `2^64 - 59`.
 #[must_use]
 pub fn akita_q64() -> BigUint {
     (BigUint::one() << 64usize) - BigUint::from(59u32)
+}
+
+/// Exact modulus for Akita q63 tables: `2^63 - 259`.
+#[must_use]
+pub fn akita_q63() -> BigUint {
+    BigUint::from(9_223_372_036_854_775_549u64)
 }
 
 /// Representative modulus for Akita q128 tables:

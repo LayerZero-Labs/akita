@@ -31,6 +31,10 @@ schedules-default = [
   "fp128-dense",
   "fp32-dense",
   "fp32-onehot",
+  "fp31-dense",
+  "fp31-onehot",
+  "fp63-dense",
+  "fp63-onehot",
   "fp64-dense",
   "fp64-onehot",
 ]
@@ -45,6 +49,10 @@ fp128-dense-multi-chunk = []
 
 fp32-dense = []
 fp32-onehot = []
+fp31-dense = []
+fp31-onehot = []
+fp63-dense = []
+fp63-onehot = []
 fp64-dense = []
 fp64-onehot = []
 

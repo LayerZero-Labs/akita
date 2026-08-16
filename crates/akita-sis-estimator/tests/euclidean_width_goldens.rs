@@ -59,7 +59,9 @@ fn euclidean_width_goldens_match_checked_in_l2_table() {
 
     for row in parse_rows() {
         let profile = match row.family {
+            AkitaModulusProfileId::Q31Offset19 => SisModulusProfileId::Q31Offset19,
             AkitaModulusProfileId::Q32Offset99 => SisModulusProfileId::Q32Offset99,
+            AkitaModulusProfileId::Q63Offset259 => SisModulusProfileId::Q63Offset259,
             AkitaModulusProfileId::Q64Offset59 => SisModulusProfileId::Q64Offset59,
             AkitaModulusProfileId::Q128OffsetA7F7 => SisModulusProfileId::Q128OffsetA7F7,
         };

@@ -9,7 +9,7 @@ claims, profile, and integrate the verifier into Jolt.
 This part covers:
 
 - [Quickstart and configuration](./quickstart.md) — smallest end-to-end example,
-  and how to choose among the `fp32` / `fp64` / `fp128` presets.
+  and how to choose among the `fp31` / `fp32` / `fp63` / `fp64` / `fp128` presets.
 - [The commitment API](./commitment-api.md) — `commit` / `prove` / `verify`,
   including setup, caching, and transcript handling.
 - [Verifier-only integration](./verifier-only.md) — the no-prover-backend path.

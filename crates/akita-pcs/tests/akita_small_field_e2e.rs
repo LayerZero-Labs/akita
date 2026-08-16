@@ -3,7 +3,7 @@
 //! # Group A — Small fields
 //!
 //! Tests the full cartesian product for configurations where `ExtField ≠ Field`
-//! (fp32, fp64).  Because the generic fp128 driver cannot be reused, each cell
+//! (fp31, fp32, fp63, fp64). Because the generic fp128 driver cannot be reused, each cell
 //! inlines its own Lagrange-weight opening computation via the `small_field_test!`
 //! macro.
 //!
@@ -22,16 +22,20 @@
 //! ╠══════════╬══════════════╦══════════════╬══════════════╦══════════════╣
 //! ║          ║ direct       ║ pre          ║ direct       ║ pre          ║
 //! ╠══════════╬══════════════╬══════════════╬══════════════╬══════════════╣
-//! ║  fp32    ║ ✓ nv=20      ║ ✓ pre=14     ║ ✓ nv=14,16   ║ ✓ pre=14     ║
+//! ║  fp31    ║ ✓ nv=20      ║ ✓ pre=20     ║ ✓ nv=14,16   ║ ✓ pre=14     ║
 //! ║          ║              ║   final=20   ║              ║   final=20   ║
+//! ║  fp32    ║ ✓ nv=20      ║ ✓ pre=20     ║ ✓ nv=14,16   ║ ✓ pre=14     ║
+//! ║          ║              ║   final=20   ║              ║   final=20   ║
+//! ║  fp63    ║ ✓ nv=20      ║ ✓ pre=16     ║ ign nv=28    ║ NA           ║
+//! ║          ║              ║   final=20   ║              ║              ║
 //! ║  fp64    ║ ✓ nv=20      ║ ✓ pre=16     ║ ign nv=28    ║ NA           ║
 //! ║          ║              ║   final=20   ║              ║              ║
 //! ╚══════════╩══════════════╩══════════════╩══════════════╩══════════════╝
 //! ```
 //!
-//! fp64 × OneHot: the family's smallest production size is nv=28, and it ships
-//! no combined precommit+final row. The direct cell is therefore ign and the
-//! pre cell NA.
+//! fp63/fp64 × OneHot: each family's smallest production size is nv=28, and it
+//! ships no combined precommit+final row. The direct cells are therefore ign
+//! and the pre cells NA.
 //!
 //! fp64 × Dense × pre uses a 16-variable pre-group rather than 14: at pre=14
 //! or 15 the prover and the planned schedule disagree on the fold-level-1
@@ -49,7 +53,7 @@
 mod common;
 mod small_field_drivers;
 
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp31, fp32, fp63, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::LiftBase;
 use akita_pcs::AkitaCommitmentScheme;
@@ -530,11 +534,20 @@ macro_rules! small_field_test {
 }
 
 // ============================================================================
-// GROUP A — Small fields (fp32, fp64)
+// GROUP A — Small fields (fp31, fp32, fp63, fp64)
 //
 // Cartesian product: field × {Dense, OneHot} × {direct, precommitted}
 // Opening computed via Lagrange weights over the extension field.
 // ============================================================================
+
+// ----------------------------------------------------------------------------
+// fp31  (Field = Prime31Offset19, ExtField = FpExt4)
+// ----------------------------------------------------------------------------
+
+small_field_test!(dense; fp31_dense; fp31::Dense; fp31::Field; fp31::ExtensionField; nvs=[20]);
+small_field_test!(dense_pre; fp31_dense_pre; fp31::Dense; fp31::Field; fp31::ExtensionField; pre_nv=20; final_nvs=[20]);
+small_field_test!(onehot; fp31_onehot; fp31::OneHot; fp31::Field; fp31::ExtensionField; nvs=[14, 16]; k=256);
+small_field_test!(onehot_pre; fp31_onehot_pre; fp31::OneHot; fp31::Field; fp31::ExtensionField; pre_nv=14; final_nvs=[20]; k=256);
 
 // ----------------------------------------------------------------------------
 // fp32  (Field = Prime32Offset99, ExtField = FpExt4)
@@ -552,6 +565,15 @@ small_field_test!(dense_pre; fp32_dense_pre; fp32::Dense; fp32::Field; fp32::Ext
 small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]; k=256);
 // fp32 × OneHot × precommitted       catalog: final=(20,1) <- pre=[(14,1)]
 small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; pre_nv=14; final_nvs=[20]; k=256);
+
+// ----------------------------------------------------------------------------
+// fp63  (Field = Prime63Offset259, ExtField = Ext2)
+// ----------------------------------------------------------------------------
+
+small_field_test!(dense; fp63_dense; fp63::Dense; fp63::Field; fp63::ExtensionField; nvs=[20]);
+small_field_test!(dense_pre; fp63_dense_pre; fp63::Dense; fp63::Field; fp63::ExtensionField; pre_nv=16; final_nvs=[20]);
+small_field_test!(#[ignore = "production-sized: fp63::OneHot starts at nv=28; run with --ignored --release"] onehot; fp63_onehot; fp63::OneHot; fp63::Field; fp63::ExtensionField; nvs=[28]; k=256);
+// fp63 × OneHot × precommitted is absent for the same catalog reason as fp64.
 
 // ----------------------------------------------------------------------------
 // fp64  (Field = Prime64Offset59, ExtField = Ext2)

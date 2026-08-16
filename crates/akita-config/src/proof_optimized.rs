@@ -5,7 +5,10 @@
 
 use super::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_field::{
+    Ext2, FpExt4, Prime128OffsetA7F7, Prime31Offset19, Prime32Offset99, Prime63Offset259,
+    Prime64Offset59,
+};
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
@@ -36,8 +39,10 @@ const fn proof_optimized_inner_basis_range(
     profile: akita_types::SisModulusProfileId,
 ) -> (u32, u32) {
     let max = match profile {
-        akita_types::SisModulusProfileId::Q32Offset99 => 10,
-        akita_types::SisModulusProfileId::Q64Offset59
+        akita_types::SisModulusProfileId::Q31Offset19
+        | akita_types::SisModulusProfileId::Q32Offset99 => 10,
+        akita_types::SisModulusProfileId::Q63Offset259
+        | akita_types::SisModulusProfileId::Q64Offset59
         | akita_types::SisModulusProfileId::Q128OffsetA7F7 => PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX,
     };
     (PROOF_OPTIMIZED_LOG_BASIS_MIN, max)
@@ -395,7 +400,7 @@ fn ensure_required_setup_field_elements(
 /// Generate a [`CommitmentConfig`] impl for one proof-optimized preset.
 ///
 /// One macro covers every proof-optimized preset (fp128 and the small-field
-/// fp32/fp64 families): the fp128 presets are the special case where the
+/// fp31/fp32/fp63/fp64 families): the fp128 presets are the special case where the
 /// extension field is the base field, `field_bits == 128`, and the SIS
 /// family is `Q128`. All proof-optimized presets share `log_basis = 3`, the
 /// shared ring-challenge policy, the shared setup-matrix sizer, and the
@@ -621,5 +626,7 @@ mod tests;
 // ---------------------------------------------------------------------------
 
 pub mod fp128;
+pub mod fp31;
 pub mod fp32;
+pub mod fp63;
 pub mod fp64;

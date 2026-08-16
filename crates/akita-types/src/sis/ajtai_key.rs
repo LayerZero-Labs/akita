@@ -111,8 +111,12 @@ impl SisSecurityPolicyId {
 /// Exact SIS modulus profile used to select generated security floors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SisModulusProfileId {
+    /// Exact q = 2^31 - 19.
+    Q31Offset19,
     /// Representative q = 2^32 - 99.
     Q32Offset99,
+    /// Exact q = 2^63 - 259.
+    Q63Offset259,
     /// Representative q = 2^64 - 59.
     Q64Offset59,
     /// Representative q = 2^128 - (2^32 - 22537).
@@ -124,7 +128,9 @@ impl SisModulusProfileId {
     /// Exact modulus represented by this profile.
     pub const fn modulus(self) -> u128 {
         match self {
+            Self::Q31Offset19 => 2_147_483_629,
             Self::Q32Offset99 => 4_294_967_197,
+            Self::Q63Offset259 => 9_223_372_036_854_775_549,
             Self::Q64Offset59 => 18_446_744_073_709_551_557,
             Self::Q128OffsetA7F7 => 340_282_366_920_938_463_463_374_607_427_473_266_697,
         }
@@ -141,6 +147,8 @@ impl SisModulusProfileId {
             Self::Q32Offset99 => 1,
             Self::Q64Offset59 => 2,
             Self::Q128OffsetA7F7 => 3,
+            Self::Q31Offset19 => 4,
+            Self::Q63Offset259 => 5,
         }
     }
 
@@ -150,6 +158,8 @@ impl SisModulusProfileId {
             1 => Some(Self::Q32Offset99),
             2 => Some(Self::Q64Offset59),
             3 => Some(Self::Q128OffsetA7F7),
+            4 => Some(Self::Q31Offset19),
+            5 => Some(Self::Q63Offset259),
             _ => None,
         }
     }
@@ -157,7 +167,9 @@ impl SisModulusProfileId {
     /// Stable descriptor name.
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Q31Offset19 => "Q31Offset19",
             Self::Q32Offset99 => "Q32Offset99",
+            Self::Q63Offset259 => "Q63Offset259",
             Self::Q64Offset59 => "Q64Offset59",
             Self::Q128OffsetA7F7 => "Q128OffsetA7F7",
         }

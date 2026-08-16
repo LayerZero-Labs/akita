@@ -137,6 +137,10 @@ pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<Pa
 
     let mut rustfmt = Command::new("rustfmt");
     rustfmt.args(["--edition", "2021"]);
+    // The batch may introduce both a module declaration and its source file.
+    // Neither destination exists until the atomic publish below, so rustfmt
+    // must not traverse children while formatting the staged module index.
+    rustfmt.args(["--config", "skip_children=true"]);
     rustfmt.args(staged.iter().map(|output| &output.staged));
     let status = match rustfmt.status() {
         Ok(status) => status,
@@ -384,6 +388,37 @@ mod tests {
                     .to_string_lossy()
                     .contains(".akita-")),
             "successful publishing must clean transaction files"
+        );
+        fs::remove_dir_all(dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn batch_can_introduce_a_module_and_its_source_together() {
+        let dir = test_dir("new-module");
+        fs::create_dir_all(&dir).expect("create test directory");
+        let family = dir.join("new_family.rs");
+        let wiring = dir.join("mod.rs");
+        fs::write(&wiring, "// old module index\n").expect("write old module index");
+
+        publish_generated_outputs(vec![
+            GeneratedOutput {
+                destination: family.clone(),
+                body: "pub const VALUE:usize=1;\n".to_string(),
+            },
+            GeneratedOutput {
+                destination: wiring.clone(),
+                body: "pub mod new_family;\n".to_string(),
+            },
+        ])
+        .expect("publish new module batch");
+
+        assert_eq!(
+            fs::read_to_string(&family).expect("read new family"),
+            "pub const VALUE: usize = 1;\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&wiring).expect("read module index"),
+            "pub mod new_family;\n"
         );
         fs::remove_dir_all(dir).expect("remove test directory");
     }
