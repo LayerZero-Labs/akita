@@ -309,7 +309,7 @@ the ring element $Y$ and the witness polynomials $\hat e_{b,h}(X)$. Hachi
 sends $Y$ to the verifier, which checks Equation (13) directly. The prover
 then proves Equation (15) using the same ring-relation machinery as the other
 constraints that bind the previous witness to the next witness, as described
-in Section 2.5.2.
+in [Semantic relations in an Akita fold](./akita-fold.md).
 
 ### Akita: compose the two checks
 
@@ -542,7 +542,21 @@ directly from the committed digit witness.
 
 ## Base-field polynomial at an extension-field point
 
-This case is implemented by `SubringCoefficientPacking`. It keeps one
-coefficient axis in the challenge subring, contracts the other axes over the
-extension field, and binds the original scalar opening directly in Stage 2.
-See [Root fold and ring switch](./root-fold-ring-switch.md).
+The scheduled opening method determines this case.
+
+With `EvaluationTrace`, Akita does not treat a base-field multilinear
+polynomial as an ordinary extension-valued opening of the same arity. It first
+runs the [extension-opening reduction](./extension-opening-reduction.md). The
+low $\log_2[\mathbb E:\mathbb F]$ variables are packed into extension-field
+coefficients, and one degree-two tensor sumcheck reduces the original claim to
+a claim on that packed polynomial with fewer variables. The reduced claim then
+enters the evaluation trace. The trace represents its extension weights by
+canonical subfield coordinates, and the verifier rejects invalid shapes,
+coordinate counts, and noncanonical images before using them. Configurations
+with $[\mathbb E:\mathbb F]=1$ skip this reduction.
+
+With `SubringCoefficientPacking`, Akita keeps one coefficient axis in the
+challenge subring, contracts the other axes over the extension field, and
+binds the original scalar opening directly in Stage 2 without EOR. See [Fold
+path and field geometry](./fold-path.md) and [Root fold and ring
+switch](./root-fold-ring-switch.md).

@@ -11,13 +11,38 @@ witness:
    relation and binds both Stage 1's virtual range-image value and the opening
    claim carried into the fold to the committed witness; the resulting witness
    evaluation becomes the next opening claim.
-3. **Stage 3 — setup product sumcheck.** Optionally carries a recursive setup
-   contribution together with the next opening.
+3. **Stage 3 — setup product sumcheck.** When recursive setup contribution is
+   selected, proves the deferred A/B/D setup contribution and leaves one
+   setup-prefix opening claim for the next fold.
 
 This chapter explains the Stage 1 range protocol and the Stage 2 fused relation
 protocol in detail. Stage 3 is summarized at the end. The terminal fold runs
 none of these sumchecks. When it uses an L2 route, the verifier computes the
 clear response norm directly. See [The proving protocol](./proving.md).
+
+## Contents
+
+- [Stage 1: digit range check](#stage-1-digit-range-check)
+  - [What it certifies](#what-it-certifies)
+  - [The simplest sound design](#the-simplest-sound-design)
+  - [Reduce the degree with the range image](#reduce-the-degree-with-the-range-image)
+- [The complete Stage-1 protocol](#the-complete-stage-1-protocol)
+  - [Quartic leaves and product substages](#quartic-leaves-and-product-substages)
+  - [One product substage](#one-product-substage)
+  - [The final leaf](#the-final-leaf)
+  - [Optional physical norm term](#optional-physical-norm-term)
+  - [Domain and challenge order](#domain-and-challenge-order)
+  - [The verifier](#the-verifier)
+- [Stage 2: fused relation sumcheck](#stage-2-fused-relation-sumcheck)
+  - [Start with the ordinary ring relation](#start-with-the-ordinary-ring-relation)
+  - [Batch the matrix rows](#batch-the-matrix-rows)
+  - [Expand the ring elements into one flat witness](#expand-the-ring-elements-into-one-flat-witness)
+  - [Raw and compressed relation terms](#raw-and-compressed-relation-terms)
+  - [Add the range-image binding](#add-the-range-image-binding)
+  - [Add the opening claim consistency](#add-the-opening-claim-consistency)
+  - [The fused Stage-2 claim](#the-fused-stage-2-claim)
+  - [Sumcheck rounds and the final point](#sumcheck-rounds-and-the-final-point)
+- [Stage 3: recursive setup contribution](#stage-3-recursive-setup-contribution)
 
 ## Stage 1: digit range check
 
@@ -259,8 +284,8 @@ At the root there is one parent with weight $1$ and claim $0$. Each product
 substage expands the current parents into their children; the fresh powers of
 $\gamma$ compress those child claims back into one claim for the next
 substage. The prover and verifier follow the same transcript order
-([`DigitRangeProver::prove`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs),
-[`AkitaStage1Verifier::verify`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
+([`digit_range/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs),
+[`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 ### The final leaf
 
@@ -317,7 +342,7 @@ in general. The equality $S(x)=w(x)(w(x)+1)$ holds at Boolean vertices, but
 multilinear extension does not commute with the quadratic map away from those
 vertices. The proof therefore carries the independent
 `range_image_evaluation` field
-([`AkitaStage1Proof`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/levels.rs)).
+([`levels.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/levels.rs)).
 
 ### Optional physical norm term
 
@@ -357,14 +382,14 @@ Ring switching supplies $\tau_0$ in column-then-ring order, while the flat
 table binds variables in increasing physical-address-bit order. The protocol
 reorders the point so that ring-slot coordinates come first, followed by
 column coordinates
-([`DigitRangeEqualityPoint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs)).
+([`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs)).
 
 ### The verifier
 
 The verifier replays the same product substages, derives the same interstage
 challenges and weights, checks each child-product claim, and closes the final
 leaf at `range_image_evaluation`
-([`AkitaStage1Verifier::verify`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
+([`stage1.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 Passing Stage 1 proves that the range-tree claims are internally consistent and
 reduces the final leaf to `range_image_evaluation`. It does **not** by itself
@@ -379,9 +404,12 @@ Stage 2 always proves three statements about the same committed digit witness $w
 2. Stage 1's virtual range-image value is correctly derived from $w(w+1)$; and
 3. the opening claim for this fold is consistent with $w$.
 
-The protocol fuses all three statements into one sumcheck. We first isolate
-the fold-relation term to make its matrix-row dimension explicit, then
-incorporate the range-image and opening-consistency terms.
+The protocol fuses all three statements into one sumcheck. The range-image and
+opening-consistency terms are shared by both payload modes. Raw mode uses only
+the ordinary fold-relation term. Compressed mode adds the compact $\mathbf
+F/\mathbf H$ relation weights and a support-restricted $\{-1,0\}$ constraint
+for the compression digits. We first isolate the ordinary relation term, then
+add the shared and mode-specific terms.
 
 When Stage 1 also proves a physical norm, Stage 2 adds the Z virtualization
 relation derived from the schedule. It proves that each final physical response
@@ -391,10 +419,14 @@ challenge after it has absorbed all Stage 1 claims, including the ordinary
 range image. This order prevents one false virtual relation from canceling
 another.
 
-### Start with the ring relation
+### Start with the ordinary ring relation
+
+The physical row families and the quotient extension are derived in [Raw and
+compressed realizations of an Akita fold](./akita-fold-realizations.md). Here
+we start from their extended relation and explain how Stage 2 proves it.
 
 Let $w_j(X)$ be the $j$-th ring element encoded by the digit witness, and let
-row $i$ of the extended fold relation be
+row $i$ of the ordinary extended fold relation be
 
 $$
 \sum_j M_{i,j}(X)w_j(X)=h_i(X).
@@ -419,8 +451,13 @@ relation. It is not a Boolean sumcheck point.
 
 ### Batch the matrix rows
 
-Suppose the relation has rows indexed by $i$. The protocol samples a Boolean
-MLE point $\tau_1$ of sufficient width for that row domain and defines
+Suppose the ordinary relation has rows indexed by $i$. Its method-independent
+rows are $\mathbf A$, $\mathbf B$, and $\mathbf D$, with their quotient terms.
+For `EvaluationTrace`, it also includes the legacy fold-consistency row and its
+quotient. `SubringCoefficientPacking` omits that legacy row and carries its
+packed consistency constraints once in the method-dependent structured terms
+defined below. The protocol samples a Boolean MLE point $\tau_1$ of sufficient
+width for the complete physical row domain and defines
 
 $$
 \beta_i=\operatorname{eq}(\tau_1,i).
@@ -429,11 +466,11 @@ $$
 It takes the random linear combination of Equation (4) over all rows. Define
 
 $$
-m_j
+m_j^{\mathrm{ord}}
 =
 \sum_i\beta_iM_{i,j}(\alpha)
 \qquad\text{and}\qquad
-h_{\tau}
+h_{\tau}^{\mathrm{raw}}
 =
 \sum_i\beta_i h_i(\alpha).
 $$
@@ -441,7 +478,7 @@ $$
 The batched relation is the single scalar claim
 
 $$
-\sum_j m_jw_j(\alpha)=h_{\tau}.
+\sum_j m_j^{\mathrm{ord}}w_j(\alpha)=h_{\tau}^{\mathrm{raw}}.
 \tag{5}
 $$
 
@@ -472,9 +509,9 @@ $$
 Substituting this into Equation (5) yields
 
 $$
-h_{\tau}
+h_{\tau}^{\mathrm{raw}}
 =
-\sum_{j,k}w_{j,k}\,\alpha^k m_j.
+\sum_{j,k}w_{j,k}\,\alpha^k m_j^{\mathrm{ord}}.
 \tag{6}
 $$
 
@@ -484,21 +521,21 @@ coefficient $k$ and the remaining bits select the witness lane $j$. Define
 $$
 A(k)=\alpha^k,
 \qquad
-L(j)=m_j.
+L_{\mathrm{ord}}(j)=m_j^{\mathrm{ord}}.
 $$
 
 The native matrix relation weight factors as
 
 $$
-R(k,j)=A(k)L(j),
+R_{\mathrm{ord}}(k,j)=A(k)L_{\mathrm{ord}}(j),
 $$
 
 so Equation (6) becomes
 
 $$
-h_{\tau}
+h_{\tau}^{\mathrm{raw}}
 =
-\sum_{x\in\{0,1\}^n}w(x)R(x).
+\sum_{x\in\{0,1\}^n}w(x)R_{\mathrm{ord}}(x).
 \tag{7}
 $$
 
@@ -510,10 +547,114 @@ parts of the native relation. It chooses the largest power-of-two coefficient
 block common to every role and to the outgoing witness. The low address still
 selects a coefficient inside that common block. Any remaining high power of
 $\alpha$, together with the matrix entry and its $\beta_i$ row weight, is
-absorbed into the lane weight $L$. Thus the exact factorization $R=A\cdot L$
-continues to hold for the native A, B, D, F, and H rows without adding another
-sumcheck dimension. Coefficient packing adds ordered structured linear terms
-that are not forced into this native factorization.
+absorbed into the lane weight $L_{\mathrm{ord}}$. Thus the exact factorization
+$R_{\mathrm{ord}}=A\cdot L_{\mathrm{ord}}$ continues to hold without adding
+another sumcheck dimension. Coefficient packing adds ordered structured linear
+terms that are not forced into this native factorization.
+
+### Raw and compressed relation terms
+
+Raw mode has no payload-compression term $C_{\mathrm{comp}}$. Equation (7) is
+its ordinary relation component, and its $\mathbf B$ and $\mathbf D$
+right-hand sides contain the transmitted semantic commitments. The scheduled
+opening method still contributes $C_{\mathrm{method}}$ below.
+
+Compressed mode retains the method-selected ordinary relation and its
+quotients, but sets the $\mathbf B$ and $\mathbf D$ right-hand sides to zero.
+Their rows now also contain the source-recomposition terms, and the physical
+row domain additionally contains the $\mathbf F_1$, $\mathbf H_1$,
+$\mathbf F_2$, and $\mathbf H_2$ rows. Thus $R_{\mathrm{ord}}$ remains one
+component of the compressed relation, but it is not a complete relation
+identity by itself.
+
+To derive the missing component directly, lift each compressed physical row in
+its native ring and evaluate it at $\alpha$. Define
+$C_{\mathrm{comp}}(x)$ to be the coefficient multiplying the flat witness
+entry $w(x)$ in the $\tau_1$-weighted sum of all linear terms not already in
+$R_{\mathrm{ord}}$.
+
+The intuition is simpler than the expanded formula. Its first line is only the
+increment to the existing $\mathbf B$ rows: $\mathbf B\hat{\mathbf t}$ and
+their ordinary quotient terms are already in $R_{\mathrm{ord}}$, so
+$C_{\mathrm{comp}}$ adds the missing negative recomposition term. The second
+and third lines are the two newly added physical rows: $\mathbf F_1$ links the
+two compression layers, while $\mathbf F_2$ binds the last layer to the
+terminal payload $p_F$. Their quotient terms merely lift those native-ring
+congruences to exact identities. Suppressing component indices, the resulting
+contribution of one $\mathbf F$ chain is
+
+$$
+\begin{aligned}
+{}&-\sum_{i\in I_B}\beta_i
+  \operatorname{Rec}_{d_B\leftarrow d_1}
+  (\boldsymbol\xi_{F,1})_i(\alpha)\\
+&+\beta_{F,1}\Bigl(
+  \mathbf F_1\boldsymbol\xi_{F,1}
+  -\operatorname{Rec}_{d_1\leftarrow d_2}(\boldsymbol\xi_{F,2})
+  -(X^{d_1}+1)q_{F,1}\Bigr)(\alpha)\\
+&+\beta_{F,2}\Bigl(
+  \mathbf F_2\boldsymbol\xi_{F,2}
+  -(X^{d_2}+1)q_{F,2}\Bigr)(\alpha).
+\end{aligned}
+\tag{7a}
+$$
+
+Here $I_B$ is the set of ordinary $\mathbf B$ rows, $\beta_{F,\ell}$ is the
+row weight of $\mathbf F_\ell$, and $q_{F,\ell}$ is the quotient ring element
+that lifts that compression row. The $\mathbf H$ chain contributes the
+analogous terms with $B,F$ replaced by $D,H$. Summing these coefficient
+weights over every $\mathbf F$ chain and the shared $\mathbf H$ chain gives
+the single compact Boolean table $C_{\mathrm{comp}}$. Define the complete
+compressed right-hand side by
+
+$$
+h_{\tau}^{\mathrm{comp}}
+=
+\sum_i\beta_i h_i(\alpha).
+$$
+
+The nonzero new targets in $h_{\tau}^{\mathrm{comp}}$ are carried by the
+terminal $p_F$ and $p_H$ rows. Adding the directly collected compression
+weights to $R_{\mathrm{ord}}$ gives the full compressed relation identity
+
+$$
+h_{\tau}^{\mathrm{comp}}
+=
+\sum_x w(x)
+\bigl(R_{\mathrm{ord}}(x)+C_{\mathrm{comp}}(x)\bigr).
+\tag{7b}
+$$
+
+This follows the same lift-evaluate-batch-flatten procedure as the raw
+relation, but the resulting compact table does not need to share the
+$A\cdot L_{\mathrm{ord}}$ factorization because its rows use different native
+dimensions.
+
+The compression digit spans must also use the stricter alphabet $\{-1,0\}$.
+Let $I_{\mathrm{comp}}$ be exactly the union of those $\mathbf F/\mathbf H$
+digit intervals and define the Boolean table
+
+$$
+B_{\mathrm{comp}}(r_1,x)
+=
+\mathbf 1_{I_{\mathrm{comp}}}(x)\operatorname{eq}(r_1,x).
+$$
+
+With a separate batching challenge $\rho$, compressed mode adds the zero claim
+
+$$
+0
+=
+\sum_x
+\rho B_{\mathrm{comp}}(r_1,x)
+w(x)\bigl(w(x)+1\bigr).
+\tag{7c}
+$$
+
+This restriction does not apply to compression quotient digits or alignment
+padding. At a non-Boolean sumcheck point, the verifier evaluates the MLE of the
+single restricted table $B_{\mathrm{comp}}$; it does not multiply separately
+extended support and equality tables.
 
 ### Add the range-image binding
 
@@ -580,45 +721,77 @@ without becoming a physical matrix row.
 The implementation does not materialize a dense
 $T_{\mathrm{open}}$ table. Define the method-dependent weight
 $C_{\mathrm{method}}(x)$ as follows. For `EvaluationTrace`, it is the compact
-trace opening weight $\beta_{\mathrm{open}}T_{\mathrm{open}}(x)$. For
-`SubringCoefficientPacking`, it is the ordered sum of the packed E and Q
-relation events, the packing-Z term, and the direct-opening term. Stage 2 folds
-each structured linear term under the same challenges and sums their final
-values. This preserves the native relation fast path without building one
-dense weight table.
+trace opening weight $\beta_{\mathrm{open}}T_{\mathrm{open}}(x)$; its legacy
+fold-consistency row is already in $R_{\mathrm{ord}}$. For
+`SubringCoefficientPacking`, $R_{\mathrm{ord}}$ omits that legacy row and
+$C_{\mathrm{method}}$ is the ordered sum of the zero-target packed E/Q relation
+events, the packing-Z term, and the direct-opening term. Each constraint is
+therefore included exactly once. Stage 2 folds each structured linear term
+under the same challenges and sums their final values. This preserves the
+native relation fast path without building one dense weight table.
 
 ### The fused Stage-2 claim
 
-Combining Equations (7), (8), and (9), the input claim is
+In raw mode, combining Equations (7), (8), and (9) gives the input claim
 
 $$
-C_0
+C_0^{\mathrm{raw}}
 =
-\gamma s_1+h_{\tau}+\beta_{\mathrm{open}}v_{\mathrm{open}}.
+\gamma s_1+h_{\tau}^{\mathrm{raw}}
++\beta_{\mathrm{open}}v_{\mathrm{open}}.
 $$
 
 Stage 2 proves
 
 $$
 \begin{aligned}
-C_0
+C_0^{\mathrm{raw}}
 =\sum_x \bigl[{}
 &\gamma\operatorname{eq}(r_1,x)
   w(x)\bigl(w(x)+1\bigr)\\
-&+w(x)A(k(x))L(j(x))\\
+&+w(x)R_{\mathrm{ord}}(x)\\
 &+w(x)C_{\mathrm{method}}(x)
 \bigr].
 \end{aligned}
 \tag{10}
 $$
 
-All terms use the same flat witness address $x$. This is why they can be
-proved by one sumcheck.
+In compressed mode, the stricter binary claim in Equation (7c) has target zero,
+while Equation (7b) supplies the complete compressed relation claim. Therefore
+
+$$
+C_0^{\mathrm{comp}}
+=
+\gamma s_1
++h_{\tau}^{\mathrm{comp}}
++\beta_{\mathrm{open}}v_{\mathrm{open}},
+$$
+
+and the sumcheck polynomial gains two terms:
+
+$$
+\begin{aligned}
+C_0^{\mathrm{comp}}
+=\sum_x \bigl[{}
+&\gamma\operatorname{eq}(r_1,x)
+  w(x)\bigl(w(x)+1\bigr)\\
+&+w(x)R_{\mathrm{ord}}(x)\\
+&+w(x)C_{\mathrm{comp}}(x)\\
+&+\rho B_{\mathrm{comp}}(r_1,x)
+  w(x)\bigl(w(x)+1\bigr)\\
+&+w(x)C_{\mathrm{method}}(x)
+\bigr].
+\end{aligned}
+\tag{10c}
+$$
+
+Every term uses the same flat witness address $x$. This is why each payload
+mode still needs only one Stage-2 sumcheck.
 
 ### Sumcheck rounds and the final point
 
-Let $P(X)$ denote the multilinear-polynomial expression inside the brackets in
-Equation (10). In round $t$, after challenges
+Let $P(X)$ denote the mode-selected polynomial expression inside the brackets
+in Equation (10) or Equation (10c). In round $t$, after challenges
 $r_{2,0},\ldots,r_{2,t-1}$ have been sampled, the prover sends
 
 $$
@@ -652,25 +825,41 @@ $$
 r_2=(r_{\mathrm{coeff}},r_{\mathrm{lane}}).
 $$
 
-The verifier closes the sumcheck against
+In raw mode, the verifier closes the sumcheck against
 
 $$
 \begin{aligned}
-C_n={}
+C_n^{\mathrm{raw}}={}
 &\gamma\operatorname{eq}(r_1,r_2)
   \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
-&+\widetilde w(r_2)
-  \widetilde A(r_{\mathrm{coeff}})
-  \widetilde L(r_{\mathrm{lane}})\\
+&+\widetilde w(r_2)\widetilde R_{\mathrm{ord}}(r_2)\\
 &+\widetilde w(r_2)\widetilde C_{\mathrm{method}}(r_2).
 \end{aligned}
 \tag{11}
 $$
 
-The value $\widetilde w(r_2)$ becomes the next-witness opening claim. The
-range term has degree three in each sumcheck variable: one degree from the
-equality polynomial and two from $w(w+1)$. The relation and opening terms each
-have degree two. Therefore Stage 2 sends degree-three round polynomials.
+In compressed mode, the ordinary factors are evaluated for the compressed
+layout, and the verifier closes the sumcheck against
+
+$$
+\begin{aligned}
+C_n^{\mathrm{comp}}={}
+&\gamma\operatorname{eq}(r_1,r_2)
+  \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
+&+\widetilde w(r_2)\widetilde R_{\mathrm{ord}}(r_2)\\
+&+\widetilde w(r_2)\widetilde C_{\mathrm{comp}}(r_2)\\
+&+\rho\widetilde B_{\mathrm{comp}}(r_1,r_2)
+  \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
+&+\widetilde w(r_2)\widetilde C_{\mathrm{method}}(r_2).
+\end{aligned}
+\tag{11c}
+$$
+
+The value $\widetilde w(r_2)$ becomes the next-witness opening claim in both
+modes. The shared range term and the restricted compression-binary term have
+degree at most three in each sumcheck variable. The ordinary, compression, and
+method-dependent structured terms have degree at most two. Therefore Stage 2
+keeps the same degree-three bound in both modes.
 
 The random objects have separate jobs:
 
@@ -679,35 +868,76 @@ The random objects have separate jobs:
 | $\alpha$ | one field element | evaluates the ring-polynomial variable $X$ |
 | $\tau_1$ | a point over matrix rows | batches all relation rows into one virtual row |
 | $\gamma$ | one field element | batches range-image consistency with the linear claims |
+| $\rho$ | one field element in compressed mode | batches the zero-valued $\{-1,0\}$ constraint |
 | $r_1$ | Stage-1 output point over flat witness addresses | identifies the carried range-image evaluation |
 | $r_2$ | Stage-2 output point over flat witness addresses | reduces the complete fused claim to one witness evaluation |
 
 In particular, $\alpha$, $\tau_1$, and $r_2$ are not coordinates of one larger
 point. They contract three different domains.
 
-### Implementation map
-
-The implementation builds the row weights with
-`eq_tau1.eval_at(row)`, factors the resulting flat relation table into the
-common alpha and lane factors, and evaluates that factorization at $r_2$
-([`factor_common_alpha`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
-[`into_common_alpha_factor_and_relation_lane_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
-[`prepare_relation_matrix_evaluator`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/ring_switch.rs)).
-Those relation weights stop at the physical fold-consistency, $A$, $B$, and
-$D$ rows. The trace index is the next reserved padded-domain index, but no
-matrix row is created for it. The prover builds its weight function separately
-and adds it directly to the relation weight during the shared witness scan
-([`accumulate_fused_relation_trace`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)).
-The fused identity is implemented by
-[`RelationRangeImageProver`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs).
-
 ## Stage 3: recursive setup contribution
 
-When the level uses recursive setup contribution, Stage 3 batches the public
-setup-product claim with Stage 2's next-witness opening. One sumcheck proves
-both claims and returns their evaluations at the resulting projected points.
-For setup-prefix offloading, the carried setup evaluation is over the actual
-full power-of-two prefix `S[0..n_prefix]`; the inactive tail is suppressed by
-the compact setup-index weight, not by zero-filled commitment contents.
-Under direct setup contribution, Stage 3 is absent
-([`prove_stage3`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold/mod.rs)).
+Stage 3 is controlled by the setup-contribution mode, not by the raw or
+compressed payload equation above. Payload mode determines whether Stage 2 has
+the extra $C_{\mathrm{comp}}$ and $B_{\mathrm{comp}}$ terms. Setup mode
+determines whether the verifier scans the public A/B/D setup directly or
+defers that contribution to Stage 3. Current schedules permit recursive setup
+offloading only inside the compressed prefix, but the Stage-3 algebra remains
+an A/B/D setup product and does not include the $\mathbf F/\mathbf H$ maps.
+
+After Stage 2 fixes its final relation-address point, let $S[\lambda,y]$ be
+coefficient $y$ of shared setup ring $\lambda$, and let $W(\lambda)$ collect
+all A/B/D row, witness-address, gadget, and mixed-dimension projection weights
+for that setup ring. The deferred claim used by Stage 2 is
+
+$$
+\sigma_S
+=
+\sum_{\lambda,y}S[\lambda,y]W(\lambda)\alpha^y.
+\tag{12}
+$$
+
+Pad the setup-index domain to a power of two and set $W(\lambda)=0$ outside
+the active A/B/D footprint. If $\widetilde S$, $\widetilde W$, and
+$\widetilde A_\alpha$ are the MLEs of the setup table, the setup-index weight,
+and $A_\alpha(y)=\alpha^y$, Stage 3 runs a degree-two sumcheck on
+
+$$
+F(Y,X)
+=
+\widetilde S(Y,X)\widetilde W(X)\widetilde A_\alpha(Y),
+\qquad
+\sigma_S=
+\sum_{Y\in\{0,1\}^{n_y}}
+\sum_{X\in\{0,1\}^{n_{\mathrm{setup}}}}F(Y,X).
+\tag{13}
+$$
+
+The implementation binds coefficient variables first and setup-index
+variables second. At its final point
+$\rho_3=(\rho_y,\rho_{\mathrm{setup}})$, the verifier checks
+
+$$
+C_{\mathrm{final}}
+=
+\widetilde S(\rho_y,\rho_{\mathrm{setup}})
+\widetilde W(\rho_{\mathrm{setup}})
+\widetilde A_\alpha(\rho_y).
+\tag{14}
+$$
+
+This is a setup-only sumcheck. It does not batch Stage 2's next-witness opening.
+When the next level selects an authenticated setup prefix, it leaves the
+independent setup-prefix opening
+
+$$
+\bigl(\rho_3,\widetilde S(\rho_3)\bigr).
+$$
+
+The next fold then receives that opening as one precommitted polynomial group
+and receives the Stage-2 next-witness opening as a second group at $r_2$. Its
+grouped opening protocol later authenticates both claims against their own
+commitments. Under direct setup contribution, Stage 3 is absent and the
+verifier computes $\sigma_S$ by scanning the required public setup prefix.
+See [Setup contribution and Stage 3](../verifying/setup_contribution.md) for
+the mixed-dimension plan and setup-prefix checks.
