@@ -718,19 +718,10 @@ mod independent_commitment_tests {
         group.validate().expect("group layout");
         let profile =
             fp128::OneHot::profile_without_precommitted_groups(group).expect("independent profile");
-        assert_eq!(
-            profile.inner_commit_matrix.ring_dimension(),
-            256,
-            "the independent commitment uses the scalar row's A dimension"
-        );
-        assert_eq!(
-            profile.outer_commit_matrix.ring_dimension(),
-            64,
-            "the independent commitment uses the scalar row's B dimension"
-        );
-        let root_basis = fp128::OneHot::opening_basis_range().0;
-        assert_eq!(profile.log_basis_inner, root_basis);
-        assert_eq!(profile.log_basis_outer, root_basis);
+        let scalar_row =
+            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+                .expect("generated scalar row");
+        assert_eq!(profile, scalar_row.profiles().final_group);
         assert_ne!(profile.inner_commit_matrix.output_rank(), 0);
         assert_ne!(profile.outer_commit_matrix.output_rank(), 0);
     }

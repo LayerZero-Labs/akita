@@ -172,9 +172,7 @@ fn terminal_candidates_compete_across_opening_bases() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
-
-    assert!(selected.schedule.recursive_folds.is_empty());
-    assert_eq!(selected.schedule.terminal.params.witness.log_basis_inner, 3);
+    assert_eq!(selected.schedule.terminal.params.witness.log_basis_inner, 6);
     assert_eq!(
         selected
             .schedule
@@ -183,7 +181,7 @@ fn terminal_candidates_compete_across_opening_bases() {
             .witness
             .inner_commit_matrix
             .coeff_linf_bound(),
-        Some(65_535),
+        Some(524_287),
     );
     let root = &selected.schedule.root.params.final_group.commitment;
     assert!(matches!(

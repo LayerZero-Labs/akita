@@ -503,7 +503,7 @@ mod tests {
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
-        CommittedGroupProfile, CommittedSourceEncoding, CompressionChainPlan, GroupOpeningPlan,
+        CommittedGroupProfile, CompressionChainPlan, GroupOpeningPlan,
         InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
         PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot,
         SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
@@ -552,7 +552,6 @@ mod tests {
             layout: CommittedGroupProfile {
                 version: CommittedGroupProfile::VERSION,
                 group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
-                source_encoding: CommittedSourceEncoding::CanonicalCoefficientTable,
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,

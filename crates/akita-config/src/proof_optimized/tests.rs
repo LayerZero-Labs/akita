@@ -312,11 +312,12 @@ fn validate_table_terminal_exact_cache_plans<Cfg: CommitmentConfig>(
         .expect("shipped entry should materialize");
         let terminal = &schedule.terminal.params.witness;
         let width = terminal.inner_width();
-        let requires_i16_tail = match terminal.d_a() {
-            64 => ntt_cache_requires_i16_tail::<Cfg::Field, 64>(width, 1 << 15),
-            128 => ntt_cache_requires_i16_tail::<Cfg::Field, 128>(width, 1 << 15),
-            dimension => panic!("unsupported generated q32 terminal dimension D{dimension}"),
-        }
+        let requires_i16_tail = akita_types::dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            <Cfg as CommitmentConfig>::Field,
+            terminal.d_a(),
+            |D| ntt_cache_requires_i16_tail::<<Cfg as CommitmentConfig>::Field, D>(width, 1 << 15,)
+        )
         .expect("generated terminal i16 accumulation should fit");
         coverage.eligible += 1;
         if requires_i16_tail {
