@@ -320,7 +320,7 @@ where
             None => {
                 let grouped_key = AkitaScheduleLookupKey {
                     final_group: key.final_group,
-                    precommitteds: vec![base.profiles().final_group.clone()],
+                    precommitteds: vec![base.profiles().final_group],
                 };
                 Base::resolve_catalog_row_for_key(&grouped_key)?
                     .schedule()

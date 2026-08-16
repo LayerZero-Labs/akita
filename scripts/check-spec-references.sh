@@ -118,13 +118,11 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 live_specs=(
   specs/setup-layout-repack.md
   specs/setup-offloading-planner.md
-  specs/eor-streamed-prover.md
   specs/packed-sumcheck.md
   specs/planner-incidence-generalization.md
   specs/multi-group-batching.md
   specs/akita-pcs-crate-decomposition.md
   specs/akita-field-refactor.md
-  specs/eor-sumcheck-prover-acceleration.md
   specs/cross-repo-field-microbench.md
 )
 # Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:

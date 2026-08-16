@@ -23,7 +23,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
-    extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
+    extension_opening_reduction_level_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
     CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
@@ -916,7 +916,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
 }
 
 #[test]
-fn planned_root_extension_reduction_bytes_match_payload() {
+fn planned_extension_reduction_bytes_match_headerless_payload() {
     let extension_width = 4usize;
     let num_claims = 3usize;
     let opening_vars = 12usize;
@@ -931,15 +931,19 @@ fn planned_root_extension_reduction_bytes_match_payload() {
     let sumcheck_bytes = reduction.sumcheck.serialized_size(Compress::No);
 
     assert_eq!(
-        extension_opening_reduction_proof_bytes(128, partials, opening_vars, extension_width)
-            .unwrap(),
+        extension_opening_reduction_level_bytes(
+            128,
+            extension_width,
+            PolynomialGroupLayout::new(opening_vars, num_claims),
+        )
+        .unwrap(),
         reduction
             .partials
             .iter()
             .map(|partial| partial.serialized_size(Compress::No))
             .sum::<usize>()
             + sumcheck_bytes,
-        "planned root EOR bytes should match the headerless serialized payload"
+        "planned EOR bytes should match the headerless serialized payload"
     );
 }
 

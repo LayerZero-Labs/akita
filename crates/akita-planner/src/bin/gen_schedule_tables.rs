@@ -344,18 +344,10 @@ fn opening_policy_signature(
     ))
 }
 
-fn catalog_policy_signature(
-    spec: &EmitSpec,
-    key: &AkitaScheduleLookupKey,
-    schedule: &FoldSchedule,
-) -> Result<String, String> {
+fn catalog_policy_signature(spec: &EmitSpec, schedule: &FoldSchedule) -> Result<String, String> {
     use std::fmt::Write as _;
 
     let mut signature = String::new();
-    let root_eor_layout = key
-        .opening_layout()
-        .and_then(|layout| layout.aggregate_polynomial_group_layout())
-        .map_err(|error| format!("derive aggregate root EOR layout: {error}"))?;
     let nonterminal = std::iter::once((
         0usize,
         &schedule.root.params.final_group.commitment,
@@ -381,15 +373,20 @@ fn catalog_policy_signature(
             params.opening_method,
             akita_types::OpeningMethod::EvaluationTrace
         ) {
+            let final_group = akita_types::PolynomialGroupLayout::singleton(
+                akita_types::padded_boolean_opening_vars(input_witness_len)
+                    .map_err(|error| format!("derive opening arity: {error}"))?,
+            );
+            let opening_shape = params
+                .opening_layout_for_final_group(final_group)
+                .and_then(|layout| layout.aggregate_polynomial_group_layout())
+                .map_err(|error| format!("derive level opening shape: {error}"))?;
             akita_types::extension_opening_reduction_level_bytes(
                 spec.policy
                     .challenge_field_bits()
                     .map_err(|error| format!("derive challenge width: {error}"))?,
                 spec.policy.claim_ext_degree,
-                level,
-                root_eor_layout,
-                input_witness_len,
-                params.d_a(),
+                opening_shape,
             )
             .map_err(|error| format!("derive level EOR bytes: {error}"))?
         } else {
@@ -455,16 +452,15 @@ fn catalog_policy_signature(
         }
         signature.push(']');
     }
-    let terminal_level = schedule.recursive_folds.len() + 1;
     let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
         spec.policy
             .challenge_field_bits()
             .map_err(|error| format!("derive challenge width: {error}"))?,
         spec.policy.claim_ext_degree,
-        terminal_level,
-        root_eor_layout,
-        schedule.terminal.input_witness_len,
-        schedule.terminal.params.witness.d_a(),
+        akita_types::PolynomialGroupLayout::singleton(
+            akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
+                .map_err(|error| format!("derive terminal opening arity: {error}"))?,
+        ),
     )
     .map_err(|error| format!("derive terminal EOR bytes: {error}"))?;
     let terminal_source = akita_types::CommittedSourceEncoding::for_producer(
@@ -529,7 +525,7 @@ fn catalog_row_metrics(
         proof_bytes,
         fold_levels: schedule.num_fold_levels(),
         row_digest: row_digest_hex(key, schedule)?,
-        policy_signature: catalog_policy_signature(spec, key, schedule)?,
+        policy_signature: catalog_policy_signature(spec, schedule)?,
     })
 }
 
@@ -1286,7 +1282,7 @@ mod tests {
             == OpeningMethod::EvaluationTrace));
 
         let policy_signature =
-            catalog_policy_signature(&spec, &key, &schedule).expect("W8R2 policy signature");
+            catalog_policy_signature(&spec, &schedule).expect("W8R2 policy signature");
         assert!(policy_signature.contains("L0[chunks=8@2,eor=0,in="));
         assert!(
             policy_signature.contains("witness=PACK,s=64,h=4,w=64,src=canonical,dA=256,sec=Linf")
@@ -1301,19 +1297,15 @@ mod tests {
         assert!(policy_signature.contains("/T[method=ET,src=canonical,eor=0,input="));
         assert!(!policy_signature.contains(['\t', '\n']));
 
-        let root_eor_layout = key
-            .opening_layout()
-            .and_then(|layout| layout.aggregate_polynomial_group_layout())
-            .expect("aggregate root EOR layout");
         let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
             spec.policy
                 .challenge_field_bits()
                 .expect("challenge field bits"),
             spec.policy.claim_ext_degree,
-            schedule.recursive_folds.len() + 1,
-            root_eor_layout,
-            schedule.terminal.input_witness_len,
-            schedule.terminal.params.witness.d_a(),
+            akita_types::PolynomialGroupLayout::singleton(
+                akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
+                    .expect("terminal opening vars"),
+            ),
         )
         .expect("terminal EOR price");
         assert_eq!(
@@ -1363,7 +1355,7 @@ mod tests {
             .num_activated_levels = 1;
         assert_ne!(
             policy_signature,
-            catalog_policy_signature(&spec, &key, &activation_changed)
+            catalog_policy_signature(&spec, &activation_changed)
                 .expect("activation policy signature"),
         );
 
@@ -1371,8 +1363,7 @@ mod tests {
         input_changed.root.input_witness_len += 1;
         assert_ne!(
             policy_signature,
-            catalog_policy_signature(&spec, &key, &input_changed)
-                .expect("input-length policy signature"),
+            catalog_policy_signature(&spec, &input_changed).expect("input-length policy signature"),
         );
     }
 

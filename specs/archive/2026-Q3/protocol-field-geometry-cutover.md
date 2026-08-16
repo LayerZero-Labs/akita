@@ -4,17 +4,20 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-24 |
-| Status        | implemented |
+| Status        | historical |
 | PR            | [#336](https://github.com/LayerZero-Labs/akita/pull/336) |
-| Depends-on    | [`specs/runtime-ring-cutover.md`](runtime-ring-cutover.md) (**satisfied**: implemented, PR #249) |
-| Coordinates-with | [`specs/protocol-core-eor-consolidation.md`](protocol-core-eor-consolidation.md) (implemented #194; module-layout reference); [`specs/extension-field-opening-batching.md`](extension-field-opening-batching.md) (EOR math / wire baseline); [`specs/digit-innermost-layout.md`](digit-innermost-layout.md) |
+| Depends-on    | [`specs/runtime-ring-cutover.md`](../../runtime-ring-cutover.md) (**satisfied**: implemented, PR #249) |
+| Coordinates-with | [`specs/protocol-core-eor-consolidation.md`](protocol-core-eor-consolidation.md) (implemented #194; module-layout reference); [`specs/extension-field-opening-batching.md`](extension-field-opening-batching.md) (EOR math / wire baseline); [`specs/digit-innermost-layout.md`](../../digit-innermost-layout.md) |
 | Supersedes    | *(orchestration ownership extended from EOR-consolidation; that spec remains the #194 module-layout record)* |
 | Superseded-by | |
 | Book-chapter  | how/proving/fold-path.md |
 
+> **Historical design record.** Its root EOR predicate was superseded by the
+> hard early-fold coefficient-packing policy. Suffix and terminal EOR remain.
+
 ## Summary
 
-Akita’s `CommitmentConfig` has two field roles ([`CommitmentConfig`](../crates/akita-config/src/lib.rs), book [rings and fields](../book/src/foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points)):
+Akita’s `CommitmentConfig` has two field roles ([`CommitmentConfig`](../../../crates/akita-config/src/lib.rs), book [rings and fields](../../../book/src/foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points)):
 
 | Role | Type | Used for |
 |------|------|----------|
@@ -448,7 +451,7 @@ No new preamble fields.
 
 - Single-field walk (`EXT_DEGREE == 1`): `prove_root` → `prepare_single_field_fold` → `prove_fold`
 - Explicit “claim field = coefficient field; no EOR”
-- Link foundations [base-field coefficients vs extension evaluation points](../foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points)
+- Link foundations [base-field coefficients vs extension evaluation points](../../../book/src/foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points)
 - Link `root-fold-ring-switch.md`, `sumcheck-stages.md`, `opening-points-layout.md`
 - Link `extension-opening-reduction.md` as the extension-claim path only
 
@@ -520,7 +523,7 @@ Phase C is documentation + deserialize belt-and-suspenders.
 - `crates/akita-types/src/layout/proof_size.rs` (`extension_opening_reduction_level_bytes`)
 - `crates/akita-types/src/proof/wire.rs`
 - `crates/akita-planner/src/schedule_params.rs` (root EOR bytes)
-- [`specs/runtime-ring-cutover.md`](runtime-ring-cutover.md) (prerequisite, implemented #249)
+- [`specs/runtime-ring-cutover.md`](../../runtime-ring-cutover.md) (prerequisite, implemented #249)
 - [`specs/protocol-core-eor-consolidation.md`](protocol-core-eor-consolidation.md) (#194)
 - [`specs/extension-field-opening-batching.md`](extension-field-opening-batching.md)
 - PR #309 / #331 (multi-group / mixed-D EOR; must stay green)

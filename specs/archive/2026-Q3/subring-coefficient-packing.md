@@ -1499,11 +1499,11 @@ under the workflow in [`specs/PRUNING.md`](../../PRUNING.md).
   interaction.
 - [Selective L2 fold sizing](https://github.com/LayerZero-Labs/akita/pull/369),
   planner objective, response sizing, and operator norm certificates.
-- [Extension-field opening batching](../../extension-field-opening-batching.md),
+- [Extension-field opening batching](extension-field-opening-batching.md),
   tensor EOR and the transformed-commitment soundness boundary.
 - [Root fold and ring switch](../../../book/src/how/proving/root-fold-ring-switch.md),
   current production sparse families and role dimensions.
-- [EOR streamed prover](../../eor-streamed-prover.md), current EOR prover path and
+- [EOR streamed prover](eor-streamed-prover.md), historical EOR prover path and
   performance context.
 - [`crates/akita-types/src/layout/proof_size.rs`](../../../crates/akita-types/src/layout/proof_size.rs),
   canonical current EOR byte formula.

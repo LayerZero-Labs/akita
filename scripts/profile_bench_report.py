@@ -921,8 +921,6 @@ def extract_summary(
                 summary["setup_contribution_mode"] = normalize_setup_mode(
                     kvs["setup_contribution_mode"]
                 )
-        elif "extension opening used root-direct fallback" in line and kvs.get("label") == mode:
-            summary["extension_root_direct_fallback"] = True
         elif "planned fold group" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             challenge_operator_norm_threshold = parse_tracing_optional_int(
@@ -3081,12 +3079,6 @@ def render_report(args: argparse.Namespace) -> int:
 
         print()
         render_execution_parameters(current, main_case)
-        if current.get("extension_root_direct_fallback"):
-            print()
-            print(
-                "- Extension opening fallback: root-direct proof; folded planner byte estimates "
-                "do not apply until the Frobenius optimization is wired."
-            )
         onehot_schedules = current.get("onehot_commit_schedules")
         if isinstance(onehot_schedules, list) and onehot_schedules:
             routes = []

@@ -4,8 +4,11 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao (spec) → hand-off for implementation |
 | Created     | 2026-06-02                     |
-| Status      | ready for implementation       |
+| Status      | historical                     |
 | PR          | follow-on to [#136](https://github.com/LayerZero-Labs/akita/pull/136) |
+
+> **Historical design record.** Root EOR was superseded by subring coefficient
+> packing. Any future suffix-only streaming work should start from a new spec.
 
 ## Summary
 

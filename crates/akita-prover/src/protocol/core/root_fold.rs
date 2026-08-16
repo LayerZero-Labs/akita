@@ -7,7 +7,7 @@ use crate::RecursiveWitnessFlat;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
-fn validate_non_eor_root_opening_shape<F, E>(
+fn validate_packing_root_opening_shape<F, E>(
     ring_d: usize,
     alpha_bits: usize,
 ) -> Result<(), AkitaError>
@@ -88,7 +88,7 @@ where
         claims,
         false,
         transcript,
-        || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
+        || validate_packing_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
         root_params,
         basis,
     )

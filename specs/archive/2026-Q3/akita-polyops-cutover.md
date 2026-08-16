@@ -4,8 +4,12 @@
 |-------------|--------------------------------------------|
 | Author(s)   | Quang Dao, Cursor assistant                |
 | Created     | 2026-05-26                                 |
-| Status      | implemented                                |
+| Status      | historical                                 |
 | PR          | [#206](https://github.com/LayerZero-Labs/akita/pull/206) |
+
+> **Historical design record.** Root tensor and sparse-ring representations
+> described below were later removed. Current backend ownership lives in the
+> Akita Book and `docs/compute-backends.md`.
 
 ## Summary
 
@@ -1068,31 +1072,31 @@ left as a compatibility path beside the new one.
 
 ## References
 
-- [`specs/akita-compute-backend-metal.md`](akita-compute-backend-metal.md):
+- [`specs/akita-compute-backend-metal.md`](../../akita-compute-backend-metal.md):
   current compute backend and Metal roadmap; this spec supersedes the
   `AkitaPolyOps` cutover notes there.
-- [`crates/akita-prover/src/lib.rs`](../crates/akita-prover/src/lib.rs):
+- [`crates/akita-prover/src/lib.rs`](../../../crates/akita-prover/src/lib.rs):
   current source traits, operation stacks, and public prover exports.
-- [`crates/akita-prover/src/compute/`](../crates/akita-prover/src/compute/):
+- [`crates/akita-prover/src/compute/`](../../../crates/akita-prover/src/compute/):
   typed compute backend setup, low-level commit/ring-switch plans, and PO1
   source-typed kernel trait skeletons.
-- [`crates/akita-prover/src/backend/dense.rs`](../crates/akita-prover/src/backend/dense.rs):
+- [`crates/akita-prover/src/backend/dense/`](../../../crates/akita-prover/src/backend/dense/):
   dense root implementation, tensor dense paths, and dense decompose-fold.
-- [`crates/akita-prover/src/backend/onehot.rs`](../crates/akita-prover/src/backend/onehot.rs):
+- [`crates/akita-prover/src/backend/onehot/`](../../../crates/akita-prover/src/backend/onehot/):
   one-hot root implementation, sparse tensor paths, and fused batched
   decompose-fold.
-- [`crates/akita-prover/src/backend/sparse_ring.rs`](../crates/akita-prover/src/backend/sparse_ring.rs):
+- [`crates/akita-prover/src/backend/sparse_ring/`](../../../crates/akita-prover/src/backend/sparse_ring/):
   sparse signed-ring root implementation.
-- [`crates/akita-prover/src/backend/field_reduction.rs`](../crates/akita-prover/src/backend/field_reduction.rs):
+- [`crates/akita-prover/src/backend/field_reduction.rs`](../../../crates/akita-prover/src/backend/field_reduction.rs):
   root tensor projection polynomial dispatch.
-- [`crates/akita-prover/src/backend/recursive_witness.rs`](../crates/akita-prover/src/backend/recursive_witness.rs):
+- [`crates/akita-prover/src/backend/recursive/`](../../../crates/akita-prover/src/backend/recursive/):
   recursive witness fold/decompose/commit support.
-- [`crates/akita-prover/src/protocol/flow.rs`](../crates/akita-prover/src/protocol/flow.rs):
+- [`crates/akita-prover/src/protocol/core/`](../../../crates/akita-prover/src/protocol/core/):
   root opening evaluation, extension opening reduction, tensor projection, and
   recursive proving flow call sites.
-- [`crates/akita-prover/src/protocol/ring_relation.rs`](../crates/akita-prover/src/protocol/ring_relation.rs):
+- [`crates/akita-prover/src/protocol/ring_relation.rs`](../../../crates/akita-prover/src/protocol/ring_relation.rs):
   opening decomposition and ring relation construction.
-- [`crates/akita-prover/src/protocol/ring_switch.rs`](../crates/akita-prover/src/protocol/ring_switch.rs):
+- [`crates/akita-prover/src/protocol/ring_switch.rs`](../../../crates/akita-prover/src/protocol/ring_switch.rs):
   recursive witness commitment and ring-switch flow call sites.
 
 ## Appendix: Streaming Commitment And The Commit-Source Boundary

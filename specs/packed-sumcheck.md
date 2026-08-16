@@ -4,9 +4,9 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao (spec) → hand-off for implementation |
 | Created     | 2026-06-02                     |
-| Status      | ready for implementation (EOR only; Stage 1/2 blocked) |
-| Pilot       | extension-opening reduction (EOR), then stage1 / stage2 |
-| Related     | [`eor-streamed-prover.md`](eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
+| Status      | ready for implementation (suffix/terminal EOR only; Stage 1/2 blocked) |
+| Pilot       | recursive suffix/terminal EOR, then stage1 / stage2 |
+| Related     | [`eor-streamed-prover.md`](archive/2026-Q3/eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
 
 ## Summary
 
@@ -28,8 +28,8 @@ SIMD representation that already exists in `akita-field`
 `akita-algebra`).
 
 This spec threads the packed representation through the **data-parallel prover loops**.
-EOR is the pilot (its fold-dominated rounds and its newly-streamed witness path are the
-cleanest target); the same recipe then rolls out to the stage1 (eq-factored) and stage2
+Suffix/terminal EOR is the pilot (its fold-dominated rounds and streamed recursive-witness path are the
+cleanest live target); the same recipe then rolls out to the stage1 (eq-factored) and stage2
 (standard) sum-check provers. The committed direction includes a **packed unreduced
 accumulator** (`PackedHasUnreducedOps`, D1) so the *accumulate*, not just the fold, is
 lane-parallel without giving up akita's deferred-reduction win. The design follows two
@@ -283,9 +283,12 @@ Unpack and finish scalar for the final `log2(WIDTH)` rounds; handle non-`WIDTH`-
 tables with `pack_slice_with_suffix` + scalar epilogue or hypercube padding. Both are
 mechanical (reference recipe moves 4 and 6).
 
-### D4 — Sparse one-hot path (SIMD-amenable; kernel detail deferred)
+### D4 — Historical sparse root path
 
-The one-hot EOR univariate plateau (`eor-streamed-prover.md`, 1.25 s) is a sparse
+The one-hot root EOR path described here was removed when L0/L1 folds became
+coefficient-packing-only. The following notes record the old experiment and are
+not part of the current implementation plan. The old one-hot EOR univariate plateau
+(`eor-streamed-prover.md`, 1.25 s) was a sparse
 `O(d_ext)`-per-query loop over a `2^24` support. It is **not excluded** — it can benefit
 from SIMD, but the kernels are arch-sensitive and are designed in a later slice:
 - **Factor fold** of a materialized (`SparseFactor::Dense`) residual is a dense `Vec<E>`
@@ -299,7 +302,7 @@ from SIMD, but the kernels are arch-sensitive and are designed in a later slice:
   one-hot packed accumulate is **arch-gated** and may stay scalar on NEON. Work this out
   in Slice 4 against measured numbers; do not block the dense pilot on it.
 
-## Pilot: EOR (all of it)
+## Pilot: recursive suffix/terminal EOR
 
 Order within the pilot:
 1. **Dense fold** (`fused_fold_and_accumulate` fold half) — packed fold, no accumulator
@@ -308,7 +311,7 @@ Order within the pilot:
 3. **Factor fold** of the materialized residual — same packed fold; free after step 1.
 4. **Partials** (`tensor_column_partials_split_fold`) — packed base×ext contraction; the
    `SplitEqEvals` tables become packed-aware (`Vec<PackedRingSubfieldFp4>` views).
-5. **Sparse one-hot** accumulate/query — D4, arch-gated, deferred kernel.
+5. ~~**Sparse one-hot** accumulate/query~~ — historical root-only path, removed.
 
 ## Rollout: stage1 / stage2
 
@@ -362,18 +365,18 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
 
 - [ ] Packed table view + packed fold in `akita-field`/`akita-algebra`, with `NoPacking`
   fallback; `WIDTH = 1` builds byte-identical to today.
-- [ ] EOR dense fold runs packed (Slice 1); proof bytes byte-identical on `dense_fp32_d32`,
-  `onehot_fp32_d32`, `onehot_fp16_d32`, `onehot_fp64_d32`; `fp128` unaffected.
+- [ ] Recursive suffix/terminal EOR dense fold runs packed (Slice 1); proof bytes remain
+  byte-identical across the production extension-field tiers; `fp128` is unaffected.
 - [ ] Packed unreduced accumulator (`PackedHasUnreducedOps`) implemented and exact, with the
   magnitude-aware reduce threshold (D1); EOR dense accumulate + factor fold + partials run
   packed through it. Re-run the D1 microbench with the real packed types/intrinsics on
   NEON + AVX2 (+ AVX-512) and record whether `u128`-lane or `u64`-chunked wins the full-width
   rounds before locking that lane choice.
 - [ ] stage1 + stage2 folds packed; full byte-identical proof/transcript suite.
-- [ ] Sparse one-hot: factor fold packed; accumulate/query packed where the target arch
-  supports it (gated), scalar fallback otherwise; byte-identical either way.
-- [ ] Tests per field family (fp32 `RingSubfieldFp4`, fp16 `RingSubfieldFp8`, fp64 `Fp2`,
-  fp128 identity): `packed_fold_matches_scalar`, `packed_round_univariate_matches_scalar`,
+- [x] The obsolete sparse one-hot root EOR phase was removed from scope with the root
+  coefficient-packing cutover.
+- [ ] Tests per production field family (fp32 `RingSubfieldFp4`, fp64 `Fp2`, fp128 identity):
+  `packed_fold_matches_scalar`, `packed_round_univariate_matches_scalar`,
   `packed_eor_proof_byte_identical`, `noPacking_parity`.
 - [ ] `cargo fmt -q`; `cargo clippy --all --all-targets -- -D warnings`;
   `cargo test -p akita-prover --test extension_opening_reduction`; cross-arch
@@ -390,7 +393,7 @@ Reuse PR #142's `field_arith/kernel/packed_macc` micro-bench (`acc += eq[i]*poly
 ### Performance
 
 Validate on the profile harness (`sumcheck_round_{univariate,fold}` per-round spans, added
-in PR #136) for `dense_fp32_d32` / `onehot_fp32_d32` / `onehot_fp16_d32` at nv26/30/32,
+in PR #136) for the live recursive suffix/terminal extension-field profiles at nv26/30/32,
 across NEON + AVX2 (+ AVX-512). Expectation: **≈ 2-4× on fold-dominated rounds**, smaller
 on mul-heavy univariate; net EOR prove-time reduction concentrated in the measured
 `sumcheck_round_fold` hotspot. No proof-size, schedule, or transcript effect.
@@ -405,8 +408,7 @@ on mul-heavy univariate; net EOR prove-time reduction concentrated in the measur
   partials.** Build `PackedHasUnreducedOps`; route the univariate accumulate, the factor
   fold, and the `SplitEqEvals`/partials contraction through it.
 - **Slice 3 — stage1 / stage2 folds.** Roll the recipe into stage1/stage2 round+fold.
-- **Slice 4 — sparse one-hot (D4).** Packed factor fold (free), then arch-gated packed
-  accumulate/query with gather; scalar fallback on NEON.
+- **Slice 4 — removed.** Sparse one-hot root EOR no longer exists.
 - **Slice 5 — fold-order / lane alignment (D2), if measured to matter.** Storage
   permutation to keep early rounds lane-aligned; only if Slice 1-3 show lane-drop overhead.
 
@@ -443,4 +445,5 @@ span, then build the packed unreduced accumulator (Slice 2) for the univariate a
   `:558-637`, `HasPacking` wiring `:702-710`, layout doc `:1-6`).
 - **D1 microbench**: `specs/packed-accumulator-microbench.rs` (standalone `rustc`; the
   reduction-frequency-vs-lane-width numbers in D1; re-run on each target arch).
-- **Companion spec**: `specs/eor-streamed-prover.md` (the algorithm this packs).
+- **Historical companion record**:
+  `specs/archive/2026-Q3/eor-streamed-prover.md` (the algorithm this packs).

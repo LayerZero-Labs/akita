@@ -513,8 +513,6 @@ pub fn stage3_payload_bytes_for_successor(
 #[doc(hidden)]
 pub fn nonterminal_level_payload_bytes(
     policy: &PlannerPolicy,
-    level: usize,
-    eor_key: PolynomialGroupLayout,
     params: &CommittedGroupParams,
     successor: Option<&CommittedGroupParams>,
     input_witness_len: usize,
@@ -537,13 +535,16 @@ pub fn nonterminal_level_payload_bytes(
         params.opening_method,
         akita_types::OpeningMethod::EvaluationTrace
     ) {
+        let final_group = PolynomialGroupLayout::singleton(
+            akita_types::padded_boolean_opening_vars(input_witness_len)?,
+        );
+        let opening_shape = params
+            .opening_layout_for_final_group(final_group)?
+            .aggregate_polynomial_group_layout()?;
         akita_types::extension_opening_reduction_level_bytes(
             challenge_field_bits,
             policy.claim_ext_degree,
-            level,
-            eor_key,
-            input_witness_len,
-            params.d_a(),
+            opening_shape,
         )?
     } else {
         0
@@ -570,7 +571,6 @@ pub fn expanded_schedule_proof_payload_bytes(
     let field_bits = policy.decomposition.field_bits();
     key.validate(field_bits)?;
     schedule.validate_structure()?;
-    let eor_key = key.opening_layout()?.aggregate_polynomial_group_layout()?;
     let nonterminal_levels = schedule
         .recursive_folds
         .len()
@@ -600,8 +600,6 @@ pub fn expanded_schedule_proof_payload_bytes(
             .map(|fold| &fold.params.witness);
         let (direct, stage3) = nonterminal_level_payload_bytes(
             policy,
-            level,
-            eor_key,
             params,
             successor,
             input_witness_len,
@@ -616,10 +614,9 @@ pub fn expanded_schedule_proof_payload_bytes(
     let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
-        nonterminal_levels,
-        eor_key,
-        schedule.terminal.input_witness_len,
-        schedule.terminal.params.witness.d_a(),
+        PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
+            schedule.terminal.input_witness_len,
+        )?),
     )?;
     let terminal_response = akita_types::terminal_response_planner_bytes(
         field_bits,

@@ -553,7 +553,6 @@ pub fn find_schedule(
     let suffix_ctx = SuffixCtx {
         policy: active_policy,
         ring_challenge_config,
-        num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
         root_lookup_key: Some(key),
@@ -562,20 +561,7 @@ pub fn find_schedule(
         level_zero_is_root: true,
     };
     let mut memo = ScheduleMemo::new();
-    let dimension_ceiling = match active_policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            CommitmentRingDims::uniform(ring_dimension)
-        }
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            potential_a_dimensions,
-            ..
-        } => CommitmentRingDims::uniform(
-            potential_a_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
-        ),
-    };
+    let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
     let suffix = derive_selected_suffix_schedule(
         &suffix_ctx,
         &mut memo,

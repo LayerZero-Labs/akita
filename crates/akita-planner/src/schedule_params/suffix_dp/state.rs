@@ -194,7 +194,6 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,

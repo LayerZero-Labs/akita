@@ -2,8 +2,7 @@
 
 use akita_field::AkitaError;
 
-use crate::PolynomialGroupLayout;
-use crate::{TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
+use crate::{PolynomialGroupLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -124,22 +123,14 @@ pub fn padded_boolean_opening_vars(len: usize) -> Result<usize, AkitaError> {
 /// `extension_opening_width` is the claim-vs-coefficient field degree: `1`
 /// (single-field geometry, zero bytes) or a supported power-of-two extension
 /// width. Any other width is rejected rather than priced, so invalid custom
-/// configurations cannot pass planning as zero-cost.
+/// configurations cannot pass planning as zero-cost. `opening_shape` is the
+/// aggregate EOR shape: maximum group arity and checked total claim count.
 pub fn extension_opening_reduction_level_bytes(
     challenge_field_bits: u32,
     extension_opening_width: usize,
-    fold_level: usize,
-    key: PolynomialGroupLayout,
-    input_witness_len: usize,
-    ring_d: usize,
+    opening_shape: PolynomialGroupLayout,
 ) -> Result<usize, AkitaError> {
-    match extension_opening_reduction_level_geometry(
-        extension_opening_width,
-        fold_level,
-        key,
-        input_witness_len,
-        ring_d,
-    )? {
+    match extension_opening_reduction_level_geometry(extension_opening_width, opening_shape)? {
         // This is a serialized-byte count, not cryptographic material.
         ExtensionOpeningReductionGeometry::NotRequired => Ok(usize::default()),
         ExtensionOpeningReductionGeometry::Required {
@@ -168,18 +159,9 @@ pub fn extension_opening_reduction_level_bytes(
 pub fn try_extension_opening_reduction_level_bytes(
     challenge_field_bits: u32,
     extension_opening_width: usize,
-    fold_level: usize,
-    key: PolynomialGroupLayout,
-    input_witness_len: usize,
-    ring_d: usize,
+    opening_shape: PolynomialGroupLayout,
 ) -> Result<Option<usize>, AkitaError> {
-    match extension_opening_reduction_level_geometry(
-        extension_opening_width,
-        fold_level,
-        key,
-        input_witness_len,
-        ring_d,
-    )? {
+    match extension_opening_reduction_level_geometry(extension_opening_width, opening_shape)? {
         // This is a serialized-byte count, not cryptographic material.
         ExtensionOpeningReductionGeometry::NotRequired => Ok(Some(usize::default())),
         ExtensionOpeningReductionGeometry::Required {
@@ -210,20 +192,23 @@ enum ExtensionOpeningReductionGeometry {
 
 fn extension_opening_reduction_level_geometry(
     extension_opening_width: usize,
-    fold_level: usize,
-    _key: PolynomialGroupLayout,
-    input_witness_len: usize,
-    _ring_d: usize,
+    opening_shape: PolynomialGroupLayout,
 ) -> Result<ExtensionOpeningReductionGeometry, AkitaError> {
     if extension_opening_width != 1 && !extension_opening_width.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(format!(
             "extension opening width must be one or a power of two, got {extension_opening_width}"
         )));
     }
-    if fold_level == 0 || extension_opening_width == 1 {
+    if extension_opening_width == 1 {
         return Ok(ExtensionOpeningReductionGeometry::NotRequired);
     }
-    let opening_vars = padded_boolean_opening_vars(input_witness_len)?;
+    opening_shape.validate()?;
+    let partials = extension_opening_width
+        .checked_mul(opening_shape.num_polynomials())
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("extension opening claim count is zero or overflows".into())
+        })?;
+    let opening_vars = opening_shape.num_vars();
     let split_bits = extension_opening_width.trailing_zeros() as usize;
     if split_bits > opening_vars {
         return Ok(ExtensionOpeningReductionGeometry::Infeasible {
@@ -232,7 +217,7 @@ fn extension_opening_reduction_level_geometry(
         });
     }
     Ok(ExtensionOpeningReductionGeometry::Required {
-        partials: extension_opening_width,
+        partials,
         opening_vars,
     })
 }
@@ -267,68 +252,79 @@ mod tests {
         }
     }
 
-    fn level_bytes(width: usize, fold_level: usize, ring_d: usize) -> Result<usize, AkitaError> {
+    fn level_bytes(width: usize, num_claims: usize) -> Result<usize, AkitaError> {
         extension_opening_reduction_level_bytes(
             128,
             width,
-            fold_level,
-            PolynomialGroupLayout::singleton(12),
-            1 << 12,
-            ring_d,
+            PolynomialGroupLayout::new(12, num_claims),
         )
     }
 
     #[test]
     fn invalid_extension_widths_error_instead_of_pricing_zero() {
         for width in [0, 3, usize::MAX] {
-            for fold_level in [0, 1] {
-                assert!(
-                    level_bytes(width, fold_level, 128).is_err(),
-                    "width {width} at level {fold_level} must be rejected"
-                );
-            }
+            assert!(
+                level_bytes(width, 1).is_err(),
+                "width {width} must be rejected"
+            );
         }
     }
 
     #[test]
-    fn valid_extension_widths_price_by_gate() {
+    fn valid_extension_widths_price_suffix_and_terminal_eor() {
         assert_eq!(
-            level_bytes(1, 0, 128).expect("degree one"),
+            level_bytes(1, 1).expect("degree one"),
             0,
             "single-field geometry contributes no EOR bytes"
         );
-        assert_eq!(
-            level_bytes(4, 0, 128).expect("packing root"),
-            0,
-            "root coefficient packing omits EOR"
-        );
-        assert_eq!(
-            level_bytes(8, 0, 4).expect("gate-off root"),
-            0,
-            "valid width below the tensor-projection gate prices zero, not an error"
-        );
         assert!(
-            level_bytes(4, 1, 128).expect("extension suffix") > 0,
-            "extension-field EvaluationTrace suffixes retain EOR"
+            level_bytes(4, 1).expect("extension suffix or terminal") > 0,
+            "extension-field EvaluationTrace suffixes and terminals retain EOR"
         );
     }
 
     #[test]
     fn candidate_aware_eor_distinguishes_local_miss_from_bad_policy() {
-        let key = PolynomialGroupLayout::singleton(12);
         assert_eq!(
-            try_extension_opening_reduction_level_bytes(128, 16, 1, key, 8, 64)
-                .expect("valid policy"),
+            try_extension_opening_reduction_level_bytes(
+                128,
+                16,
+                PolynomialGroupLayout::singleton(3),
+            )
+            .expect("valid policy"),
             None,
             "four split bits do not fit a three-variable recursive opening"
         );
         assert!(
-            try_extension_opening_reduction_level_bytes(128, 16, 1, key, 16, 64)
-                .expect("valid sibling geometry")
-                .expect("feasible sibling")
+            try_extension_opening_reduction_level_bytes(
+                128,
+                16,
+                PolynomialGroupLayout::singleton(4),
+            )
+            .expect("valid sibling geometry")
+            .expect("feasible sibling")
                 > 0
         );
-        assert!(try_extension_opening_reduction_level_bytes(128, 3, 1, key, 16, 64).is_err());
+        assert!(try_extension_opening_reduction_level_bytes(
+            128,
+            3,
+            PolynomialGroupLayout::singleton(4),
+        )
+        .is_err());
+        assert!(try_extension_opening_reduction_level_bytes(
+            128,
+            4,
+            PolynomialGroupLayout::new(4, 0),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn eor_partial_bytes_scale_with_claim_count() {
+        let one_claim = level_bytes(4, 1).expect("one claim");
+        let two_claims = level_bytes(4, 2).expect("two claims");
+        let partial_bytes = 4 * field_bytes(128);
+        assert_eq!(two_claims - one_claim, partial_bytes);
     }
 
     #[test]

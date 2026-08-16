@@ -8,8 +8,8 @@ use akita_types::{
     sis::{compute_num_digits_field_width, num_digits_for_bound},
     AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
     CommittedSourceEncoding, FoldLevelProof, FoldSchedule, InnerCommitSecurityRoute,
-    NttTransformDomain, OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
-    PolynomialGroupLayout, PrecommittedLevelParams, SetupSumcheckProof, SisModulusProfileId,
+    NttTransformDomain, OpenCommitMatrixParams, OpeningMethod, PolynomialGroupLayout,
+    PrecommittedLevelParams, SetupSumcheckProof, SisModulusProfileId,
     SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
 };
 
@@ -695,16 +695,6 @@ pub(crate) fn emit_runtime_schedule_summary(
     let levels = schedule.num_fold_levels();
     let num_setup_field_elements =
         akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
-    let root_precommitted_layouts = schedule
-        .root
-        .params
-        .precommitted_groups
-        .iter()
-        .map(|group| group.descriptor.group)
-        .collect::<Vec<_>>();
-    let root_eor_layout =
-        OpeningClaimsLayout::from_root_groups(&root_precommitted_layouts, final_group)?
-            .aggregate_polynomial_group_layout()?;
     let num_setup_bytes = num_setup_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule
         .recursive_folds
@@ -799,13 +789,16 @@ pub(crate) fn emit_runtime_schedule_summary(
             opening_report_geometry(lp.opening_method, extension_degree, role_dims.d_a())?;
         let extension_opening_reduction_bytes =
             if matches!(lp.opening_method, OpeningMethod::EvaluationTrace) {
+                let final_group = akita_types::PolynomialGroupLayout::singleton(
+                    akita_types::padded_boolean_opening_vars(input_witness_len)?,
+                );
+                let opening_shape = lp
+                    .opening_layout_for_final_group(final_group)?
+                    .aggregate_polynomial_group_layout()?;
                 akita_types::extension_opening_reduction_level_bytes(
                     challenge_field_bits,
                     extension_degree,
-                    level_idx,
-                    root_eor_layout,
-                    input_witness_len,
-                    role_dims.d_a(),
+                    opening_shape,
                 )?
             } else {
                 0

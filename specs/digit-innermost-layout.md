@@ -7,7 +7,7 @@
 | Revised | 2026-07-31 |
 | Status | active |
 | PR | #294 |
-| Supersedes | Root and recursive layout decisions in `setup-layout-repack.md` and `protocol-core-eor-consolidation.md`, plus the deleted `distributed-verifier-row-eval.md` (PR #296, closed unlanded) |
+| Supersedes | Root and recursive layout decisions in `setup-layout-repack.md` and `archive/2026-Q3/protocol-core-eor-consolidation.md`, plus the deleted `distributed-verifier-row-eval.md` (PR #296, closed unlanded) |
 | Superseded by | |
 | Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
 

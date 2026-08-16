@@ -60,8 +60,6 @@ fn offloaded_witness_contracts(
 
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
-    level: usize,
-    eor_key: PolynomialGroupLayout,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
     next_witness_len: usize,
@@ -175,8 +173,6 @@ fn child_choice(
     let (direct_payload_bytes, stage3_payload_bytes) =
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             edge.policy,
-            edge.level,
-            edge.eor_key,
             &edge.candidate_params,
             suffix.first_fold_params(),
             edge.current_witness_len,
@@ -304,7 +300,6 @@ fn price_level_candidate_with_children(
     state: SuffixState,
     candidate_params: &CommittedGroupParams,
     next_witness_len: usize,
-    eor_key: PolynomialGroupLayout,
     natural_len: usize,
     direct_child: Option<&SuffixResult>,
     offloaded_child: Option<&SuffixResult>,
@@ -327,8 +322,6 @@ fn price_level_candidate_with_children(
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
-        level: state.level,
-        eor_key,
         candidate_params: Arc::new(candidate_params.clone()),
         current_witness_len: state.current_witness_len,
         next_witness_len,
@@ -398,8 +391,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     let SuffixCtx {
         policy,
         ring_challenge_config,
-        num_vars,
-        key,
+        key: _,
         setup_field_budget: _,
         root_lookup_key,
         root_honest_fold_policy,
@@ -465,20 +457,6 @@ pub(crate) fn derive_selected_suffix_schedule(
     let root_opening_layout = root_level_key
         .map(AkitaScheduleLookupKey::opening_layout)
         .transpose()?;
-    let root_eor_key = root_level_key
-        .map(|root_key| {
-            root_key
-                .num_polynomials()
-                .map(|total_polys| PolynomialGroupLayout::new(root_key.max_num_vars(), total_polys))
-        })
-        .transpose()?;
-    let eor_key = root_eor_key.unwrap_or_else(|| {
-        if level_zero_is_root && level == 0 {
-            key
-        } else {
-            PolynomialGroupLayout::singleton(num_vars)
-        }
-    });
     let scalar_opening_layout = if root_level_key.is_some() {
         None
     } else {
@@ -487,6 +465,11 @@ pub(crate) fn derive_selected_suffix_schedule(
             incoming_setup_prefix,
         )?)
     };
+    let eor_opening_shape = root_opening_layout
+        .as_ref()
+        .or(scalar_opening_layout.as_ref())
+        .ok_or_else(|| AkitaError::InvalidSetup("opening layout is missing".into()))?
+        .aggregate_polynomial_group_layout()?;
     let inner_source = if level_zero_is_root && level == 0 {
         super::root_inner_basis_source(
             root_honest_fold_policy.ok_or_else(|| {
@@ -532,10 +515,7 @@ pub(crate) fn derive_selected_suffix_schedule(
             if let Some(opening_reduction_bytes) = try_extension_opening_reduction_level_bytes(
                 policy.challenge_field_bits()?,
                 policy.claim_ext_degree,
-                level,
-                eor_key,
-                current_witness_len,
-                dimensions.d_a(),
+                eor_opening_shape,
             )? {
                 let precommitted_openings = if let Some(root_key) = root_level_key {
                     let mut openings = Vec::with_capacity(root_key.precommitteds.len());
@@ -925,7 +905,6 @@ pub(crate) fn derive_selected_suffix_schedule(
                 state,
                 &candidate_params,
                 next_witness_len,
-                eor_key,
                 natural_len,
                 direct_child.as_deref(),
                 offloaded_child.as_deref(),

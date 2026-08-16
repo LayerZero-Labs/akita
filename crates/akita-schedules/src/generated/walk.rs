@@ -10,7 +10,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
     extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, PlannedFoldSchedule,
-    PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
+    PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalResponseShape,
 };
 
 use crate::generated::{validate_entry_key, GeneratedFoldScheduleEntry};
@@ -40,7 +41,6 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
-    let root_eor_key = key.opening_layout()?.aggregate_polynomial_group_layout()?;
     let mut root_params = if is_multi_group {
         let (precommitted_groups, precommitted_d_width) =
             multi_group_root_precommitted_groups_for_open_basis(
@@ -199,8 +199,6 @@ pub(crate) fn walk_generated_schedule_entry(
         let next_lp = expanded.get(fold_level + 1).map(|(params, _, _)| params);
         let (direct_level_bytes, stage3_bytes) = nonterminal_level_payload_bytes(
             policy,
-            fold_level,
-            root_eor_key,
             lp,
             next_lp,
             *input_witness_len,
@@ -224,10 +222,9 @@ pub(crate) fn walk_generated_schedule_entry(
         .checked_add(extension_opening_reduction_level_bytes(
             challenge_field_bits,
             policy.claim_ext_degree,
-            terminal_level,
-            root_eor_key,
-            input_witness_len,
-            terminal_params.d_a(),
+            PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
+                input_witness_len,
+            )?),
         )?)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("terminal direct byte count overflow".to_string())

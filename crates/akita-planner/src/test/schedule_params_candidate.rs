@@ -4,7 +4,7 @@ use super::recursive::{
 };
 use super::*;
 use akita_challenges::SparseChallengeConfig;
-use akita_types::{LevelParamsLike, PolynomialGroupLayout, SisModulusProfileId};
+use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
 fn synthetic_profile(
     group: PolynomialGroupLayout,
@@ -300,7 +300,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             }
         );
         assert_eq!(
-            prefix.commitment_params.source_encoding(),
+            akita_types::LevelParamsLike::source_encoding(&prefix.commitment_params),
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         let d_d = params.role_dims().d_d();
@@ -482,8 +482,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let (packing_direct_bytes, _) =
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
-            0,
-            key.final_group,
             first_params,
             None,
             1 << 16,
@@ -506,10 +504,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         akita_types::extension_opening_reduction_level_bytes(
             policy.challenge_field_bits().unwrap(),
             policy.claim_ext_degree,
-            0,
-            key.final_group,
-            1 << 16,
-            first_params.d_a(),
+            PolynomialGroupLayout::new(16, key.final_group.num_polynomials()),
         )
         .expect("legacy EOR price")
             > 0,
@@ -737,6 +732,56 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
                 challenge_subring_dimension: 64,
             }
     }));
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+
+    let mut policy = policy_of::<OneHot>();
+    policy.claim_ext_degree = 2;
+    let mut params = grouped_level_params();
+    let prefix_params = params
+        .precommitted_groups
+        .pop()
+        .expect("synthetic prefix params");
+    params.setup_prefix = Some(akita_types::scheduled_setup_prefix(1 << 6, prefix_params));
+    let witness_len = 1 << 4;
+    let output_witness_len = 1 << 4;
+    let final_group = PolynomialGroupLayout::singleton(4);
+    let opening_layout = params
+        .opening_layout_for_final_group(final_group)
+        .expect("prefix-consuming opening layout");
+    assert_eq!(opening_layout.max_num_vars(), 6);
+    let opening_shape = opening_layout
+        .aggregate_polynomial_group_layout()
+        .expect("aggregate EOR shape");
+    let expected_eor = akita_types::extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits().unwrap(),
+        policy.claim_ext_degree,
+        opening_shape,
+    )
+    .expect("aggregate EOR bytes");
+    let base = akita_types::level_proof_bytes(
+        policy.decomposition.field_bits(),
+        policy.challenge_field_bits().unwrap(),
+        &params,
+        None,
+        output_witness_len,
+        Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState),
+    )
+    .expect("base level payload");
+    let (runtime, stage3) = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+        &policy,
+        &params,
+        None,
+        witness_len,
+        output_witness_len,
+    )
+    .expect("runtime level payload");
+    assert_eq!(stage3, 0);
+    assert_eq!(runtime - base, expected_eor);
 }
 
 #[cfg(feature = "catalog-gen")]

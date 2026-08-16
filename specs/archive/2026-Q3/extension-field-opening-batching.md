@@ -4,10 +4,14 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-06 (originally as the umbrella for PRs #69, #71, and this completion work) |
-| Status | baseline extension path, generic multipoint incidence packaging, recursive and root-level tensor-algebra extension-opening reduction, field-family SIS accounting, generated small-field schedule tables, and first small-field prover optimizations have landed in the worktree; the old dense/one-hot Frobenius multipoint route has been removed from the live implementation; root tensor projection now moves the transformed witness to the root commitment boundary for same-width `E = L` small-field roots; remaining work is true-tower E2E coverage, deeper planner tuning, profile reruns, and full CI validation |
+| Status | historical |
 | PR | #71 (`quang/general-field-final`) |
 | Companion spec | #71 first slice (spec deleted; see git history) |
 | Earlier slices | #60 and #69 (specs deleted; see git history) |
+
+> **Historical design record.** Subring coefficient packing superseded the root
+> tensor-projection path. Later `EvaluationTrace` suffixes and terminals retain
+> EOR.
 
 ## Summary
 

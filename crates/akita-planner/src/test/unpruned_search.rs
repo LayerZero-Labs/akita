@@ -3,7 +3,6 @@ use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
 struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
-    dimensions: &'a RingDimensionSearchDomain,
     ring_challenge_config: &'a dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     key: PolynomialGroupLayout,
 }
@@ -50,7 +49,6 @@ fn enumerate_suffixes(
     }
     let UnprunedCtx {
         policy,
-        dimensions,
         ring_challenge_config,
         key,
     } = *ctx;
@@ -69,27 +67,19 @@ fn enumerate_suffixes(
     let challenge_field_bits = policy.challenge_field_bits()?;
     let (min_log_basis, max_log_basis) =
         crate::policy::log_basis_search_range_at_level(policy, level);
+    let terminal_opening_shape = akita_types::PolynomialGroupLayout::singleton(
+        akita_types::padded_boolean_opening_vars(input_witness_len)?,
+    );
     let mut schedules = Vec::new();
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
-        for candidate_dimensions in dimensions.candidates() {
-            let suffix_dimensions = CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION);
-            if level >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
-                if *candidate_dimensions != suffix_dimensions {
-                    continue;
-                }
-            } else if !componentwise_dimensions_at_most(*candidate_dimensions, dimension_ceiling) {
-                continue;
-            }
+        for candidate_dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
             let trace_work = ring_challenge_config(candidate_dimensions.d_a())
                 .ok()
                 .and_then(|ring_challenge| {
                     try_extension_opening_reduction_level_bytes(
                         challenge_field_bits,
                         policy.claim_ext_degree,
-                        level,
-                        key,
-                        input_witness_len,
-                        candidate_dimensions.d_a(),
+                        terminal_opening_shape,
                     )
                     .transpose()
                     .map(|result| {
@@ -112,7 +102,7 @@ fn enumerate_suffixes(
                             policy,
                             payload_mode,
                             opening,
-                            *candidate_dimensions,
+                            candidate_dimensions,
                             input_witness_len,
                             crate::InnerBasisSource::BalancedDigits {
                                 log_basis: current_log_basis,
@@ -129,7 +119,7 @@ fn enumerate_suffixes(
                             policy,
                             payload_mode,
                             opening,
-                            *candidate_dimensions,
+                            candidate_dimensions,
                             input_witness_len,
                             crate::InnerBasisSource::BalancedDigits {
                                 log_basis: current_log_basis,
@@ -150,7 +140,7 @@ fn enumerate_suffixes(
                         policy,
                         payload_mode,
                         trace_opening,
-                        *candidate_dimensions,
+                        candidate_dimensions,
                         input_witness_len,
                         crate::InnerBasisSource::BalancedDigits {
                             log_basis: current_log_basis,
@@ -207,7 +197,7 @@ fn enumerate_suffixes(
             }
 
             let fold_work = if level <= 1 {
-                packing_opening_domain(level, policy.claim_ext_degree, *candidate_dimensions)
+                packing_opening_domain(level, policy.claim_ext_degree, candidate_dimensions)
                     .into_iter()
                     .map(|opening| (opening, 0))
                     .collect::<Vec<_>>()
@@ -217,12 +207,7 @@ fn enumerate_suffixes(
             for (opening, opening_reduction_bytes) in fold_work {
                 for &payload_mode in payload_phase.candidate_modes(level, false) {
                     for (params, output_witness_len) in derive_candidates(opening, payload_mode)? {
-                        let child_ceiling = if level + 1 >= akita_schedules::ADAPTIVE_SEARCH_LEVELS
-                        {
-                            CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION)
-                        } else {
-                            params.role_dims()
-                        };
+                        let child_ceiling = params.role_dims();
                         let next_source_moment = if policy.selective_l2_response_model_enabled() {
                             let opening_layout = suffix_opening_layout(input_witness_len, None)?;
                             Some(crate::response_model::next_source_moment(
@@ -313,7 +298,6 @@ pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     honest_fold_policy: HonestFoldPolicySpec,
-    dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
@@ -328,7 +312,6 @@ pub(super) fn find_schedule(
     let schedule_key = akita_types::AkitaScheduleLookupKey::single(key);
     let ctx = UnprunedCtx {
         policy,
-        dimensions,
         ring_challenge_config: &ring_challenge_config,
         key,
     };
@@ -341,14 +324,16 @@ pub(super) fn find_schedule(
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
     for log_basis in min_log_basis..=max_log_basis {
         for inner_basis in min_inner_basis..=max_inner_basis {
-            for root_dimensions in dimensions.candidates() {
+            for root_dimensions in
+                dimension_candidates(policy, 0, initial_dimension_ceiling(policy)?)?
+            {
                 let alpha = root_dimensions.d_a().trailing_zeros() as usize;
                 let reduced_vars = key.num_vars().saturating_sub(alpha);
                 if reduced_vars == 0 {
                     continue;
                 }
                 let root_openings =
-                    packing_opening_domain(0, policy.claim_ext_degree, *root_dimensions);
+                    packing_opening_domain(0, policy.claim_ext_degree, root_dimensions);
                 for root_opening in root_openings {
                     for (root_params, output_witness_len) in
                         crate::planner::root_level_candidates_for_basis(
@@ -356,7 +341,7 @@ pub(super) fn find_schedule(
                             honest_fold_policy,
                             &[],
                             policy,
-                            *root_dimensions,
+                            root_dimensions,
                             root_opening,
                             &[],
                             input_witness_len,
@@ -391,7 +376,7 @@ pub(super) fn find_schedule(
                                 input_witness_len: output_witness_len,
                                 current_log_basis: log_basis,
                                 source_moment: next_source_moment,
-                                dimension_ceiling: *root_dimensions,
+                                dimension_ceiling: root_dimensions,
                                 payload_phase:
                                     akita_types::CommitmentPayloadPhase::CompressedPrefix,
                             },
@@ -411,29 +396,7 @@ pub(super) fn find_schedule(
                                 } else {
                                     akita_types::NextWitnessBindingPolicy::OuterPayload
                                 }),
-                            )?
-                            .checked_add(if root_opening.is_coefficient_packing() {
-                                0
-                            } else {
-                                try_extension_opening_reduction_level_bytes(
-                                    policy.challenge_field_bits()?,
-                                    policy.claim_ext_degree,
-                                    0,
-                                    key,
-                                    input_witness_len,
-                                    root_dimensions.d_a(),
-                                )?
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "unpruned root ET fallback has no EOR geometry".into(),
-                                    )
-                                })?
-                            })
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "unpruned traversal root proof size overflow".into(),
-                                )
-                            })?;
+                            )?;
                             let folds = suffix.folds.prepend(CandidateFoldStep {
                                 params: Arc::new(root_params.clone()),
                                 input_witness_len,

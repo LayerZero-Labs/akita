@@ -69,7 +69,7 @@ pub(crate) fn root_inner_basis_source(
     }
 }
 
-fn dimension_candidates(
+pub(crate) fn dimension_candidates(
     policy: &PlannerPolicy,
     level: usize,
     ceiling: CommitmentRingDims,
@@ -125,6 +125,25 @@ fn dimension_candidates(
         }
     };
     Ok(candidates)
+}
+
+pub(crate) fn initial_dimension_ceiling(
+    policy: &PlannerPolicy,
+) -> Result<CommitmentRingDims, AkitaError> {
+    match policy.ring_dimension_schedule_mode {
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            Ok(CommitmentRingDims::uniform(ring_dimension))
+        }
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            potential_a_dimensions,
+            ..
+        } => Ok(CommitmentRingDims::uniform(
+            potential_a_dimensions
+                .last()
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
+        )),
+    }
 }
 
 fn suffix_dimension_ceiling(

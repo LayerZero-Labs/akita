@@ -46,7 +46,7 @@ where
     E::from_base_slice(&coeffs)
 }
 
-fn onehot_sparse_tensor_witness<F, E>(
+fn sparse_suffix_tensor_witness<F, E>(
     num_vars: usize,
     num_polys: usize,
 ) -> SparseExtensionOpeningWitness<E>
@@ -122,7 +122,7 @@ where
     let eta = (0..split_bits)
         .map(|_| random_ext::<F, E>(&mut rng))
         .collect::<Vec<_>>();
-    let witness = onehot_sparse_tensor_witness::<F, E>(num_vars, num_polys);
+    let witness = sparse_suffix_tensor_witness::<F, E>(num_vars, num_polys);
     let lazy_rounds = tail_vars.min(
         akita_prover::protocol::extension_opening_reduction::SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
     );
@@ -148,7 +148,7 @@ where
     let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap();
 
     let mut group = c.benchmark_group(format!(
-        "extension_opening_reduction/{label}/onehot_nv{num_vars}_np{num_polys}"
+        "extension_opening_reduction/{label}/sparse_suffix_nv{num_vars}_np{num_polys}"
     ));
     configure_group(&mut group);
     group.bench_function("prove_sumcheck", |b| {

@@ -9,7 +9,7 @@ type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
 
 #[test]
-fn coefficient_packing_bypasses_root_and_recursive_eor() {
+fn coefficient_packing_bypasses_eor_while_evaluation_trace_uses_it() {
     let packing = akita_types::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };

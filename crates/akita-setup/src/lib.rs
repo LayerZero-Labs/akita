@@ -768,8 +768,6 @@ mod tests {
                     layout: CommittedGroupProfile {
                         version: CommittedGroupProfile::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        source_encoding:
-                            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,

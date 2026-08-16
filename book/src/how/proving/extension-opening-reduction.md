@@ -1,6 +1,6 @@
 # Extension-opening reduction
 
-How Akita wires in the extension-opening reduction (EOR). It turns a base-field
+How Akita wires in suffix and terminal extension-opening reduction (EOR). It turns a base-field
 evaluation claim at an extension-field point into a single claim on a packed
 polynomial over the extension, with fewer variables. A fold uses this path only
 when its scheduled opening method is `EvaluationTrace` and
@@ -12,9 +12,9 @@ soundness live in
 [Foundations → Extension-opening reduction](../../foundations/extension-opening-reduction.md);
 this page is about Akita's prover paths, scheduling, and efficiency.
 
-The implemented prover has dense-packed and sparse one-hot paths, a lazy tensor
-factor for early rounds, and a streamed form that keeps small balanced
-representatives visible to the hot loop.
+The implemented prover consumes recursive witness sources through dense-packed
+or sparse extension-opening terms, a lazy tensor factor for early rounds, and a
+streamed form that keeps small balanced representatives visible to the hot loop.
 
 ## Multi-group openings
 
@@ -50,4 +50,5 @@ This internal shared reduction challenge is not an ambient public opening point.
 - `crates/akita-verifier/src/protocol/core/fold/mod.rs`.
 - `crates/akita-types/src/extension_opening_reduction.rs`.
 - Paper App B.4.1 `sec:akita-eor-sumcheck` (implemented prover paths, prefix-suffix tensor weight, streamed/staged prover).
-- `specs/extension-field-opening-batching.md` (trim stale `akita-scheme` refs), `specs/eor-streamed-prover.md` (active).
+- Historical records under `specs/archive/2026-Q3/` document the removed root
+  EOR implementations and the surviving suffix machinery's origin.

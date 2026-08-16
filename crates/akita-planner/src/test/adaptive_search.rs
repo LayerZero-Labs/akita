@@ -190,14 +190,13 @@ fn terminal_candidates_compete_across_opening_bases() {
         root.opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
-    let terminal_level = selected.schedule.recursive_folds.len() + 1;
     let terminal_eor = extension_opening_reduction_level_bytes(
         policy.challenge_field_bits().unwrap(),
         policy.claim_ext_degree,
-        terminal_level,
-        onehot_group(14, 1),
-        selected.schedule.terminal.input_witness_len,
-        selected.schedule.terminal.params.witness.d_a(),
+        akita_types::PolynomialGroupLayout::singleton(
+            akita_types::padded_boolean_opening_vars(selected.schedule.terminal.input_witness_len)
+                .unwrap(),
+        ),
     )
     .unwrap();
     assert!(terminal_eor > 0, "the ET terminal must retain its EOR");
@@ -238,7 +237,6 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
         onehot_group(14, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
-        &dimensions,
         OneHot::ring_challenge_config,
     )
     .expect_err("the bounds-disabled oracle must use the same hard packing policy");
@@ -258,6 +256,15 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     .unwrap();
     let mut policy = policy_for_domain(policy_of::<OneHot>(), &dimensions);
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
+    let admitted_dimensions =
+        dimension_candidates(&policy, 0, initial_dimension_ceiling(&policy).unwrap())
+            .expect("adaptive dimension domain");
+    assert!(
+        admitted_dimensions
+            .iter()
+            .any(|dims| dims.d_a() != dims.d_b() || dims.d_a() != dims.d_d()),
+        "the adaptive policy must include mixed A/B/D tuples"
+    );
     let key = onehot_group(14, 1);
     let selected = find_schedule(
         key,
@@ -281,7 +288,6 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         key,
         &policy,
         OneHot::root_honest_fold_policy(),
-        &dimensions,
         OneHot::ring_challenge_config,
     )
     .expect("unpruned packing schedule from mixed domain");
@@ -307,8 +313,14 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes(),
     );
-    assert!(selected.schedule.recursive_folds.is_empty());
-    assert_eq!(selected.schedule.terminal.params.witness.d_a(), 256);
+    assert!(selected
+        .schedule
+        .recursive_folds
+        .iter()
+        .all(|fold| matches!(
+            fold.params.witness.opening_method,
+            akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        )));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -407,7 +419,6 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
         key,
         &policy,
         OneHot::root_honest_fold_policy(),
-        &domain,
         OneHot::ring_challenge_config,
     )
     .unwrap();
@@ -498,7 +509,6 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
             key,
             &policy,
             OneHot::root_honest_fold_policy(),
-            &domain,
             OneHot::ring_challenge_config,
         )
         .expect("unpruned adaptive search");
