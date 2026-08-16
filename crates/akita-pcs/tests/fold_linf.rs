@@ -14,18 +14,10 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
-/// Production-scale fold-linf e2e is exercised at nv=20: still folds with
-/// intermediate handles and fold-l∞ grinding, without the nv=28 CI cost.
+/// Production-scale fold-linf e2e is exercised at nv=20 for root and terminal
+/// grinding without the nv=28 CI cost. Recursive-handle tampering is covered
+/// by the two-polynomial nv=20 fixture in `protocol_soundness`.
 const FOLD_LINF_E2E_NV: usize = 20;
-
-fn bump_flat_ring_vec(flat: &mut akita_types::RingVec<F>) {
-    let mut coeffs = flat.coeffs().to_vec();
-    let first = coeffs
-        .first_mut()
-        .expect("tamper target must contain at least one coefficient");
-    *first += F::one();
-    *flat = akita_types::RingVec::from_coeffs(coeffs);
-}
 
 struct FoldLinfGrindFixture {
     proof: AkitaBatchedProof<F, F>,
@@ -158,39 +150,6 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             "oversized grind nonce returned {err:?}"
         );
     });
-}
-
-#[test]
-fn fold_recursive_handle_tamper_rejected() {
-    init_rayon_pool();
-    run_on_large_stack(|| {
-        let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_04);
-        let mut malformed = fixture.proof;
-        let recursive = malformed
-            .recursive_folds
-            .first_mut()
-            .expect("onehot fixture should include an intermediate fold");
-        bump_flat_ring_vec(&mut recursive.opening_payload);
-
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        let result = Scheme::batched_verify(
-            &malformed,
-            &fixture.verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
-            BasisMode::Lagrange,
-        );
-        assert_invalid_proof("tampered recursive fold handle", result);
-    });
-}
-
-#[allow(dead_code)]
-fn assert_invalid_proof<T: core::fmt::Debug>(label: &str, result: Result<T, AkitaError>) {
-    match result {
-        Err(AkitaError::InvalidProof) => {}
-        Err(AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
-        other => panic!("{label}: expected InvalidProof, got {other:?}"),
-    }
 }
 
 #[cfg(feature = "logging-transcript")]

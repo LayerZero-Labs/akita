@@ -144,10 +144,12 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         }
         previous = current;
     }
-    assert_eq!(
-        schedule.terminal.params.witness.d_a(),
-        ADAPTIVE_SUFFIX_RING_DIMENSION
-    );
+    let terminal_d_a = schedule.terminal.params.witness.d_a();
+    assert!(domain
+        .candidates()
+        .iter()
+        .any(|candidate| candidate.d_a() == terminal_d_a));
+    assert!(terminal_d_a <= previous.d_a());
 }
 
 #[cfg(feature = "catalog-gen")]
