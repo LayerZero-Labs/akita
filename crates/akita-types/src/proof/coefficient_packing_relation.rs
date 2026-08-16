@@ -3,7 +3,10 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
+use akita_algebra::offset_eq::{
+    eq_eval_at_index, eval_affine_digit_intervals, eval_boolean_pair_tensor_families,
+    EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
+};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
@@ -19,6 +22,8 @@ use crate::{
     RelationRangeImagePlan, RelationRowFamily, RelationWitnessGeometry, SignedDigitKernel,
     SubringCoefficientPackingGeometry,
 };
+
+mod compact;
 
 fn checked_product(label: &str, factors: &[usize]) -> Result<usize, AkitaError> {
     factors.iter().try_fold(1usize, |product, &factor| {
@@ -441,6 +446,136 @@ pub struct CoefficientPackingGroupSemantics<E: FieldCore> {
     stage2_terms: CoefficientPackingStage2Terms<E>,
 }
 
+/// One verifier group's compact coefficient-packing semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoefficientPackingVerifierGroupSemantics<E: FieldCore> {
+    group_index: usize,
+    geometry: SubringCoefficientPackingGeometry,
+    group_claim_range: Range<usize>,
+    scalar_claim_weight: E,
+    compact_factors: CoefficientPackingCompactFactors<E>,
+}
+
+/// Compact tensor factors used by the verifier at the Stage 2 final point.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoefficientPackingCompactFactors<E: FieldCore> {
+    basis: crate::BasisMode,
+    physical_field_len: usize,
+    direct_opening_point: Arc<[E]>,
+    packing_z_point: Arc<[E]>,
+    affine_relation_families: Vec<CoefficientPackingAffineRelationFamily<E>>,
+    quotient_families: Vec<EqPairTensorFamily<E>>,
+    direct_opening_families: Vec<EqPairTensorFamily<E>>,
+    packing_z_families: Vec<EqPairTensorFamily<E>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CoefficientPackingAffineRelationFamily<E: FieldCore> {
+    scalar: E,
+    coefficient_weights: Arc<[E]>,
+    coefficient_len: usize,
+    base_offset: usize,
+    outer_len: usize,
+    outer_stride: usize,
+    digit_stride: usize,
+    digit_weights: Arc<[E]>,
+    outer_weights: Arc<[E]>,
+}
+
+impl<E: FieldCore> CoefficientPackingAffineRelationFamily<E> {
+    fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let coefficient_len = self.coefficient_len;
+        if coefficient_len == 0 || !coefficient_len.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "packing affine coefficient axis is malformed".into(),
+            ));
+        }
+        let coefficient_bits = coefficient_len.trailing_zeros() as usize;
+        let (coefficient_point, outer_point) = point
+            .split_at_checked(coefficient_bits)
+            .ok_or(AkitaError::InvalidProof)?;
+        let coefficient_evaluation = self
+            .coefficient_weights
+            .get(..coefficient_len)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter()
+            .enumerate()
+            .fold(E::zero(), |sum, (coefficient, &weight)| {
+                sum + weight * eq_eval_at_index(coefficient_point, coefficient)
+            });
+        let affine = eval_affine_digit_intervals(
+            outer_point,
+            &[self.base_offset],
+            0,
+            self.outer_len,
+            self.outer_stride,
+            self.digit_stride,
+            self.digit_weights.as_ref(),
+            self.outer_weights.as_ref(),
+            &[],
+            &[],
+        )?;
+        Ok(self.scalar * coefficient_evaluation * affine)
+    }
+}
+
+impl<E: FieldCore> CoefficientPackingCompactFactors<E> {
+    fn validate_point(&self, point: &[E]) -> Result<(), AkitaError> {
+        let point_variables = u32::try_from(point.len())
+            .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
+        let expected = 1usize
+            .checked_shl(point_variables)
+            .ok_or_else(|| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
+        let padded = self
+            .physical_field_len
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("packing field domain overflow".into()))?;
+        if expected != padded {
+            return Err(AkitaError::InvalidSize {
+                expected: padded.trailing_zeros() as usize,
+                actual: point.len(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Evaluate packed E and Q relation weights without expanding their
+    /// claim/block/digit/plane support.
+    pub fn evaluate_relation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        self.validate_point(point)?;
+        let affine = self
+            .affine_relation_families
+            .iter()
+            .try_fold(E::zero(), |sum, family| {
+                Ok(sum + family.evaluate_at_point(point)?)
+            })?;
+        Ok(affine
+            + eval_boolean_pair_tensor_families::<_, false, false>(
+                &[],
+                point,
+                &self.quotient_families,
+            )?)
+    }
+
+    /// Evaluate the direct-opening and packing-Z structured terms from their
+    /// retained tensor factors.
+    pub fn evaluate_stage2_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        self.validate_point(point)?;
+        let evaluate = |left: &[E], families: &[EqPairTensorFamily<E>]| match self.basis {
+            crate::BasisMode::Lagrange => {
+                eval_boolean_pair_tensor_families::<_, false, false>(left, point, families)
+            }
+            crate::BasisMode::Monomial => {
+                eval_boolean_pair_tensor_families::<_, true, false>(left, point, families)
+            }
+        };
+        Ok(
+            evaluate(&self.direct_opening_point, &self.direct_opening_families)?
+                + evaluate(&self.packing_z_point, &self.packing_z_families)?,
+        )
+    }
+}
+
 /// Exact authority used to prepare every packing group in one fold.
 pub struct CoefficientPackingBatchSemanticInputs<'a, F: FieldCore, E: FieldCore> {
     pub level_params: &'a CommittedGroupParams,
@@ -465,6 +600,15 @@ pub struct CoefficientPackingBatchSemantics<F: FieldCore, E: FieldCore> {
     tau1: Arc<[E]>,
     claim_coefficients: Arc<[E]>,
     groups: Vec<CoefficientPackingGroupSemantics<E>>,
+}
+
+/// Checked compact packing semantics for the Stage 2 verifier.
+///
+/// Unlike [`CoefficientPackingBatchSemantics`], this carrier never builds the
+/// prover's expanded event and segment representation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoefficientPackingVerifierBatchSemantics<E: FieldCore> {
+    groups: Vec<CoefficientPackingVerifierGroupSemantics<E>>,
 }
 
 impl<F: FieldCore, E: FieldCore> CoefficientPackingBatchSemantics<F, E> {
@@ -503,6 +647,13 @@ impl<F: FieldCore, E: FieldCore> CoefficientPackingBatchSemantics<F, E> {
     }
 }
 
+impl<E: FieldCore> CoefficientPackingVerifierBatchSemantics<E> {
+    #[must_use]
+    pub fn groups(&self) -> &[CoefficientPackingVerifierGroupSemantics<E>] {
+        &self.groups
+    }
+}
+
 impl<E: FieldCore> CoefficientPackingGroupSemantics<E> {
     #[must_use]
     pub const fn group_index(&self) -> usize {
@@ -523,6 +674,123 @@ impl<E: FieldCore> CoefficientPackingGroupSemantics<E> {
     pub const fn stage2_terms(&self) -> &CoefficientPackingStage2Terms<E> {
         &self.stage2_terms
     }
+}
+
+impl<E: FieldCore> CoefficientPackingVerifierGroupSemantics<E> {
+    #[must_use]
+    pub const fn group_index(&self) -> usize {
+        self.group_index
+    }
+
+    #[must_use]
+    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
+        self.geometry
+    }
+
+    #[must_use]
+    pub fn group_claim_range(&self) -> Range<usize> {
+        self.group_claim_range.clone()
+    }
+
+    #[must_use]
+    pub const fn scalar_claim_weight(&self) -> E {
+        self.scalar_claim_weight
+    }
+
+    #[must_use]
+    pub const fn compact_factors(&self) -> &CoefficientPackingCompactFactors<E> {
+        &self.compact_factors
+    }
+}
+
+struct PreparedCoefficientPackingGroup<E: FieldCore> {
+    group_index: usize,
+    geometry: SubringCoefficientPackingGeometry,
+    group_claim_range: Range<usize>,
+    scalar_claim_weight: E,
+    compact_factors: Option<CoefficientPackingCompactFactors<E>>,
+    expanded: Option<(
+        CoefficientPackingRelationEvents<E>,
+        CoefficientPackingStage2Terms<E>,
+    )>,
+}
+
+struct CoefficientPackingBatchAuthority {
+    relation_geometry: RelationWitnessGeometry,
+    row_families: Vec<RelationRowFamily>,
+}
+
+fn validate_coefficient_packing_batch_authority<F, E>(
+    level_params: &CommittedGroupParams,
+    opening_batch: &OpeningClaimsLayout,
+    relation_plan: &RelationRangeImagePlan,
+    relation: &RingRelationInstance<F>,
+    tau1: &[E],
+    claim_coefficients: &[E],
+) -> Result<CoefficientPackingBatchAuthority, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+{
+    if SignedDigitKernel::for_log_basis(level_params.log_basis_open) != Some(SignedDigitKernel::I8)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing level opening basis requires the i8 digit kernel".into(),
+        ));
+    }
+    for group_index in 0..opening_batch.num_groups() {
+        let group_params = level_params.group_params_geometry(opening_batch, group_index)?;
+        if SignedDigitKernel::for_log_basis(group_params.log_basis_open())
+            != Some(SignedDigitKernel::I8)
+            || SignedDigitKernel::for_log_basis(group_params.log_basis_inner()).is_none()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing group opening bases require i8 digits and inner bases must be supported"
+                    .into(),
+            ));
+        }
+    }
+    let level_role_dims = level_params.role_dims();
+    validate_role_dims_for_field::<F>(level_role_dims)?;
+    if relation.role_dims() != level_role_dims {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing relation role dimensions disagree with the level".into(),
+        ));
+    }
+    for group_index in 0..opening_batch.num_groups() {
+        validate_role_dims_for_field::<F>(
+            level_params.group_role_dims_geometry(opening_batch, group_index)?,
+        )?;
+    }
+    let relation_geometry =
+        RelationWitnessGeometry::for_level(level_params, opening_batch, E::EXT_DEGREE)?;
+    let expected_witness_layout = relation.segment_layout(level_params, None)?;
+    if relation.opening_batch() != opening_batch
+        || relation.extension_degree() != E::EXT_DEGREE
+        || relation_plan.relation_witness_geometry() != &relation_geometry
+        || relation_plan.witness_layout() != &expected_witness_layout
+        || claim_coefficients.len() != opening_batch.num_total_polynomials()
+        || tau1.len() != relation_plan.relation_row_index_num_vars()?
+    {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing relation authorities disagree".into(),
+        ));
+    }
+    let row_families = relation_geometry.rhs_layout().row_families()?;
+    let expected_rhs_len = row_families.iter().try_fold(0usize, |sum, family| {
+        sum.checked_add(family.geometry().physical_coefficient_width())
+            .ok_or_else(|| AkitaError::InvalidSetup("relation RHS offset overflow".into()))
+    })?;
+    if expected_rhs_len != relation.rhs().coeff_len() {
+        return Err(AkitaError::InvalidSize {
+            expected: expected_rhs_len,
+            actual: relation.rhs().coeff_len(),
+        });
+    }
+    Ok(CoefficientPackingBatchAuthority {
+        relation_geometry,
+        row_families,
+    })
 }
 
 fn push_event<E: FieldCore>(
@@ -568,58 +836,35 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    if SignedDigitKernel::for_log_basis(inputs.level_params.log_basis_open)
-        != Some(SignedDigitKernel::I8)
-    {
-        return Err(AkitaError::InvalidSetup(
-            "coefficient-packing level opening basis requires the i8 digit kernel".into(),
-        ));
-    }
-    for group_index in 0..inputs.opening_batch.num_groups() {
-        let group_params = inputs
-            .level_params
-            .group_params_geometry(inputs.opening_batch, group_index)?;
-        if SignedDigitKernel::for_log_basis(group_params.log_basis_open())
-            != Some(SignedDigitKernel::I8)
-            || SignedDigitKernel::for_log_basis(group_params.log_basis_inner()).is_none()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient-packing group opening bases require i8 digits and inner bases must be supported"
-                    .into(),
-            ));
-        }
-    }
-    let level_role_dims = inputs.level_params.role_dims();
-    validate_role_dims_for_field::<F>(level_role_dims)?;
-    if inputs.relation.role_dims() != level_role_dims {
-        return Err(AkitaError::InvalidSetup(
-            "coefficient-packing relation role dimensions disagree with the level".into(),
-        ));
-    }
-    for group_index in 0..inputs.opening_batch.num_groups() {
-        validate_role_dims_for_field::<F>(
-            inputs
-                .level_params
-                .group_role_dims_geometry(inputs.opening_batch, group_index)?,
-        )?;
-    }
-    let expected_geometry = RelationWitnessGeometry::for_level(
+    let authority = validate_coefficient_packing_batch_authority::<F, E>(
         inputs.level_params,
         inputs.opening_batch,
-        E::EXT_DEGREE,
+        inputs.relation_plan,
+        inputs.relation,
+        inputs.tau1,
+        inputs.claim_coefficients,
     )?;
-    let expected_witness_layout = inputs.relation.segment_layout(inputs.level_params, None)?;
-    if inputs.relation.opening_batch() != inputs.opening_batch
-        || inputs.relation.extension_degree() != E::EXT_DEGREE
-        || inputs.relation_plan.relation_witness_geometry() != &expected_geometry
-        || inputs.relation_plan.witness_layout() != &expected_witness_layout
-        || inputs.claim_coefficients.len() != inputs.opening_batch.num_total_polynomials()
-        || inputs.tau1.len() != inputs.relation_plan.relation_row_index_num_vars()?
-    {
-        return Err(AkitaError::InvalidSetup(
-            "coefficient-packing relation authorities disagree".into(),
-        ));
-    }
+    let prepared = prepare_coefficient_packing_group(inputs, &authority, true)?;
+    let (relation_events, stage2_terms) = prepared.expanded.ok_or_else(|| {
+        AkitaError::InvalidSetup("expanded coefficient-packing semantics are missing".into())
+    })?;
+    Ok(CoefficientPackingGroupSemantics {
+        group_index: prepared.group_index,
+        geometry: prepared.geometry,
+        relation_events,
+        stage2_terms,
+    })
+}
+
+fn prepare_coefficient_packing_group<F, E>(
+    inputs: CoefficientPackingGroupSemanticInputs<'_, F, E>,
+    authority: &CoefficientPackingBatchAuthority,
+    include_expanded: bool,
+) -> Result<PreparedCoefficientPackingGroup<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+{
     let group_plan = inputs
         .relation_plan
         .groups()
@@ -662,7 +907,9 @@ where
             ));
         }
     };
-    let opening_geometry = expected_geometry.group_opening_geometry(inputs.group_index)?;
+    let opening_geometry = authority
+        .relation_geometry
+        .group_opening_geometry(inputs.group_index)?;
     if inputs.prepared_point.geometry() != geometry
         || opening_geometry.polynomial_modulus_dimension() != geometry.challenge_subring_dimension()
         || opening_geometry.coordinate_plane_count() != geometry.extension_degree()
@@ -680,7 +927,7 @@ where
         ));
     }
 
-    let row_families = expected_geometry.rhs_layout().row_families()?;
+    let row_families = &authority.row_families;
     let consistency_row = inputs
         .relation_plan
         .consistency_row_index(inputs.group_index)?;
@@ -718,13 +965,6 @@ where
         }
         rhs_offset = end;
     }
-    if rhs_offset != inputs.relation.rhs().coeff_len() {
-        return Err(AkitaError::InvalidSize {
-            expected: rhs_offset,
-            actual: inputs.relation.rhs().coeff_len(),
-        });
-    }
-
     let consistency_weight = relation_row_weight(consistency_row, inputs.tau1)?;
     let scalar_claim_weight = relation_row_weight(
         inputs.relation_plan.scalar_opening_row_index()?,
@@ -752,6 +992,83 @@ where
     .into_iter()
     .map(E::lift_base)
     .collect::<Vec<_>>();
+    let challenge_count = group_layout
+        .num_polynomials()
+        .checked_mul(group_params.num_live_blocks())
+        .ok_or_else(|| AkitaError::InvalidSetup("challenge count overflow".into()))?;
+    let mut challenge_alpha_values = Vec::new();
+    challenge_alpha_values
+        .try_reserve_exact(challenge_count)
+        .map_err(|_| AkitaError::InvalidInput("challenge evaluation allocation failed".into()))?;
+    for challenge_index in 0..challenge_count {
+        challenge_alpha_values
+            .push(canonical_challenges.eval_at_pows::<F, E>(challenge_index, &alpha_powers)?);
+    }
+
+    let quotient_gadget = gadget_row_scalars::<F>(
+        r_decomp_levels::<F>(inputs.level_params.log_basis_open),
+        inputs.level_params.log_basis_open,
+    )
+    .into_iter()
+    .map(E::lift_base)
+    .collect::<Vec<_>>();
+    if quotient_gadget.len() != inputs.relation_plan.witness_layout().quotient_depth() {
+        return Err(AkitaError::InvalidSetup(
+            "packing quotient depth disagrees with witness layout".into(),
+        ));
+    }
+    let denominator = alpha_powers
+        .last()
+        .copied()
+        .ok_or(AkitaError::InvalidProof)?
+        * inputs.alpha
+        + E::one();
+    let witness_gadget = gadget_row_scalars::<F>(
+        group_params.num_digits_inner(),
+        group_params.log_basis_inner(),
+    )
+    .into_iter()
+    .map(E::lift_base)
+    .collect::<Vec<_>>();
+    let fold_gadget = gadget_row_scalars::<F>(
+        group_params.num_digits_fold(),
+        group_params.log_basis_open(),
+    )
+    .into_iter()
+    .map(E::lift_base)
+    .collect::<Vec<_>>();
+    if !include_expanded {
+        let compact_factors = compact::prepare_compact_factors(compact::CompactFactorInputs {
+            geometry,
+            prepared_point: inputs.prepared_point,
+            witness_layout: inputs.relation_plan.witness_layout(),
+            group_index: inputs.group_index,
+            num_claims: group_layout.num_polynomials(),
+            num_live_blocks: group_params.num_live_blocks(),
+            d_d,
+            consistency_row,
+            physical_field_len,
+            consistency_weight,
+            scalar_claim_weight,
+            denominator,
+            claim_coefficients: group_claim_coefficients,
+            challenge_alpha: &challenge_alpha_values,
+            alpha_powers: &alpha_powers,
+            basis_elements: &basis,
+            opening_gadget: &opening_gadget,
+            quotient_gadget: &quotient_gadget,
+            witness_gadget: &witness_gadget,
+            fold_gadget: &fold_gadget,
+        })?;
+        return Ok(PreparedCoefficientPackingGroup {
+            group_index: inputs.group_index,
+            geometry,
+            group_claim_range,
+            scalar_claim_weight,
+            compact_factors: Some(compact_factors),
+            expanded: None,
+        });
+    }
 
     let e_event_capacity = checked_product(
         "E event",
@@ -788,8 +1105,9 @@ where
                     .checked_mul(group_params.num_live_blocks())
                     .and_then(|base| base.checked_add(global_block))
                     .ok_or_else(|| AkitaError::InvalidSetup("challenge index overflow".into()))?;
-                let challenge_alpha =
-                    canonical_challenges.eval_at_pows::<F, E>(challenge_index, &alpha_powers)?;
+                let challenge_alpha = *challenge_alpha_values
+                    .get(challenge_index)
+                    .ok_or(AkitaError::InvalidProof)?;
                 for (digit, &gadget) in opening_gadget.iter().enumerate() {
                     for (plane, &basis_element) in basis.iter().enumerate() {
                         let mut plane_offset = 0usize;
@@ -829,24 +1147,6 @@ where
         }
     }
 
-    let quotient_gadget = gadget_row_scalars::<F>(
-        r_decomp_levels::<F>(inputs.level_params.log_basis_open),
-        inputs.level_params.log_basis_open,
-    )
-    .into_iter()
-    .map(E::lift_base)
-    .collect::<Vec<_>>();
-    if quotient_gadget.len() != inputs.relation_plan.witness_layout().quotient_depth() {
-        return Err(AkitaError::InvalidSetup(
-            "packing quotient depth disagrees with witness layout".into(),
-        ));
-    }
-    let denominator = alpha_powers
-        .last()
-        .copied()
-        .ok_or(AkitaError::InvalidProof)?
-        * inputs.alpha
-        + E::one();
     for (digit, &gadget) in quotient_gadget.iter().enumerate() {
         for (plane, &basis_element) in basis.iter().enumerate() {
             let physical_start = inputs.relation_plan.witness_layout().r_coefficient_index(
@@ -972,20 +1272,6 @@ where
             }
         }
     }
-    let witness_gadget = gadget_row_scalars::<F>(
-        group_params.num_digits_inner(),
-        group_params.log_basis_inner(),
-    )
-    .into_iter()
-    .map(E::lift_base)
-    .collect::<Vec<_>>();
-    let fold_gadget = gadget_row_scalars::<F>(
-        group_params.num_digits_fold(),
-        group_params.log_basis_open(),
-    )
-    .into_iter()
-    .map(E::lift_base)
-    .collect::<Vec<_>>();
     for unit in inputs
         .relation_plan
         .witness_layout()
@@ -1027,45 +1313,50 @@ where
         }
     }
 
-    Ok(CoefficientPackingGroupSemantics {
+    Ok(PreparedCoefficientPackingGroup {
         group_index: inputs.group_index,
         geometry,
-        relation_events: CoefficientPackingRelationEvents {
-            events,
-            alpha_powers: alpha_powers.into(),
-            relation_coefficient_block_len: coefficient_block,
-            physical_field_len,
-        },
-        stage2_terms: CoefficientPackingStage2Terms {
-            direct_opening_source: direct_opening_source.into(),
-            packing_z_source: packing_z_source.into(),
-            segments,
-            terms,
-            physical_field_len,
-            relation_coefficient_block_len: coefficient_block,
-            group_claim_range,
-            scalar_claim_weight,
-        },
+        group_claim_range: group_claim_range.clone(),
+        scalar_claim_weight,
+        compact_factors: None,
+        expanded: Some((
+            CoefficientPackingRelationEvents {
+                events,
+                alpha_powers: alpha_powers.into(),
+                relation_coefficient_block_len: coefficient_block,
+                physical_field_len,
+            },
+            CoefficientPackingStage2Terms {
+                direct_opening_source: direct_opening_source.into(),
+                packing_z_source: packing_z_source.into(),
+                segments,
+                terms,
+                physical_field_len,
+                relation_coefficient_block_len: coefficient_block,
+                group_claim_range,
+                scalar_claim_weight,
+            },
+        )),
     })
 }
 
-/// Prepare all packing groups for one exact fold authority.
-pub fn prepare_coefficient_packing_batch_semantics<F, E>(
-    inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
-) -> Result<CoefficientPackingBatchSemantics<F, E>, AkitaError>
+fn prepare_coefficient_packing_batch_groups<F, E>(
+    inputs: &CoefficientPackingBatchSemanticInputs<'_, F, E>,
+    include_expanded: bool,
+) -> Result<Vec<PreparedCoefficientPackingGroup<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    let expected_geometry = RelationWitnessGeometry::for_level(
+    let authority = validate_coefficient_packing_batch_authority::<F, E>(
         inputs.level_params,
         inputs.opening_batch,
-        E::EXT_DEGREE,
+        inputs.relation_plan,
+        inputs.relation,
+        inputs.tau1,
+        inputs.claim_coefficients,
     )?;
-    if inputs.relation_plan.relation_witness_geometry() != &expected_geometry
-        || inputs.relation.opening_batch() != inputs.opening_batch
-        || inputs.prepared_points.len() > inputs.opening_batch.num_groups()
-    {
+    if inputs.prepared_points.len() > inputs.opening_batch.num_groups() {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing batch authorities disagree".into(),
         ));
@@ -1084,21 +1375,25 @@ where
     let mut groups = Vec::new();
     for group_plan in inputs.relation_plan.groups() {
         let group_index = group_plan.group_index();
-        match expected_geometry.group_opening_method(group_index)? {
+        let point = points.get(group_index).ok_or(AkitaError::InvalidProof)?;
+        match authority
+            .relation_geometry
+            .group_opening_method(group_index)?
+        {
             OpeningMethod::EvaluationTrace => {
-                if points[group_index].is_some() {
+                if point.is_some() {
                     return Err(AkitaError::InvalidInput(
                         "EvaluationTrace group supplied a packing point".into(),
                     ));
                 }
             }
             OpeningMethod::SubringCoefficientPacking { .. } => {
-                let prepared_point = points[group_index].ok_or_else(|| {
+                let prepared_point = point.ok_or_else(|| {
                     AkitaError::InvalidInput(
                         "coefficient-packing group is missing its prepared point".into(),
                     )
                 })?;
-                groups.push(prepare_coefficient_packing_group_semantics(
+                groups.push(prepare_coefficient_packing_group(
                     CoefficientPackingGroupSemanticInputs {
                         level_params: inputs.level_params,
                         opening_batch: inputs.opening_batch,
@@ -1110,17 +1405,46 @@ where
                         tau1: inputs.tau1,
                         claim_coefficients: inputs.claim_coefficients,
                     },
+                    &authority,
+                    include_expanded,
                 )?);
             }
         }
     }
     if points.iter().enumerate().any(|(group, point)| {
-        point.is_some() && groups.iter().all(|plan| plan.group_index() != group)
+        point.is_some() && groups.iter().all(|plan| plan.group_index != group)
     }) {
         return Err(AkitaError::InvalidInput(
             "coefficient-packing prepared point is outside the relation group order".into(),
         ));
     }
+    Ok(groups)
+}
+
+/// Prepare all packing groups for one exact fold authority.
+pub fn prepare_coefficient_packing_batch_semantics<F, E>(
+    inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
+) -> Result<CoefficientPackingBatchSemantics<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+{
+    let groups = prepare_coefficient_packing_batch_groups(&inputs, true)?
+        .into_iter()
+        .map(|prepared| {
+            let (relation_events, stage2_terms) = prepared.expanded.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "expanded coefficient-packing semantics are missing".into(),
+                )
+            })?;
+            Ok(CoefficientPackingGroupSemantics {
+                group_index: prepared.group_index,
+                geometry: prepared.geometry,
+                relation_events,
+                stage2_terms,
+            })
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
     Ok(CoefficientPackingBatchSemantics {
         level_params: inputs.level_params.clone(),
         opening_batch: inputs.opening_batch.clone(),
@@ -1131,6 +1455,34 @@ where
         claim_coefficients: inputs.claim_coefficients.into(),
         groups,
     })
+}
+
+/// Prepare the compact packing factors used by the Stage 2 verifier without
+/// constructing the prover's expanded event or segment tables.
+pub fn prepare_coefficient_packing_verifier_batch_semantics<F, E>(
+    inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
+) -> Result<CoefficientPackingVerifierBatchSemantics<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+{
+    let groups = prepare_coefficient_packing_batch_groups(&inputs, false)?
+        .into_iter()
+        .map(|prepared| {
+            Ok(CoefficientPackingVerifierGroupSemantics {
+                group_index: prepared.group_index,
+                geometry: prepared.geometry,
+                group_claim_range: prepared.group_claim_range,
+                scalar_claim_weight: prepared.scalar_claim_weight,
+                compact_factors: prepared.compact_factors.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "compact coefficient-packing semantics are missing".into(),
+                    )
+                })?,
+            })
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    Ok(CoefficientPackingVerifierBatchSemantics { groups })
 }
 
 #[cfg(test)]

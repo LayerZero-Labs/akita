@@ -426,13 +426,12 @@ fn verifier_setup_with_alternate_full_prefix(
     setup: &AkitaProverSetup<F>,
     verifier_setup: &AkitaVerifierSetup<F>,
     slot_id: &SetupPrefixSlotId,
-) -> AkitaVerifierSetup<F> {
+) -> Option<AkitaVerifierSetup<F>> {
     let natural_len = slot_id.natural_len;
     let n_prefix = slot_id.n_prefix().expect("prefix length");
-    assert!(
-        natural_len < n_prefix,
-        "adversarial fixture requires a non-empty setup tail"
-    );
+    if natural_len == n_prefix {
+        return None;
+    }
 
     let original = setup.expanded.shared_matrix().as_field_slice();
     let mut altered = original.to_vec();
@@ -487,8 +486,10 @@ fn verifier_setup_with_alternate_full_prefix(
             .insert(replacement)
             .expect("insert verifier slot");
     }
-    AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
-        .expect("alternate verifier setup")
+    Some(
+        AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
+            .expect("alternate verifier setup"),
+    )
 }
 
 /// Multi-group recursive roundtrip: two user precommitted groups plus one final group.
@@ -697,23 +698,24 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         )
         .expect("generated-profile recursive verify");
 
-        let alternate_verifier_setup = verifier_setup_with_alternate_full_prefix(
+        if let Some(alternate_verifier_setup) = verifier_setup_with_alternate_full_prefix(
             &setup,
             &verifier_setup,
             &first_setup_prefix_slot(&schedule),
-        );
-        let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let alternate_result = Recursive::<BaseCfg>::batched_verify(
-            &proof,
-            &alternate_verifier_setup,
-            &mut alternate_transcript,
-            verify_claims(final_openings.clone()),
-            BasisMode::Lagrange,
-        );
-        assert!(
-            alternate_result.is_err(),
-            "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
-        );
+        ) {
+            let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
+            let alternate_result = Recursive::<BaseCfg>::batched_verify(
+                &proof,
+                &alternate_verifier_setup,
+                &mut alternate_transcript,
+                verify_claims(final_openings.clone()),
+                BasisMode::Lagrange,
+            );
+            assert!(
+                alternate_result.is_err(),
+                "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
+            );
+        }
 
         let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
             let mut transcript = AkitaTranscript::<F>::new(transcript_domain);

@@ -209,9 +209,7 @@ fn verify_stage2<F, E, T>(
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
     relation: &RingRelationInstance<F>,
-    relation_row_point: &[E],
-    claim_coefficients: &[E],
-    coefficient_packing_batch: Option<&akita_types::CoefficientPackingBatchSemantics<F, E>>,
+    coefficient_packing_batch: Option<&akita_types::CoefficientPackingVerifierBatchSemantics<E>>,
     coefficient_packing_scalar_openings: &[(usize, E)],
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -233,8 +231,6 @@ where
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
         relation,
-        relation_row_point,
-        claim_coefficients,
         coefficient_packing_batch,
         coefficient_packing_scalar_openings,
     )
@@ -254,9 +250,7 @@ fn verify_stage2_kernel<F, E, T>(
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
     relation: &RingRelationInstance<F>,
-    relation_row_point: &[E],
-    claim_coefficients: &[E],
-    coefficient_packing_batch: Option<&akita_types::CoefficientPackingBatchSemantics<F, E>>,
+    coefficient_packing_batch: Option<&akita_types::CoefficientPackingVerifierBatchSemantics<E>>,
     coefficient_packing_scalar_openings: &[(usize, E)],
 ) -> Result<Vec<E>, AkitaError>
 where
@@ -284,8 +278,6 @@ where
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
         relation,
-        relation_row_point,
-        claim_coefficients,
         coefficient_packing_batch,
         coefficient_packing_scalar_openings,
         stage1.physical_l2_claim,
@@ -575,18 +567,20 @@ where
     let coefficient_packing_batch = if prepared_packing_points.is_empty() {
         None
     } else {
-        Some(akita_types::prepare_coefficient_packing_batch_semantics(
-            akita_types::CoefficientPackingBatchSemanticInputs {
-                level_params: prepared.lp,
-                opening_batch,
-                relation_plan: &relation_range_image_plan,
-                relation: &relation_instance,
-                prepared_points: &prepared_packing_points,
-                alpha: rs.alpha,
-                tau1: &rs.tau1,
-                claim_coefficients: &prefix.trace_claim_coefficients,
-            },
-        )?)
+        Some(
+            akita_types::prepare_coefficient_packing_verifier_batch_semantics(
+                akita_types::CoefficientPackingBatchSemanticInputs {
+                    level_params: prepared.lp,
+                    opening_batch,
+                    relation_plan: &relation_range_image_plan,
+                    relation: &relation_instance,
+                    prepared_points: &prepared_packing_points,
+                    alpha: rs.alpha,
+                    tau1: &rs.tau1,
+                    claim_coefficients: &prefix.trace_claim_coefficients,
+                },
+            )?,
+        )
     };
     let stage1_replay = verify_stage1::<F, E, T>(
         stage1,
@@ -621,7 +615,7 @@ where
         let mut authenticated_total = E::zero();
         let mut group_openings = Vec::with_capacity(batch.groups().len());
         for semantics in batch.groups() {
-            let claim_range = semantics.stage2_terms().group_claim_range();
+            let claim_range = semantics.group_claim_range();
             let openings = prefix
                 .scalar_openings
                 .get(claim_range.clone())
@@ -696,8 +690,6 @@ where
         evaluation_trace_weight,
         evaluation_trace_opening_claim,
         &relation_instance,
-        &rs.tau1,
-        &prefix.row_coefficients,
         coefficient_packing_batch.as_ref(),
         &coefficient_packing_scalar_openings,
     )

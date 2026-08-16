@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use akita_field::AkitaError;
 
 use crate::PlannerPolicy;
 
-use super::{child_choice, FirstFoldKey, PendingScheduleCandidate, ScheduleCandidate};
+use super::{child_choice, ParentObservableKey, PendingScheduleCandidate, ScheduleCandidate};
 
 #[derive(Clone, Copy)]
 pub(super) enum FrontierProjection {
@@ -30,9 +30,7 @@ pub(super) fn consider_child_suffixes<'a>(
     projection: FrontierProjection,
     frontier: &mut ProjectedFrontier,
 ) -> Result<(), AkitaError> {
-    let parent_cost = FirstFoldKey {
-        descriptor: Some(edge.candidate_params.canonical_descriptor_bytes()),
-    };
+    let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params))?;
     for suffix in child_candidates {
         let Some(candidate) = child_choice(edge, suffix)? else {
             continue;
@@ -49,14 +47,18 @@ pub(super) fn consider_child_suffixes<'a>(
     Ok(())
 }
 
-fn parent_visible_cost(first: Option<&akita_types::CommittedGroupParams>) -> FirstFoldKey {
-    FirstFoldKey {
-        descriptor: first.map(akita_types::CommittedGroupParams::canonical_descriptor_bytes),
-    }
+fn parent_visible_cost(
+    policy: &PlannerPolicy,
+    first: Option<&akita_types::CommittedGroupParams>,
+) -> Result<ParentObservableKey, AkitaError> {
+    ParentObservableKey::new(policy, first)
 }
 
-fn first_parent_visible_cost(candidate: &ScheduleCandidate) -> FirstFoldKey {
-    parent_visible_cost(candidate.first_fold_params())
+fn first_parent_visible_cost(
+    policy: &PlannerPolicy,
+    candidate: &ScheduleCandidate,
+) -> Result<ParentObservableKey, AkitaError> {
+    parent_visible_cost(policy, candidate.first_fold_params())
 }
 
 fn setup_score(
@@ -73,84 +75,115 @@ fn payload_score(metrics: super::super::CandidateMetrics) -> (usize, usize) {
     (metrics.proof_bytes, metrics.setup_field_elements)
 }
 
+#[derive(Clone)]
+struct ProjectedCandidate {
+    descriptor: Arc<[u8]>,
+    descriptor_context: DescriptorOrderContext,
+    admission: ParentAdmissionClass,
+    schedule: ScheduleCandidate,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DescriptorOrderContext {
+    fold_count: usize,
+    first_fold_descriptor: Option<Arc<[u8]>>,
+}
+
+impl DescriptorOrderContext {
+    fn for_candidate(candidate: &ScheduleCandidate) -> Self {
+        Self {
+            fold_count: candidate.folds.len(),
+            first_fold_descriptor: candidate
+                .first_fold_params()
+                .map(akita_types::CommittedGroupParams::canonical_descriptor_bytes)
+                .map(Arc::from),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ParentAdmissionClass {
+    fold_depth: u8,
+    first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
+}
+
+impl ParentAdmissionClass {
+    pub(super) fn for_candidate(candidate: &ScheduleCandidate) -> Self {
+        Self {
+            fold_depth: candidate.folds.len().min(2) as u8,
+            first_direct_setup_capacity: candidate.metrics().first_direct_setup_capacity,
+        }
+    }
+
+    fn admits_every_parent_of(self, other: Self) -> bool {
+        self.fold_depth >= other.fold_depth
+            && self.first_direct_setup_capacity <= other.first_direct_setup_capacity
+    }
+
+    pub(super) fn is_admitted_by(
+        self,
+        require_child_fold: bool,
+        offloaded: bool,
+        natural_setup_field_len: usize,
+    ) -> bool {
+        (!require_child_fold || self.fold_depth >= 1)
+            && (!offloaded
+                || (self.fold_depth >= 2
+                    && self.first_direct_setup_capacity
+                        < crate::schedule_params::SetupPrefixCapacity::for_natural_len(
+                            natural_setup_field_len,
+                        )))
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct ObjectiveChoices {
-    pub(crate) setup: Option<ScheduleCandidate>,
-    pub(crate) payload: Option<ScheduleCandidate>,
+    setup: Vec<ProjectedCandidate>,
+    payload: Vec<ProjectedCandidate>,
+}
+
+impl ObjectiveChoices {
+    pub(super) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
+        self.setup.iter().map(|candidate| &candidate.schedule)
+    }
+
+    pub(super) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
+        self.payload.iter().map(|candidate| &candidate.schedule)
+    }
+
+    pub(super) fn into_payload_candidates(self) -> Vec<ScheduleCandidate> {
+        self.payload
+            .into_iter()
+            .map(|candidate| candidate.schedule)
+            .collect()
+    }
 }
 
 #[derive(Default)]
 pub(super) struct ProjectedFrontier {
-    pub(super) by_parent_cost: BTreeMap<FirstFoldKey, ObjectiveChoices>,
+    pub(super) by_parent_cost: BTreeMap<ParentObservableKey, ObjectiveChoices>,
 }
 
 impl ProjectedFrontier {
-    pub(super) fn could_improve(
-        &self,
-        policy: &PlannerPolicy,
-        parent_cost: &FirstFoldKey,
-        metrics: super::super::CandidateMetrics,
-        projection: FrontierProjection,
-    ) -> bool {
-        let choices = self.by_parent_cost.get(parent_cost);
-        let setup = policy.recursive_setup_planning
-            && projection.includes_first_direct_setup()
-            && choices
-                .and_then(|choices| choices.setup.as_ref())
-                .is_none_or(|best| {
-                    let best = best.metrics();
-                    setup_score(metrics) <= setup_score(best)
-                });
-        let payload = projection.includes_payload()
-            && choices
-                .and_then(|choices| choices.payload.as_ref())
-                .is_none_or(|best| {
-                    let best = best.metrics();
-                    payload_score(metrics) <= payload_score(best)
-                });
-        setup || payload
-    }
-
     fn consider(
         &mut self,
         policy: &PlannerPolicy,
-        parent_cost: FirstFoldKey,
+        parent_cost: ParentObservableKey,
         candidate: ScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
-        let metrics = candidate.metrics();
+        let projected = ProjectedCandidate {
+            descriptor: super::super::candidate_schedule_descriptor_bytes(&candidate)?.into(),
+            descriptor_context: DescriptorOrderContext::for_candidate(&candidate),
+            admission: ParentAdmissionClass::for_candidate(&candidate),
+            schedule: candidate,
+        };
         let choices = self.by_parent_cost.entry(parent_cost).or_default();
         if policy.recursive_setup_planning && projection.includes_first_direct_setup() {
-            let score = setup_score(metrics);
-            let improves = if let Some(best) = choices.setup.as_ref() {
-                let best_metrics = best.metrics();
-                let best_score = setup_score(best_metrics);
-                score < best_score
-                    || (score == best_score
-                        && super::super::candidate_schedule_descriptor_bytes(&candidate)?
-                            < super::super::candidate_schedule_descriptor_bytes(best)?)
-            } else {
-                true
-            };
-            if improves {
-                choices.setup = Some(candidate.clone());
-            }
+            insert_projected(&mut choices.setup, projected.clone(), setup_dominates);
         }
         if projection.includes_payload() {
-            let score = payload_score(metrics);
-            let improves = if let Some(best) = choices.payload.as_ref() {
-                let best_metrics = best.metrics();
-                let best_score = payload_score(best_metrics);
-                score < best_score
-                    || (score == best_score
-                        && super::super::candidate_schedule_descriptor_bytes(&candidate)?
-                            < super::super::candidate_schedule_descriptor_bytes(best)?)
-            } else {
-                true
-            };
-            if improves {
-                choices.payload = Some(candidate);
-            }
+            insert_projected(&mut choices.payload, projected, payload_dominates);
         }
         Ok(())
     }
@@ -161,25 +194,226 @@ impl ProjectedFrontier {
         candidate: ScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
-        let parent_cost = first_parent_visible_cost(&candidate);
+        let parent_cost = first_parent_visible_cost(policy, &candidate)?;
         self.consider(policy, parent_cost, candidate, projection)
     }
 
     fn consider_pending(
         &mut self,
         policy: &PlannerPolicy,
-        parent_cost: &FirstFoldKey,
+        parent_cost: &ParentObservableKey,
         pending: PendingScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
-        if self.could_improve(policy, parent_cost, pending.metrics(), projection) {
-            self.consider(
-                policy,
-                parent_cost.clone(),
-                pending.into_candidate(),
-                projection,
-            )?;
+        self.consider(
+            policy,
+            parent_cost.clone(),
+            pending.into_candidate(),
+            projection,
+        )
+    }
+}
+
+fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
+    setup_projection_dominates(
+        ProjectionOrder {
+            score: setup_score(left.schedule.metrics()),
+            descriptor: left.descriptor.as_ref(),
+            context: &left.descriptor_context,
+            admission: left.admission,
+        },
+        ProjectionOrder {
+            score: setup_score(right.schedule.metrics()),
+            descriptor: right.descriptor.as_ref(),
+            context: &right.descriptor_context,
+            admission: right.admission,
+        },
+    )
+}
+
+#[derive(Clone, Copy)]
+struct ProjectionOrder<'a, Score> {
+    score: Score,
+    descriptor: &'a [u8],
+    context: &'a DescriptorOrderContext,
+    admission: ParentAdmissionClass,
+}
+
+fn setup_projection_dominates(
+    left: ProjectionOrder<'_, (crate::schedule_params::SetupPrefixCapacity, usize, usize)>,
+    right: ProjectionOrder<'_, (crate::schedule_params::SetupPrefixCapacity, usize, usize)>,
+) -> bool {
+    left.admission.admits_every_parent_of(right.admission)
+        && (left.score.0 < right.score.0
+            || (left.score.0 == right.score.0
+                && (left.score.1 < right.score.1
+                    || (left.score.1 == right.score.1
+                        && left.score.2 <= right.score.2
+                        && left.context == right.context
+                        && left.descriptor <= right.descriptor))))
+}
+
+fn payload_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
+    payload_projection_dominates(
+        ProjectionOrder {
+            score: payload_score(left.schedule.metrics()),
+            descriptor: left.descriptor.as_ref(),
+            context: &left.descriptor_context,
+            admission: left.admission,
+        },
+        ProjectionOrder {
+            score: payload_score(right.schedule.metrics()),
+            descriptor: right.descriptor.as_ref(),
+            context: &right.descriptor_context,
+            admission: right.admission,
+        },
+    )
+}
+
+fn payload_projection_dominates(
+    left: ProjectionOrder<'_, (usize, usize)>,
+    right: ProjectionOrder<'_, (usize, usize)>,
+) -> bool {
+    left.admission.admits_every_parent_of(right.admission)
+        && (left.score.0 < right.score.0
+            || (left.score.0 == right.score.0
+                && left.score.1 <= right.score.1
+                && left.context == right.context
+                && left.descriptor <= right.descriptor))
+}
+
+fn insert_projected(
+    frontier: &mut Vec<ProjectedCandidate>,
+    candidate: ProjectedCandidate,
+    dominates: fn(&ProjectedCandidate, &ProjectedCandidate) -> bool,
+) {
+    if frontier
+        .iter()
+        .any(|existing| dominates(existing, &candidate))
+    {
+        return;
+    }
+    frontier.retain(|existing| !dominates(&candidate, existing));
+    frontier.push(candidate);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{
+        payload_projection_dominates, setup_projection_dominates, DescriptorOrderContext,
+        ParentAdmissionClass, ProjectionOrder,
+    };
+    use crate::schedule_params::SetupPrefixCapacity;
+
+    fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
+        DescriptorOrderContext {
+            fold_count,
+            first_fold_descriptor: (fold_count != 0).then(|| Arc::from([first_fold])),
         }
-        Ok(())
+    }
+
+    fn admission(fold_depth: u8, natural_len: usize) -> ParentAdmissionClass {
+        ParentAdmissionClass {
+            fold_depth,
+            first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
+        }
+    }
+
+    fn order<'a, Score>(
+        score: Score,
+        descriptor: &'a [u8],
+        context: &'a DescriptorOrderContext,
+        admission: ParentAdmissionClass,
+    ) -> ProjectionOrder<'a, Score> {
+        ProjectionOrder {
+            score,
+            descriptor,
+            context,
+            admission,
+        }
+    }
+
+    #[test]
+    fn setup_projection_keeps_setup_descriptor_tradeoffs_that_a_parent_can_mask() {
+        let smaller_setup = (SetupPrefixCapacity::for_natural_len(8), 100, 64);
+        let smaller_descriptor = (SetupPrefixCapacity::for_natural_len(8), 100, 128);
+        assert!(!setup_projection_dominates(
+            order(smaller_setup, &[2], &context(2, 7), admission(2, 8)),
+            order(smaller_descriptor, &[1], &context(2, 7), admission(2, 8),),
+        ));
+        assert!(!setup_projection_dominates(
+            order(smaller_descriptor, &[1], &context(2, 7), admission(2, 8),),
+            order(smaller_setup, &[2], &context(2, 7), admission(2, 8)),
+        ));
+
+        assert!(setup_projection_dominates(
+            order(
+                (SetupPrefixCapacity::for_natural_len(4), 100, 256),
+                &[9],
+                &context(2, 8),
+                admission(2, 4),
+            ),
+            order(smaller_setup, &[2], &context(3, 7), admission(2, 8)),
+        ));
+        assert!(setup_projection_dominates(
+            order(
+                (SetupPrefixCapacity::for_natural_len(8), 99, 256),
+                &[9],
+                &context(3, 8),
+                admission(2, 8),
+            ),
+            order(smaller_setup, &[2], &context(2, 7), admission(2, 8)),
+        ));
+    }
+
+    #[test]
+    fn payload_projection_keeps_setup_descriptor_tradeoffs_that_a_parent_can_mask() {
+        assert!(!payload_projection_dominates(
+            order((100, 64), &[2], &context(2, 7), admission(2, 8)),
+            order((100, 128), &[1], &context(2, 7), admission(2, 8)),
+        ));
+        assert!(!payload_projection_dominates(
+            order((100, 128), &[1], &context(2, 7), admission(2, 8)),
+            order((100, 64), &[2], &context(2, 7), admission(2, 8)),
+        ));
+        assert!(payload_projection_dominates(
+            order((99, 256), &[9], &context(3, 8), admission(2, 4)),
+            order((100, 64), &[1], &context(2, 7), admission(2, 8)),
+        ));
+        assert!(payload_projection_dominates(
+            order((100, 64), &[1], &context(2, 7), admission(2, 8)),
+            order((100, 128), &[2], &context(2, 7), admission(2, 8)),
+        ));
+    }
+
+    #[test]
+    fn projection_dominance_preserves_parent_admission_and_descriptor_order() {
+        let score = (100, 64);
+        let two_fold = admission(2, 8);
+
+        assert!(!payload_projection_dominates(
+            order((99, 32), &[1], &context(1, 7), admission(1, 8)),
+            order(score, &[2], &context(2, 7), two_fold),
+        ));
+        assert!(!payload_projection_dominates(
+            order((99, 32), &[1], &context(2, 7), admission(2, 16)),
+            order(score, &[2], &context(2, 7), two_fold),
+        ));
+        assert!(!payload_projection_dominates(
+            order(score, &[1], &context(2, 8), two_fold),
+            order(score, &[2], &context(2, 7), two_fold),
+        ));
+        assert!(!payload_projection_dominates(
+            order(score, &[1], &context(3, 7), two_fold),
+            order(score, &[2], &context(2, 7), two_fold),
+        ));
+
+        assert!(!admission(0, 8).is_admitted_by(true, false, 16));
+        assert!(admission(1, 8).is_admitted_by(true, false, 16));
+        assert!(!admission(1, 8).is_admitted_by(false, true, 16));
+        assert!(admission(2, 8).is_admitted_by(false, true, 16));
+        assert!(!admission(2, 16).is_admitted_by(false, true, 16));
     }
 }

@@ -12,8 +12,9 @@ use akita_field::{
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
-    AkitaExpandedSetup, CoefficientPackingBatchSemantics, CoefficientPackingGroupSemantics,
-    CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport, RingRelationInstance,
+    AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
+    CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
+    NegativeBinarySupport, RingRelationInstance,
 };
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
@@ -34,7 +35,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     evaluation_trace: Option<PreparedEvaluationTrace<E>>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
-    coefficient_packing_groups: &'a [CoefficientPackingGroupSemantics<E>],
+    coefficient_packing_groups: &'a [CoefficientPackingVerifierGroupSemantics<E>],
     coefficient_packing_opening_claim: E,
     physical_l2_claim: E,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
@@ -69,9 +70,7 @@ where
         evaluation_trace_row_weight: E,
         evaluation_trace_opening_claim: E,
         relation: &RingRelationInstance<F>,
-        relation_row_point: &[E],
-        claim_coefficients: &[E],
-        coefficient_packing_batch: Option<&'a CoefficientPackingBatchSemantics<F, E>>,
+        coefficient_packing_batch: Option<&'a CoefficientPackingVerifierBatchSemantics<E>>,
         coefficient_packing_scalar_openings: &[(usize, E)],
         physical_l2_claim: E,
         physical_l2_families: Vec<EqPairTensorFamily<E>>,
@@ -88,27 +87,7 @@ where
         if physical_l2_families.is_empty() && !physical_l2_claim.is_zero() {
             return Err(AkitaError::InvalidProof);
         }
-        let context = relation_matrix_evaluator
-            .flat_context
-            .as_ref()
-            .ok_or(AkitaError::InvalidProof)?;
         let coefficient_packing_groups = if let Some(batch) = coefficient_packing_batch {
-            batch.validate_context(
-                &context.level_params,
-                &context.opening_batch,
-                relation,
-                alpha,
-                relation_row_point,
-                claim_coefficients,
-            )?;
-            if batch.relation_plan().witness_layout() != context.witness_layout.as_ref()
-                || batch.relation_plan().relation_address_geometry()
-                    != relation_matrix_evaluator.relation_address_geometry
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "coefficient-packing verifier plan disagrees with ring switch".into(),
-                ));
-            }
             batch.groups()
         } else {
             &[]
@@ -139,7 +118,7 @@ where
                 .find_map(|&(group, opening)| (group == group_index).then_some(opening))
                 .ok_or(AkitaError::InvalidProof)?;
             coefficient_packing_opening_claim +=
-                semantics.stage2_terms().scalar_claim_weight() * authenticated_opening;
+                semantics.scalar_claim_weight() * authenticated_opening;
         }
         Ok(Self {
             batching_coeff,
@@ -170,9 +149,21 @@ where
         self.coefficient_packing_groups
             .iter()
             .try_fold(E::zero(), |sum, semantics| {
-                Ok(sum
-                    + semantics.relation_events().evaluate_at_point(point)?
-                    + semantics.stage2_terms().evaluate_at_point(point)?)
+                let relation = {
+                    let _span =
+                        tracing::info_span!("coefficient_packing_relation_weight").entered();
+                    semantics
+                        .compact_factors()
+                        .evaluate_relation_at_point(point)?
+                };
+                let structured = {
+                    let _span =
+                        tracing::info_span!("coefficient_packing_structured_weight").entered();
+                    semantics
+                        .compact_factors()
+                        .evaluate_stage2_at_point(point)?
+                };
+                Ok(sum + relation + structured)
             })
     }
 }
@@ -274,13 +265,14 @@ mod tests {
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
     use akita_field::{Ext2, Prime64Offset59};
     use akita_types::{
-        prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
-        AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
-        CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
-        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
-        RelationAddressGeometry, RelationRangeImagePlan, RelationWitnessGeometry,
-        RingRelationGroupOpening, RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry,
-        WitnessLayout,
+        prepare_coefficient_packing_batch_semantics,
+        prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels,
+        relation_rhs_coeff_len, AkitaSetupDescriptor, BasisMode,
+        CoefficientPackingBatchSemanticInputs, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
+        OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
+        PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
+        RelationWitnessGeometry, RingRelationGroupOpening, RingVec, SisModulusProfileId,
+        SubringCoefficientPackingGeometry, WitnessLayout,
     };
     use std::sync::Arc;
 
@@ -405,7 +397,20 @@ mod tests {
         let tau1 = (0..relation_plan.relation_row_index_num_vars().unwrap())
             .map(|index| E::from_u64(13 + index as u64))
             .collect::<Vec<_>>();
-        let batch =
+        let batch = prepare_coefficient_packing_verifier_batch_semantics(
+            CoefficientPackingBatchSemanticInputs {
+                level_params: &params,
+                opening_batch: &opening_batch,
+                relation_plan: &relation_plan,
+                relation: &relation,
+                prepared_points: &[(0, &prepared_point)],
+                alpha,
+                tau1: &tau1,
+                claim_coefficients: &claim_coefficients,
+            },
+        )
+        .unwrap();
+        let expanded_oracle =
             prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
                 level_params: &params,
                 opening_batch: &opening_batch,
@@ -460,8 +465,6 @@ mod tests {
             E::zero(),
             E::zero(),
             &relation,
-            &tau1,
-            &claim_coefficients,
             Some(&batch),
             &[(0, scalar_opening)],
             E::zero(),
@@ -470,7 +473,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             verifier.input_claim(),
-            batch.groups()[0].stage2_terms().scalar_claim_weight() * scalar_opening
+            batch.groups()[0].scalar_claim_weight() * scalar_opening
         );
         let point = (0..domain.num_vars())
             .map(|index| E::from_u64(29 + index as u64))
@@ -479,18 +482,16 @@ mod tests {
             verifier
                 .coefficient_packing_weight_at_point(&point)
                 .unwrap(),
-            batch.groups()[0]
+            expanded_oracle.groups()[0]
                 .relation_events()
                 .evaluate_at_point(&point)
                 .unwrap()
-                + batch.groups()[0]
+                + expanded_oracle.groups()[0]
                     .stage2_terms()
                     .evaluate_at_point(&point)
                     .unwrap()
         );
 
-        let mut wrong_tau1 = tau1.clone();
-        wrong_tau1[0] += E::one();
         assert!(AkitaStage2Verifier::new(
             E::zero(),
             E::zero(),
@@ -510,35 +511,6 @@ mod tests {
             E::zero(),
             E::zero(),
             &relation,
-            &wrong_tau1,
-            &claim_coefficients,
-            Some(&batch),
-            &[(0, scalar_opening)],
-            E::zero(),
-            Vec::new(),
-        )
-        .is_err());
-        assert!(AkitaStage2Verifier::new(
-            E::zero(),
-            E::zero(),
-            E::one(),
-            vec![E::zero(); domain.num_vars()],
-            &evaluator,
-            None,
-            None,
-            None,
-            &setup,
-            alpha,
-            None,
-            E::zero(),
-            relation_address_geometry.relation_lane_variable_count(),
-            relation_address_geometry.relation_coefficient_variable_count(),
-            None,
-            E::zero(),
-            E::zero(),
-            &relation,
-            &tau1,
-            &claim_coefficients,
             Some(&batch),
             &[(0, scalar_opening), (0, scalar_opening)],
             E::zero(),

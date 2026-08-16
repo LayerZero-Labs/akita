@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap},
     num::NonZeroUsize,
     sync::Arc,
 };
@@ -169,19 +169,12 @@ fn child_choice(
     edge: &ChildEdge<'_>,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
-    let child_is_terminal = suffix.folds.is_empty();
-    if edge.require_child_fold && child_is_terminal {
+    if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
+        edge.require_child_fold,
+        edge.offloaded,
+        edge.natural_setup_field_len,
+    ) {
         return Ok(None);
-    }
-    if edge.offloaded {
-        if child_is_terminal || suffix.folds.len() == 1 {
-            return Ok(None);
-        }
-        if suffix.metrics().first_direct_setup_capacity
-            >= super::SetupPrefixCapacity::for_natural_len(edge.natural_setup_field_len)
-        {
-            return Ok(None);
-        }
     }
 
     let (direct_payload_bytes, stage3_payload_bytes) =
@@ -238,16 +231,16 @@ fn child_choice(
     }))
 }
 
-fn consider_mixed_child_suffixes(
+fn consider_mixed_child_suffixes<'a>(
     edge: &ChildEdge<'_>,
-    child_candidates: &[ScheduleCandidate],
-    frontier: &mut Vec<ScheduleCandidate>,
+    child_candidates: impl Iterator<Item = &'a ScheduleCandidate>,
+    frontier: &mut MixedFrontier,
 ) -> Result<(), AkitaError> {
     for suffix in child_candidates {
         let Some(candidate) = child_choice(edge, suffix)? else {
             continue;
         };
-        insert_mixed_frontier(edge.policy, frontier, candidate.into_candidate());
+        insert_mixed_frontier(edge.policy, frontier, candidate.into_candidate())?;
     }
     Ok(())
 }
@@ -260,7 +253,7 @@ fn price_terminal_candidate(
     opening_reduction_bytes: usize,
     natural_len: usize,
     frontier: &mut ProjectedFrontier,
-    mixed_frontier: &mut Vec<ScheduleCandidate>,
+    mixed_frontier: &mut MixedFrontier,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     let direct_projection =
@@ -316,7 +309,7 @@ fn price_terminal_candidate(
         terminal: Arc::new(direct_step),
     };
     frontier.consider_candidate(policy, candidate.clone(), direct_projection)?;
-    insert_mixed_frontier(policy, mixed_frontier, candidate);
+    insert_mixed_frontier(policy, mixed_frontier, candidate)?;
     Ok(())
 }
 
@@ -332,7 +325,7 @@ fn price_level_candidate_with_children(
     offloaded_child: Option<&SuffixResult>,
     require_child_fold: bool,
     frontier: &mut ProjectedFrontier,
-    mixed_frontier: &mut Vec<ScheduleCandidate>,
+    mixed_frontier: &mut MixedFrontier,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     // Only a prefix-consuming state is read through the setup projection by
@@ -371,7 +364,7 @@ fn price_level_candidate_with_children(
         if state.incoming_setup_prefix.is_none() {
             consider_mixed_child_suffixes(
                 &direct_edge,
-                &direct_child.mixed_frontier,
+                direct_child.mixed_frontier.candidates(),
                 mixed_frontier,
             )?;
         }
@@ -463,8 +456,9 @@ pub(crate) fn derive_selected_suffix_schedule(
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (level_zero_is_root && level == 0);
     let mut payload_only = BTreeMap::new();
-    let mut setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices> = BTreeMap::new();
-    let mut mixed_frontier = Vec::new();
+    let mut setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices> =
+        BTreeMap::new();
+    let mut mixed_frontier = MixedFrontier::new();
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
         return Err(AkitaError::InvalidSetup(
@@ -943,8 +937,11 @@ pub(crate) fn derive_selected_suffix_schedule(
     for (key, choices) in frontier.by_parent_cost {
         if retains_setup_projection {
             setup_and_payload.insert(key, choices);
-        } else if let Some(choice) = choices.payload {
-            payload_only.insert(key, choice);
+        } else {
+            let candidates = choices.into_payload_candidates();
+            if !candidates.is_empty() {
+                payload_only.insert(key, candidates);
+            }
         }
     }
 

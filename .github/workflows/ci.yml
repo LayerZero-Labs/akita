@@ -192,7 +192,7 @@ jobs:
           # Exact packing searches retain large suffix frontiers. Keep the
           # standard hosted runner below the measured two-row memory peak.
           AKITA_SCHEDULE_GEN_JOBS: 1
-        run: scripts/generate-schedule-tables.sh --check-catalog
+        run: scripts/generate-schedule-tables.sh --check-catalog --row-progress
       - name: Committed schedule tables match the generator
         run: git diff --exit-code -- crates/akita-schedules/src/generated
       - name: Recursive setup-prefix slots

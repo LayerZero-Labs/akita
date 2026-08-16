@@ -153,3 +153,53 @@ fn batches_matching_multi_axis_recurrences() {
         .sum();
     assert_eq!(monomial_batch, monomial_separate);
 }
+
+#[test]
+fn bit_product_axes_match_dense_coordinate_oracle() {
+    let mut rng = StdRng::seed_from_u64(0xB17F_AC70);
+    let right = random_vec(&mut rng, 13);
+    let dense_weights = random_vec(&mut rng, 3);
+    let first_bits = (0..3)
+        .map(|_| [F::random(&mut rng), F::random(&mut rng)])
+        .collect::<Vec<_>>();
+    let second_bits = (0..2)
+        .map(|_| [F::random(&mut rng), F::random(&mut rng)])
+        .collect::<Vec<_>>();
+    let scalar = F::from_u64(23);
+    let family = EqPairTensorFamily::new(
+        0,
+        7,
+        scalar,
+        vec![
+            EqPairTensorAxis::bit_product(0, 5, first_bits.clone()).unwrap(),
+            EqPairTensorAxis::bit_product(0, 131, second_bits.clone()).unwrap(),
+            EqPairTensorAxis::dense(0, 1000, dense_weights.clone()),
+        ],
+    )
+    .unwrap();
+
+    let bit_weight = |factors: &[[F; 2]], coordinate: usize| {
+        factors
+            .iter()
+            .enumerate()
+            .fold(F::one(), |weight, (bit, factor)| {
+                weight * factor[(coordinate >> bit) & 1]
+            })
+    };
+    let mut expected = F::zero();
+    for (dense, &dense_weight) in dense_weights.iter().enumerate() {
+        for second in 0..4 {
+            for first in 0..8 {
+                expected += scalar
+                    * dense_weight
+                    * bit_weight(&first_bits, first)
+                    * bit_weight(&second_bits, second)
+                    * eq_eval_at_index(&right, 7 + 1000 * dense + 131 * second + 5 * first);
+            }
+        }
+    }
+    assert_eq!(
+        eval_boolean_pair_tensor_families::<_, false, false>(&[], &right, &[family]).unwrap(),
+        expected
+    );
+}

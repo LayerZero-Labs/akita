@@ -137,6 +137,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         .map(|claim| E::from_u64((claim + 11) as u64))
         .collect::<Vec<_>>();
     let tau1 = vec![E::from_u64(7); relation_plan.relation_row_index_num_vars().unwrap()];
+    let mut points = Vec::new();
     for group in relation_plan.groups() {
         let group_index = group.group_index();
         let group_layout = opening_batch.group_layout(group_index).unwrap();
@@ -152,6 +153,34 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
             &vec![E::from_u64(5 + group_index as u64); group_layout.num_vars()],
         )
         .unwrap();
+        points.push((group_index, point));
+    }
+    let point_refs = points
+        .iter()
+        .map(|(group, point)| (*group, point))
+        .collect::<Vec<_>>();
+    let compact_batch = prepare_coefficient_packing_verifier_batch_semantics(
+        CoefficientPackingBatchSemanticInputs {
+            level_params: &params,
+            opening_batch: &opening_batch,
+            relation_plan: &relation_plan,
+            relation: &relation,
+            prepared_points: &point_refs,
+            alpha: E::from_u64(37),
+            tau1: &tau1,
+            claim_coefficients: &claim_coefficients,
+        },
+    )
+    .unwrap();
+    for group in relation_plan.groups() {
+        let group_index = group.group_index();
+        let group_params = params
+            .group_params_geometry(&opening_batch, group_index)
+            .unwrap();
+        let point = points
+            .iter()
+            .find_map(|(candidate, point)| (*candidate == group_index).then_some(point))
+            .unwrap();
         let semantics =
             prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
                 level_params: &params,
@@ -159,16 +188,45 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
                 relation_plan: &relation_plan,
                 relation: &relation,
                 group_index,
-                prepared_point: &point,
+                prepared_point: point,
                 alpha: E::from_u64(37),
                 tau1: &tau1,
                 claim_coefficients: &claim_coefficients,
             })
             .unwrap();
+        let compact = compact_batch
+            .groups()
+            .iter()
+            .find(|candidate| candidate.group_index() == group_index)
+            .unwrap();
         assert_eq!(semantics.group_index(), group_index);
         assert_eq!(
             semantics.stage2_terms().group_claim_range(),
             group.claim_range()
+        );
+        let point = (0..semantics
+            .relation_events()
+            .physical_field_len()
+            .next_power_of_two()
+            .trailing_zeros())
+            .map(|bit| E::from_u64(41 + u64::from(bit)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            compact
+                .compact_factors()
+                .evaluate_relation_at_point(&point)
+                .unwrap(),
+            semantics
+                .relation_events()
+                .evaluate_at_point(&point)
+                .unwrap()
+        );
+        assert_eq!(
+            compact
+                .compact_factors()
+                .evaluate_stage2_at_point(&point)
+                .unwrap(),
+            semantics.stage2_terms().evaluate_at_point(&point).unwrap()
         );
         if group_index == 0 {
             assert_eq!(group_params.log_basis_inner(), 9);

@@ -273,6 +273,10 @@ pub struct PreparedSubringCoefficientPackingPoint<E: FieldCore> {
     num_live_positions: usize,
     num_positions_per_block: usize,
     num_live_blocks: usize,
+    packing_point: Vec<E>,
+    tail_point: Vec<E>,
+    position_point: Vec<E>,
+    block_point: Vec<E>,
     packing_weights: Vec<E>,
     tail_weights: Vec<E>,
     position_weights: Vec<E>,
@@ -345,11 +349,14 @@ impl<E: FieldCore> PreparedSubringCoefficientPackingPoint<E> {
             offset = end;
             Ok(axis)
         };
-        let packing_weights = basis_weights(take_axis(axis_bits[0])?, basis)?;
-        let tail_weights = basis_weights(take_axis(axis_bits[1])?, basis)?;
-        let position_weights = basis_weights(take_axis(axis_bits[2])?, basis)?;
-        let live_block_weights =
-            basis_weights_prefix(take_axis(axis_bits[3])?, basis, num_live_blocks)?;
+        let packing_point = take_axis(axis_bits[0])?.to_vec();
+        let tail_point = take_axis(axis_bits[1])?.to_vec();
+        let position_point = take_axis(axis_bits[2])?.to_vec();
+        let block_point = take_axis(axis_bits[3])?.to_vec();
+        let packing_weights = basis_weights(&packing_point, basis)?;
+        let tail_weights = basis_weights(&tail_point, basis)?;
+        let position_weights = basis_weights(&position_point, basis)?;
+        let live_block_weights = basis_weights_prefix(&block_point, basis, num_live_blocks)?;
         Ok(Self {
             geometry,
             basis,
@@ -357,6 +364,10 @@ impl<E: FieldCore> PreparedSubringCoefficientPackingPoint<E> {
             num_live_positions,
             num_positions_per_block,
             num_live_blocks,
+            packing_point,
+            tail_point,
+            position_point,
+            block_point,
             packing_weights,
             tail_weights,
             position_weights,
@@ -392,6 +403,26 @@ impl<E: FieldCore> PreparedSubringCoefficientPackingPoint<E> {
     /// Number of live partial-opening blocks.
     pub const fn num_live_blocks(&self) -> usize {
         self.num_live_blocks
+    }
+
+    /// Public point coordinates for the low A-ring coefficient axis.
+    pub fn packing_point(&self) -> &[E] {
+        &self.packing_point
+    }
+
+    /// Public point coordinates for the challenge-subring coefficient axis.
+    pub fn tail_point(&self) -> &[E] {
+        &self.tail_point
+    }
+
+    /// Public point coordinates for positions within one block.
+    pub fn position_point(&self) -> &[E] {
+        &self.position_point
+    }
+
+    /// Public point coordinates for the padded block domain.
+    pub fn block_point(&self) -> &[E] {
+        &self.block_point
     }
 
     /// Weights for the low A-ring coefficient axis.

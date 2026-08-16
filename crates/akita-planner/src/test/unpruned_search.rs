@@ -120,7 +120,7 @@ fn enumerate_suffixes(
             let derive_candidates =
                 |opening, payload_mode| -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
                     if level < akita_schedules::ADAPTIVE_SEARCH_LEVELS {
-                        derive_candidate_level_params_split_frontier(
+                        derive_candidate_level_params_split_frontier_without_bounds(
                             None,
                             policy,
                             payload_mode,

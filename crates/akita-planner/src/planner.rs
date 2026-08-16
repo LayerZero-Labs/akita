@@ -603,7 +603,7 @@ pub fn find_schedule(
             select_complete_candidate(active_policy, suffix.payload_candidates())?
         }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-            select_complete_candidate(active_policy, &suffix.mixed_frontier)?
+            select_complete_candidate(active_policy, suffix.mixed_frontier.candidates())?
         }
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
             select_complete_candidate(active_policy, suffix.setup_candidates())?

@@ -50,11 +50,12 @@ pub use batch::{
 };
 pub use coefficient_packing_relation::{
     prepare_coefficient_packing_batch_semantics, prepare_coefficient_packing_group_semantics,
-    CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
-    CoefficientPackingGroupSemanticInputs, CoefficientPackingGroupSemantics,
-    CoefficientPackingRelationEvent, CoefficientPackingRelationEvents,
-    CoefficientPackingStage2Segment, CoefficientPackingStage2Source, CoefficientPackingStage2Term,
-    CoefficientPackingStage2Terms,
+    prepare_coefficient_packing_verifier_batch_semantics, CoefficientPackingBatchSemanticInputs,
+    CoefficientPackingBatchSemantics, CoefficientPackingGroupSemanticInputs,
+    CoefficientPackingGroupSemantics, CoefficientPackingRelationEvent,
+    CoefficientPackingRelationEvents, CoefficientPackingStage2Segment,
+    CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
+    CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,

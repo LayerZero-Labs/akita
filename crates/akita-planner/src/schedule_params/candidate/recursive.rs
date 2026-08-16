@@ -317,6 +317,7 @@ pub(crate) fn recursive_split_search_domain(
 pub(super) struct RecursiveSplitLowerBoundInput {
     pub(super) num_ring_elems: usize,
     pub(super) ring_dimension: usize,
+    pub(super) opening_width: usize,
     pub(super) reduced_vars: usize,
     pub(super) r: usize,
     pub(super) delta_commit: usize,
@@ -338,9 +339,9 @@ fn recursive_witness_body_lower_bound(input: RecursiveSplitLowerBoundInput) -> O
         .checked_mul(input.delta_commit)?
         .checked_mul(input.num_chunks.max(1))?;
     let physical_width_floor = e_hat
-        .checked_add(t_hat_floor)?
-        .checked_add(z_hat_floor)?
-        .checked_mul(input.ring_dimension)?;
+        .checked_mul(input.opening_width)?
+        .checked_add(t_hat_floor.checked_mul(input.ring_dimension)?)?
+        .checked_add(z_hat_floor.checked_mul(input.ring_dimension)?)?;
     Some(physical_width_floor)
 }
 
@@ -531,25 +532,18 @@ impl RecursiveCandidateContext<'_> {
             let lower_bound_input = RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
                 ring_dimension: self.dimensions.d_a(),
+                opening_width: self
+                    .opening
+                    .physical_coefficient_width(self.dimensions.d_a()),
                 reduced_vars: search.reduced_vars,
                 r,
                 delta_commit,
                 delta_open,
                 num_chunks: search.num_chunks,
             };
-            let bounds = if self.opening.is_coefficient_packing() {
-                // The legacy bounds price every E and consistency quotient at
-                // ambient A width. They are not lower bounds once packing
-                // reduces those rows to k*s.
-                RecursiveSplitBounds {
-                    score: None,
-                    witness_body: None,
-                }
-            } else {
-                RecursiveSplitBounds {
-                    score: recursive_split_lower_bound(lower_bound_input),
-                    witness_body: recursive_witness_body_lower_bound(lower_bound_input),
-                }
+            let bounds = RecursiveSplitBounds {
+                score: recursive_split_lower_bound(lower_bound_input),
+                witness_body: recursive_witness_body_lower_bound(lower_bound_input),
             };
             if !admit_split(r, bounds) {
                 continue;
@@ -581,6 +575,15 @@ impl RecursiveCandidateContext<'_> {
                     else {
                         continue;
                     };
+                    if bounds.score.is_some_and(|bound| bound > score.0)
+                        || bounds
+                            .witness_body
+                            .is_some_and(|bound| bound > next_witness_len)
+                    {
+                        return Err(AkitaError::InvalidSetup(
+                            "recursive split lower bound exceeds a materialized candidate".into(),
+                        ));
+                    }
                     visit(score, r, params, next_witness_len);
                 }
             }
@@ -947,6 +950,72 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
     incoming_setup_prefix: Option<usize>,
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    derive_candidate_level_params_split_frontier_with_bounds(
+        setup_prefix_cache,
+        policy,
+        payload_mode,
+        opening,
+        dimensions,
+        current_witness_len,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        incoming_setup_prefix,
+        source_moment,
+        true,
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_candidate_level_params_split_frontier_without_bounds(
+    setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    opening: PlannerOpeningCandidate,
+    dimensions: CommitmentRingDims,
+    current_witness_len: usize,
+    source: crate::InnerBasisSource,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    fold_level: usize,
+    incoming_setup_prefix: Option<usize>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    derive_candidate_level_params_split_frontier_with_bounds(
+        setup_prefix_cache,
+        policy,
+        payload_mode,
+        opening,
+        dimensions,
+        current_witness_len,
+        source,
+        log_basis_inner,
+        log_basis_open,
+        fold_level,
+        incoming_setup_prefix,
+        source_moment,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_candidate_level_params_split_frontier_with_bounds(
+    setup_prefix_cache: Option<&mut SetupPrefixSearchCache>,
+    policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
+    opening: PlannerOpeningCandidate,
+    dimensions: CommitmentRingDims,
+    current_witness_len: usize,
+    source: crate::InnerBasisSource,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    fold_level: usize,
+    incoming_setup_prefix: Option<usize>,
+    source_moment: Option<crate::response_model::SourceMomentEstimate>,
+    apply_split_bounds: bool,
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(
         setup_prefix_cache,
         policy,
@@ -991,6 +1060,9 @@ pub(crate) fn derive_candidate_level_params_split_frontier(
         };
         context.walk_splits(
             |_, bounds| {
+                if !apply_split_bounds {
+                    return true;
+                }
                 let frontier_admits = bounds
                     .witness_body
                     .is_none_or(|bound| bound < current_witness_len);

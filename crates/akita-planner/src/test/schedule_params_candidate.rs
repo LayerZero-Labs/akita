@@ -1,4 +1,7 @@
-use super::recursive::{recursive_candidate_order_key, recursive_split_search_domain};
+use super::recursive::{
+    recursive_candidate_order_key, recursive_split_lower_bound, recursive_split_search_domain,
+    RecursiveSplitLowerBoundInput,
+};
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
@@ -78,6 +81,32 @@ fn recursive_candidate_order_preserves_exhaustive_tie_break() {
     assert!(
         recursive_candidate_order_key((99, 98, 1, 0), 1) < recursive_candidate_order_key(score, 9),
         "the exact layout score must remain the primary objective"
+    );
+}
+
+#[test]
+fn recursive_split_bound_prices_packing_e_at_its_physical_width() {
+    let input = RecursiveSplitLowerBoundInput {
+        num_ring_elems: 1 << 12,
+        ring_dimension: 256,
+        opening_width: 128,
+        reduced_vars: 12,
+        r: 6,
+        delta_commit: 3,
+        delta_open: 4,
+        num_chunks: 8,
+    };
+    let blocks = (1usize << 12).div_ceil(1 << 6);
+    let expected_body = blocks * 4 * 128 + blocks * 4 * 256 + (1 << 6) * 3 * 8 * 256;
+    assert_eq!(
+        recursive_split_lower_bound(input),
+        Some(expected_body + 2 * blocks)
+    );
+    assert!(
+        recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
+            opening_width: 256,
+            ..input
+        }) > recursive_split_lower_bound(input)
     );
 }
 
@@ -305,6 +334,114 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             )
             .unwrap()
             .unwrap()
+        );
+    }
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
+    use akita_config::{
+        policy_of,
+        proof_optimized::{fp128, fp32, fp64},
+    };
+
+    let cases = [
+        (
+            policy_of::<fp128::Dense>(),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 128,
+                opening: 64,
+            },
+            4,
+        ),
+        (
+            policy_of::<fp64::Dense>(),
+            CommitmentRingDims {
+                inner: 256,
+                outer: 128,
+                opening: 64,
+            },
+            3,
+        ),
+        (
+            policy_of::<fp32::Dense>(),
+            CommitmentRingDims {
+                inner: 1024,
+                outer: 128,
+                opening: 64,
+            },
+            3,
+        ),
+    ];
+    for (policy, dimensions, log_basis) in cases {
+        let opening = PlannerOpeningCandidate::coefficient_packing(
+            1,
+            policy.claim_ext_degree,
+            dimensions,
+            64,
+        )
+        .expect("production packing geometry");
+        let derive = |without_bounds| {
+            let arguments = (
+                None,
+                &policy,
+                akita_types::CommitmentPayloadMode::Compressed,
+                opening,
+                dimensions,
+                948_672,
+                crate::InnerBasisSource::BalancedDigits { log_basis },
+                log_basis,
+                log_basis,
+                1,
+                None,
+                Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+            );
+            if without_bounds {
+                derive_candidate_level_params_split_frontier_without_bounds(
+                    arguments.0,
+                    arguments.1,
+                    arguments.2,
+                    arguments.3,
+                    arguments.4,
+                    arguments.5,
+                    arguments.6,
+                    arguments.7,
+                    arguments.8,
+                    arguments.9,
+                    arguments.10,
+                    arguments.11,
+                )
+            } else {
+                derive_candidate_level_params_split_frontier(
+                    arguments.0,
+                    arguments.1,
+                    arguments.2,
+                    arguments.3,
+                    arguments.4,
+                    arguments.5,
+                    arguments.6,
+                    arguments.7,
+                    arguments.8,
+                    arguments.9,
+                    arguments.10,
+                    arguments.11,
+                )
+            }
+        };
+        let canonical = |candidates: Vec<(CommittedGroupParams, usize)>| {
+            candidates
+                .into_iter()
+                .map(|(params, next)| (params.canonical_descriptor_bytes(), next))
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let exhaustive = canonical(derive(true).expect("bounds-disabled frontier"));
+        assert!(!exhaustive.is_empty());
+        assert_eq!(
+            canonical(derive(false).expect("bounded frontier")),
+            exhaustive,
+            "split bounds must not change the exact frontier for {dimensions:?}",
         );
     }
 }

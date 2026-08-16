@@ -1,54 +1,5 @@
 use super::{dominates_mixed_score, offloaded_witness_contracts};
 use crate::schedule_params::MixedScore;
-use std::collections::VecDeque;
-
-#[test]
-fn suffix_cache_gives_referenced_entry_a_second_chance() {
-    let key = |level| super::ScheduleMemoKey {
-        level,
-        current_witness_len: 1024,
-        current_lb: 3,
-        source_moment: None,
-        incoming_setup_prefix: None,
-        d_a: 64,
-        d_b: 64,
-        d_d: 64,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-    };
-    let hot = key(1);
-    let cold = key(2);
-    let mut entries = std::collections::HashMap::from([
-        (
-            hot,
-            super::MemoEntry {
-                result: super::empty_suffix_result(),
-                referenced: true,
-            },
-        ),
-        (
-            cold,
-            super::MemoEntry {
-                result: super::empty_suffix_result(),
-                referenced: false,
-            },
-        ),
-    ]);
-    let mut insertion_order = VecDeque::from([hot, cold]);
-
-    super::evict_suffix_entry(&mut entries, &mut insertion_order);
-
-    assert!(entries.contains_key(&hot));
-    assert!(!entries.contains_key(&cold));
-    assert_eq!(insertion_order, VecDeque::from([hot]));
-}
-
-#[test]
-fn full_suffix_cache_evicts_within_the_inserted_state_class() {
-    assert!(super::eviction_uses_direct_queue(true, true, true));
-    assert!(!super::eviction_uses_direct_queue(false, true, true));
-    assert!(!super::eviction_uses_direct_queue(true, false, true));
-    assert!(super::eviction_uses_direct_queue(false, true, false));
-}
 
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
     super::ScheduleMemoKey {
@@ -65,76 +16,69 @@ fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::Schedu
 }
 
 #[test]
-fn suffix_cache_preserves_capacity_and_class_local_second_chance() {
-    let direct_hot = memo_key(1, None);
-    let direct_cold = memo_key(2, None);
-    let prefixed_cold = memo_key(3, Some(1));
-    let prefixed_other = memo_key(4, Some(1));
-    let mut memo = super::ScheduleMemo::with_capacity(4);
-    for key in [direct_hot, direct_cold, prefixed_cold, prefixed_other] {
+fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
+    let direct = memo_key(1, None);
+    let prefixed = memo_key(2, Some(1));
+    let mut memo = super::ScheduleMemo::new();
+    for key in [direct, prefixed] {
         memo.insert(key, super::empty_suffix_result());
-        assert!(memo.internal_invariants_hold());
     }
+    assert!(memo.contains(&direct));
+    assert_eq!(memo.len(), 2);
+    assert!(memo.contains(&prefixed));
 
-    memo.get(&direct_hot).expect("mark direct entry as hot");
-    let new_direct = memo_key(5, None);
-    memo.insert(new_direct, super::empty_suffix_result());
-    assert!(memo.contains(&direct_hot));
-    assert!(!memo.contains(&direct_cold));
-    assert!(memo.contains(&prefixed_cold));
-    assert!(memo.contains(&prefixed_other));
-    assert_eq!(memo.queue_lengths(), (2, 2));
-    assert_eq!(memo.len(), 4);
-    assert!(memo.internal_invariants_hold());
-
-    let new_prefixed = memo_key(6, Some(2));
-    memo.insert(new_prefixed, super::empty_suffix_result());
-    assert!(memo.contains(&direct_hot));
-    assert!(memo.contains(&new_direct));
-    assert!(!memo.contains(&prefixed_cold));
-    assert!(memo.contains(&prefixed_other));
-    assert!(memo.contains(&new_prefixed));
-    assert_eq!(memo.queue_lengths(), (2, 2));
-    assert_eq!(memo.len(), 4);
-    assert!(memo.internal_invariants_hold());
-
-    memo.insert(new_prefixed, super::empty_suffix_result());
-    assert_eq!(memo.queue_lengths(), (2, 2));
-    assert_eq!(memo.len(), 4);
-    assert!(memo.internal_invariants_hold());
+    memo.insert(direct, super::empty_suffix_result());
+    assert_eq!(memo.len(), 2);
+    assert!(memo.contains(&direct));
+    assert!(memo.contains(&prefixed));
 }
 
 #[test]
-fn suffix_cache_falls_back_only_when_inserted_class_is_empty() {
-    let prefixed_one = memo_key(1, Some(1));
-    let prefixed_two = memo_key(2, Some(1));
-    let direct = memo_key(3, None);
-    let mut memo = super::ScheduleMemo::with_capacity(2);
-    memo.insert(prefixed_one, super::empty_suffix_result());
-    memo.insert(prefixed_two, super::empty_suffix_result());
-    assert!(memo.internal_invariants_hold());
+fn parent_observable_key_ignores_unpriced_successor_opening_details() {
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+        .expect("D64 challenge");
+    let mut evaluation_trace = akita_types::CommittedGroupParams::params_only(
+        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        256,
+        2,
+        2,
+        2,
+        2,
+        challenge,
+    );
+    evaluation_trace.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    let mut packing = evaluation_trace.clone();
+    packing.opening_method = akita_types::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    packing.log_basis_open = 4;
+    packing.num_digits_open = 32;
+    assert_ne!(
+        evaluation_trace.canonical_descriptor_bytes(),
+        packing.canonical_descriptor_bytes()
+    );
+    assert_eq!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
+        "a parent prices only the successor outer payload and setup-prefix payload"
+    );
 
-    memo.insert(direct, super::empty_suffix_result());
-    assert!(memo.contains(&direct));
-    assert!(!memo.contains(&prefixed_one));
-    assert!(memo.contains(&prefixed_two));
-    assert_eq!(memo.queue_lengths(), (1, 1));
-    assert_eq!(memo.len(), 2);
-    assert!(memo.internal_invariants_hold());
-
-    let direct_one = memo_key(4, None);
-    let direct_two = memo_key(5, None);
-    let prefixed = memo_key(6, Some(2));
-    let mut memo = super::ScheduleMemo::with_capacity(2);
-    memo.insert(direct_one, super::empty_suffix_result());
-    memo.insert(direct_two, super::empty_suffix_result());
-    memo.insert(prefixed, super::empty_suffix_result());
-    assert!(memo.contains(&prefixed));
-    assert!(!memo.contains(&direct_one));
-    assert!(memo.contains(&direct_two));
-    assert_eq!(memo.queue_lengths(), (1, 1));
-    assert_eq!(memo.len(), 2);
-    assert!(memo.internal_invariants_hold());
+    let outer = packing.outer_commit_matrix;
+    packing.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank() * 2,
+        outer.input_width(),
+        outer.coeff_linf_bound(),
+        outer.ring_dimension(),
+    );
+    assert_ne!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
+        "changing the transmitted successor payload must change the parent key"
+    );
 }
 
 #[test]

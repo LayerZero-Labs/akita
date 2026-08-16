@@ -13,27 +13,42 @@ use super::*;
 /// - `mixed_frontier` — nondominated setup-envelope/proof candidates for the
 ///   direct adaptive-dimension objective.
 pub(crate) struct SuffixResult {
-    pub(super) payload_only: BTreeMap<FirstFoldKey, ScheduleCandidate>,
-    pub(super) setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices>,
+    pub(super) payload_only: BTreeMap<ParentObservableKey, Vec<ScheduleCandidate>>,
+    pub(super) setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices>,
     /// Nondominated setup-envelope/proof candidates used by adaptive scalar
-    /// planning. Candidates with different first folds remain distinct because
-    /// the parent proof price and canonical descriptor can distinguish them.
-    pub(crate) mixed_frontier: Vec<ScheduleCandidate>,
+    /// planning, bucketed by the exact geometry visible to their parent.
+    pub(crate) mixed_frontier: MixedFrontier,
+}
+
+pub(crate) struct MixedFrontier {
+    by_parent: BTreeMap<ParentObservableKey, Vec<ScheduleCandidate>>,
+}
+
+impl MixedFrontier {
+    pub(super) const fn new() -> Self {
+        Self {
+            by_parent: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
+        self.by_parent.values().flatten()
+    }
 }
 
 impl SuffixResult {
     pub(crate) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
-        self.payload_only.values().chain(
+        self.payload_only.values().flatten().chain(
             self.setup_and_payload
                 .values()
-                .filter_map(|choices| choices.payload.as_ref()),
+                .flat_map(frontier::ObjectiveChoices::payload_candidates),
         )
     }
 
     pub(crate) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.setup_and_payload
             .values()
-            .filter_map(|choices| choices.setup.as_ref())
+            .flat_map(frontier::ObjectiveChoices::setup_candidates)
     }
 }
 
@@ -54,27 +69,73 @@ pub(super) fn dominates_mixed_score(left: MixedScore, right: MixedScore) -> bool
 
 pub(super) fn insert_mixed_frontier(
     policy: &PlannerPolicy,
-    frontier: &mut Vec<ScheduleCandidate>,
+    frontier: &mut MixedFrontier,
     candidate: ScheduleCandidate,
-) {
+) -> Result<(), AkitaError> {
     if policy.selection_policy
         != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
         || !policy.admits_setup_field_elements(candidate.setup_field_elements)
     {
-        return;
+        return Ok(());
     }
-    crate::schedule_params::pareto::insert(frontier, candidate, |left, right| {
-        left.first_fold_params() == right.first_fold_params()
-            && dominates_mixed_score(mixed_score(left), mixed_score(right))
-    });
+    let candidate_key = ParentObservableKey::new(policy, candidate.first_fold_params())?;
+    let bucket = frontier.by_parent.entry(candidate_key).or_default();
+    let mut dominated = false;
+    let mut retained = Vec::with_capacity(bucket.len() + 1);
+    for existing in bucket.drain(..) {
+        if dominates_mixed_score(mixed_score(&existing), mixed_score(&candidate)) {
+            dominated = true;
+        }
+        if !dominates_mixed_score(mixed_score(&candidate), mixed_score(&existing)) {
+            retained.push(existing);
+        }
+    }
+    if !dominated {
+        retained.push(candidate);
+    }
+    *bucket = retained;
+    Ok(())
 }
 
-/// Parent-visible first-fold class. A parent edge prices the child's outgoing
-/// commitment payload, so suffixes with different first payload sizes are not
-/// interchangeable even when they use the same digit basis.
+/// Exact successor geometry visible to a parent fold.
+///
+/// The parent prices only the child's outgoing commitment payload and optional
+/// Stage-3 setup-prefix payload. The child's other matrix and opening choices
+/// remain part of the retained full schedule for the canonical tie-break, but
+/// cannot affect the parent edge price.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct FirstFoldKey {
-    pub(super) descriptor: Option<Vec<u8>>,
+pub(crate) struct ParentObservableKey {
+    outer_payload_bytes: usize,
+    setup_prefix_payload_bytes: usize,
+}
+
+impl ParentObservableKey {
+    pub(super) fn new(
+        policy: &PlannerPolicy,
+        first: Option<&akita_types::CommittedGroupParams>,
+    ) -> Result<Self, AkitaError> {
+        let Some(first) = first else {
+            return Ok(Self {
+                outer_payload_bytes: 0,
+                setup_prefix_payload_bytes: 0,
+            });
+        };
+        let payload = first.outer_payload_geometry()?;
+        let outer_payload_bytes = payload
+            .transmitted_coefficients()
+            .checked_mul(akita_types::layout::proof_size::field_bytes(
+                policy.decomposition.field_bits(),
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("outer payload byte count overflow".into()))?;
+        Ok(Self {
+            outer_payload_bytes,
+            setup_prefix_payload_bytes:
+                akita_schedules::planner_support::stage3_payload_bytes_for_successor(
+                    policy,
+                    Some(first),
+                )?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -90,80 +151,20 @@ pub(super) struct ScheduleMemoKey {
     pub(super) payload_phase: akita_types::CommitmentPayloadPhase,
 }
 
-impl ScheduleMemoKey {
-    const fn is_direct(self) -> bool {
-        self.incoming_setup_prefix.is_none()
-    }
-}
-
 pub(crate) struct ScheduleMemo {
-    entries: HashMap<ScheduleMemoKey, MemoEntry>,
-    direct_insertion_order: VecDeque<ScheduleMemoKey>,
-    prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
-    capacity: usize,
+    // Every completed state is retained for the lifetime of one row search.
+    // Evicting completed exact-DP states turns a wide packing search into
+    // repeated subtree evaluation; the compact suffix frontiers and persistent
+    // fold chains are the memory bound instead.
+    entries: HashMap<ScheduleMemoKey, Arc<SuffixResult>>,
     pub(super) setup_prefixes: SetupPrefixSearchCache,
-}
-
-pub(super) struct MemoEntry {
-    pub(super) result: Arc<SuffixResult>,
-    pub(super) referenced: bool,
-}
-
-const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
-// Direct and prefixed states share the hard total bound. Before the cache is
-// full, either class may use free capacity. Once it fills, each insertion
-// normally evicts from its own class, so the population split becomes
-// phase-stable instead of allowing a wide prefix stream to churn hot direct
-// states. The other class is used only when the inserted class is empty.
-const MAX_SECOND_CHANCE_PROBES: usize = 16;
-
-pub(super) fn eviction_uses_direct_queue(
-    inserting_direct: bool,
-    direct_has_entries: bool,
-    prefixed_has_entries: bool,
-) -> bool {
-    (inserting_direct && direct_has_entries) || !prefixed_has_entries
-}
-
-pub(super) fn evict_suffix_entry(
-    entries: &mut HashMap<ScheduleMemoKey, MemoEntry>,
-    insertion_order: &mut VecDeque<ScheduleMemoKey>,
-) {
-    let mut probes = 0;
-    while let Some(evicted) = insertion_order.pop_front() {
-        let recently_referenced = probes < MAX_SECOND_CHANCE_PROBES
-            && entries.get_mut(&evicted).is_some_and(|entry| {
-                let referenced = entry.referenced;
-                entry.referenced = false;
-                referenced
-            });
-        if recently_referenced {
-            insertion_order.push_back(evicted);
-            probes += 1;
-        } else {
-            entries.remove(&evicted);
-            break;
-        }
-    }
 }
 
 impl ScheduleMemo {
     pub(crate) fn new() -> Self {
         Self {
             entries: HashMap::new(),
-            direct_insertion_order: VecDeque::new(),
-            prefixed_insertion_order: VecDeque::new(),
-            capacity: MAX_SUFFIX_SEARCH_CACHE_ENTRIES,
             setup_prefixes: SetupPrefixSearchCache::default(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_capacity(capacity: usize) -> Self {
-        assert!(capacity > 0, "suffix memo capacity must be nonzero");
-        Self {
-            capacity,
-            ..Self::new()
         }
     }
 
@@ -177,87 +178,12 @@ impl ScheduleMemo {
         self.entries.contains_key(key)
     }
 
-    #[cfg(test)]
-    pub(super) fn queue_lengths(&self) -> (usize, usize) {
-        (
-            self.direct_insertion_order.len(),
-            self.prefixed_insertion_order.len(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(super) fn internal_invariants_hold(&self) -> bool {
-        let direct = self
-            .direct_insertion_order
-            .iter()
-            .copied()
-            .collect::<std::collections::HashSet<_>>();
-        let prefixed = self
-            .prefixed_insertion_order
-            .iter()
-            .copied()
-            .collect::<std::collections::HashSet<_>>();
-        self.entries.len() <= self.capacity
-            && self.direct_insertion_order.len() == direct.len()
-            && self.prefixed_insertion_order.len() == prefixed.len()
-            && direct.is_disjoint(&prefixed)
-            && direct.len() + prefixed.len() == self.entries.len()
-            && direct
-                .iter()
-                .all(|key| key.is_direct() && self.entries.contains_key(key))
-            && prefixed
-                .iter()
-                .all(|key| !key.is_direct() && self.entries.contains_key(key))
-            && self.entries.keys().all(|key| {
-                if key.is_direct() {
-                    direct.contains(key)
-                } else {
-                    prefixed.contains(key)
-                }
-            })
-    }
-
-    pub(super) fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
-        self.entries.get_mut(key).map(|entry| {
-            entry.referenced = true;
-            &entry.result
-        })
+    pub(super) fn get(&self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
+        self.entries.get(key)
     }
 
     pub(super) fn insert(&mut self, key: ScheduleMemoKey, result: Arc<SuffixResult>) {
-        if let Entry::Occupied(mut existing) = self.entries.entry(key) {
-            existing.insert(MemoEntry {
-                result,
-                referenced: true,
-            });
-            return;
-        }
-        if self.entries.len() >= self.capacity {
-            let evict_direct = eviction_uses_direct_queue(
-                key.is_direct(),
-                !self.direct_insertion_order.is_empty(),
-                !self.prefixed_insertion_order.is_empty(),
-            );
-            let insertion_order = if evict_direct {
-                &mut self.direct_insertion_order
-            } else {
-                &mut self.prefixed_insertion_order
-            };
-            evict_suffix_entry(&mut self.entries, insertion_order);
-        }
-        let insertion_order = if key.is_direct() {
-            &mut self.direct_insertion_order
-        } else {
-            &mut self.prefixed_insertion_order
-        };
-        insertion_order.push_back(key);
-        self.entries.insert(
-            key,
-            MemoEntry {
-                result,
-                referenced: false,
-            },
-        );
+        self.entries.insert(key, result);
     }
 }
 
@@ -265,7 +191,7 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
     Arc::new(SuffixResult {
         payload_only: BTreeMap::new(),
         setup_and_payload: BTreeMap::new(),
-        mixed_frontier: Vec::new(),
+        mixed_frontier: MixedFrontier::new(),
     })
 }
 

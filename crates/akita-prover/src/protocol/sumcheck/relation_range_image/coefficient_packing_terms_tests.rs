@@ -3,13 +3,15 @@ use super::*;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_field::{Ext2, Prime64Offset59};
 use akita_types::{
-    prepare_coefficient_packing_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
+    prepare_coefficient_packing_batch_semantics,
+    prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
     AkitaExpandedSetup, AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
-    CoefficientPackingBatchSemantics, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
-    OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
-    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance, RingVec,
-    SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+    CoefficientPackingBatchSemantics, CoefficientPackingVerifierBatchSemantics,
+    CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams, OpeningClaimsLayout,
+    OpeningMethod, PreparedSubringCoefficientPackingPoint, RelationAddressGeometry,
+    RelationRangeImagePlan, RelationWitnessGeometry, RingRelationGroupOpening,
+    RingRelationInstance, RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry,
+    WitnessLayout,
 };
 
 type F = Prime64Offset59;
@@ -24,9 +26,14 @@ struct Fixture {
     claim_coefficients: Vec<E>,
     tau1: Vec<E>,
     batch: CoefficientPackingBatchSemantics<F, E>,
+    compact_batch: CoefficientPackingVerifierBatchSemantics<E>,
 }
 
 fn fixture() -> Fixture {
+    fixture_for_basis(BasisMode::Lagrange)
+}
+
+fn fixture_for_basis(basis: BasisMode) -> Fixture {
     let s = 64;
     let d_a = 256;
     let d_d = 128;
@@ -83,7 +90,7 @@ fn fixture() -> Fixture {
     let geometry = SubringCoefficientPackingGeometry::try_new(2, d_a, s).unwrap();
     let prepared_point = PreparedSubringCoefficientPackingPoint::new(
         geometry,
-        BasisMode::Lagrange,
+        basis,
         6,
         4,
         11,
@@ -151,6 +158,19 @@ fn fixture() -> Fixture {
             claim_coefficients: &claim_coefficients,
         })
         .unwrap();
+    let compact_batch = prepare_coefficient_packing_verifier_batch_semantics(
+        CoefficientPackingBatchSemanticInputs {
+            level_params: &params,
+            opening_batch: &opening_batch,
+            relation_plan: &relation_plan,
+            relation: &relation,
+            prepared_points: &[(0, &prepared_point)],
+            alpha: E::from_u64(17),
+            tau1: &tau1,
+            claim_coefficients: &claim_coefficients,
+        },
+    )
+    .unwrap();
     Fixture {
         params,
         opening_batch,
@@ -160,6 +180,7 @@ fn fixture() -> Fixture {
         claim_coefficients,
         tau1,
         batch,
+        compact_batch,
     }
 }
 
@@ -224,32 +245,51 @@ fn prover_adapter_preserves_shared_stage2_semantics() {
 
 #[test]
 fn prover_adapter_folds_to_shared_stage2_point_evaluation() {
-    let fixture = fixture();
-    let semantics = &fixture.batch.groups()[0];
-    let mut prepared = prepare_coefficient_packing_linear_terms(semantics, E::zero())
-        .unwrap()
-        .linear_terms;
-    let padded_len = semantics
-        .stage2_terms()
-        .physical_field_len()
-        .next_power_of_two();
-    let point = (0..padded_len.trailing_zeros())
-        .map(|index| E::from_u64(101 + u64::from(index)))
-        .collect::<Vec<_>>();
-    let coefficient_bits = semantics
-        .relation_events()
-        .relation_coefficient_block_len()
-        .trailing_zeros() as usize;
-    for &challenge in &point[..coefficient_bits] {
-        prepared.fold_coefficients(challenge);
+    for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+        let fixture = fixture_for_basis(basis);
+        let semantics = &fixture.batch.groups()[0];
+        let mut prepared = prepare_coefficient_packing_linear_terms(semantics, E::zero())
+            .unwrap()
+            .linear_terms;
+        let padded_len = semantics
+            .stage2_terms()
+            .physical_field_len()
+            .next_power_of_two();
+        let point = (0..padded_len.trailing_zeros())
+            .map(|index| E::from_u64(101 + u64::from(index)))
+            .collect::<Vec<_>>();
+        let coefficient_bits = semantics
+            .relation_events()
+            .relation_coefficient_block_len()
+            .trailing_zeros() as usize;
+        for &challenge in &point[..coefficient_bits] {
+            prepared.fold_coefficients(challenge);
+        }
+        for &challenge in &point[coefficient_bits..] {
+            prepared.fold_lanes(challenge);
+        }
+        assert_eq!(
+            prepared.final_value().unwrap(),
+            semantics.stage2_terms().evaluate_at_point(&point).unwrap()
+        );
+        assert_eq!(
+            fixture.compact_batch.groups()[0]
+                .compact_factors()
+                .evaluate_stage2_at_point(&point)
+                .unwrap(),
+            semantics.stage2_terms().evaluate_at_point(&point).unwrap()
+        );
+        assert_eq!(
+            fixture.compact_batch.groups()[0]
+                .compact_factors()
+                .evaluate_relation_at_point(&point)
+                .unwrap(),
+            semantics
+                .relation_events()
+                .evaluate_at_point(&point)
+                .unwrap()
+        );
     }
-    for &challenge in &point[coefficient_bits..] {
-        prepared.fold_lanes(challenge);
-    }
-    assert_eq!(
-        prepared.final_value().unwrap(),
-        semantics.stage2_terms().evaluate_at_point(&point).unwrap()
-    );
 }
 
 #[test]

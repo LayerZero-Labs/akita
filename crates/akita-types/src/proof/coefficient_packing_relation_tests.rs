@@ -226,8 +226,34 @@ where
     .unwrap()
 }
 
-fn materialize_events(events: &CoefficientPackingRelationEvents<E>) -> Vec<E> {
-    let mut dense = vec![E::zero(); events.physical_field_len()];
+fn prepare_compact<Base, Extension>(
+    fixture: &Fixture<Base, Extension>,
+    alpha: Extension,
+) -> CoefficientPackingVerifierGroupSemantics<Extension>
+where
+    Base: FieldCore + CanonicalField + FromPrimitiveInt,
+    Extension:
+        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+{
+    prepare_coefficient_packing_verifier_batch_semantics(CoefficientPackingBatchSemanticInputs {
+        level_params: &fixture.params,
+        opening_batch: &fixture.opening_batch,
+        relation_plan: &fixture.relation_plan,
+        relation: &fixture.relation,
+        prepared_points: &[(0, &fixture.prepared_point)],
+        alpha,
+        tau1: &fixture.tau1,
+        claim_coefficients: &fixture.claim_coefficients,
+    })
+    .unwrap()
+    .groups()[0]
+        .clone()
+}
+
+fn materialize_events<Extension: FieldCore>(
+    events: &CoefficientPackingRelationEvents<Extension>,
+) -> Vec<Extension> {
+    let mut dense = vec![Extension::zero(); events.physical_field_len()];
     for event in events.events() {
         for (offset, index) in event.physical_coefficients().enumerate() {
             dense[index] +=
@@ -278,6 +304,7 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
     );
     for alpha in [E::zero(), E::one(), E::from_u64(17)] {
         let semantics = prepare(&fixture, alpha);
+        let compact = prepare_compact(&fixture, alpha);
         let padded_len = semantics
             .relation_events()
             .physical_field_len()
@@ -317,6 +344,20 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
             semantics.stage2_terms().evaluate_at_point(&point).unwrap(),
             multilinear_eval(&dense_stage2, &point).unwrap()
         );
+        assert_eq!(
+            compact
+                .compact_factors()
+                .evaluate_relation_at_point(&point)
+                .unwrap(),
+            multilinear_eval(&dense_events, &point).unwrap()
+        );
+        assert_eq!(
+            compact
+                .compact_factors()
+                .evaluate_stage2_at_point(&point)
+                .unwrap(),
+            multilinear_eval(&dense_stage2, &point).unwrap()
+        );
         let mut reordered_terms = semantics.stage2_terms().clone();
         reordered_terms.terms.reverse();
         assert_eq!(
@@ -333,6 +374,168 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
             .evaluate_at_point(&point[..point.len() - 1])
             .is_err());
     }
+}
+
+fn assert_compact_factors_match_dense<Base, Extension>(fixture: &Fixture<Base, Extension>)
+where
+    Base: FieldCore + CanonicalField + FromPrimitiveInt,
+    Extension:
+        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+{
+    for alpha in [Extension::zero(), Extension::one(), Extension::from_u64(19)] {
+        let semantics = prepare(fixture, alpha);
+        let compact = prepare_compact(fixture, alpha);
+        let padded_len = semantics
+            .relation_events()
+            .physical_field_len()
+            .next_power_of_two();
+        let point = (0..padded_len.trailing_zeros())
+            .map(|index| Extension::from_u64(29 + u64::from(index)))
+            .collect::<Vec<_>>();
+        let mut relation = materialize_events(semantics.relation_events());
+        relation.resize(padded_len, Extension::zero());
+        let mut stage2 = materialize_stage2_source(
+            semantics.stage2_terms(),
+            CoefficientPackingStage2Source::DirectOpening,
+        );
+        let packing_z = materialize_stage2_source(
+            semantics.stage2_terms(),
+            CoefficientPackingStage2Source::PackingZ,
+        );
+        for (sum, contribution) in stage2.iter_mut().zip(packing_z) {
+            *sum += contribution;
+        }
+        stage2.resize(padded_len, Extension::zero());
+        assert_eq!(
+            compact
+                .compact_factors()
+                .evaluate_relation_at_point(&point)
+                .unwrap(),
+            multilinear_eval(&relation, &point).unwrap()
+        );
+        assert_eq!(
+            compact
+                .compact_factors()
+                .evaluate_stage2_at_point(&point)
+                .unwrap(),
+            multilinear_eval(&stage2, &point).unwrap()
+        );
+        assert!(compact
+            .compact_factors()
+            .evaluate_relation_at_point(&point[..point.len() - 1])
+            .is_err());
+    }
+}
+
+#[test]
+fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
+    let overlap = fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
+        SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        64,
+        64,
+        6,
+        4,
+        9,
+        2,
+        2,
+    );
+    assert_compact_factors_match_dense(&overlap);
+
+    for d_d in [64, 128] {
+        let h4 = fixture::<Prime32Offset99, FpExt4<Prime32Offset99>>(
+            SisModulusProfileId::Q32Offset99,
+            1024,
+            d_d,
+            64,
+            6,
+            4,
+            13,
+            2,
+            2,
+        );
+        assert_eq!(
+            h4.prepared_point.geometry().packing_factor(),
+            4,
+            "k=4,dA=1024,s=64 must exercise h=4"
+        );
+        assert_compact_factors_match_dense(&h4);
+    }
+}
+
+#[test]
+fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
+    type Extension = Prime128OffsetA7F7;
+
+    const K: usize = 1;
+    const S: usize = 64;
+    const H: usize = 4;
+    const D_A: usize = 256;
+    const D_D: usize = 64;
+    const OPENING_DIGITS: usize = 43;
+    const LIVE_BLOCKS: usize = 8192;
+    assert_eq!(D_A, K * S * H);
+    assert_eq!(D_D, S);
+
+    let alpha = Extension::from_u64(7);
+    let coefficient_weights = scalar_powers(alpha, S);
+    let digit_weights = scalar_powers(Extension::from_u64(3), OPENING_DIGITS);
+    let outer_weights = (0..LIVE_BLOCKS)
+        .map(|block| Extension::from_u64(11 + (block % 251) as u64))
+        .collect::<Vec<_>>();
+    let coefficient_bits = S.trailing_zeros() as usize;
+    let outer_domain = LIVE_BLOCKS * OPENING_DIGITS;
+    let outer_bits = outer_domain.next_power_of_two().trailing_zeros() as usize;
+    let point = (0..coefficient_bits + outer_bits)
+        .map(|bit| match bit % 5 {
+            0 => Extension::zero(),
+            1 => Extension::one(),
+            _ => Extension::from_u64(17 + bit as u64),
+        })
+        .collect::<Vec<_>>();
+    let family = CoefficientPackingAffineRelationFamily {
+        scalar: Extension::from_u64(13),
+        coefficient_weights: coefficient_weights.clone().into(),
+        coefficient_len: S,
+        base_offset: 0,
+        outer_len: LIVE_BLOCKS,
+        outer_stride: OPENING_DIGITS,
+        digit_stride: 1,
+        digit_weights: digit_weights.clone().into(),
+        outer_weights: outer_weights.clone().into(),
+    };
+
+    let coefficient_evaluation = coefficient_weights.iter().enumerate().fold(
+        Extension::zero(),
+        |sum, (coefficient, &weight)| {
+            sum + weight * eq_eval_at_index(&point[..coefficient_bits], coefficient)
+        },
+    );
+    let outer_evaluation =
+        outer_weights
+            .iter()
+            .enumerate()
+            .fold(Extension::zero(), |sum, (block, &block_weight)| {
+                sum + digit_weights.iter().enumerate().fold(
+                    Extension::zero(),
+                    |digit_sum, (digit, &digit_weight)| {
+                        digit_sum
+                            + block_weight
+                                * digit_weight
+                                * eq_eval_at_index(
+                                    &point[coefficient_bits..],
+                                    block * OPENING_DIGITS + digit,
+                                )
+                    },
+                )
+            });
+    assert_eq!(
+        family.evaluate_at_point(&point).unwrap(),
+        family.scalar * coefficient_evaluation * outer_evaluation
+    );
+    assert!(family
+        .evaluate_at_point(&point[..coefficient_bits - 1])
+        .is_err());
 }
 
 #[test]
@@ -1164,190 +1367,6 @@ fn structured_stage2_terms_match_independent_dense_tables() {
 }
 
 #[test]
-fn public_rhs_accepts_zero_packing_consistency_and_rejects_nonzero_payload() {
-    let fixture = fixture::<F, E>(
-        SisModulusProfileId::Q64Offset59,
-        256,
-        128,
-        64,
-        6,
-        4,
-        11,
-        2,
-        1,
-    );
-    let layout = fixture
-        .relation_plan
-        .relation_witness_geometry()
-        .rhs_layout();
-    assert_eq!(
-        relation_claim_from_compressed_rhs_extension::<F, E>(
-            layout,
-            &fixture.tau1,
-            E::from_u64(23),
-            fixture.relation.rhs(),
-        )
-        .unwrap(),
-        E::zero()
-    );
-    let mut malformed = fixture.relation.rhs().coeffs().to_vec();
-    malformed[0] = F::one();
-    assert!(relation_claim_from_compressed_rhs_extension::<F, E>(
-        layout,
-        &fixture.tau1,
-        E::from_u64(23),
-        &RingVec::from_coeffs(malformed),
-    )
-    .is_err());
-
-    let alpha = E::from_u64(29);
-    let families = layout.row_families().unwrap();
-    let mut native_rhs = vec![F::zero(); relation_rhs_coeff_len(layout).unwrap()];
-    let mut expected = E::zero();
-    let mut offset = 0usize;
-    for (row_index, family) in families.into_iter().enumerate() {
-        let geometry = family.geometry();
-        if matches!(
-            family,
-            RelationRowFamily::Outer { .. } | RelationRowFamily::Opening { .. }
-        ) {
-            let coefficient = 3.min(geometry.polynomial_modulus_dimension() - 1);
-            let value = F::from_u64((row_index + 2) as u64);
-            native_rhs[offset + coefficient] = value;
-            expected += relation_row_weight(row_index, &fixture.tau1).unwrap()
-                * scalar_powers(alpha, geometry.polynomial_modulus_dimension())[coefficient]
-                * E::lift_base(value);
-        }
-        offset += geometry.physical_coefficient_width();
-    }
-    assert_eq!(
-        relation_claim_from_compressed_rhs_extension::<F, E>(
-            layout,
-            &fixture.tau1,
-            alpha,
-            &RingVec::from_coeffs(native_rhs),
-        )
-        .unwrap(),
-        expected
-    );
-}
-
-#[test]
-fn degree_one_packing_consistency_rhs_must_be_zero() {
-    type Base = Prime128OffsetA7F7;
-    let fixture = fixture::<Base, Base>(
-        SisModulusProfileId::Q128OffsetA7F7,
-        128,
-        64,
-        64,
-        6,
-        4,
-        10,
-        1,
-        1,
-    );
-    let layout = fixture
-        .relation_plan
-        .relation_witness_geometry()
-        .rhs_layout();
-    let mut malformed = fixture.relation.rhs().coeffs().to_vec();
-    malformed[0] = Base::one();
-
-    assert!(relation_claim_from_compressed_rhs_extension::<Base, Base>(
-        layout,
-        &fixture.tau1,
-        Base::from_u64(23),
-        &RingVec::from_coeffs(malformed),
-    )
-    .is_err());
-}
-
-#[test]
-fn alpha_and_role_dimensions_are_bound_by_the_shared_plan() {
-    let fixture = fixture::<F, E>(
-        SisModulusProfileId::Q64Offset59,
-        256,
-        128,
-        64,
-        6,
-        4,
-        11,
-        2,
-        1,
-    );
-    let at_zero = prepare(&fixture, E::zero());
-    let at_one = prepare(&fixture, E::one());
-    assert_eq!(
-        at_zero.relation_events().alpha_powers(),
-        scalar_powers(E::zero(), 64)
-    );
-    assert_eq!(
-        at_one.relation_events().alpha_powers(),
-        scalar_powers(E::one(), 64)
-    );
-    assert_ne!(
-        materialize_events(at_zero.relation_events()),
-        materialize_events(at_one.relation_events())
-    );
-
-    let wrong_relation = RingRelationInstance::new(
-        fixture.relation.group_openings().to_vec(),
-        fixture.relation.extension_degree(),
-        fixture.opening_batch.clone(),
-        fixture.relation.gamma().to_vec(),
-        fixture.relation.row_coefficient_rings().clone(),
-        fixture.relation.rhs().clone(),
-        RingVec::from_coeffs(Vec::new()),
-        CommitmentRingDims {
-            inner: fixture.params.role_dims().d_a(),
-            outer: fixture.params.role_dims().d_b(),
-            opening: 64,
-        },
-    )
-    .unwrap();
-    assert!(
-        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
-            level_params: &fixture.params,
-            opening_batch: &fixture.opening_batch,
-            relation_plan: &fixture.relation_plan,
-            relation: &wrong_relation,
-            group_index: 0,
-            prepared_point: &fixture.prepared_point,
-            alpha: E::from_u64(3),
-            tau1: &fixture.tau1,
-            claim_coefficients: &fixture.claim_coefficients,
-        })
-        .is_err()
-    );
-
-    let mut unsupported = fixture.params.clone();
-    let inner = unsupported.inner_commit_matrix;
-    unsupported.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-        inner.security_policy(),
-        inner.sis_table_key().unwrap().table_digest,
-        inner.sis_modulus_profile(),
-        inner.output_rank(),
-        inner.input_width(),
-        inner.coeff_linf_bound().unwrap_or(0),
-        1usize << 20,
-    );
-    assert!(
-        prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
-            level_params: &unsupported,
-            opening_batch: &fixture.opening_batch,
-            relation_plan: &fixture.relation_plan,
-            relation: &fixture.relation,
-            group_index: 0,
-            prepared_point: &fixture.prepared_point,
-            alpha: E::from_u64(3),
-            tau1: &fixture.tau1,
-            claim_coefficients: &fixture.claim_coefficients,
-        })
-        .is_err()
-    );
-}
-
-#[test]
 fn production_extension_degrees_include_exact_overlap_and_h_greater_than_one() {
     type F1 = Prime128OffsetA7F7;
     let overlap = fixture::<F1, F1>(
@@ -1396,6 +1415,9 @@ fn production_extension_degrees_include_exact_overlap_and_h_greater_than_one() {
         assert_eq!(event.alpha_exponent_start(), 0);
     }
 }
+
+#[path = "coefficient_packing_relation_authority_tests.rs"]
+mod authority;
 
 #[path = "coefficient_packing_relation_multigroup_tests.rs"]
 mod multigroup;

@@ -313,12 +313,9 @@ fn contract_residual_tensor_axes<F: FieldCore>(
         .ok_or(AkitaError::InvalidProof)?;
     let mut acc = F::zero();
     for coordinate in 0..axis.len {
-        let axis_weight = match &axis.weights {
-            EqPairTensorWeights::Unit => F::one(),
-            EqPairTensorWeights::Dense(weights) => {
-                *weights.get(coordinate).ok_or(AkitaError::InvalidProof)?
-            }
-        };
+        let axis_weight = axis
+            .coordinate_weight(coordinate)
+            .ok_or(AkitaError::InvalidProof)?;
         if axis_weight.is_zero() {
             continue;
         }
@@ -361,12 +358,9 @@ fn visit_tensor_coordinates<F: FieldCore>(
         .get(axis_index)
         .ok_or(AkitaError::InvalidProof)?;
     for coordinate in 0..axis.len {
-        let axis_weight = match &axis.weights {
-            EqPairTensorWeights::Unit => F::one(),
-            EqPairTensorWeights::Dense(weights) => {
-                *weights.get(coordinate).ok_or(AkitaError::InvalidProof)?
-            }
-        };
+        let axis_weight = axis
+            .coordinate_weight(coordinate)
+            .ok_or(AkitaError::InvalidProof)?;
         if axis_weight.is_zero() {
             continue;
         }
