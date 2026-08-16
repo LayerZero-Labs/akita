@@ -154,7 +154,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn terminal_candidates_compete_across_opening_bases() {
+fn proof_first_uniform_search_matches_unpruned_descriptor() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     // fp32 has extension degree four, so production s >= 64 requires d_A >= 256.
@@ -174,16 +174,24 @@ fn terminal_candidates_compete_across_opening_bases() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
-    assert_eq!(selected.schedule.terminal.params.witness.log_basis_inner, 6);
+    let unpruned = unpruned_search::find_schedule(
+        onehot_group(14, 1),
+        &policy,
+        OneHot::root_honest_fold_policy(),
+        OneHot::ring_challenge_config,
+    )
+    .unwrap();
     assert_eq!(
-        selected
-            .schedule
-            .terminal
-            .params
-            .witness
-            .inner_commit_matrix
-            .coeff_linf_bound(),
-        Some(524_287),
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
+    );
+    assert_eq!(
+        selected.estimate.estimated_num_setup_field_elements,
+        unpruned.estimate.estimated_num_setup_field_elements,
+    );
+    assert_eq!(
+        selected.schedule.canonical_descriptor_bytes(),
+        unpruned.schedule.canonical_descriptor_bytes(),
     );
     let root = &selected.schedule.root.params.final_group.commitment;
     assert!(matches!(

@@ -652,7 +652,12 @@ pub(crate) fn derive_selected_suffix_schedule(
                     for &mode in
                         payload_phase.candidate_modes(level, incoming_setup_prefix.is_some())
                     {
+                        // Proof-first uniform search compares complete schedules across the
+                        // same early split frontier as the bounds-disabled oracle.
                         let retain_split_frontier = incoming_setup_prefix.is_some()
+                            || (policy.selection_policy
+                                == crate::SelectionPolicyId::MinEstimatedProofPayload
+                                && level < akita_schedules::ADAPTIVE_SEARCH_LEVELS)
                             || matches!(
                                 policy.ring_dimension_schedule_mode,
                                 crate::RingDimensionScheduleMode::AdaptiveDimension {
