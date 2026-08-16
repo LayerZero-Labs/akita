@@ -253,7 +253,24 @@ where
         F: CanonicalField + FromPrimitiveInt,
         E: FpExtEncoding<F>,
     {
-        Ok(self.tensor_packed_extension_poly::<E, D>()?.into())
+        let ext_degree = <E as ExtField<F>>::EXT_DEGREE;
+        if let Some(cache) = self.projection_cache.get() {
+            if cache.ring_d == D && cache.ext_degree == ext_degree {
+                return Ok(std::sync::Arc::clone(&cache.projected).into());
+            }
+            // A cache built at another shape is not reused; fall through to
+            // the uncached path, exactly like `digit_planes_for`.
+            return Ok(std::sync::Arc::new(self.tensor_packed_extension_poly::<E, D>()?).into());
+        }
+        let projected = std::sync::Arc::new(self.tensor_packed_extension_poly::<E, D>()?);
+        let _ = self
+            .projection_cache
+            .set(super::poly::DenseProjectionCache {
+                ring_d: D,
+                ext_degree,
+                projected: std::sync::Arc::clone(&projected),
+            });
+        Ok(projected.into())
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]

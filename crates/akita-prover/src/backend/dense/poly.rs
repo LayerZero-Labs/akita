@@ -35,6 +35,18 @@ pub(super) struct DenseDigitCache {
     planes: Vec<i8>,
 }
 
+/// Cached root tensor projection of this polynomial (single shape slot,
+/// same reuse rationale as [`DenseDigitCache`]). The commit and opening
+/// paths project the same source table at the same shape, so without this
+/// the second projection of a production-scale table is a repeated full
+/// walk of the coefficient buffer.
+#[derive(Debug)]
+pub(super) struct DenseProjectionCache<F: FieldCore> {
+    pub(super) ring_d: usize,
+    pub(super) ext_degree: usize,
+    pub(super) projected: std::sync::Arc<DensePoly<F>>,
+}
+
 /// Dense polynomial: all ring coefficients materialized in memory.
 ///
 /// Storage is D-free: coefficients are a flat field-element buffer, and the
@@ -54,6 +66,7 @@ pub struct DensePoly<F: FieldCore> {
     /// padding), present only when every live coefficient is small.
     pub(super) small_i8_coeffs: Option<Vec<i8>>,
     digit_cache: OnceLock<DenseDigitCache>,
+    pub(super) projection_cache: OnceLock<DenseProjectionCache<F>>,
 }
 
 impl<F: FieldCore + Clone> Clone for DensePoly<F> {
@@ -64,6 +77,7 @@ impl<F: FieldCore + Clone> Clone for DensePoly<F> {
             coeffs: self.coeffs.clone(),
             small_i8_coeffs: self.small_i8_coeffs.clone(),
             digit_cache: OnceLock::new(),
+            projection_cache: OnceLock::new(),
         }
     }
 }
@@ -259,6 +273,7 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             coeffs: RingVec::from_coeffs(coeffs),
             small_i8_coeffs: all_small_i8.then_some(small_i8_coeffs),
             digit_cache: OnceLock::new(),
+            projection_cache: OnceLock::new(),
         })
     }
 
@@ -294,6 +309,7 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             coeffs: RingVec::from_coeffs(flat),
             small_i8_coeffs,
             digit_cache: OnceLock::new(),
+            projection_cache: OnceLock::new(),
         }
     }
 

@@ -27,14 +27,22 @@ use crate::{
 /// ring coefficients so the transformed commitment path preserves sparsity.
 #[derive(Debug, Clone)]
 pub enum RootTensorProjectionPoly<F: FieldCore> {
-    /// Dense transformed root polynomial (D-free flat storage).
-    Dense(DensePoly<F>),
+    /// Dense transformed root polynomial (D-free flat storage). Shared so a
+    /// projection cached on the source polynomial is reused across the
+    /// commit and opening paths without copying the table.
+    Dense(Arc<DensePoly<F>>),
     /// Sparse signed-ring transformed root polynomial.
     Sparse(Arc<SparseRingPoly<F>>),
 }
 
 impl<F: FieldCore> From<DensePoly<F>> for RootTensorProjectionPoly<F> {
     fn from(poly: DensePoly<F>) -> Self {
+        Self::Dense(Arc::new(poly))
+    }
+}
+
+impl<F: FieldCore> From<Arc<DensePoly<F>>> for RootTensorProjectionPoly<F> {
+    fn from(poly: Arc<DensePoly<F>>) -> Self {
         Self::Dense(poly)
     }
 }
@@ -69,14 +77,14 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyMeta::num_ring_elems(poly),
+            Self::Dense(poly) => RootPolyMeta::num_ring_elems(poly.as_ref()),
             Self::Sparse(poly) => RootPolyMeta::num_ring_elems(poly.as_ref()),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyMeta::num_vars(poly),
+            Self::Dense(poly) => RootPolyMeta::num_vars(poly.as_ref()),
             Self::Sparse(poly) => RootPolyMeta::num_vars(poly.as_ref()),
         }
     }
@@ -88,14 +96,14 @@ where
 {
     fn num_ring_elems(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::<F, D>::num_ring_elems(poly),
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_ring_elems(poly.as_ref()),
             Self::Sparse(poly) => RootPolyShape::<F, D>::num_ring_elems(poly.as_ref()),
         }
     }
 
     fn num_vars(&self) -> usize {
         match self {
-            Self::Dense(poly) => RootPolyShape::<F, D>::num_vars(poly),
+            Self::Dense(poly) => RootPolyShape::<F, D>::num_vars(poly.as_ref()),
             Self::Sparse(poly) => RootPolyShape::<F, D>::num_vars(poly.as_ref()),
         }
     }
@@ -312,7 +320,7 @@ where
                 let mut dense_polys = Vec::with_capacity(source.polys.len());
                 for poly in source.polys {
                     match *poly {
-                        RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner),
+                        RootTensorProjectionPoly::Dense(inner) => dense_polys.push(inner.as_ref()),
                         _ => {
                             return Ok(BatchDecomposeFoldOutcome::FallbackPerPoly);
                         }
@@ -586,7 +594,7 @@ mod tests {
             plan,
         )
         .unwrap();
-        let projected = dense.map(RootTensorProjectionPoly::Dense);
+        let projected = dense.map(RootTensorProjectionPoly::from);
         let actual =
             RootCommitKernel::<RootTensorProjectionView<'_, F, D>, F, D>::commit_inner_group(
                 &CpuBackend::DEFAULT,

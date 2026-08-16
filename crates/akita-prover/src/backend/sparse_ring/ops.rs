@@ -263,9 +263,7 @@ where
     where
         E: FpExtEncoding<F>,
     {
-        Ok(RootTensorProjectionPoly::Dense(
-            source.poly.tensor_packed_extension_poly::<E, D>()?,
-        ))
+        Ok(source.poly.tensor_packed_extension_poly::<E, D>()?.into())
     }
 }
 
