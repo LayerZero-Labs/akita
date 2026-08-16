@@ -26,7 +26,7 @@ use akita_prover::{
     AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext,
     RootTensorProjectionPoly, UniformProverStack,
 };
-use akita_types::{FpExtEncoding, NttCacheKey, OpeningClaimsLayout};
+use akita_types::{CommittedSourceEncoding, FpExtEncoding, NttCacheKey, OpeningClaimsLayout};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Cfg = fp64::Dense;
@@ -304,6 +304,11 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .map(|row| row.schedule().root.params.final_group.commitment.clone())
         .expect("layout");
+    assert_eq!(
+        params.source_encoding,
+        CommittedSourceEncoding::CanonicalCoefficientTable,
+        "the selected packing root must exercise the canonical commit capability"
+    );
 
     let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
@@ -341,7 +346,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     );
     assert_eq!(contract_output.hint, dense_output.hint);
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
-    assert_eq!(TENSOR_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(TENSOR_KERNEL_CALLS.load(Ordering::Relaxed), 0);
 
     let mut malformed_params = params.clone();
     malformed_params.num_digits_inner += 1;
@@ -354,5 +359,5 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     .expect_err("malformed explicit params must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
-    assert_eq!(TENSOR_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(TENSOR_KERNEL_CALLS.load(Ordering::Relaxed), 0);
 }

@@ -323,6 +323,45 @@ mod tests {
         );
 
         let full_prefix_len = padded_setup_prefix_len(natural_field_len);
+        let d_setup = level_params.inner_commit_matrix.ring_dimension();
+        let d_outer = level_params.outer_commit_matrix.ring_dimension();
+        let ring_slots = full_prefix_len / d_setup;
+        let setup_num_digits = akita_types::sis::compute_num_digits_field_width(
+            level_params
+                .inner_commit_matrix
+                .sis_modulus_profile()
+                .field_bits(),
+            level_params.log_basis_inner,
+        );
+        let inner_width = ring_slots
+            .checked_mul(setup_num_digits)
+            .expect("setup-prefix A width");
+        level_params.inner_commit_matrix =
+            akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
+                level_params
+                    .inner_commit_matrix
+                    .sis_table_key()
+                    .expect("L-infinity setup-prefix A matrix"),
+                inner_width,
+            )
+            .expect("full-field setup-prefix A capacity");
+        let outer_width = akita_types::CommitmentSliceGeometry::try_new(
+            level_params.outer_slice_count,
+            ring_slots,
+            1,
+            level_params.inner_commit_matrix.output_rank(),
+            level_params.num_digits_outer,
+            d_setup,
+            d_outer,
+        )
+        .expect("setup-prefix slice geometry")
+        .physical_input_width();
+        level_params.outer_commit_matrix =
+            akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
+                level_params.outer_commit_matrix.sis_table_key(),
+                outer_width,
+            )
+            .expect("setup-prefix B capacity");
         let commitment_params = setup_prefix_precommitted_params(&level_params, full_prefix_len)
             .expect("setup-prefix parameters");
         let id = scheduled_setup_prefix(natural_field_len, commitment_params);
@@ -362,7 +401,8 @@ mod tests {
         let natural_field_len = level_params
             .inner_commit_matrix
             .ring_dimension()
-            .div_ceil(2)
+            .checked_mul(level_params.outer_slice_count.get())
+            .expect("unaligned setup length")
             + 1;
         let expected_setup_eval_len = padded_setup_prefix_len(natural_field_len) / RING_D;
         let (setup, offloaded_params) =

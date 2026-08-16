@@ -369,6 +369,7 @@ where
     E: ExtField<F> + akita_types::FpExtEncoding<F>,
     I: OneHotIndex,
 {
+    #[tracing::instrument(skip_all, name = "coefficient_packing_onehot_partials")]
     fn coefficient_packing_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
@@ -396,6 +397,7 @@ where
             })?;
         let stride = geometry.subring_embedding_stride();
         let s = geometry.challenge_subring_dimension();
+        let num_blocks = point.num_live_blocks();
 
         source
             .polys
@@ -418,54 +420,93 @@ where
                         actual: actual_field_len,
                     });
                 }
+                if poly.onehot_k == 0 {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing one-hot chunk size must be nonzero".into(),
+                    ));
+                }
+                let block_coordinates = cfg_into_iter!(0..num_blocks)
+                    .map(|block_index| {
+                        let first_position = block_index
+                            .checked_mul(point.num_positions_per_block())
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput(
+                                    "coefficient-packing one-hot block offset overflow".into(),
+                                )
+                            })?;
+                        let end_position = first_position
+                            .checked_add(point.num_positions_per_block())
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput(
+                                    "coefficient-packing one-hot block end overflow".into(),
+                                )
+                            })?
+                            .min(point.num_live_positions());
+                        let first_field = first_position.checked_mul(D).ok_or_else(|| {
+                            AkitaError::InvalidInput(
+                                "coefficient-packing one-hot field offset overflow".into(),
+                            )
+                        })?;
+                        let end_field = end_position.checked_mul(D).ok_or_else(|| {
+                            AkitaError::InvalidInput(
+                                "coefficient-packing one-hot field end overflow".into(),
+                            )
+                        })?;
+                        let first_chunk = first_field / poly.onehot_k;
+                        let end_chunk = end_field.div_ceil(poly.onehot_k).min(poly.indices.len());
+                        let mut block = vec![F::zero(); geometry.partial_base_field_width()];
+                        for chunk_index in first_chunk..end_chunk {
+                            let Some(hot_index) = poly
+                                .indices
+                                .get(chunk_index)
+                                .copied()
+                                .ok_or(AkitaError::InvalidProof)?
+                            else {
+                                continue;
+                            };
+                            let field_index = chunk_index
+                                .checked_mul(poly.onehot_k)
+                                .and_then(|base| base.checked_add(hot_index.as_usize()))
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidInput("one-hot source index overflow".into())
+                                })?;
+                            if field_index < first_field || field_index >= end_field {
+                                continue;
+                            }
+                            let position_in_block = field_index / D - first_position;
+                            let coefficient_index = field_index % D;
+                            let low_index = coefficient_index % stride;
+                            let subring_index = coefficient_index / stride;
+                            let value = point.position_weights()[position_in_block]
+                                * point.packing_weights()[low_index];
+                            let extension_coordinates = value.ext_coords();
+                            if extension_coordinates.len() != geometry.extension_degree() {
+                                return Err(AkitaError::InvalidSetup(
+                                    "coefficient-packing extension encoding width mismatch".into(),
+                                ));
+                            }
+                            for (extension_coordinate, coordinate) in
+                                extension_coordinates.iter().copied().enumerate()
+                            {
+                                let local_index = extension_coordinate
+                                    .checked_mul(s)
+                                    .and_then(|base| base.checked_add(subring_index))
+                                    .ok_or(AkitaError::InvalidProof)?;
+                                *block.get_mut(local_index).ok_or(AkitaError::InvalidProof)? +=
+                                    coordinate;
+                            }
+                        }
+                        Ok(block)
+                    })
+                    .collect::<Result<Vec<_>, AkitaError>>()?;
                 let mut coordinates = Vec::new();
                 coordinates.try_reserve_exact(output_len).map_err(|_| {
                     AkitaError::InvalidInput(
                         "coefficient-packing one-hot output allocation failed".into(),
                     )
                 })?;
-                coordinates.resize(output_len, F::zero());
-                for (chunk_index, hot_index) in poly.indices.iter().copied().enumerate() {
-                    let Some(hot_index) = hot_index else {
-                        continue;
-                    };
-                    let field_index = chunk_index
-                        .checked_mul(poly.onehot_k)
-                        .and_then(|base| base.checked_add(hot_index.as_usize()))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput("one-hot source index overflow".into())
-                        })?;
-                    let position = field_index / D;
-                    let coefficient_index = field_index % D;
-                    let block_index = position / point.num_positions_per_block();
-                    let position_in_block = position % point.num_positions_per_block();
-                    let low_index = coefficient_index % stride;
-                    let subring_index = coefficient_index / stride;
-                    let value = point.position_weights()[position_in_block]
-                        * point.packing_weights()[low_index];
-                    let extension_coordinates = value.ext_coords();
-                    if extension_coordinates.len() != geometry.extension_degree() {
-                        return Err(AkitaError::InvalidSetup(
-                            "coefficient-packing extension encoding width mismatch".into(),
-                        ));
-                    }
-                    let block_offset = block_index
-                        .checked_mul(geometry.partial_base_field_width())
-                        .ok_or(AkitaError::InvalidProof)?;
-                    for (extension_coordinate, coordinate) in
-                        extension_coordinates.iter().copied().enumerate()
-                    {
-                        let local_index = extension_coordinate
-                            .checked_mul(s)
-                            .and_then(|base| base.checked_add(subring_index))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let output_index = block_offset
-                            .checked_add(local_index)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        *coordinates
-                            .get_mut(output_index)
-                            .ok_or(AkitaError::InvalidProof)? += coordinate;
-                    }
+                for block in block_coordinates {
+                    coordinates.extend(block);
                 }
                 SubringCoefficientPackingPartials::new(
                     geometry,

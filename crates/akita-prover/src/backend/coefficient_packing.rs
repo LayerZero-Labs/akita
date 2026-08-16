@@ -1,6 +1,7 @@
 //! Shared checked construction for coefficient-packing backend kernels.
 
 use crate::compute::SubringCoefficientPackingPlan;
+use akita_field::parallel::*;
 use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::FpExtEncoding;
 
@@ -20,11 +21,12 @@ fn zero_vec<T: FieldCore>(len: usize) -> Result<Vec<T>, AkitaError> {
 /// The source index is `[position][A coefficient]`. This helper is shared by
 /// dense and recursive representations; sparse representations may implement
 /// a direct scatter while comparing against this path in tests.
+#[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
 pub(crate) fn partials_from_indexed_source<F, E, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
     source_num_vars: usize,
     source_len: usize,
-    mut coefficient_at: impl FnMut(usize) -> Result<F, AkitaError>,
+    coefficient_at: impl Fn(usize) -> Result<F, AkitaError> + Sync,
 ) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore,
@@ -53,72 +55,80 @@ where
     let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
         AkitaError::InvalidInput("coefficient-packing output length overflow".into())
     })?;
-    let mut output = zero_vec::<F>(output_len)?;
     let s = geometry.challenge_subring_dimension();
     let stride = geometry.subring_embedding_stride();
 
-    for block_index in 0..num_blocks {
-        let first_position = block_index
-            .checked_mul(point.num_positions_per_block())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("coefficient-packing block offset overflow".into())
-            })?;
-        let live_in_block = point
-            .num_live_positions()
-            .checked_sub(first_position)
-            .ok_or(AkitaError::InvalidProof)?
-            .min(point.num_positions_per_block());
-        let mut packed = zero_vec::<E>(s)?;
-        for position_in_block in 0..live_in_block {
-            let position = first_position
-                .checked_add(position_in_block)
-                .ok_or(AkitaError::InvalidProof)?;
-            let source_offset = position.checked_mul(D).ok_or_else(|| {
-                AkitaError::InvalidInput("coefficient-packing source offset overflow".into())
-            })?;
-            let position_weight = point.position_weights()[position_in_block];
-            for (subring_index, accumulator) in packed.iter_mut().enumerate() {
-                let subring_offset = subring_index.checked_mul(stride).ok_or_else(|| {
-                    AkitaError::InvalidInput("coefficient-packing subring offset overflow".into())
+    let block_coordinates = cfg_into_iter!(0..num_blocks)
+        .map(|block_index| {
+            let first_position = block_index
+                .checked_mul(point.num_positions_per_block())
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("coefficient-packing block offset overflow".into())
                 })?;
-                let mut packed_position = E::zero();
-                for (low_index, &packing_weight) in point.packing_weights().iter().enumerate() {
-                    let index = source_offset
-                        .checked_add(subring_offset)
-                        .and_then(|value| value.checked_add(low_index))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "coefficient-packing source index overflow".into(),
-                            )
-                        })?;
-                    let source = coefficient_at(index)?;
-                    packed_position += packing_weight.mul_base(source);
-                }
-                *accumulator += position_weight * packed_position;
-            }
-        }
-
-        let block_offset = block_index.checked_mul(partial_width).ok_or_else(|| {
-            AkitaError::InvalidInput("coefficient-packing output offset overflow".into())
-        })?;
-        for (subring_index, coefficient) in packed.into_iter().enumerate() {
-            let coordinates = coefficient.ext_coords();
-            if coordinates.len() != geometry.extension_degree() {
-                return Err(AkitaError::InvalidSetup(
-                    "coefficient-packing extension encoding width mismatch".into(),
-                ));
-            }
-            for (extension_coordinate, &coordinate) in coordinates.iter().enumerate() {
-                let local_index = geometry
-                    .partial_base_field_coordinate_index(extension_coordinate, subring_index)?;
-                let output_index = block_offset
-                    .checked_add(local_index)
+            let live_in_block = point
+                .num_live_positions()
+                .checked_sub(first_position)
+                .ok_or(AkitaError::InvalidProof)?
+                .min(point.num_positions_per_block());
+            let mut packed = zero_vec::<E>(s)?;
+            for position_in_block in 0..live_in_block {
+                let position = first_position
+                    .checked_add(position_in_block)
                     .ok_or(AkitaError::InvalidProof)?;
-                *output
-                    .get_mut(output_index)
-                    .ok_or(AkitaError::InvalidProof)? = coordinate;
+                let source_offset = position.checked_mul(D).ok_or_else(|| {
+                    AkitaError::InvalidInput("coefficient-packing source offset overflow".into())
+                })?;
+                let position_weight = point.position_weights()[position_in_block];
+                for (subring_index, accumulator) in packed.iter_mut().enumerate() {
+                    let subring_offset = subring_index.checked_mul(stride).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "coefficient-packing subring offset overflow".into(),
+                        )
+                    })?;
+                    let mut packed_position = E::zero();
+                    for (low_index, &packing_weight) in point.packing_weights().iter().enumerate() {
+                        let index = source_offset
+                            .checked_add(subring_offset)
+                            .and_then(|value| value.checked_add(low_index))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput(
+                                    "coefficient-packing source index overflow".into(),
+                                )
+                            })?;
+                        let source = coefficient_at(index)?;
+                        packed_position += packing_weight.mul_base(source);
+                    }
+                    *accumulator += position_weight * packed_position;
+                }
             }
-        }
+
+            let mut output_coordinates = zero_vec::<F>(partial_width)?;
+            for (subring_index, coefficient) in packed.into_iter().enumerate() {
+                let coordinates = coefficient.ext_coords();
+                if coordinates.len() != geometry.extension_degree() {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing extension encoding width mismatch".into(),
+                    ));
+                }
+                for (extension_coordinate, &coordinate) in coordinates.iter().enumerate() {
+                    let local_index = geometry
+                        .partial_base_field_coordinate_index(extension_coordinate, subring_index)?;
+                    *output_coordinates
+                        .get_mut(local_index)
+                        .ok_or(AkitaError::InvalidProof)? = coordinate;
+                }
+            }
+            Ok(output_coordinates)
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let mut output = Vec::new();
+    output.try_reserve_exact(output_len).map_err(|_| {
+        AkitaError::InvalidInput(format!(
+            "coefficient-packing output allocation failed for {output_len} elements"
+        ))
+    })?;
+    for coordinates in block_coordinates {
+        output.extend(coordinates);
     }
     Ok(output)
 }
@@ -475,6 +485,73 @@ mod tests {
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
         assert_eq!(dense_partials, onehot_partials);
+    }
+
+    #[test]
+    fn onehot_chunk_spanning_packing_blocks_matches_dense_at_boundaries() {
+        const ONEHOT_K: usize = 2048;
+        const NUM_POSITIONS: usize = 16;
+        const POSITIONS_PER_BLOCK: usize = 4;
+        const _: () = assert!(ONEHOT_K > D * POSITIONS_PER_BLOCK);
+        let geometry = SubringCoefficientPackingGeometry::try_new(4, D, 64).unwrap();
+        let public_point = (0..12)
+            .map(|index| E::from_u64((index + 11) as u64))
+            .collect::<Vec<_>>();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            NUM_POSITIONS,
+            POSITIONS_PER_BLOCK,
+            12,
+            &public_point,
+        )
+        .unwrap();
+        let hot_by_claim = [
+            [Some(1023usize), Some(17usize)],
+            [Some(1024usize), Some(2047usize)],
+            [Some(1025usize), None],
+        ];
+        let onehot = hot_by_claim
+            .iter()
+            .map(|indices| OneHotPoly::<F>::new(ONEHOT_K, D, indices.to_vec()).unwrap())
+            .collect::<Vec<_>>();
+        let dense = hot_by_claim
+            .iter()
+            .map(|indices| {
+                let hot_fields = indices
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(chunk, hot)| hot.map(|hot| chunk * ONEHOT_K + hot))
+                    .collect::<Vec<_>>();
+                DensePoly::from_ring_coeffs(
+                    (0..NUM_POSITIONS)
+                        .map(|position| {
+                            CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(
+                                |coefficient| {
+                                    let field = position * D + coefficient;
+                                    F::from_u64(u64::from(hot_fields.contains(&field)))
+                                },
+                            ))
+                        })
+                        .collect(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let onehot_refs = onehot.iter().collect::<Vec<_>>();
+        let dense_refs = dense.iter().collect::<Vec<_>>();
+        let onehot_batch =
+            <OneHotPoly<F> as RootTensorSource<F, D>>::tensor_batch(&onehot_refs).unwrap();
+        let dense_batch =
+            <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_refs).unwrap();
+        let plan = SubringCoefficientPackingPlan { point: &point };
+        let onehot_partials = CpuBackend::DEFAULT
+            .coefficient_packing_partials_batch(None, onehot_batch, plan)
+            .unwrap();
+        let dense_partials = CpuBackend::DEFAULT
+            .coefficient_packing_partials_batch(None, dense_batch, plan)
+            .unwrap();
+
+        assert_eq!(onehot_partials, dense_partials);
     }
 
     #[test]

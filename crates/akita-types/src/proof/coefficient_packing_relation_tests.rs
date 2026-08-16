@@ -294,6 +294,13 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
                 .unwrap(),
             multilinear_eval(&dense_events, &point).unwrap()
         );
+        let mut reordered_events = semantics.relation_events().clone();
+        reordered_events.events.reverse();
+        assert_eq!(
+            reordered_events.evaluate_at_point(&point).unwrap(),
+            multilinear_eval(&dense_events, &point).unwrap(),
+            "direct-index alpha caching must not depend on event order"
+        );
         let mut dense_stage2 = materialize_stage2_source(
             semantics.stage2_terms(),
             CoefficientPackingStage2Source::DirectOpening,
@@ -310,6 +317,13 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
             semantics.stage2_terms().evaluate_at_point(&point).unwrap(),
             multilinear_eval(&dense_stage2, &point).unwrap()
         );
+        let mut reordered_terms = semantics.stage2_terms().clone();
+        reordered_terms.terms.reverse();
+        assert_eq!(
+            reordered_terms.evaluate_at_point(&point).unwrap(),
+            multilinear_eval(&dense_stage2, &point).unwrap(),
+            "direct-index source caching must not depend on term order"
+        );
         assert!(semantics
             .relation_events()
             .evaluate_at_point(&point[..point.len() - 1])
@@ -319,6 +333,111 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
             .evaluate_at_point(&point[..point.len() - 1])
             .is_err());
     }
+}
+
+#[test]
+fn compact_consumers_parallel_branch_matches_dense_oracles() {
+    let fixture = fixture::<F, E>(
+        SisModulusProfileId::Q64Offset59,
+        256,
+        128,
+        64,
+        6,
+        4,
+        11,
+        2,
+        2,
+    );
+    let semantics = prepare(&fixture, E::from_u64(17));
+    let padded_len = semantics
+        .relation_events()
+        .physical_field_len()
+        .next_power_of_two();
+    let point = (0..padded_len.trailing_zeros())
+        .map(|index| E::from_u64(31 + index as u64))
+        .collect::<Vec<_>>();
+
+    let mut parallel_events = semantics.relation_events().clone();
+    let event_work = parallel_events
+        .events()
+        .iter()
+        .map(|event| {
+            event.physical_coefficients().len() / parallel_events.relation_coefficient_block_len()
+        })
+        .sum::<usize>();
+    let event_repetitions = 1024usize.div_ceil(event_work);
+    let original_events = parallel_events.events.clone();
+    parallel_events.events = original_events
+        .iter()
+        .cloned()
+        .cycle()
+        .take(original_events.len() * event_repetitions)
+        .collect();
+    let parallel_event_work = parallel_events
+        .events()
+        .iter()
+        .map(|event| {
+            event.physical_coefficients().len() / parallel_events.relation_coefficient_block_len()
+        })
+        .sum::<usize>();
+    assert!(parallel_event_work >= 1024);
+    let mut dense_events = materialize_events(&parallel_events);
+    dense_events.resize(padded_len, E::zero());
+    assert_eq!(
+        parallel_events.evaluate_at_point(&point).unwrap(),
+        multilinear_eval(&dense_events, &point).unwrap()
+    );
+
+    let mut parallel_terms = semantics.stage2_terms().clone();
+    let term_work = parallel_terms
+        .terms()
+        .iter()
+        .map(|term| {
+            parallel_terms.segments()[term.segments()]
+                .iter()
+                .map(|segment| {
+                    segment.physical_coefficients().len()
+                        / parallel_terms.relation_coefficient_block_len
+                })
+                .sum::<usize>()
+        })
+        .sum::<usize>();
+    let term_repetitions = 1024usize.div_ceil(term_work);
+    let original_terms = parallel_terms.terms.clone();
+    parallel_terms.terms = original_terms
+        .iter()
+        .cloned()
+        .cycle()
+        .take(original_terms.len() * term_repetitions)
+        .collect();
+    let parallel_term_work = parallel_terms
+        .terms()
+        .iter()
+        .map(|term| {
+            parallel_terms.segments()[term.segments()]
+                .iter()
+                .map(|segment| {
+                    segment.physical_coefficients().len()
+                        / parallel_terms.relation_coefficient_block_len
+                })
+                .sum::<usize>()
+        })
+        .sum::<usize>();
+    assert!(parallel_term_work >= 1024);
+    let mut dense_stage2 = materialize_stage2_source(
+        &parallel_terms,
+        CoefficientPackingStage2Source::DirectOpening,
+    );
+    let packing_z =
+        materialize_stage2_source(&parallel_terms, CoefficientPackingStage2Source::PackingZ);
+    for (sum, contribution) in dense_stage2.iter_mut().zip(packing_z) {
+        *sum += contribution;
+    }
+    dense_stage2.resize(padded_len, E::zero());
+    assert_eq!(
+        parallel_terms.evaluate_at_point(&point).unwrap(),
+        multilinear_eval(&dense_stage2, &point).unwrap()
+    );
 }
 
 #[test]

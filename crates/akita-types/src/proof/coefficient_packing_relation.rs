@@ -6,6 +6,7 @@ use std::sync::Arc;
 use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
+use akita_field::parallel::*;
 use akita_field::{
     canonical_extension_basis, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
     LiftBase, MulBase,
@@ -141,8 +142,33 @@ impl<E: FieldCore> CoefficientPackingRelationEvents<E> {
                 actual: work,
             });
         }
+        let alpha_block_count = self.alpha_powers.len() / block;
         let mut alpha_cache = Vec::new();
-        self.events.iter().try_fold(E::zero(), |sum, event| {
+        alpha_cache
+            .try_reserve_exact(alpha_block_count)
+            .map_err(|_| {
+                AkitaError::InvalidInput("packing alpha cache allocation failed".into())
+            })?;
+        for alpha_block in 0..alpha_block_count {
+            let alpha_start = alpha_block
+                .checked_mul(block)
+                .ok_or_else(|| AkitaError::InvalidSetup("packing alpha range overflow".into()))?;
+            let alpha_end = alpha_start
+                .checked_add(block)
+                .ok_or_else(|| AkitaError::InvalidSetup("packing alpha range overflow".into()))?;
+            alpha_cache.push(multilinear_eval(
+                self.alpha_powers
+                    .get(alpha_start..alpha_end)
+                    .ok_or(AkitaError::InvalidProof)?,
+                &point[..low_variables],
+            )?);
+        }
+        let evaluate_event = |sum: Result<E, AkitaError>, event_index: usize| {
+            let sum = sum?;
+            let event = self
+                .events
+                .get(event_index)
+                .ok_or(AkitaError::InvalidProof)?;
             let coefficients = event.physical_coefficients();
             if !coefficients.start.is_multiple_of(block)
                 || !coefficients.len().is_multiple_of(block)
@@ -159,24 +185,9 @@ impl<E: FieldCore> CoefficientPackingRelationEvents<E> {
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("packing alpha range overflow".into())
                         })?;
-                    let alpha_eval = if let Some((_, value)) = alpha_cache
-                        .iter()
-                        .find(|(cached_start, _)| *cached_start == alpha_start)
-                    {
-                        *value
-                    } else {
-                        let alpha_end = alpha_start.checked_add(block).ok_or_else(|| {
-                            AkitaError::InvalidSetup("packing alpha range overflow".into())
-                        })?;
-                        let value = multilinear_eval(
-                            self.alpha_powers
-                                .get(alpha_start..alpha_end)
-                                .ok_or(AkitaError::InvalidProof)?,
-                            &point[..low_variables],
-                        )?;
-                        alpha_cache.push((alpha_start, value));
-                        value
-                    };
+                    let alpha_eval = *alpha_cache
+                        .get(alpha_start / block)
+                        .ok_or(AkitaError::InvalidProof)?;
                     let physical = coefficients
                         .start
                         .checked_add(coefficient_offset)
@@ -185,7 +196,17 @@ impl<E: FieldCore> CoefficientPackingRelationEvents<E> {
                         })?;
                     Ok(acc + event.scalar() * alpha_eval * equality.eval(physical / block))
                 })
-        })
+        };
+        if work < 1024 {
+            (0..self.events.len()).fold(Ok(E::zero()), evaluate_event)
+        } else {
+            cfg_fold_reduce!(
+                0..self.events.len(),
+                || Ok(E::zero()),
+                evaluate_event,
+                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+            )
+        }
     }
 }
 
@@ -331,11 +352,39 @@ impl<E: FieldCore> CoefficientPackingStage2Terms<E> {
                 actual: work,
             });
         }
-        let mut source_cache = Vec::new();
-        self.terms.iter().try_fold(E::zero(), |sum, term| {
-            let source = match term.source() {
-                CoefficientPackingStage2Source::DirectOpening => self.direct_opening_source(),
-                CoefficientPackingStage2Source::PackingZ => self.packing_z_source(),
+        let evaluate_source = |source: &[E]| -> Result<Vec<E>, AkitaError> {
+            if !source.len().is_multiple_of(block) {
+                return Err(AkitaError::InvalidProof);
+            }
+            let block_count = source.len() / block;
+            let mut cache = Vec::new();
+            cache.try_reserve_exact(block_count).map_err(|_| {
+                AkitaError::InvalidInput("packing source cache allocation failed".into())
+            })?;
+            for source_block in 0..block_count {
+                let source_start = source_block.checked_mul(block).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
+                })?;
+                let source_end = source_start.checked_add(block).ok_or_else(|| {
+                    AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
+                })?;
+                cache.push(multilinear_eval(
+                    source
+                        .get(source_start..source_end)
+                        .ok_or(AkitaError::InvalidProof)?,
+                    &point[..low_variables],
+                )?);
+            }
+            Ok(cache)
+        };
+        let direct_opening_cache = evaluate_source(self.direct_opening_source())?;
+        let packing_z_cache = evaluate_source(self.packing_z_source())?;
+        let evaluate_term = |sum: Result<E, AkitaError>, term_index: usize| {
+            let sum = sum?;
+            let term = self.terms.get(term_index).ok_or(AkitaError::InvalidProof)?;
+            let source_cache = match term.source() {
+                CoefficientPackingStage2Source::DirectOpening => &direct_opening_cache,
+                CoefficientPackingStage2Source::PackingZ => &packing_z_cache,
             };
             let segments = self
                 .segments
@@ -362,31 +411,24 @@ impl<E: FieldCore> CoefficientPackingStage2Terms<E> {
                             source_range.start.checked_add(offset).ok_or_else(|| {
                                 AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
                             })?;
-                        let source_value = if let Some((_, _, value)) =
-                            source_cache
-                                .iter()
-                                .find(|(cached_source, cached_index, _)| {
-                                    *cached_source == term.source() && *cached_index == source_index
-                                }) {
-                            *value
-                        } else {
-                            let source_end = source_index.checked_add(block).ok_or_else(|| {
-                                AkitaError::InvalidSetup("packing Stage 2 source overflow".into())
-                            })?;
-                            let value = multilinear_eval(
-                                source
-                                    .get(source_index..source_end)
-                                    .ok_or(AkitaError::InvalidProof)?,
-                                &point[..low_variables],
-                            )?;
-                            source_cache.push((term.source(), source_index, value));
-                            value
-                        };
+                        let source_value = *source_cache
+                            .get(source_index / block)
+                            .ok_or(AkitaError::InvalidProof)?;
                         Ok(acc
                             + term.factor() * source_value * equality.eval(physical_index / block))
                     })
             })
-        })
+        };
+        if work < 1024 {
+            (0..self.terms.len()).fold(Ok(E::zero()), evaluate_term)
+        } else {
+            cfg_fold_reduce!(
+                0..self.terms.len(),
+                || Ok(E::zero()),
+                evaluate_term,
+                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+            )
+        }
     }
 }
 
