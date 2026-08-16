@@ -12,6 +12,8 @@ to track current behavior; update the owning book chapter instead.
 
 | Spec | Final status | Book chapter | Archived |
 |------|--------------|--------------|----------|
+| `2026-Q3/commitment-compression-cutover.md` | archived | `book/src/how/proving/akita-fold-realizations.md` | 2026-Q3 |
+| `2026-Q3/relation-range-image-sumcheck.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |
 | `2026-Q3/pr375-prover-streaming-and-onehot-unification.md` | archived | `book/src/how/optimizations.md` | 2026-Q3 |
 | `2026-Q3/weak-binding-norm-fix.md` | superseded | `book/src/how/security.md` | 2026-Q3 |
 | `2026-Q3/profile-bench-coverage-matrix.md` | archived | `book/src/usage/profiling.md` | 2026-Q3 |
