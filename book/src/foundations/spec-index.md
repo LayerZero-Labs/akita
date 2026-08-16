@@ -20,6 +20,9 @@ The approved SIS security-policy frontier is
 quantum LGSA policy at a 128-bit target.
 
 Recent archived records include
+[`subring-coefficient-packing`](../../../specs/archive/2026-Q3/subring-coefficient-packing.md),
+whose opening geometry, transcript order, planner policy, and security contract
+now live in the ring-switch, configuration, profiling, and security chapters;
 [`group-local-opening-points`](../../../specs/archive/2026-Q3/group-local-opening-points.md),
 whose durable claim ownership and protocol dataflow now live in the architecture,
 verification, commitment API, and extension-opening chapters. The

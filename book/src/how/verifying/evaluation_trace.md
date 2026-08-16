@@ -1,8 +1,9 @@
 # Evaluation trace
 
 The evaluation trace binds each public opening claim to the `E` digits inside
-the next witness. It is mandatory at every nonterminal fold that carries
-opening claims.
+the next witness when the schedule selects `EvaluationTrace`. Early folds may
+select `SubringCoefficientPacking` instead. Both methods bind the claimed
+opening in Stage 2, but they use different coefficient geometry.
 
 The verifier never constructs the prover's trace table. It prepares a small
 description of each group and exact witness unit, then evaluates the trace once

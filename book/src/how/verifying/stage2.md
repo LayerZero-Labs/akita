@@ -7,7 +7,8 @@ The three facts are:
 
 1. The witness agrees with the Stage 1 range result.
 2. The witness satisfies the relation matrix.
-3. The opening digits encode the claimed polynomial evaluations.
+3. The opening digits encode the claimed polynomial evaluations under the
+   scheduled opening method.
 
 The verifier replays a degree three sumcheck over the complete relation witness
 domain.
@@ -16,10 +17,10 @@ domain.
 
 Let `eta` be the batching challenge for the range image. Let `R(tau0)` be the
 Stage 1 range image claim, `v_M` the public relation claim after row and ring
-evaluation, and `v_trace` the claimed opening trace value. The Stage 2 input is
+evaluation, and `v_open` the claimed opening value. The Stage 2 input is
 
 ```math
-\eta R(\tau_0)+v_M+v_{trace}.
+\eta R(\tau_0)+v_M+v_{open}.
 ```
 
 The transcript fixes the witness, `alpha`, `tau0`, `tau1`, the row batching
@@ -32,9 +33,9 @@ carried by the proof. The verifier checks
 
 ```math
 \eta\,eq(\tau_0,r)w(r)(w(r)+1)
-+w(r)\widetilde M(\tau_1,r)
++w(r)\widetilde M_{native}(\tau_1,r)
 +C_{compression}(r)
-+\lambda_{trace}w(r)\widetilde T(r).
++w(r)C_{method}(r).
 ```
 
 The terms have separate owners:
@@ -43,7 +44,11 @@ The terms have separate owners:
 - `RelationMatrixEvaluator` evaluates the ordinary relation matrix.
 - `CompressionRelationWeights` and `NegativeBinarySupport` evaluate the F and
   H compression relations and their digit constraints.
-- `PreparedEvaluationTrace` evaluates the mandatory opening trace.
+- `PreparedEvaluationTrace` evaluates an evaluation trace opening.
+- `CoefficientPackingRelationEvents` evaluates the packed E and Q relation
+  events at the checked physical coefficient blocks.
+- `CoefficientPackingStage2Terms` evaluates the packing Z and direct-opening
+  structured linear terms.
 
 If `eta` is zero, the verifier skips the range equality evaluation. This is an
 arithmetic shortcut only. The transcript and proof shape do not change.
@@ -61,10 +66,10 @@ those checked intervals. It does not allocate a dense support bitmap.
 
 ## Relation term
 
-The ordinary relation term is
+The native relation term is
 
 ```math
-w(r)\widetilde M(\tau_1,r).
+w(r)\widetilde M_{native}(\tau_1,r).
 ```
 
 The previous chapter explains `M`. Direct setup mode reads the public setup
@@ -75,11 +80,11 @@ Compressed F and H rows are evaluated separately because their digit support
 and native dimensions differ from the ordinary A, B, and D roles. Their result
 is still part of the same Stage 2 polynomial.
 
-## Evaluation trace term
+## Method-dependent structured terms
 
 The relation matrix checks algebraic consistency of the witness. It does not by
 itself prove that the `E` digits encode the opening values stated by the caller.
-The evaluation trace supplies that binding:
+The scheduled method supplies that binding. Evaluation trace uses
 
 ```math
 \lambda_{trace}w(r)\widetilde T(r).
@@ -88,6 +93,14 @@ The evaluation trace supplies that binding:
 `lambda_trace` is the row weight assigned to the virtual trace row. The trace
 is a virtual row because the verifier evaluates its public tensor formula at
 the final point instead of adding a physical matrix row and quotient digits.
+
+Subring coefficient packing contributes an ordered sum of structured linear
+terms. `CoefficientPackingRelationEvents` supplies the packed E and Q relation
+weights. `CoefficientPackingStage2Terms` supplies the packing-Z and direct
+opening weights from the block point, tail point, extension basis coordinates,
+and opening digit weights. The packing-Z weights do not share the native A
+row's low alpha factor, so they remain a separate factorized term. Every term
+still evaluates the same flat witness at the same final point.
 
 ## Why the terms share one point
 
@@ -104,5 +117,6 @@ address split.
 - Evaluation trace: `crates/akita-verifier/src/protocol/evaluation_trace.rs`.
 - Prover stage: `crates/akita-prover/src/protocol/sumcheck/relation_range_image/`.
 
-The next chapter derives the evaluation trace and explains its compact
-contraction.
+The next chapter derives the evaluation trace path and explains its compact
+contraction. The packing equations are in
+[Root fold and ring switching](../proving/root-fold-ring-switch.md).

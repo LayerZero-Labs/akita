@@ -156,6 +156,14 @@ The benchmark jobs consume the generated schedule tables committed at each
 revision. They do not regenerate those tables before compiling. The separate
 schedule drift CI job checks committed tables against the generator.
 
+The fold report names the opening method for every group. A coefficient packing
+row reports its challenge subring dimension `s`, packing factor `h`, packed
+partial width, and `Q_pack` width. It also reports the committed source
+encoding, witness chunk count, and whether EOR is present. These fields explain
+why a row can use less setup while taking more prover or verifier time. The
+report compares them with the merge base instead of inferring a method from the
+field tier or A ring dimension.
+
 Committed-fold A-role pricing (every cell folds securely):
 
 | Case | nv | np | Setup mode |
@@ -236,8 +244,10 @@ checked split-tensor contraction primitive as the dense backend. It streams the
 base evaluation table through split equality weights instead of allocating a
 full extension-field copy of the table.
 
-Small-field dense commits begin with the Hachi root tensor projection required
-by the extension-to-ring reduction. Perfetto reports it as
+Small-field dense commits use the source encoding selected by the schedule.
+`EvaluationTrace` rows may begin with the Hachi root tensor projection required
+by extension-to-ring reduction. `SubringCoefficientPacking` rows commit the
+canonical coefficient table instead. Perfetto reports a tensor projection as
 `dense_tensor_root_projection` inside the commit span, including the table
 length, ring dimension, extension degree, and output-ring count. The projection
 maps independent base-coordinate chunks directly into ψ-packed rings; it does

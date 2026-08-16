@@ -487,7 +487,7 @@ A(k)=\alpha^k,
 L(j)=m_j.
 $$
 
-The relation weight factors as
+The native matrix relation weight factors as
 
 $$
 R(k,j)=A(k)L(j),
@@ -506,12 +506,14 @@ The Boolean domain is padded with zeros when the live witness length is not a
 power of two.
 
 The production protocol also permits different ring dimensions in different
-parts of the relation. It chooses the largest power-of-two coefficient block
-common to every role and to the outgoing witness. The low address still
+parts of the native relation. It chooses the largest power-of-two coefficient
+block common to every role and to the outgoing witness. The low address still
 selects a coefficient inside that common block. Any remaining high power of
 $\alpha$, together with the matrix entry and its $\beta_i$ row weight, is
 absorbed into the lane weight $L$. Thus the exact factorization $R=A\cdot L$
-continues to hold without adding another sumcheck dimension.
+continues to hold for the native A, B, D, F, and H rows without adding another
+sumcheck dimension. Coefficient packing adds ordered structured linear terms
+that are not forced into this native factorization.
 
 ### Add the range-image binding
 
@@ -536,41 +538,54 @@ protocol uses $\gamma$ to batch Equation (8) with the relation claim.
 
 ### Add the opening claim consistency
 
-Stage 2 also verifies the incoming opening claim $v_{\mathrm{tr}}$ against the
-committed witness $w$. [Field-to-ring evaluation
-reduction](./field-ring-reduction.md) derives the public trace weight $T(x)$
-and establishes the evaluation-consistency relation
+Stage 2 also verifies the incoming opening claim $v_{\mathrm{open}}$ against
+the committed witness $w$. The schedule selects how the public opening weight
+$T_{\mathrm{open}}(x)$ is prepared. `EvaluationTrace` uses the trace weights
+derived in [Field-to-ring evaluation reduction](./field-ring-reduction.md).
+`SubringCoefficientPacking` uses the direct coefficient-packing weights
+derived in [Root fold and ring switch](./root-fold-ring-switch.md). Both methods
+establish the same linear evaluation-consistency shape
 
 $$
-v_{\mathrm{tr}}=\sum_x w(x)T(x).
+v_{\mathrm{open}}=\sum_x w(x)T_{\mathrm{open}}(x).
 \tag{9}
 $$
 
 Here we focus only on how this relation is fused into Stage 2. Equation (9)
 has the same linear form in $w$ as a row of the ring-switched relation, so the
 protocol treats it as a **virtual row** placed immediately after the physical
-relation rows. If $i_{\mathrm{tr}}$ is that row's index in the padded row
+relation rows. If $i_{\mathrm{open}}$ is that row's index in the padded row
 domain, the shared row challenge $\tau_1$ assigns it the weight
 
 $$
-\beta_{\mathrm{tr}}
+\beta_{\mathrm{open}}
 =
-\operatorname{eq}(\tau_1,i_{\mathrm{tr}}).
+\operatorname{eq}(\tau_1,i_{\mathrm{open}}).
 $$
 
 The virtual row is not inserted into the physical matrix or its
 relation-weight factorization. Only its batching weight
-$\beta_{\mathrm{tr}}$ comes from the row domain. Stage 2 directly fuses
+$\beta_{\mathrm{open}}$ comes from the row domain. Stage 2 directly fuses
 
 $$
-\beta_{\mathrm{tr}}v_{\mathrm{tr}}
+\beta_{\mathrm{open}}v_{\mathrm{open}}
 =
-\sum_x\beta_{\mathrm{tr}}w(x)T(x)
+\sum_x\beta_{\mathrm{open}}w(x)T_{\mathrm{open}}(x)
 $$
 
 into the sumcheck over the flat witness address $x$. In this way, the opening
 claim reuses the same row randomness $\tau_1$ as the ring-switched relation
 without becoming a physical matrix row.
+
+The implementation does not materialize a dense
+$T_{\mathrm{open}}$ table. Define the method-dependent weight
+$C_{\mathrm{method}}(x)$ as follows. For `EvaluationTrace`, it is the compact
+trace opening weight $\beta_{\mathrm{open}}T_{\mathrm{open}}(x)$. For
+`SubringCoefficientPacking`, it is the ordered sum of the packed E and Q
+relation events, the packing-Z term, and the direct-opening term. Stage 2 folds
+each structured linear term under the same challenges and sums their final
+values. This preserves the native relation fast path without building one
+dense weight table.
 
 ### The fused Stage-2 claim
 
@@ -579,7 +594,7 @@ Combining Equations (7), (8), and (9), the input claim is
 $$
 C_0
 =
-\gamma s_1+h_{\tau}+\beta_{\mathrm{tr}}v_{\mathrm{tr}}.
+\gamma s_1+h_{\tau}+\beta_{\mathrm{open}}v_{\mathrm{open}}.
 $$
 
 Stage 2 proves
@@ -591,13 +606,13 @@ C_0
 &\gamma\operatorname{eq}(r_1,x)
   w(x)\bigl(w(x)+1\bigr)\\
 &+w(x)A(k(x))L(j(x))\\
-&+\beta_{\mathrm{tr}}w(x)T(x)
+&+w(x)C_{\mathrm{method}}(x)
 \bigr].
 \end{aligned}
 \tag{10}
 $$
 
-All three terms use the same flat witness address $x$. This is why they can be
+All terms use the same flat witness address $x$. This is why they can be
 proved by one sumcheck.
 
 ### Sumcheck rounds and the final point
@@ -647,14 +662,14 @@ C_n={}
 &+\widetilde w(r_2)
   \widetilde A(r_{\mathrm{coeff}})
   \widetilde L(r_{\mathrm{lane}})\\
-&+\beta_{\mathrm{tr}}\widetilde w(r_2)\widetilde T(r_2).
+&+\widetilde w(r_2)\widetilde C_{\mathrm{method}}(r_2).
 \end{aligned}
 \tag{11}
 $$
 
 The value $\widetilde w(r_2)$ becomes the next-witness opening claim. The
 range term has degree three in each sumcheck variable: one degree from the
-equality polynomial and two from $w(w+1)$. The relation and trace terms each
+equality polynomial and two from $w(w+1)$. The relation and opening terms each
 have degree two. Therefore Stage 2 sends degree-three round polynomials.
 
 The random objects have separate jobs:

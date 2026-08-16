@@ -46,6 +46,29 @@ reduction later resolves.
 - Paper §2.1 ("Base-field coefficients and extension-field points").
 - `crates/akita-field/src/ext/lift.rs`, `ext/mod.rs`.
 
+## Challenge subrings and coefficient packing
+
+For extension degree `k`, Akita can open coefficients through
+
+```text
+C = E[Y]/(Y^s+1)
+```
+
+while keeping commitments in `R = K[X]/(X^d_A+1)`. The dimensions satisfy
+`d_A = k h s`. The challenge subring embeds into the A ring by
+`Y -> X^(k h)`. A packed value has `k` coordinate planes of length `s`. Its
+physical width is therefore `k s`, but its polynomial modulus still has
+dimension `s`.
+
+The schedule selects `s`. It does not change the extension degree or the
+committed field. The implementation uses one canonical extension basis and one
+canonical coefficient order.
+
+**Implementation map**
+
+- `crates/akita-types/src/subring_coefficient_packing.rs`.
+- `crates/akita-types/src/proof/coefficient_packing_relation.rs`.
+
 ## Norms, invertibility, and challenge families
 
 The centered \\( \ell_\infty, \ell_1, \ell_2 \\) norms on \\( R_q \\), the

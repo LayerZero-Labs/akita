@@ -127,6 +127,31 @@ is another random-oracle query, so the Fiat-Shamir reduction charges it through
 the adversary's total query budget. See
 [Polynomial commitments and binding](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
+## Subring coefficient packing
+
+Before sampling a packing challenge, the prover binds every coordinate of the
+partial opening through the D payload or its compressed H payload. The
+transcript also binds the method, challenge subring dimension, challenge
+family, group order, claim count, and block count. After challenge folding, the
+prover binds `Q_pack` and the next witness before sampling `alpha`.
+
+The production primes satisfy the fixed LS18 congruence and shortness
+condition used for unit pairwise challenge differences. This fact belongs to
+the field and challenge security review. It is not planner metadata and does
+not require a per-schedule certificate.
+
+Extraction forks one claim and block position at a time while holding the
+other transcript inputs fixed. The complete packed consistency equation is one
+polynomial identity in `E[Y]`. After including the `(Y^s + 1)Q_pack` term, its
+degree is at most `2s-1`, so its root bound is `(2s-1)/|E|`. The proof does not
+project to one base field coordinate and does not add a factor of `k` or a
+`1/|K|` error term.
+
+This error composes with the existing A, B, D, F, and H Module SIS binding
+events, the range and sumcheck errors, and the random oracle forking loss. See
+the [subring coefficient packing design record](../../../specs/archive/2026-Q3/subring-coefficient-packing.md)
+for the full derivation and acceptance checklist.
+
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have
 perfect symmetry. Five million sampled orbit comparisons at D64 and D128 had no

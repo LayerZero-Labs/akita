@@ -22,8 +22,9 @@ ring elements, define that multiplication as a `TraceOpen` operation, and then
 write the same evaluation claim directly as a linear relation on the committed
 fold witness.
 
-Base-field polynomials evaluated at extension-field points are left as a stub
-at the end of the page.
+For base-field polynomials evaluated at extension-field points, the schedule
+uses evaluation trace with EOR or subring coefficient packing. See
+[Fold path and field geometry](./fold-path.md).
 
 ## The evaluation problem
 
@@ -442,7 +443,11 @@ quotient.
 [Sumcheck stages](./sumcheck-stages.md#add-the-opening-claim-consistency)
 explains how this claim is row-batched and fused with the other Stage-2 terms.
 
-## Code reference
+## Evaluation trace code reference
+
+This section applies when the schedule selects `EvaluationTrace`. A fold that
+selects `SubringCoefficientPacking` uses the direct coefficient-packing flow
+in [Root fold and ring switch](./root-fold-ring-switch.md) instead.
 
 The base-field path follows the reduction above:
 
@@ -537,4 +542,7 @@ directly from the committed digit witness.
 
 ## Base-field polynomial at an extension-field point
 
-> **Status:** stub.
+This case is implemented by `SubringCoefficientPacking`. It keeps one
+coefficient axis in the challenge subring, contracts the other axes over the
+extension field, and binds the original scalar opening directly in Stage 2.
+See [Root fold and ring switch](./root-fold-ring-switch.md).

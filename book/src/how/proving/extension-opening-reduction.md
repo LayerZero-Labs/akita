@@ -1,11 +1,12 @@
 # Extension-opening reduction
 
-How Akita wires in the extension-opening reduction (EOR): it turns a base-field
+How Akita wires in the extension-opening reduction (EOR). It turns a base-field
 evaluation claim at an extension-field point into a single claim on a packed
-polynomial over the extension, with fewer variables. This path is used only
-when `CommitmentConfig::EXT_DEGREE > 1`, meaning that the claim field is a
-proper extension of the coefficient field. Single-field presets
-(`EXT_DEGREE == 1`, including production fp128) never run EOR; see
+polynomial over the extension, with fewer variables. A fold uses this path only
+when its scheduled opening method is `EvaluationTrace` and
+`CommitmentConfig::EXT_DEGREE > 1`. Single-field presets never run EOR.
+Subring coefficient packing also skips EOR because it opens the extension
+valued claim directly. See
 [Fold path and field geometry](./fold-path.md). The generic reduction and its
 soundness live in
 [Foundations → Extension-opening reduction](../../foundations/extension-opening-reduction.md);
@@ -17,7 +18,8 @@ representatives visible to the hot loop.
 
 ## Multi-group openings
 
-A multi-group root still emits one EOR proof and runs one degree-two sumcheck.
+A multi-group evaluation trace fold emits one EOR proof and runs one degree-two
+sumcheck. A coefficient packing fold emits neither.
 Group `g` contributes its own complete public point, native packed witness, and
 transparent factor:
 

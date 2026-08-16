@@ -12,9 +12,11 @@ same time. Read the chapters in this order:
 1. [Matrix evaluation at a point](./verifying/matrix_evaluation.md)
    defines the physical rows and columns.
 2. [The Stage 2 fused check](./verifying/stage2.md) shows how the relation,
-   range image, and opening trace share one final witness evaluation.
-3. [Evaluation trace](./verifying/evaluation_trace.md) explains how opening
-   claims bind to the `E` digits without a prover-sized verifier table.
+   range image, and schedule-selected opening method share one final witness
+   evaluation.
+3. [Evaluation trace](./verifying/evaluation_trace.md) explains the trace-based
+   opening method. [Root fold and ring switch](./proving/root-fold-ring-switch.md)
+   explains subring coefficient packing.
 4. [Setup contribution and Stage 3](./verifying/setup_contribution.md) explains
    direct setup evaluation and recursive setup offloading.
 5. [The distributed relation verifier](./verifying/distributed-relation-verifier.md)
@@ -47,13 +49,13 @@ ring switch: sample alpha, tau0, and tau1
         |
         +--> prepare relation matrix evaluator
         +--> prepare compression weights
-        +--> prepare evaluation trace
+        +--> prepare scheduled opening terms
         |
         v
 Stage 1: digit range product
         |
         v
-Stage 2: range image + relation + evaluation trace
+Stage 2: range image + relation + opening claim
         |
         v
 Stage 3: setup product when the setup claim is deferred

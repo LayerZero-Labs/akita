@@ -127,6 +127,25 @@ row exists, or the L2 route does not lower the A rank, the planner keeps the L
 infinity candidate.
 Runtime expansion never reruns the model. It only checks the frozen schedule.
 
+### Subring coefficient packing candidates
+
+At absolute fold levels 0 and 1, the planner searches the A ring dimension and
+the challenge subring dimension together. For each pair it derives the packing
+factor from `d_A = k h s`. It rejects unsupported challenge families and
+invalid D divisibility before it constructs matrices.
+
+The planner does not minimize `s`, `h`, or `d_A` directly. It keeps the same
+objective as other schedules. It minimizes setup field elements first and
+proof payload second, then applies the canonical deterministic ordering. This
+allows a larger A ring to win when its lower module rank reduces the complete
+setup.
+
+Production rows prefer coefficient packing at levels 0 and 1. The search adds
+an evaluation trace fallback only when no complete packing assignment is
+feasible for the state. Later folds and the terminal remain evaluation trace.
+The terminal seed is priced separately, so a zero EOR packing candidate cannot
+be mistaken for a terminal opening.
+
 A clear terminal L2 candidate has no recursive norm proof. The verifier checks
 the decoded response norm directly. The planner may use the certified energy
 to estimate a smaller Golomb payload for candidate comparison. The scheduled

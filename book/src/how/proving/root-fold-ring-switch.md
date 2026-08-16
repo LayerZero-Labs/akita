@@ -1,35 +1,73 @@
 # Root fold and ring switching
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+One folding step builds a batched relation and switches it into the next ring
+witness. The schedule also selects how each commitment group is opened.
 
-The heart of one folding step: building the batched root relation and switching
-it into the next-level ring witness.
+## Subring coefficient packing
+
+Let the claim field have extension degree `k`, let the A ring have dimension
+`d_A`, and let the challenge subring have dimension `s`. An admitted packing
+geometry satisfies
+
+```text
+d_A = k h s
+```
+
+for a power of two packing factor `h`. The prover reads source coefficient
+`a + k h j`, contracts the `a` coordinate over the claim field, and keeps the
+subring coefficient `j` explicit. One partial has `k s` base field
+coordinates. The order is extension coordinate followed by subring
+coefficient.
+
+The fold challenge is sampled once in `K[Y]/(Y^s+1)`. The A relation uses the
+same coefficients embedded by `Y -> X^(k h)`. The packing consistency row uses
+the challenge at `alpha`, while the A rows use it at `alpha^(k h)`. The prover
+also records the positive high half of the ordinary product as `Q_pack`.
+
+Stage 2 keeps this check compact. It uses the normal alpha based term for the
+native relation rows and separate factorized terms for each packing group's Z
+weights and direct opening. These terms share one witness point. The prover and
+verifier do not build a dense witness sized weight table.
+
+Production planning considers packing only at absolute fold levels 0 and 1.
+Those folds use the coefficient `L∞` A security route. Later folds and the
+terminal use evaluation trace. If no complete packing assignment is feasible,
+the planner retains an evaluation trace fallback instead of dropping the row.
+
+Commitment identity records the coefficient representation and the A and B
+matrices. It does not record the consuming opening method, `s`, or challenge.
+The schedule and transcript descriptor record that opening plan. This lets a
+later evaluation trace fold consume a flat witness or setup prefix produced by
+an earlier packing fold without changing its commitment identity.
+
+The prover binds the complete D payload, or its compressed H payload, before it
+draws the subring challenge. It binds `Q_pack` and the next witness before it
+draws `alpha`. The verifier replays the same order.
 
 ## The root fold
 
-The batched root relation (`OpeningClaimsLayout` routing polynomial groups to
-claims), the commitment/claim/fold rows, and how the level-0 root fold differs
-from a recursive fold.
-
-**Sources to fold in**
-
-- `crates/akita-verifier/src/protocol/core/root_fold.rs:352-544` (`prove_root`, terminal root fold).
-- `crates/akita-prover/src/protocol/ring_relation.rs`.
-- `crates/akita-types/src/opening_claims.rs`.
-- Paper §3.2 `sec:akita-layout` (the batched root relation; `eq:batched-root-*`), §3.5 `sec:akita-one-step`.
-- `specs/archive/2026-Q2/w-to-e-notation.md` (w / e / v naming).
+`OpeningClaimsLayout` routes polynomial groups to claims. Each group keeps its
+own public point, commitment profile, and opening geometry. The relation order
+is final group followed by precommitted groups. A recursive fold uses the same
+group rules for its folded witness and an incoming setup prefix.
 
 ## Ring switching
 
-The lattice fold proper: lifting the root relation `M·w = h` from
-`R_q = Z_q[X]/(X^D+1)` to `Z_q[X]` via the unique quotient, computed with paired
-cyclic and negacyclic NTTs. Distinguish this from the FRI-Binius
-extension-opening reduction (a different "ring switch"; see
-[Foundations → Extension-opening reduction](../../foundations/extension-opening-reduction.md)).
+The lattice fold lifts the relation `M w = h` from
+`R_q = Z_q[X]/(X^D+1)` to `Z_q[X]` through its unique quotient. The prover
+computes native ring quotients with paired cyclic and negacyclic NTTs. A packing
+consistency row instead has modulus dimension `s` and `k` coordinate planes.
+Its physical width is `k s`; it is not a ring of dimension `k s`.
 
-**Sources to fold in**
+This ring switch is distinct from EOR. EOR changes an extension valued opening
+claim before the lattice relation. Ring switching proves the polynomial
+quotients of the lattice relation itself.
 
-- `crates/akita-prover/src/protocol/ring_switch.rs:48-80`, `ring_switch/finalize.rs`.
-- Paper §3.5 (`fig:akita-ring-switch`), App B.3 `sec:akita-ring-switching` (quotient via cyclic/negacyclic NTT, `eq:akita-quotient-identity`).
-- `specs/terminal-fold-cutover.md` (D-block at intermediate vs terminal).
-- Council math report B4 (lattice fold vs EOR distinction).
+## Implementation map
+
+- `crates/akita-prover/src/protocol/ring_relation.rs`.
+- `crates/akita-prover/src/protocol/ring_switch.rs`.
+- `crates/akita-prover/src/protocol/coefficient_packing.rs`.
+- `crates/akita-types/src/subring_coefficient_packing.rs`.
+- `crates/akita-types/src/proof/coefficient_packing_relation.rs`.
+- Paper section 3.5 and implementation appendix B.3.

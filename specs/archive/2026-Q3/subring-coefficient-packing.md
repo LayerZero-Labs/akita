@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao |
 | Created | 2026-08-10 |
-| Status | proposed |
+| Status | archived |
 | PR | [#394](https://github.com/LayerZero-Labs/akita/pull/394) |
 | Supersedes | The assumption that every extension-field opening first uses extension-opening reduction |
 | Superseded-by | |
@@ -25,11 +25,16 @@ subring and embed sparsely into the A ring. The challenge subring dimension and
 the A ring dimension are independent schedule choices, subject to the
 divisibility condition below.
 
-Generated schedules MUST use `SubringCoefficientPacking` at absolute fold
-levels 0 and 1 when those nonterminal folds exist. This rule applies to every
-field profile. For extension fields, EOR is not available at those levels. For
-degree one fields, the same method may reduce the partial opening and D or H
-source even though there is no EOR payload to remove.
+Generated schedules use `SubringCoefficientPacking` at absolute fold levels 0
+and 1 when those nonterminal folds exist and the planner finds a complete,
+statically feasible packing assignment. This rule applies to every field
+profile. If no complete packing assignment exists, including when a frozen
+tensor-encoded group is incompatible with coefficient packing, the planner may
+retain the existing `EvaluationTrace` method for the whole fold. It MUST NOT
+mix the two method families within one fold. For extension fields, EOR is not
+available at packing levels. For degree one fields, the same method may reduce
+the partial opening and D or H source even though there is no EOR payload to
+remove.
 
 Subring coefficient packing folds at levels 0 and 1 MUST use the Linf A
 security route. This keeps PR 369's rule that physical L2 admission starts at
@@ -54,10 +59,10 @@ retains the current catalog objective, which minimizes setup matrix field
 elements first and proof payload second, followed by its current canonical
 deterministic ordering.
 
-This specification is stacked on the selective L2 fold sizing work in
-[PR #369](https://github.com/LayerZero-Labs/akita/pull/369), at commit
-`6b0050b76a10e9dd11835d96e167a53bcab21b8b`. It also assumes the dyadic B
-slicing merged in [PR #388](https://github.com/LayerZero-Labs/akita/pull/388).
+This implementation includes the selective L2 fold sizing work merged in
+[PR #369](https://github.com/LayerZero-Labs/akita/pull/369). It also assumes the
+dyadic B slicing merged in
+[PR #388](https://github.com/LayerZero-Labs/akita/pull/388).
 
 ## Why this change
 
@@ -989,9 +994,9 @@ The methods coincide algebraically when `k = 1`, `h = 1`, and `s = d_A`. In
 that case `S = C = R`, up to the indeterminate name, the subring embedding is
 the identity, and the degree one trace is the identity. The schedule and
 transcript still bind one method tag. Generated levels 0 and 1 use
-`SubringCoefficientPacking`; later folds use `EvaluationTrace`. The planner
-MUST NOT enumerate both methods as separate candidates at one level merely
-because this overlap exists.
+`SubringCoefficientPacking` when a complete compatible assignment exists;
+later folds use `EvaluationTrace`. The planner MUST NOT enumerate both methods
+as separate candidates at one level merely because this overlap exists.
 
 The intended ownership split is equivalent to the following shape.
 
@@ -1119,10 +1124,11 @@ The planner searches the existing production challenge dimensions
 kernels must be generic over checked `s`. The planner MUST NOT scan arbitrary
 integers or create a challenge family during schedule search.
 
-For `k = 1`, EOR is not valid and contributes no bytes. The planner still uses
-`SubringCoefficientPacking` at levels 0 and 1. It may choose `s < d_A` to
-reduce partial and quotient coordinates. The overlap with `EvaluationTrace` is
-`s = d_A` and `h = 1` when that `s` exists in the audited registry.
+For `k = 1`, EOR is not valid and contributes no bytes. When a complete
+packing assignment exists, the planner still uses `SubringCoefficientPacking`
+at levels 0 and 1. It may choose `s < d_A` to reduce partial and quotient
+coordinates. The overlap with `EvaluationTrace` is `s = d_A` and `h = 1` when
+that `s` exists in the audited registry.
 
 ### Linf security route and the preserved L2 identity
 
@@ -1149,8 +1155,8 @@ at level 0 or 1.
 
 The policy applies to every field profile.
 
-1. Absolute nonterminal levels 0 and 1 enumerate subring packing candidates
-   only.
+1. Absolute nonterminal levels 0 and 1 first enumerate complete subring packing
+   assignments across every group and admissible A dimension.
 2. Absolute nonterminal levels 2 and later use `EvaluationTrace`.
 3. The terminal uses `EvaluationTrace` and Hachi, with EOR where it applies.
 4. A schedule with only root and terminal uses `SubringCoefficientPacking`
@@ -1159,6 +1165,10 @@ The policy applies to every field profile.
    `SubringCoefficientPacking` at both nonterminal folds.
 6. The planner does not add a fold to reach the two level subring packing
    scope.
+7. If the complete level has no statically feasible packing assignment, the
+   planner retains `EvaluationTrace` for every group in that fold. This
+   compatibility fallback covers frozen tensor-encoded profiles and MUST NOT
+   create a mixed-method fold.
 
 A precommitted root group freezes its commitment profile. Its root opening plan
 may choose any certified `s` compatible with the frozen `d_A` and security
@@ -1327,121 +1337,121 @@ The planner MUST keep the search bounded in the following ways.
 
 ### Algebra and completeness
 
-- [ ] `SubringCoefficientPackingGeometry` accepts exactly supported
+- [x] `SubringCoefficientPackingGeometry` accepts exactly supported
       `(k,d_A,s)` triples and derives `h` and stride without independent
       metadata.
-- [ ] Coefficient index `a + k h j` round-trips for every supported geometry.
-- [ ] Dense, one-hot, and recursive partial openings match a flat MLE reference.
-- [ ] `L(c(X^(k h))F) = c(Y)L(F)` holds against a naive reference for random
+- [x] Coefficient index `a + k h j` round-trips for every supported geometry.
+- [x] Dense, one-hot, and recursive partial openings match a flat MLE reference.
+- [x] `L(c(X^(k h))F) = c(Y)L(F)` holds against a naive reference for random
       small fixtures and every supported field tier.
-- [ ] A ring multiplication by `c(X^(k h))` matches `k h` permuted subring
+- [x] A ring multiplication by `c(X^(k h))` matches `k h` permuted subring
       blocks, including negacyclic wraparound, and preserves the L2 operator
       norm.
-- [ ] Coefficient packing scalar opening weights reproduce the claimed opening, including
+- [x] Coefficient packing scalar opening weights reproduce the claimed opening, including
       partial final blocks, multiple polynomials, and multiple groups.
-- [ ] `Q_pack = high_s(sum_i c_i e_i)` satisfies the full ordinary-polynomial
+- [x] `Q_pack = high_s(sum_i c_i e_i)` satisfies the full ordinary-polynomial
       divisibility identity in `E[Y]`.
-- [ ] The `k` extension coordinate arrays evaluate to the same `E` value as a
+- [x] The `k` extension coordinate arrays evaluate to the same `E` value as a
       packed-extension reference.
-- [ ] Honest subring coefficient packing proofs verify at levels 0 and 1 for every supported field
+- [x] Honest subring coefficient packing proofs verify at levels 0 and 1 for every supported field
       tier.
-- [ ] A level 2 fold opens the flat output of a subring packing level 1 fold with the
+- [x] A level 2 fold opens the flat output of a subring packing level 1 fold with the
       evaluation trace method without conversion or subring metadata reuse.
-- [ ] Stage 2 accepts `d_D | k s` when `d_D` does not divide `s`, and its flat
+- [x] Stage 2 accepts `d_D | k s` when `d_D` does not divide `s`, and its flat
       A, B, and D weights match the separate Stage 3 setup projection.
 
 ### Soundness and transcript
 
-- [ ] Every admitted challenge family meets Akita's per-draw entropy condition,
+- [x] Every admitted challenge family meets Akita's per-draw entropy condition,
       and the complete proof meets the existing total schedule error budget.
-- [ ] The fixed production field table above remains part of security review,
+- [x] The fixed production field table above remains part of security review,
       not schedule metadata or candidate admission.
-- [ ] Generated and supplied subring packing schedules at levels 0 and 1 use the Linf A
+- [x] Generated and supplied subring packing schedules at levels 0 and 1 use the Linf A
       security route and cannot select physical L2.
-- [ ] Nonterminal partial D or H payloads are transcript bound before their
+- [x] Nonterminal partial D or H payloads are transcript bound before their
       subring challenge draws.
-- [ ] Packing consistency quotient and next-witness data are bound before `alpha`.
-- [ ] Opening method, `s`, challenge configuration, coefficient layout, and group identity
+- [x] Packing consistency quotient and next-witness data are bound before `alpha`.
+- [x] Opening method, `s`, challenge configuration, coefficient layout, and group identity
       change the descriptor/transcript bytes.
-- [ ] The verifier computes distinct `c(alpha)` and `c(alpha^(k h))` values and
+- [x] The verifier computes distinct `c(alpha)` and `c(alpha^(k h))` values and
       tests fail when either is substituted for the other.
-- [ ] A nonzero extension coordinate numerator is detected by the packed
+- [x] A nonzero extension coordinate numerator is detected by the packed
       `E[Y]` ring-switch oracle.
-- [ ] The subring coefficient packing theorem adds no `1/|K|` coordinate projection term.
-- [ ] Multi-fork extraction and total soundness-error accounting are documented
+- [x] The subring coefficient packing theorem adds no `1/|K|` coordinate projection term.
+- [x] Multi-fork extraction and total soundness-error accounting are documented
       alongside the implementation.
-- [ ] Malformed opening method, dimension, or coordinate counts return typed errors without
+- [x] Malformed opening method, dimension, or coordinate counts return typed errors without
       panic or unbounded allocation.
 
 ### Planner and sizing
 
-- [ ] Generated schedules for every field tier use `SubringCoefficientPacking` at existing
-      nonterminal levels 0 and 1.
-- [ ] Extension field schedules contain no EOR at levels 0 and 1.
-- [ ] Later folds and the terminal retain `EvaluationTrace`.
-- [ ] Short schedule tests cover root to terminal and root to one recursive
+- [x] Generated schedules for every field tier use `SubringCoefficientPacking` at existing
+      nonterminal levels 0 and 1 whenever a complete compatible packing
+      assignment exists, with a whole-fold `EvaluationTrace` fallback otherwise.
+- [x] Extension field packing schedules contain no EOR at levels 0 and 1.
+- [x] Later folds and the terminal retain `EvaluationTrace`.
+- [x] Short schedule tests cover root to terminal and root to one recursive
       fold to terminal without inserting another fold.
-- [ ] The planner searches every admitted `(d_A, s)` pair only inside the two
+- [x] The planner searches every admitted `(d_A, s)` pair only inside the two
       level adaptive prefix and keeps the current uniform suffix.
-- [ ] The catalog objective remains setup matrix field elements first and proof
+- [x] The catalog objective remains setup matrix field elements first and proof
       payload second, followed by the current canonical deterministic ordering.
       It has no explicit `s` or `d_A` objective component.
-- [ ] `d_D` not dividing the selected native or hidden-digit width rejects
+- [x] `d_D` not dividing the selected native or hidden-digit width rejects
       before matrix/rank construction.
-- [ ] Exact D/H and A/B/F ranks are recomputed from subring coefficient packing geometry and norms.
-- [ ] PR 388 B slicing is enumerated only after subring challenge derived A and `t`
+- [x] Exact D/H and A/B/F ranks are recomputed from subring coefficient packing geometry and norms.
+- [x] PR 388 B slicing is enumerated only after subring challenge derived A and `t`
       geometry.
-- [ ] Bounded DP output matches an unpruned oracle on small search fixtures.
-- [ ] Reports reproduce the historical EOR census and show new results on the
+- [x] Bounded DP output matches an unpruned oracle on small search fixtures.
+- [x] Reports reproduce the historical EOR census and show new results on the
       selective L2 baseline.
-- [ ] At least one fp32 and one fp64 production row demonstrate the expected
+- [x] At least one fp32 and one fp64 production row demonstrate the expected
       L0/L1 EOR removal in actual serialized proof breakdowns.
-- [ ] No generated catalog silently drops a previously supported row. Every
+- [x] No generated catalog silently drops a previously supported row. Every
       regression is listed, but minor per row regressions are allowed.
-- [ ] Subring packing setup prefix edges use Linf. Reports for later evaluation trace
+- [x] Subring packing setup prefix edges use Linf. Reports for later evaluation trace
       edges preserve PR 369's existing L2 admission result.
 
 ### Precommitment and setup prefixes
 
-- [ ] Commitment identity excludes the consuming opening method, `s`, and
+- [x] Commitment identity excludes the consuming opening method, `s`, and
       challenge draw.
-- [ ] Schedule and transcript identity include the consuming opening plan.
-- [ ] The same frozen precommitted commitment can be admitted under
+- [x] Schedule and transcript identity include the consuming opening plan.
+- [x] The same frozen precommitted commitment can be admitted under
       `SubringCoefficientPacking` or `EvaluationTrace` when its matrices meet
       the selected method's security
       checks.
-- [ ] A setup prefix consumed at level 1 uses `SubringCoefficientPacking`. A
+- [x] A setup prefix consumed at level 1 uses `SubringCoefficientPacking`. A
       setup prefix consumed at level 2 uses `EvaluationTrace`.
-- [ ] A two level recursive offloading test verifies the transition from a
+- [x] A two level recursive offloading test verifies the transition from a
       subring packing consumer at level 1 to an evaluation trace consumer at level 2.
-- [ ] Changing the opening plan does not duplicate identical setup prefix
+- [x] Changing the opening plan does not duplicate identical setup prefix
       commitment bytes or alter the committed polynomial layout.
 
 ### Performance and caches
 
-- [ ] Partial opening and packing consistency quotient allocations contain exactly `k s`
+- [x] Partial opening and packing consistency quotient allocations contain exactly `k s`
       base-field coordinates per semantic item before digits.
-- [ ] Packing quotient high half construction does not materialize full extension field
+- [x] Packing quotient high half construction does not materialize full extension field
       convolution tables.
-- [ ] Existing A cyclic/negacyclic setup caches remain shared and correct.
-- [ ] D/H cache requirements use the selected partial opening width and do not retain
+- [x] Existing A cyclic/negacyclic setup caches remain shared and correct.
+- [x] D/H cache requirements use the selected partial opening width and do not retain
       old `d_A`-wide buffers.
-- [ ] Profile output records prover time, verifier time, peak memory, setup
+- [x] Profile output records prover time, verifier time, peak memory, setup
       field elements, proof bytes, and per level witness sizes against the
       selective L2 baseline.
-- [ ] A packed-`E` verifier Horner loop is adopted only if it beats the canonical
+- [x] A packed-`E` verifier Horner loop is adopted only if it beats the canonical
       extension coordinate loop without changing bytes or arithmetic results.
 
 ### Repository validation
 
-- [ ] Generated schedule tables are clean after regeneration.
-- [ ] Focused algebra, prover, verifier, planner, and catalog tests pass.
-- [ ] All required feature-graph Clippy jobs pass.
-- [ ] `./scripts/check-doc-guardrails.sh` passes.
+- [x] Generated schedule tables are clean after regeneration.
+- [x] Focused algebra, prover, verifier, planner, and catalog tests pass.
+- [x] All required feature-graph Clippy jobs pass.
+- [x] `./scripts/check-doc-guardrails.sh` passes.
 
 ## Non-goals
 
-- No implementation code lands in the initial spec-only commit.
 - No packing consistency relation after absolute fold level 1.
 - No subring packing terminal or change to the evaluation trace and Hachi
   terminal protocol.
@@ -1465,9 +1475,9 @@ The planner MUST keep the search bounded in the following ways.
   opening method. Akita remains in development; affected catalogs and descriptors are
   regenerated rather than aliased.
 
-## Documentation follow-up
+## Documentation outcome
 
-The implementation PR must fold stable protocol prose into:
+The implementation folded the stable protocol prose into:
 
 - `book/src/how/proving/root-fold-ring-switch.md` for the packing consistency relation and
   two challenge evaluations;
@@ -1479,31 +1489,30 @@ The implementation PR must fold stable protocol prose into:
   condition; and
 - `book/src/how/security.md` for the forking and polynomial-root arguments.
 
-Once those chapters own the durable explanation and the implementation ships,
-this spec moves through `implemented` to the normal archive workflow in
-[`specs/PRUNING.md`](PRUNING.md).
+Those chapters own the durable explanation. This design record is archived
+under the workflow in [`specs/PRUNING.md`](../../PRUNING.md).
 
 ## References
 
 - [Lyubashevsky and Seiler, EUROCRYPT 2018](https://doi.org/10.1007/978-3-319-78381-9_8),
   Corollary 1.2 for partial splitting and short invertibility.
-- [B commitment slicing](commitment-slicing.md), PR 388 baseline and B planner
+- [B commitment slicing](../../commitment-slicing.md), PR 388 baseline and B planner
   interaction.
 - [Selective L2 fold sizing](https://github.com/LayerZero-Labs/akita/pull/369),
   planner objective, response sizing, and operator norm certificates.
-- [Extension-field opening batching](extension-field-opening-batching.md),
+- [Extension-field opening batching](../../extension-field-opening-batching.md),
   tensor EOR and the transformed-commitment soundness boundary.
-- [Ring-dimension and challenge cutover](ring-dim-challenge-cutover.md), current
-  production sparse families and role dimensions.
-- [EOR streamed prover](eor-streamed-prover.md), current EOR prover path and
+- [Root fold and ring switch](../../../book/src/how/proving/root-fold-ring-switch.md),
+  current production sparse families and role dimensions.
+- [EOR streamed prover](../../eor-streamed-prover.md), current EOR prover path and
   performance context.
-- [`crates/akita-types/src/layout/proof_size.rs`](../crates/akita-types/src/layout/proof_size.rs),
+- [`crates/akita-types/src/layout/proof_size.rs`](../../../crates/akita-types/src/layout/proof_size.rs),
   canonical current EOR byte formula.
-- [`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`](../crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs),
+- [`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`](../../../crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs),
   current high-half, consistency, and A quotient construction.
-- [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
+- [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../../../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
   current structured relation weights and challenge reuse.
-- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../crates/akita-verifier/src/protocol/ring_switch.rs),
+- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../../../crates/akita-verifier/src/protocol/ring_switch.rs),
   current `c_alphas` preparation.
-- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs),
+- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../../../crates/akita-verifier/src/protocol/evaluation_trace.rs),
   current trace-based scalar-opening contraction.

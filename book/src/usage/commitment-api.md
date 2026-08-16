@@ -62,8 +62,11 @@ Callers that already own audited root parameters use the same `commit` method
 with `GroupContext::explicit_without_precommitted_groups(&params)` or
 `GroupContext::explicit_with_precommitted_groups(&prior, &params)`. Explicit mode
 does not select a catalog row. It validates the supplied parameters, while
-tensor projection follows the same field/root-geometry predicate as scheduler
-mode.
+the supplied opening method also selects and authenticates the committed source
+encoding. `EvaluationTrace` may use `TensorSubfieldProjection` when the field
+and root geometry admit it. `SubringCoefficientPacking` uses
+`CanonicalCoefficientTable`. The encoding is commitment identity and cannot be
+reinterpreted by a later opening plan.
 
 ### Precommitting under a recursive configuration
 
