@@ -257,56 +257,6 @@ where
 {
 }
 
-/// Capability: this backend can **tensor-project** a single source `P` at an
-/// extension-field opening point of type `E`.
-///
-/// Commit-side alias for single-point tensor projection only. Prove paths use
-/// the full [`TensorBackendFor`] bundle (single + batch).
-pub trait ProjectBackendFor<F, P, E, const D: usize>: ComputeBackendSetup<F>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootTensorSource<F, D>,
-    Self: for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
-{
-}
-
-impl<F, P, E, const D: usize, B> ProjectBackendFor<F, P, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootTensorSource<F, D>,
-    B: ComputeBackendSetup<F>
-        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
-{
-}
-
-/// Capability: this backend can run the full **opening/prove** kernel set over a
-/// single source `P` at an extension-field opening point of type `E`.
-///
-/// Composed from [`OpeningProveBackendFor`] and [`TensorBackendFor`].
-pub trait ProveBackendFor<F, P, E, const D: usize>:
-    OpeningProveBackendFor<F, P, D> + TensorBackendFor<F, P, E, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
-{
-}
-
-impl<F, P, E, const D: usize, B> ProveBackendFor<F, P, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
-    B: OpeningProveBackendFor<F, P, D> + TensorBackendFor<F, P, E, D>,
-{
-}
-
 /// Marker bundle for scheme-level prove entry points.
 ///
 /// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.

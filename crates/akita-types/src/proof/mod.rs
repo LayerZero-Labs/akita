@@ -44,8 +44,7 @@ pub use crate::opening_claims::{
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    root_tensor_projection_enabled_for_width, validate_batched_inputs, PreparedOpeningPoint,
+    ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
     RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use coefficient_packing_relation::{

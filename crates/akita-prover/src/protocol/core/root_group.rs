@@ -2,12 +2,12 @@
 
 use super::*;
 use crate::compute::{
-    tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
+    ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
     RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor, RuntimeRootProvePoly,
     RuntimeTensorBackendFor, RuntimeTensorSource, SubringCoefficientPackingBatchKernel,
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-use crate::{PreparedProverGroup, RootTensorProjectionPoly};
+use crate::PreparedProverGroup;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
@@ -91,13 +91,6 @@ where
         ring_dimension: usize,
         point: &[E],
     ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError>;
-
-    fn tensor_project(
-        &self,
-        backend: &B,
-        prepared: Option<&B::PreparedSetup>,
-        ring_dimension: usize,
-    ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>;
 
     fn extension_opening_terms(
         &self,
@@ -335,25 +328,6 @@ where
                 self.polynomial_refs(),
                 point,
             )
-        )
-    }
-
-    fn tensor_project(
-        &self,
-        backend: &B,
-        prepared: Option<&B::PreparedSetup>,
-        ring_dimension: usize,
-    ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError> {
-        dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            ring_dimension,
-            |D| {
-                self.polynomial_refs()
-                    .iter()
-                    .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, prepared, *poly))
-                    .collect()
-            }
         )
     }
 

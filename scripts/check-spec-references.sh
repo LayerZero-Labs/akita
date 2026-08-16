@@ -100,6 +100,16 @@ dead_patterns=(
   'sole_profile'
   '_precommitted\.rs'
   'api/scheme\.rs'
+  'RootTensorProjectionPoly\b'
+  'RootTensorProjectionView\b'
+  'RootTensorProjectionBatchView\b'
+  'SparseRingPoly\b'
+  'SparseRingView\b'
+  'SparseRingBatchView\b'
+  'root_tensor_projection_enabled\b'
+  'root_tensor_projection_enabled_for_width\b'
+  'ProveBackendFor\b'
+  'ProjectBackendFor\b'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"

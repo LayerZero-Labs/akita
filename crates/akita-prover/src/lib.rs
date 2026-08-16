@@ -24,8 +24,8 @@ pub use api::{
 
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
-    RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly, SparseRingBlockEntry,
-    SparseRingPoly, SuffixWitnessBatchView, SuffixWitnessView,
+    RecursiveFoldSource, RecursiveWitnessFlat, SparseRingBlockEntry, SuffixWitnessBatchView,
+    SuffixWitnessView,
 };
 pub use compute::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome,
@@ -33,7 +33,7 @@ pub use compute::{
     CyclicRowsComputeBackend, DigitRowsComputeBackend, LevelProveStacks, NttCacheOwnerId,
     NttExecutionRequirements, NttOperationCluster, OpeningCluster, OpeningProveBackendFor,
     OperationCtx, PlannedNttCacheOwnerMetric, PreparedCrtNttProfile, PreparedNttCacheMetric,
-    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
+    ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
     ReleaseRootNttAfterFold, RingSwitchCluster, RingSwitchProveBackend, RingSwitchRelationRows,
     RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend,
     RootProvePoly, RootTensorSource, RoutedNttRequirement, RuntimeCommitBackendFor,

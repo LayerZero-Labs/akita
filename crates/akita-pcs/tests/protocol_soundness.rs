@@ -661,8 +661,9 @@ fn ext4_point() -> Vec<fp32::ExtensionField> {
         .collect()
 }
 
-/// Coefficient packing removes EOR from the first two fp32 folds. The terminal
-/// remains EvaluationTrace and must reject a changed or missing EOR payload.
+/// Coefficient packing removes EOR from every emitted early fp32 fold. The
+/// terminal remains EvaluationTrace and must reject a changed or missing EOR
+/// payload.
 #[test]
 fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
     init_rayon_pool();
@@ -739,29 +740,25 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             proof.root.extension_opening_reduction.is_none(),
             "coefficient packing must not emit a root EOR payload"
         );
-        assert!(
-            matches!(
-                resolved
-                    .schedule()
-                    .recursive_folds
-                    .first()
-                    .expect("fp32 row has a level-1 fold")
-                    .params
-                    .witness
-                    .opening_method,
-                OpeningMethod::SubringCoefficientPacking { .. }
-            ),
-            "the shipped fp32 row must use coefficient packing at level 1"
-        );
-        assert!(
-            proof
-                .recursive_folds
-                .first()
-                .expect("fp32 proof has a level-1 fold")
-                .extension_opening_reduction
-                .is_none(),
-            "coefficient packing must not emit a level-1 EOR payload"
-        );
+        for (step, recursive_proof) in resolved
+            .schedule()
+            .recursive_folds
+            .iter()
+            .take(1)
+            .zip(proof.recursive_folds.iter().take(1))
+        {
+            assert!(
+                matches!(
+                    step.params.witness.opening_method,
+                    OpeningMethod::SubringCoefficientPacking { .. }
+                ),
+                "every emitted early fp32 fold must use coefficient packing"
+            );
+            assert!(
+                recursive_proof.extension_opening_reduction.is_none(),
+                "coefficient packing must not emit a recursive EOR payload"
+            );
+        }
         assert!(
             proof.terminal.extension_opening_reduction.is_some(),
             "the EvaluationTrace terminal must retain EOR"

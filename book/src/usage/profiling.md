@@ -244,14 +244,9 @@ checked split-tensor contraction primitive as the dense backend. It streams the
 base evaluation table through split equality weights instead of allocating a
 full extension-field copy of the table.
 
-Small-field dense commits use the source encoding selected by the schedule.
-`EvaluationTrace` rows may begin with the Hachi root tensor projection required
-by extension-to-ring reduction. `SubringCoefficientPacking` rows commit the
-canonical coefficient table instead. Perfetto reports a tensor projection as
-`dense_tensor_root_projection` inside the commit span, including the table
-length, ring dimension, extension degree, and output-ring count. The projection
-maps independent base-coordinate chunks directly into ψ-packed rings; it does
-not materialize an intermediate extension-field table.
+Dense root commitments always use the canonical coefficient table. Extension
+opening reduction and its tensor-packed witness are now suffix-only operations;
+they do not appear inside the root commit span.
 
 Dense profile witnesses use an index-derived SplitMix64 stream. This keeps the
 input deterministic while allowing every evaluation to be generated in

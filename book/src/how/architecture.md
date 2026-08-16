@@ -59,8 +59,8 @@ Its round count and planned size do not depend on the successor witness length.
 
 The cyclotomic ring dimension is **schedule-derived shape metadata, not a
 type parameter of the protocol**. Protocol data — commitments, hints, proofs,
-claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
-`SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`). Per-level
+claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`, and
+their enum wrapper) — is flat field-element vectors (`RingVec<F>`). Per-level
 `CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
 the operation authority for how those vectors are interpreted; levels may
 differ. Here, *role* is the historical protocol name for a commitment matrix's

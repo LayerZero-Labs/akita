@@ -1,4 +1,3 @@
-use crate::backend::RootTensorProjectionPoly;
 use crate::compute::backend::ComputeBackendSetup;
 use crate::compute::operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
@@ -8,10 +7,8 @@ use crate::compute::plans::RingSwitchRelationRows;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced,
+    AkitaError, CanonicalField, ExtField, FieldCore, HalvingField, MulBaseUnreduced,
 };
-use akita_types::FpExtEncoding;
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
 ///
@@ -132,22 +129,12 @@ where
     where
         E: MulBaseUnreduced<F>;
 
-    /// Tensor-packed root witness, dense or sparse when available.
+    /// Tensor-packed recursive witness, dense or sparse when available.
     fn packed_witness(
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
     ) -> Result<TensorPackedWitness<E>, AkitaError>;
-
-    /// Committed tensor-projected root polynomial.
-    fn root_projection(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        source: S,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        F: FromPrimitiveInt,
-        E: FpExtEncoding<F>;
 }
 
 /// Batched tensor projection kernel over a borrowed tensor-batch view `S`.
@@ -166,7 +153,7 @@ where
     where
         E: MulBaseUnreduced<F>;
 
-    /// Sparse linear combination of tensor-packed root witnesses.
+    /// Sparse linear combination of tensor-packed recursive witnesses.
     ///
     /// Returns `Ok(None)` when a sparse combination is unavailable for the whole
     /// batch and the caller must fall back to dense materialization.

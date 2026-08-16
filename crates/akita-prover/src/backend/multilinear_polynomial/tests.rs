@@ -1,13 +1,12 @@
 use super::{MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView};
-use crate::backend::{DenseBatchView, OneHotBatchView, OneHotView};
+use crate::backend::OneHotView;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, ComputeBackendSetup, CpuBackend,
     DecomposeFoldBatchPlan, OpeningBatchKernel, RootCommitKernel, RootCommitSource,
-    RootOpeningSource, RootPolyShape, RootTensorSource, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    RootOpeningSource, RootPolyShape,
 };
 use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
-use akita_field::{CanonicalField, ExtField, FpExt4, Prime24Offset3};
+use akita_field::{CanonicalField, Prime24Offset3};
 use akita_types::SetupMatrixCapacity;
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
@@ -34,19 +33,6 @@ fn sample_onehot<const D: usize>() -> OneHotPoly<Prime24Offset3> {
         ],
     )
     .unwrap()
-}
-
-fn sample_point<E: ExtField<Prime24Offset3>>(num_vars: usize) -> Vec<E> {
-    (0..num_vars)
-        .map(|idx| {
-            E::from_base_slice(&[
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 2),
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 3),
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 5),
-                Prime24Offset3::from_canonical_u128_reduced(5 * idx as u128 + 7),
-            ])
-        })
-        .collect()
 }
 
 #[test]
@@ -123,167 +109,6 @@ fn multilinear_onehot_group_commit_matches_inner_kernel() {
         assert_eq!(got.inner_rows.ring_dim(), expected.inner_rows.ring_dim());
         assert_eq!(got.inner_rows.coeffs(), expected.inner_rows.coeffs());
     }
-}
-
-#[test]
-fn multilinear_kernel_homogeneous_dense_tensor_batch_matches_inner() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 16;
-
-    let dense0 = sample_dense::<D>();
-    let dense1 = sample_dense::<D>();
-    let num_vars = RootPolyShape::<F, D>::num_vars(&dense0);
-    let wrapped = [
-        MultilinearPolynomial::dense(dense0),
-        MultilinearPolynomial::dense(dense1),
-    ];
-    let wrapped_refs = [&wrapped[0], &wrapped[1]];
-    let point = sample_point::<E>(num_vars);
-    let backend = CpuBackend::DEFAULT;
-
-    let inner_refs: Vec<&DensePoly<F>> = wrapped
-        .iter()
-        .map(|poly| match poly {
-            MultilinearPolynomial::Dense(dense) => dense,
-            MultilinearPolynomial::OneHot(_) => unreachable!(),
-        })
-        .collect();
-    let dense_view = <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&inner_refs).unwrap();
-    let expected =
-        TensorProjectionBatchKernel::<DenseBatchView<'_, F, D>, F, E, D>::column_partials_batch(
-            &backend, None, dense_view, &point,
-        )
-        .unwrap();
-    let batch_view =
-        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
-    let got = TensorProjectionBatchKernel::<
-        MultilinearPolynomialBatchView<'_, F, D>,
-        F,
-        E,
-        D,
-    >::column_partials_batch(&backend, None, batch_view, &point)
-    .unwrap();
-    assert_eq!(got, expected);
-}
-
-#[test]
-fn multilinear_kernel_homogeneous_onehot_tensor_batch_matches_inner() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 16;
-
-    let onehot0 = sample_onehot::<D>();
-    let onehot1 = sample_onehot::<D>();
-    let num_vars = RootPolyShape::<F, D>::num_vars(&onehot0);
-    let wrapped = [
-        MultilinearPolynomial::onehot(onehot0),
-        MultilinearPolynomial::onehot(onehot1),
-    ];
-    let wrapped_refs = [&wrapped[0], &wrapped[1]];
-    let point = sample_point::<E>(num_vars);
-    let backend = CpuBackend::DEFAULT;
-
-    let inner_refs: Vec<&OneHotPoly<F>> = wrapped
-        .iter()
-        .map(|poly| match poly {
-            MultilinearPolynomial::OneHot(onehot) => onehot,
-            MultilinearPolynomial::Dense(_) => unreachable!(),
-        })
-        .collect();
-    let onehot_view = <OneHotPoly<F> as RootTensorSource<F, D>>::tensor_batch(&inner_refs).unwrap();
-    let expected =
-        TensorProjectionBatchKernel::<OneHotBatchView<'_, F, D>, F, E, D>::column_partials_batch(
-            &backend,
-            None,
-            onehot_view,
-            &point,
-        )
-        .unwrap();
-    let batch_view =
-        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
-    let got = TensorProjectionBatchKernel::<
-        MultilinearPolynomialBatchView<'_, F, D>,
-        F,
-        E,
-        D,
-    >::column_partials_batch(&backend, None, batch_view, &point)
-    .unwrap();
-    assert_eq!(got, expected);
-}
-
-#[test]
-fn multilinear_kernel_mixed_batch_column_partials_falls_back_per_poly() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 16;
-
-    let onehot = sample_onehot::<D>();
-    let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
-    let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
-        .collect::<Vec<_>>();
-    let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
-    let wrapped = [
-        MultilinearPolynomial::dense(dense),
-        MultilinearPolynomial::onehot(onehot),
-    ];
-    let wrapped_refs = [&wrapped[0], &wrapped[1]];
-    let point = sample_point::<E>(num_vars);
-    let backend = CpuBackend::DEFAULT;
-
-    let expected = wrapped_refs
-        .iter()
-        .map(|poly| {
-            let view = RootTensorSource::<F, D>::tensor_view(*poly).unwrap();
-            TensorProjectionKernel::<MultilinearPolynomialView<'_, F, D>, F, E, D>::column_partials(
-                &backend, None, view, &point,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let batch_view =
-        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
-    let got = TensorProjectionBatchKernel::<
-        MultilinearPolynomialBatchView<'_, F, D>,
-        F,
-        E,
-        D,
-    >::column_partials_batch(&backend, None, batch_view, &point)
-    .unwrap();
-    assert_eq!(got, expected);
-}
-
-#[test]
-fn multilinear_kernel_mixed_batch_sparse_linear_combination_returns_none() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 16;
-
-    let onehot = sample_onehot::<D>();
-    let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
-    let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
-        .collect::<Vec<_>>();
-    let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
-    let wrapped = [
-        MultilinearPolynomial::dense(dense),
-        MultilinearPolynomial::onehot(onehot),
-    ];
-    let wrapped_refs = [&wrapped[0], &wrapped[1]];
-    let coeffs = vec![E::one(), E::one()];
-    let backend = CpuBackend::DEFAULT;
-
-    let batch_view =
-        <MultilinearPolynomial<F> as RootTensorSource<F, D>>::tensor_batch(&wrapped_refs).unwrap();
-    let got = TensorProjectionBatchKernel::<
-        MultilinearPolynomialBatchView<'_, F, D>,
-        F,
-        E,
-        D,
-    >::sparse_linear_combination(&backend, None, batch_view, &coeffs)
-    .unwrap();
-    assert!(got.is_none());
 }
 
 #[test]

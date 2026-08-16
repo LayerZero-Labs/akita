@@ -18,8 +18,7 @@ use crate::backend::poly_helpers::{
 };
 use crate::compute::{CommitInnerPlan, CpuBackend, RootCommitKernel};
 use akita_types::{
-    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, FpExtEncoding,
-    WitnessLayout,
+    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, WitnessLayout,
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -507,7 +506,6 @@ where
 // Source-typed prove views + CpuBackend kernels for [`RecursiveWitnessFlat`].
 // ===========================================================================
 
-use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitSource, RootOpeningSource,
@@ -776,20 +774,6 @@ where
             source.tensor_packed_extension_evals()?,
         ))
     }
-
-    fn root_projection(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        E: FpExtEncoding<F>,
-    {
-        let _ = source;
-        Err(AkitaError::InvalidInput(
-            "recursive suffix witnesses are not tensor-projected root polynomials".to_string(),
-        ))
-    }
 }
 
 impl<F, E, const D: usize> TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>
@@ -947,22 +931,6 @@ mod tests {
         assert_eq!(committed.coeffs.len(), tensor.coeffs.len());
         assert_eq!(tensor.live_ring_elems, 70);
         assert_eq!(tensor.num_vars(), 13);
-    }
-
-    #[test]
-    fn suffix_root_projection_is_rejected() {
-        const D: usize = 16;
-        type E = akita_field::FpExt4<F>;
-        let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
-        let witness = RecursiveWitnessFlat::from_i8_digits(digits);
-        let view = witness.tensor_view().expect("tensor view");
-        let err = TensorProjectionKernel::<SuffixWitnessView<'_, F, D>, F, E, D>::root_projection(
-            &CpuBackend::DEFAULT,
-            None,
-            view,
-        )
-        .expect_err("suffix witnesses must not tensor-project");
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
     }
 
     #[test]

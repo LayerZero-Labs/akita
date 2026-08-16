@@ -22,8 +22,10 @@ pub(crate) static FP32_DENSE_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 256, log_basis: 3 },
             witness_partition: GeneratedWitnessPartition::Single,
         },
-        recursive_folds: &[],
-        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 2096, positions_per_block: 128, live_blocks: 17 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 1024, log_basis: 3 }, num_digits_inner: 1, fold_log_basis: 3, fold_digit_count: 3, inner_output_rank: 1, inner_coeff_linf_bound: 65535, response_l2_sq_cap: None, z_linf_cap: Some(219), z_rice_low_bits: 5, z_payload_bytes: 147456 },
+        recursive_folds: &[
+            GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Compressed, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 128 }, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 2096, positions_per_block: 128, live_blocks: 17 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 1024, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 256, log_basis: 6 }, outer_slice_count: 1 }, num_digits_fold: 2, response_l2_sq_cap: None, open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 256, log_basis: 6 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
+        ],
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 7074, positions_per_block: 2, live_blocks: 3537 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 6 }, num_digits_inner: 1, fold_log_basis: 6, fold_digit_count: 3, inner_output_rank: 2, inner_coeff_linf_bound: 67108863, response_l2_sq_cap: None, z_linf_cap: Some(29234), z_rice_low_bits: 12, z_payload_bytes: 256 },
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
@@ -71,7 +73,7 @@ pub(crate) static CATALOG_POTENTIAL_B_DIMENSIONS: &[usize] = &[64, 128, 256];
 #[rustfmt::skip]
 pub(crate) static CATALOG_POTENTIAL_D_DIMENSIONS: &[usize] = &[64, 128, 256];
 #[rustfmt::skip]
-pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128, 256, 512, 1024];
+pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp32_dense",
@@ -99,5 +101,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12423973825851036286,
     key_count: 3,
-    key_digest: 15134433564559185608,
+    key_digest: 12386647035008082640,
 };

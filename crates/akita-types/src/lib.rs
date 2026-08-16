@@ -113,7 +113,6 @@ pub use proof::{
     relation_claim_from_layout_extension, relation_claim_from_rows,
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_row_count,
     ring_relation_segment_lengths, ring_subfield_packed_extension_opening_point,
-    root_tensor_projection_enabled, root_tensor_projection_enabled_for_width,
     sample_akita_setup_seed, scheduled_setup_prefix, setup_matrix_capacity_for_schedule,
     setup_matrix_field_elements_for_schedule, setup_prefix_coverage_eval_len,
     setup_prefix_precommitted_params, setup_prefix_slot_field_elements, suffix_opening_layout,

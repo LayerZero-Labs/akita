@@ -64,6 +64,11 @@ pub(crate) fn terminal_direct_suffix_cost(
             "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
         ));
     }
+    if !input_witness_len.is_multiple_of(terminal_lp.d_a()) {
+        return Err(AkitaError::InvalidSetup(
+            "terminal-direct input length must be divisible by its A-ring dimension".to_string(),
+        ));
+    }
     if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_precommitted_groups() {
         return Err(AkitaError::InvalidSetup(
             "terminal direct response must be a scalar flat fold".to_string(),
@@ -147,4 +152,39 @@ pub(crate) fn terminal_direct_suffix_cost(
         estimated_payload_bytes: estimated_terminal_bytes,
     };
     Ok((direct, estimated_terminal_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_rejects_an_input_not_divisible_by_its_a_ring() {
+        let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+        let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
+            .expect("D256 challenge");
+        let params = CommittedGroupParams::params_only(
+            akita_types::SisModulusProfileId::Q128OffsetA7F7,
+            256,
+            2,
+            2,
+            2,
+            2,
+            challenge,
+        );
+        let error = terminal_direct_suffix_cost(
+            &policy,
+            257,
+            &params,
+            128,
+            PolynomialGroupLayout::new(8, 1),
+            1,
+            None,
+            None,
+        )
+        .expect_err("nondivisible terminal input");
+        assert!(
+            matches!(error, AkitaError::InvalidSetup(message) if message.contains("divisible"))
+        );
+    }
 }

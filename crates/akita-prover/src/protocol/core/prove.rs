@@ -6,7 +6,6 @@ use crate::compute::{
     RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
-use crate::RootTensorProjectionPoly;
 use crate::SelectedProverOpeningData;
 use akita_config::{
     effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
@@ -66,21 +65,15 @@ where
         + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-        + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
             Cfg::Field,
             RecursiveFoldSource<Cfg::Field>,
-            Cfg::ExtField,
-        > + RuntimeCoefficientPackingBackendFor<
-            Cfg::Field,
-            RootTensorProjectionPoly<Cfg::Field>,
             Cfg::ExtField,
         > + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-        + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
@@ -180,21 +173,15 @@ where
         + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-        + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
         + RuntimeCoefficientPackingBackendFor<
             Cfg::Field,
             RecursiveFoldSource<Cfg::Field>,
-            Cfg::ExtField,
-        > + RuntimeCoefficientPackingBackendFor<
-            Cfg::Field,
-            RootTensorProjectionPoly<Cfg::Field>,
             Cfg::ExtField,
         > + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-        + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>

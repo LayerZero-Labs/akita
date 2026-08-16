@@ -6,8 +6,8 @@ use crate::validation::is_i8_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_types::{tensor_opening_split, RingVec, TensorColumnSource};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_types::RingVec;
 use std::borrow::Cow;
 use std::mem::size_of;
 use std::sync::OnceLock;
@@ -149,42 +149,6 @@ impl<F: FieldCore> DensePoly<F> {
         let (chunks, remainder) = flat.get(..needed)?.as_chunks::<D>();
         debug_assert!(remainder.is_empty());
         Some(chunks)
-    }
-
-    /// Live (unpadded) flat coefficient count, `1 << num_vars`.
-    pub(super) fn live_coeff_len(&self) -> Result<usize, AkitaError> {
-        1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
-        })
-    }
-
-    pub(super) fn tensor_shape<E, const D: usize>(
-        &self,
-        logical_point: Option<&[E]>,
-    ) -> Result<(usize, usize), AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        let (split_bits, width) = tensor_opening_split::<F, E>()?;
-        if split_bits > self.num_vars {
-            return Err(AkitaError::InvalidInput(
-                "extension-opening tensor split exceeds polynomial arity".to_string(),
-            ));
-        }
-        if width > D || !D.is_multiple_of(width) {
-            return Err(AkitaError::InvalidInput(format!(
-                "extension degree {width} does not evenly pack into dense ring degree {D}"
-            )));
-        }
-        if let Some(point) = logical_point {
-            if point.len() != self.num_vars {
-                return Err(AkitaError::InvalidPointDimension {
-                    expected: self.num_vars,
-                    actual: point.len(),
-                });
-            }
-        }
-        Ok((split_bits, width))
     }
 }
 
@@ -352,25 +316,5 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
                 chunks
             },
         )
-    }
-}
-
-/// Column source over the flat dense coefficient buffer: `row(tail)` is the
-/// `width`-length base-field run at flat index `tail*width`.
-///
-/// The old ring-typed source computed `ring_idx = tail*width / D` and sliced
-/// within that ring; runs are `width`-aligned and `width` divides `D`, so a
-/// run never crossed a ring boundary and flat indexing reads the identical
-/// coefficients. `flat` is bounded to the LIVE length (`1 << num_vars`); the
-/// folding reads exactly that live range.
-pub(super) struct DenseColumnSource<'a, F: FieldCore> {
-    pub(super) flat: &'a [F],
-    pub(super) width: usize,
-}
-
-impl<F: FieldCore> TensorColumnSource<F> for DenseColumnSource<'_, F> {
-    #[inline]
-    fn row(&self, tail: usize) -> &[F] {
-        &self.flat[tail * self.width..][..self.width]
     }
 }

@@ -180,25 +180,14 @@ where
         B: ComputeBackendSetup<Cfg::Field>
             + RuntimeCommitBackendFor<Cfg::Field, akita_prover::RecursiveWitnessFlat>
             + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-            + RuntimeOpeningProveBackendFor<
-                Cfg::Field,
-                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
-            > + RuntimeCoefficientPackingBackendFor<
+            + RuntimeCoefficientPackingBackendFor<
                 Cfg::Field,
                 RecursiveFoldSource<Cfg::Field>,
-                Cfg::ExtField,
-            > + RuntimeCoefficientPackingBackendFor<
-                Cfg::Field,
-                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
                 Cfg::ExtField,
             > + SuffixOpeningProveBackend<Cfg::Field>
             + DigitRowsComputeBackend<Cfg::Field>
             + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-            + RuntimeTensorBackendFor<
-                Cfg::Field,
-                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
-                Cfg::ExtField,
-            > + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+            + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
             + RuntimeRingSwitchProveBackend<Cfg::Field>
             + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,

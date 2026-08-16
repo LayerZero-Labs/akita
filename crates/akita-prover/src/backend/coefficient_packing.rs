@@ -137,10 +137,9 @@ where
 mod tests {
     use crate::backend::{DensePoly, OneHotPoly, RecursiveWitnessFlat};
     use crate::compute::{
-        CpuBackend, RootTensorSource, SubringCoefficientPackingBatchKernel,
+        CpuBackend, RootOpeningSource, SubringCoefficientPackingBatchKernel,
         SubringCoefficientPackingPlan,
     };
-    use crate::{RootTensorProjectionPoly, SparseRingPoly};
     use akita_algebra::CyclotomicRing;
     use akita_field::{
         AkitaError, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt,
@@ -206,7 +205,7 @@ mod tests {
         .unwrap();
         let poly = DensePoly::from_ring_coeffs(rings);
         let polys = [&poly];
-        let batch = <DensePoly<T> as RootTensorSource<T, RING_D>>::tensor_batch(&polys).unwrap();
+        let batch = <DensePoly<T> as RootOpeningSource<T, RING_D>>::opening_batch(&polys).unwrap();
         let got = CpuBackend::DEFAULT
             .coefficient_packing_partials_batch(
                 None,
@@ -242,7 +241,7 @@ mod tests {
         .unwrap();
         let poly = DensePoly::from_ring_coeffs(rings);
         let polys = [&poly];
-        let batch = <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&polys).unwrap();
+        let batch = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&polys).unwrap();
         let got = CpuBackend::DEFAULT
             .coefficient_packing_partials_batch(
                 None,
@@ -293,7 +292,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let refs = sources.iter().collect::<Vec<_>>();
-        let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&refs).unwrap();
+        let batch =
+            <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&refs).unwrap();
         let got = CpuBackend::DEFAULT
             .coefficient_packing_partials_batch(
                 None,
@@ -341,9 +341,9 @@ mod tests {
         let dense_refs = [&dense];
         let onehot_refs = [&onehot];
         let dense_batch =
-            <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_refs).unwrap();
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
         let onehot_batch =
-            <OneHotPoly<F> as RootTensorSource<F, D>>::tensor_batch(&onehot_refs).unwrap();
+            <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&onehot_refs).unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
         let dense_partials = CpuBackend::DEFAULT
             .coefficient_packing_partials_batch(None, dense_batch, plan)
@@ -388,9 +388,9 @@ mod tests {
         let dense_refs = [&dense];
         let onehot_refs = [&onehot];
         let dense_batch =
-            <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_refs).unwrap();
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
         let onehot_batch =
-            <OneHotPoly<F> as RootTensorSource<F, D>>::tensor_batch(&onehot_refs).unwrap();
+            <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&onehot_refs).unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
 
         assert!(matches!(
@@ -407,40 +407,6 @@ mod tests {
                 actual,
             }) if expected == 6 * D && actual == 8 * D
         ));
-    }
-
-    #[test]
-    fn tensor_projection_dense_and_sparse_sources_pack_identically() {
-        let point = prepared_point();
-        let entries = vec![(0usize, 17usize, 1i8), (1, 255, -1)];
-        let sparse = SparseRingPoly::from_signed_coeffs(9, D, 2, entries.clone()).unwrap();
-        let dense = DensePoly::from_ring_coeffs(
-            (0..2)
-                .map(|position| {
-                    CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
-                        entries
-                            .iter()
-                            .filter(|(ring, index, _)| *ring == position && *index == coefficient)
-                            .map(|(_, _, value)| F::from_i8(*value))
-                            .fold(F::zero(), |sum, value| sum + value)
-                    }))
-                })
-                .collect(),
-        );
-        let dense_projection = RootTensorProjectionPoly::Dense(dense);
-        let sparse_projection = RootTensorProjectionPoly::Sparse(std::sync::Arc::new(sparse));
-        let refs = [&dense_projection, &sparse_projection];
-        let batch =
-            <RootTensorProjectionPoly<F> as RootTensorSource<F, D>>::tensor_batch(&refs).unwrap();
-        let packed = CpuBackend::DEFAULT
-            .coefficient_packing_partials_batch(
-                None,
-                batch,
-                SubringCoefficientPackingPlan { point: &point },
-            )
-            .unwrap();
-        assert_eq!(packed.len(), 2);
-        assert_eq!(packed[0], packed[1]);
     }
 
     #[test]
@@ -474,9 +440,9 @@ mod tests {
         let dense_refs = [&dense];
         let onehot_refs = [&onehot];
         let dense_batch =
-            <DensePoly<F> as RootTensorSource<F, LARGE_D>>::tensor_batch(&dense_refs).unwrap();
+            <DensePoly<F> as RootOpeningSource<F, LARGE_D>>::opening_batch(&dense_refs).unwrap();
         let onehot_batch =
-            <OneHotPoly<F> as RootTensorSource<F, LARGE_D>>::tensor_batch(&onehot_refs).unwrap();
+            <OneHotPoly<F> as RootOpeningSource<F, LARGE_D>>::opening_batch(&onehot_refs).unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
         let dense_partials = CpuBackend::DEFAULT
             .coefficient_packing_partials_batch(None, dense_batch, plan)
@@ -540,9 +506,9 @@ mod tests {
         let onehot_refs = onehot.iter().collect::<Vec<_>>();
         let dense_refs = dense.iter().collect::<Vec<_>>();
         let onehot_batch =
-            <OneHotPoly<F> as RootTensorSource<F, D>>::tensor_batch(&onehot_refs).unwrap();
+            <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&onehot_refs).unwrap();
         let dense_batch =
-            <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_refs).unwrap();
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
         let onehot_partials = CpuBackend::DEFAULT
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
@@ -581,9 +547,9 @@ mod tests {
         let dense_refs = [&dense];
         let recursive_refs = [&recursive];
         let dense_batch =
-            <DensePoly<F> as RootTensorSource<F, D>>::tensor_batch(&dense_refs).unwrap();
+            <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&dense_refs).unwrap();
         let recursive_batch =
-            <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&recursive_refs)
+            <RecursiveWitnessFlat as RootOpeningSource<F, D>>::opening_batch(&recursive_refs)
                 .unwrap();
         let plan = SubringCoefficientPackingPlan { point: &point };
         let dense_partials = CpuBackend::DEFAULT
@@ -615,7 +581,7 @@ mod tests {
         let lower_arity = DensePoly::from_field_evals(5, RING_D, vec![Base::one(); 32]).unwrap();
         let refs = [&lower_arity];
         let batch =
-            <DensePoly<Base> as RootTensorSource<Base, RING_D>>::tensor_batch(&refs).unwrap();
+            <DensePoly<Base> as RootOpeningSource<Base, RING_D>>::opening_batch(&refs).unwrap();
         assert!(CpuBackend::DEFAULT
             .coefficient_packing_partials_batch(
                 None,

@@ -1,23 +1,16 @@
 //! CpuBackend kernels over dense polynomial views.
 
-use super::poly::DensePoly;
 use super::views::{DenseBatchView, DenseView};
 use crate::backend::coefficient_packing::partials_from_indexed_source;
-use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
     RootCommitKernel, RootPolyMeta, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
-use akita_types::FpExtEncoding;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
 impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
@@ -115,75 +108,6 @@ where
         _plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<F, D>, AkitaError> {
         Ok(BatchDecomposeFoldOutcome::FallbackPerPoly)
-    }
-}
-
-impl<F, E, const D: usize> TensorProjectionKernel<DenseView<'_, F, D>, F, E, D> for CpuBackend
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F>,
-{
-    fn column_partials(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseView<'_, F, D>,
-        logical_point: &[E],
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        source
-            .poly
-            .tensor_extension_column_partials::<E, D>(logical_point)
-    }
-
-    fn packed_witness(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        Ok(TensorPackedWitness::Dense(
-            source.poly.tensor_packed_extension_evals::<E, D>()?,
-        ))
-    }
-
-    fn root_projection(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        E: FpExtEncoding<F>,
-    {
-        source.poly.tensor_packed_extension_root_poly::<E, D>()
-    }
-}
-
-impl<F, E, const D: usize> TensorProjectionBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
-    for CpuBackend
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    fn column_partials_batch(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseBatchView<'_, F, D>,
-        logical_point: &[E],
-    ) -> Result<Vec<Vec<E>>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        DensePoly::tensor_extension_column_partials_batch::<E, D>(source.polys, logical_point)
-    }
-
-    fn sparse_linear_combination(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseBatchView<'_, F, D>,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        DensePoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
     }
 }
 

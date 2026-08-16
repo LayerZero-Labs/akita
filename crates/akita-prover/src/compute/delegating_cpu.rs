@@ -20,10 +20,8 @@ use super::operation_plans::{
 use super::plans::RingSwitchRelationRows;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-};
-use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField};
+use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
 macro_rules! delegate_compute_backend_setup {
@@ -210,18 +208,6 @@ macro_rules! delegate_tensor_kernels {
                 source: S,
             ) -> Result<super::kernels::TensorPackedWitness<E>, AkitaError> {
                 CpuBackend::DEFAULT.packed_witness(prepared, source)
-            }
-
-            fn root_projection(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                source: S,
-            ) -> Result<crate::backend::RootTensorProjectionPoly<F>, AkitaError>
-            where
-                F: FromPrimitiveInt,
-                E: FpExtEncoding<F>,
-            {
-                CpuBackend::DEFAULT.root_projection(prepared, source)
             }
         }
 

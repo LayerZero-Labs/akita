@@ -6,7 +6,6 @@ use crate::compute::{
     RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
     SuffixTensorProveBackend,
 };
-use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::AkitaCommitmentHint;
@@ -96,10 +95,6 @@ where
         + RuntimeCoefficientPackingBackendFor<
             Cfg::Field,
             RecursiveFoldSource<Cfg::Field>,
-            Cfg::ExtField,
-        > + RuntimeCoefficientPackingBackendFor<
-            Cfg::Field,
-            RootTensorProjectionPoly<Cfg::Field>,
             Cfg::ExtField,
         > + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
@@ -445,14 +440,11 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>
-        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>
-        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>,
+        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>,
     O: DigitRowsComputeBackend<F>
         + RuntimeOpeningProveBackendFor<F, RecursiveWitnessFlat>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
-        + RuntimeCoefficientPackingBackendFor<F, RecursiveFoldSource<F>, E>
-        + RuntimeCoefficientPackingBackendFor<F, RootTensorProjectionPoly<F>, E>,
+        + RuntimeCoefficientPackingBackendFor<F, RecursiveFoldSource<F>, E>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
@@ -548,7 +540,6 @@ where
         prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
-            false,
             block_claims,
             ExtensionOpeningSource::Logical(&logical_groups),
             true,

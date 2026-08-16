@@ -6,7 +6,7 @@ use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_types::{AkitaExpandedSetup, FlatMatrix, FpExtEncoding, SetupPrefixSlot};
+use akita_types::{AkitaExpandedSetup, FlatMatrix, SetupPrefixSlot};
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
@@ -20,7 +20,6 @@ use crate::compute::{
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use crate::RootTensorProjectionPoly;
 
 #[doc(hidden)]
 #[derive(Clone)]
@@ -462,27 +461,6 @@ where
                 E,
                 D,
             >>::packed_witness(self, prepared, view),
-        }
-    }
-
-    fn root_projection(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        source: RecursiveFoldView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        E: FpExtEncoding<F>,
-    {
-        match source {
-            RecursiveFoldView::SetupPrefix { .. } => setup_prefix_extension_tensor_unsupported(),
-            RecursiveFoldView::Witness(view) => <CpuBackend as TensorProjectionKernel<
-                SuffixWitnessView<'_, F, D>,
-                F,
-                E,
-                D,
-            >>::root_projection(
-                self, prepared, view
-            ),
         }
     }
 }

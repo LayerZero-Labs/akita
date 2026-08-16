@@ -1,15 +1,9 @@
 //! The multilinear-polynomial wrapper enum, its borrowed dispatch views, and
 //! the source-trait impls. The `CpuBackend` kernel impls live in [`super::ops`].
 
-use akita_field::unreduced::HasWide;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use akita_field::{AkitaError, FieldCore};
 
-use crate::compute::{
-    CpuBackend, CpuPreparedSetup, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootTensorSource, TensorProjectionKernel,
-};
+use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
 
 /// Owned multilinear-polynomial wrapper for dense and one-hot batches.
@@ -17,7 +11,7 @@ use crate::{DensePoly, OneHotIndex, OneHotPoly};
 /// This is an Akita-owned private sum type (allowed by the polyops cutover
 /// spec): it erases `DensePoly` vs `OneHotPoly` for heterogeneous batches while
 /// exposing the source-typed view/kernel boundary (`RootCommitSource`,
-/// `RootOpeningSource`, `RootTensorSource`, and matching `CpuBackend` kernels).
+/// `RootOpeningSource`, and matching `CpuBackend` kernels).
 /// Wrappers take ownership of the inner polynomial by move so `P` has no lifetime
 /// parameter and participates in generic `commit<P, B>` like `DensePoly`.
 #[derive(Debug, Clone)]
@@ -105,29 +99,6 @@ where
             }
         }
         Some(onehot)
-    }
-
-    pub(super) fn column_partials_per_poly<E>(
-        self,
-        backend: &CpuBackend,
-        prepared: Option<&CpuPreparedSetup<F>>,
-        logical_point: &[E],
-    ) -> Result<Vec<Vec<E>>, AkitaError>
-    where
-        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        self.polys
-            .iter()
-            .map(|poly| {
-                TensorProjectionKernel::<MultilinearPolynomialView<'_, F, D, I>, F, E, D>::column_partials(
-                    backend,
-                    prepared,
-                    poly.tensor_view()?,
-                    logical_point,
-                )
-            })
-            .collect()
     }
 }
 
@@ -222,32 +193,6 @@ where
     fn opening_batch<'view>(
         polys: &'view [&'view Self],
     ) -> Result<Self::OpeningBatchView<'view>, AkitaError> {
-        Ok(MultilinearPolynomialBatchView { polys })
-    }
-}
-
-impl<F, const D: usize, I> RootTensorSource<F, D> for MultilinearPolynomial<F, I>
-where
-    F: FieldCore,
-    I: OneHotIndex,
-{
-    type TensorView<'view>
-        = MultilinearPolynomialView<'view, F, D, I>
-    where
-        Self: 'view;
-
-    type TensorBatchView<'view>
-        = MultilinearPolynomialBatchView<'view, F, D, I>
-    where
-        Self: 'view;
-
-    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        Ok(MultilinearPolynomialView { poly: self })
-    }
-
-    fn tensor_batch<'view>(
-        polys: &'view [&'view Self],
-    ) -> Result<Self::TensorBatchView<'view>, AkitaError> {
         Ok(MultilinearPolynomialBatchView { polys })
     }
 }

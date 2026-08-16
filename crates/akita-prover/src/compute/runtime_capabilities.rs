@@ -7,7 +7,6 @@ use super::poly::{
     RootOpeningSource, RootPolyMeta, RootTensorSource, TensorBackendFor,
 };
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
-use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling};
 
@@ -35,12 +34,10 @@ macro_rules! runtime_capabilities {
         {
         }
 
-        /// Opening kernels for suffix witnesses and root-tensor projections.
+        /// Opening kernels for suffix witnesses.
         pub trait SuffixOpeningProveBackend<F>:
             OpeningProveBackendFor<F, RecursiveWitnessFlat, $first>
-            + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, $first>
-            $(+ OpeningProveBackendFor<F, RecursiveWitnessFlat, $rest>
-                + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, $rest>)*
+            $(+ OpeningProveBackendFor<F, RecursiveWitnessFlat, $rest>)*
         where
             F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
             <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -52,18 +49,14 @@ macro_rules! runtime_capabilities {
             F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
             <F as HasWide>::Wide: From<F> + ReduceTo<F>,
             B: OpeningProveBackendFor<F, RecursiveWitnessFlat, $first>
-                + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, $first>
-                $(+ OpeningProveBackendFor<F, RecursiveWitnessFlat, $rest>
-                    + OpeningProveBackendFor<F, RootTensorProjectionPoly<F>, $rest>)*,
+                $(+ OpeningProveBackendFor<F, RecursiveWitnessFlat, $rest>)*,
         {
         }
 
-        /// Tensor kernels for suffix witnesses and root-tensor projections.
+        /// Tensor kernels for suffix witnesses.
         pub trait SuffixTensorProveBackend<F, E>:
             TensorBackendFor<F, RecursiveWitnessFlat, E, $first>
-            + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, $first>
-            $(+ TensorBackendFor<F, RecursiveWitnessFlat, E, $rest>
-                + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, $rest>)*
+            $(+ TensorBackendFor<F, RecursiveWitnessFlat, E, $rest>)*
         where
             F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
             <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -77,9 +70,7 @@ macro_rules! runtime_capabilities {
             <F as HasWide>::Wide: From<F> + ReduceTo<F>,
             E: ExtField<F>,
             B: TensorBackendFor<F, RecursiveWitnessFlat, E, $first>
-                + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, $first>
-                $(+ TensorBackendFor<F, RecursiveWitnessFlat, E, $rest>
-                    + TensorBackendFor<F, RootTensorProjectionPoly<F>, E, $rest>)*,
+                $(+ TensorBackendFor<F, RecursiveWitnessFlat, E, $rest>)*,
         {
         }
 
@@ -98,7 +89,7 @@ macro_rules! runtime_capabilities {
         {
         }
 
-        /// Root polynomial tensor sources at every runtime dimension.
+        /// Recursive suffix tensor sources at every runtime dimension.
         pub trait RuntimeTensorSource<F>:
             RootTensorSource<F, $first> $(+ RootTensorSource<F, $rest>)*
         where

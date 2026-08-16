@@ -224,7 +224,7 @@ fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
     let view = RootCommitSource::<F, D>::commit_view(&poly).unwrap();
     assert_eq!(view.indices(), poly.indices());
     assert_eq!(view.onehot_k(), poly.onehot_k());
-    assert_eq!(view.num_vars(), poly.num_vars());
+    assert_eq!(view.num_vars(), poly.num_vars);
     let polys = [&poly];
     let batch = RootOpeningSource::<F, D>::opening_batch(&polys).unwrap();
     assert_eq!(
@@ -232,14 +232,12 @@ fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
             .views()
             .map(|view| view.num_vars())
             .collect::<Vec<_>>(),
-        vec![poly.num_vars()]
+        vec![poly.num_vars]
     );
 
     assert!(RootCommitSource::<F, BAD_D>::commit_view(&poly).is_err());
     assert!(RootOpeningSource::<F, BAD_D>::opening_view(&poly).is_err());
-    assert!(RootTensorSource::<F, BAD_D>::tensor_view(&poly).is_err());
     assert!(RootOpeningSource::<F, BAD_D>::opening_batch(&[&poly]).is_err());
-    assert!(RootTensorSource::<F, BAD_D>::tensor_batch(&[&poly]).is_err());
 }
 
 #[test]
@@ -283,93 +281,4 @@ fn onehot_clone_owns_semantic_indices_independently() {
     let original = poly.materialize_block_range(32, 2, 0..2).unwrap();
     let changed = cloned.materialize_block_range(32, 2, 0..2).unwrap();
     assert_ne!(original.block(0), changed.block(0));
-}
-
-#[test]
-fn concurrent_onehot_operations_use_independent_derived_storage() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 32;
-    let poly = OneHotPoly::<F>::new(
-        32,
-        D,
-        vec![
-            Some(0usize),
-            Some(7),
-            None,
-            Some(31),
-            Some(3),
-            None,
-            Some(12),
-            Some(1),
-        ],
-    )
-    .unwrap();
-    let num_blocks = poly.num_live_blocks_for(D, 2).unwrap();
-
-    let (left, right) = std::thread::scope(|scope| {
-        let left = scope.spawn(|| {
-            let blocks = poly.materialize_block_range(D, 2, 0..num_blocks).unwrap();
-            let projection = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-            (blocks, projection)
-        });
-        let right = scope.spawn(|| {
-            let blocks = poly.materialize_block_range(D, 2, 0..num_blocks).unwrap();
-            let projection = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-            (blocks, projection)
-        });
-        (left.join().unwrap(), right.join().unwrap())
-    });
-
-    assert_flat_blocks_eq(&left.0, &right.0);
-    let (
-        RootTensorProjectionPoly::Sparse(left_projection),
-        RootTensorProjectionPoly::Sparse(right_projection),
-    ) = (&left.1, &right.1)
-    else {
-        panic!("one hot tensor projections must remain sparse");
-    };
-    assert!(!std::sync::Arc::ptr_eq(left_projection, right_projection));
-    assert_eq!(
-        RootPolyMeta::num_vars(left_projection.as_ref()),
-        RootPolyMeta::num_vars(right_projection.as_ref())
-    );
-    assert_eq!(
-        left_projection.direct_field_evals().unwrap(),
-        right_projection.direct_field_evals().unwrap()
-    );
-}
-
-#[test]
-fn tensor_root_projection_is_operation_local() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 16;
-
-    let poly = OneHotPoly::<F>::new(
-        8,
-        D,
-        vec![
-            Some(0usize),
-            Some(7),
-            None,
-            Some(3),
-            Some(5),
-            Some(1),
-            None,
-            Some(6),
-        ],
-    )
-    .unwrap();
-
-    let first = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-    let second = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-    let (RootTensorProjectionPoly::Sparse(first), RootTensorProjectionPoly::Sparse(second)) =
-        (&first, &second)
-    else {
-        panic!("one hot tensor projections must remain sparse");
-    };
-    assert!(!std::sync::Arc::ptr_eq(first, second));
-    assert_eq!(RootPolyMeta::num_vars(first.as_ref()), poly.num_vars());
-    assert_eq!(RootPolyMeta::num_vars(second.as_ref()), poly.num_vars());
 }

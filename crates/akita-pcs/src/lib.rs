@@ -64,10 +64,10 @@ pub use akita_prover::{
     CommitOutput, ComputeBackendSetup, CpuBackend, CpuPreparedSetup, CyclicRowsComputeBackend,
     DecomposeFoldWitness, DigitRowsComputeBackend, GroupContext, LevelProveStacks,
     OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps, PreparedProverGroup,
-    ProveBackendFor, ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows,
-    RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly,
-    RootTensorSource, SelectedProverOpeningData, SparseRingBlockEntry, TensorBackendFor,
-    TieredProveStacks, UniformProverStack,
+    ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    SelectedProverOpeningData, SparseRingBlockEntry, TensorBackendFor, TieredProveStacks,
+    UniformProverStack,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};

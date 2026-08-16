@@ -99,7 +99,7 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
 
 #[test]
 fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
-    use crate::backend::{DensePoly, OneHotPoly, RecursiveWitnessFlat, SparseRingPoly};
+    use crate::backend::{DensePoly, OneHotPoly, RecursiveWitnessFlat};
     use akita_field::{ExtField, FpExt4, Prime32Offset99};
     use akita_types::{prepare_opening_point, BasisMode};
 
@@ -186,20 +186,6 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
             .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
             .expect("one-hot compact fold"),
         onehot.fold_blocks_ring(&position_rings, POSITIONS),
-    );
-
-    let sparse = SparseRingPoly::<F>::from_signed_coeffs(
-        8,
-        D,
-        8,
-        vec![(0, 1, 1), (2, 30, -1), (4, 17, 1), (7, 31, -1)],
-    )
-    .expect("sparse-ring source");
-    assert_output(
-        sparse
-            .evaluate_and_fold_subfield(subfield_multipliers, POSITIONS)
-            .expect("sparse-ring compact fold"),
-        sparse.fold_blocks_ring(&position_rings, POSITIONS),
     );
 
     let digits = (0..8 * D).map(|index| (index % 7) as i8 - 3).collect();

@@ -6,15 +6,13 @@
 //! kernels can trust the D-view afterwards.
 
 use super::poly::DensePoly;
-use crate::compute::{
-    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
-};
+use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
 use akita_field::{AkitaError, FieldCore};
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///
-/// One view type backs the commit, opening-fold, and tensor-projection kernels;
-/// the kernel trait it is passed to selects the operation.
+/// One view type backs the commit and opening-fold kernels; the kernel trait it
+/// is passed to selects the operation.
 #[derive(Debug, Clone, Copy)]
 pub struct DenseView<'a, F: FieldCore, const D: usize> {
     pub(super) poly: &'a DensePoly<F>,
@@ -87,33 +85,6 @@ where
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
-        for poly in polys {
-            poly.ring_coeffs::<D>()?;
-        }
-        Ok(DenseBatchView { polys })
-    }
-}
-
-impl<F, const D: usize> RootTensorSource<F, D> for DensePoly<F>
-where
-    F: FieldCore,
-{
-    type TensorView<'a>
-        = DenseView<'a, F, D>
-    where
-        Self: 'a;
-
-    type TensorBatchView<'a>
-        = DenseBatchView<'a, F, D>
-    where
-        Self: 'a;
-
-    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        self.ring_coeffs::<D>()?;
-        Ok(DenseView { poly: self })
-    }
-
-    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
         for poly in polys {
             poly.ring_coeffs::<D>()?;
         }

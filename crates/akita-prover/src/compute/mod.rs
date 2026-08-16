@@ -26,7 +26,6 @@ mod backend;
 pub(crate) mod compression;
 mod cpu;
 pub mod delegating_cpu;
-mod dispatch;
 mod kernels;
 mod operation_plans;
 mod plans;
@@ -41,7 +40,6 @@ pub use backend::{
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
-pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
     BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
     RootCommitKernel, SubringCoefficientPackingBatchKernel, TensorPackedWitness,
@@ -56,10 +54,10 @@ pub use plans::RingSwitchRelationRows;
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{
-    CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
-    ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend,
-    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend,
-    RootProvePoly, RootTensorSource, TensorBackendFor,
+    CommitBackendFor, OpeningProveBackendFor, ProveFlowBackendFor, ProveStackFor,
+    RecursiveProveBackend, RingSwitchProveBackend, RootCommitSource, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    TensorBackendFor,
 };
 pub use runtime_capabilities::{
     RootProveFlowBackend, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
