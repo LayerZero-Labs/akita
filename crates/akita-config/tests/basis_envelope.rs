@@ -44,17 +44,20 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
         let expected_fold_digits = honest_policy
             .num_digits_fold(HonestFoldSizingQuery {
                 ring_dimension: root.d_a(),
+                challenge_dimension: match root.opening_method {
+                    akita_types::OpeningMethod::EvaluationTrace => root.d_a(),
+                    akita_types::OpeningMethod::SubringCoefficientPacking {
+                        challenge_subring_dimension,
+                    } => challenge_subring_dimension,
+                },
                 num_claims: 1,
                 num_live_ring_elements_per_claim: root.num_live_ring_elements_per_claim,
                 num_live_blocks: root.num_live_blocks,
                 num_positions_per_block: root.num_positions_per_block,
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
-                witness_norms: honest_policy.witness_norms_for_inner_basis(
-                    root.log_basis_inner,
-                    root.d_a(),
-                    nv,
-                ),
+                witness_norms: honest_policy
+                    .witness_norms_for_inner_basis(root.log_basis_inner, root.d_a()),
                 log_basis_response: root.log_basis_open,
                 challenge_config: &root.fold_challenge_config,
             })

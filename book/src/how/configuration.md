@@ -75,9 +75,10 @@ The planner estimates the squared norm of the actual recursive witness. It
 applies the following rules.
 
 * A dense root uses the deterministic maximum squared digit energy for every
-  coefficient. A one-hot root maximizes the physical squared energy over every
-  hot position allowed by its policy-owned chunk contract. This follows the
-  tensor projection kernel and includes coefficient collisions.
+  coefficient. A one-hot root uses the canonical coefficient table: each
+  policy-owned source chunk contributes at most one coefficient of magnitude
+  one, distinct chunks occupy distinct coefficients, and the peak coefficient
+  square is one.
 * The Z part uses the centered residues of a rounded normal variable. Its
   variance comes from the previous source energy and the challenge energy.
 * The E, T, and R parts use the centered field digit moment for every live
@@ -140,11 +141,10 @@ proof payload second, then applies the canonical deterministic ordering. This
 allows a larger A ring to win when its lower module rank reduces the complete
 setup.
 
-Production rows prefer coefficient packing at levels 0 and 1. The search adds
-an evaluation trace fallback only when no complete packing assignment is
-feasible for the state. Later folds and the terminal remain evaluation trace.
-The terminal seed is priced separately, so a zero EOR packing candidate cannot
-be mistaken for a terminal opening.
+Nonterminal folds at levels 0 and 1 require coefficient packing. A state with
+no complete packing assignment is unsupported. Later nonterminal folds and the
+terminal use evaluation trace. The terminal seed is priced separately, so a
+zero EOR packing candidate cannot be mistaken for a terminal opening.
 
 A clear terminal L2 candidate has no recursive norm proof. The verifier checks
 the decoded response norm directly. The planner may use the certified energy

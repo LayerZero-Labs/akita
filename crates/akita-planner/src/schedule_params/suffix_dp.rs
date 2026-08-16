@@ -263,17 +263,7 @@ fn price_terminal_candidate(
         } else {
             FrontierProjection::Payload
         };
-    let adaptive_terminal_is_allowed = !matches!(
-        policy.ring_dimension_schedule_mode,
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            num_search_levels,
-            ..
-        } if policy.selection_policy
-            == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-            && state.level < num_search_levels
-    );
-    if !adaptive_terminal_is_allowed
-        || (ctx.level_zero_is_root && state.level == 0)
+    if (ctx.level_zero_is_root && state.level == 0)
         || state.incoming_setup_prefix.is_some()
         || candidate_params.has_precommitted_groups()
     {
@@ -520,7 +510,6 @@ pub(crate) fn derive_selected_suffix_schedule(
         crate::policy::log_basis_search_range_at_level(policy, level);
     let mut dimension_work = Vec::new();
     let mut early_packing_work = Vec::new();
-    let mut early_et_fallback_work = Vec::new();
     for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
         let early_packing_level = level <= 1;
         // A direct terminal response cannot consume an attached setup prefix:
@@ -545,10 +534,6 @@ pub(crate) fn derive_selected_suffix_schedule(
         } else {
             None
         };
-        let packing_is_statically_feasible = !packing_domain.is_empty()
-            && root_precommit_products
-                .as_ref()
-                .is_none_or(|products| !products.is_empty());
         if let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) {
             if let Some(opening_reduction_bytes) = try_extension_opening_reduction_level_bytes(
                 policy.challenge_field_bits()?,
@@ -591,20 +576,15 @@ pub(crate) fn derive_selected_suffix_schedule(
                     };
                     if early_packing_level {
                         if terminal_seed_is_relevant {
-                            dimension_work.push(trace_work.clone());
+                            dimension_work.push(trace_work);
                         }
-                        early_et_fallback_work.push(OpeningWork {
-                            allows_terminal: false,
-                            allows_fold: true,
-                            ..trace_work
-                        });
                     } else {
                         dimension_work.push(trace_work);
                     }
                 }
             }
         }
-        if packing_is_statically_feasible {
+        if !packing_domain.is_empty() {
             if let Some(precommit_products) = root_precommit_products.as_ref() {
                 for opening in packing_domain {
                     for precommitted_openings in precommit_products {
@@ -631,11 +611,7 @@ pub(crate) fn derive_selected_suffix_schedule(
         }
     }
     if level <= 1 {
-        if early_packing_work.is_empty() {
-            dimension_work.extend(early_et_fallback_work);
-        } else {
-            dimension_work.extend(early_packing_work);
-        }
+        dimension_work.extend(early_packing_work);
     }
     // Every opening basis contributes to one state frontier. In particular,
     // terminal-direct candidates have no first fold and therefore share the

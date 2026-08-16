@@ -110,17 +110,28 @@ fn use_expected_producer_encodings(schedule: &mut FoldSchedule, extension_degree
     }
 }
 
+fn use_required_early_packing(schedule: &mut FoldSchedule, extension_degree: usize) {
+    let packing = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+    let root = &mut schedule.root.params.final_group.commitment;
+    root.opening_method = packing;
+    root.fold_challenge_config = production;
+    schedule.root.params.sparse_challenge_config = production;
+    if let Some(first) = schedule.recursive_folds.first_mut() {
+        first.params.witness.opening_method = packing;
+        first.params.witness.fold_challenge_config = production;
+        first.params.sparse_challenge_config = production;
+    }
+    use_expected_producer_encodings(schedule, extension_degree);
+}
+
 #[test]
 fn accepts_packing_geometry_for_every_extension_degree() {
     for (extension_degree, d_a) in [(1, 64), (2, 128), (4, 256)] {
         let mut schedule = recursive_schedule(d_a, d_a, false);
-        let root = &mut schedule.root.params.final_group.commitment;
-        root.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        };
-        root.fold_challenge_config =
-            akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        use_expected_producer_encodings(&mut schedule, extension_degree);
+        use_required_early_packing(&mut schedule, extension_degree);
         schedule
             .validate_nonterminal_opening_execution(extension_degree)
             .expect("packing geometry should be executable");
@@ -158,13 +169,7 @@ fn accepts_group_local_packing_subring_dimensions() {
 #[test]
 fn accepts_level_one_packing() {
     let mut schedule = recursive_schedule(128, 128, false);
-    let recursive = &mut schedule.recursive_folds[0].params.witness;
-    recursive.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    recursive.fold_challenge_config =
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-    use_expected_producer_encodings(&mut schedule, 2);
+    use_required_early_packing(&mut schedule, 2);
     schedule
         .validate_nonterminal_opening_execution(2)
         .expect("absolute level one packing should be executable");
@@ -173,6 +178,7 @@ fn accepts_level_one_packing() {
 #[test]
 fn rejects_level_two_packing() {
     let mut schedule = recursive_schedule(128, 128, false);
+    use_required_early_packing(&mut schedule, 2);
     append_recursive_fold(&mut schedule);
     let recursive = &mut schedule.recursive_folds[1].params.witness;
     recursive.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
@@ -183,26 +189,21 @@ fn rejects_level_two_packing() {
     use_expected_producer_encodings(&mut schedule, 2);
     assert!(matches!(
         schedule.validate_nonterminal_opening_execution(2),
-        Err(AkitaError::InvalidSetup(message)) if message.contains("levels 0 and 1")
+        Err(AkitaError::InvalidSetup(message)) if message.contains("requires evaluation trace")
     ));
 }
 
 #[test]
 fn rejects_subring_that_ignores_extension_degree() {
     let mut schedule = recursive_schedule(128, 128, false);
-    let root = &mut schedule.root.params.final_group.commitment;
-    root.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    root.fold_challenge_config =
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-    use_expected_producer_encodings(&mut schedule, 4);
+    use_required_early_packing(&mut schedule, 4);
     assert!(schedule.validate_nonterminal_opening_execution(4).is_err());
 }
 
 #[test]
 fn rejects_unaudited_recursive_packing_family() {
     let mut schedule = recursive_schedule(64, 64, false);
+    use_required_early_packing(&mut schedule, 1);
     schedule.recursive_folds[0].params.witness.opening_method =
         crate::OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
@@ -217,16 +218,7 @@ fn rejects_unaudited_recursive_packing_family() {
 #[test]
 fn rejects_packing_over_tensor_projected_source() {
     let mut schedule = recursive_schedule(128, 128, false);
-    let root = &mut schedule.root.params.final_group.commitment;
-    root.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    root.source_encoding = crate::CommittedSourceEncoding::TensorSubfieldProjection {
-        extension_degree: 2,
-    };
-    root.fold_challenge_config =
-        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-    use_expected_producer_encodings(&mut schedule, 2);
+    use_required_early_packing(&mut schedule, 2);
     schedule.root.params.final_group.commitment.source_encoding =
         crate::CommittedSourceEncoding::TensorSubfieldProjection {
             extension_degree: 2,
@@ -245,39 +237,43 @@ fn rejects_packing_over_tensor_projected_source() {
 }
 
 #[test]
-fn rejects_active_root_tensor_gate_mutated_to_canonical() {
+fn rejects_evaluation_trace_at_the_root() {
     let mut schedule = recursive_schedule(128, 128, false);
     use_expected_producer_encodings(&mut schedule, 2);
-    schedule.root.params.final_group.commitment.source_encoding =
-        crate::CommittedSourceEncoding::CanonicalCoefficientTable;
 
     assert!(matches!(
         schedule.validate_nonterminal_opening_execution(2),
-        Err(AkitaError::InvalidSetup(message)) if message.contains("producer geometry")
+        Err(AkitaError::InvalidSetup(message)) if message.contains("level 0 requires subring coefficient packing")
     ));
 }
 
 #[test]
-fn rejects_root_tensor_encoding_below_the_tensor_arity_gate() {
+fn rejects_evaluation_trace_at_level_one() {
     let mut schedule = recursive_schedule(128, 128, false);
-    schedule.root.input_witness_len = 64;
+    use_required_early_packing(&mut schedule, 2);
+    let witness = &mut schedule.recursive_folds[0].params.witness;
+    witness.opening_method = OpeningMethod::EvaluationTrace;
+    witness.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
-    schedule.root.params.final_group.commitment.source_encoding =
-        crate::CommittedSourceEncoding::TensorSubfieldProjection {
-            extension_degree: 2,
-        };
 
     assert!(matches!(
         schedule.validate_nonterminal_opening_execution(2),
-        Err(AkitaError::InvalidSetup(message)) if message.contains("producer geometry")
+        Err(AkitaError::InvalidSetup(message)) if message.contains("level 1 requires subring coefficient packing")
     ));
 }
 
 #[test]
 fn rejects_extension_recursive_trace_mutated_to_canonical() {
     let mut schedule = recursive_schedule(128, 128, false);
+    use_required_early_packing(&mut schedule, 2);
+    append_recursive_fold(&mut schedule);
+    schedule.recursive_folds[1].params.witness.opening_method = OpeningMethod::EvaluationTrace;
+    schedule.recursive_folds[1]
+        .params
+        .witness
+        .fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
-    schedule.recursive_folds[0].params.witness.source_encoding =
+    schedule.recursive_folds[1].params.witness.source_encoding =
         crate::CommittedSourceEncoding::CanonicalCoefficientTable;
 
     assert!(matches!(

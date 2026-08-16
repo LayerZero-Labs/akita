@@ -31,8 +31,8 @@ verifier do not build a dense witness sized weight table.
 
 Production planning considers packing only at absolute fold levels 0 and 1.
 Those folds use the coefficient `L∞` A security route. Later folds and the
-terminal use evaluation trace. If no complete packing assignment is feasible,
-the planner retains an evaluation trace fallback instead of dropping the row.
+terminal use evaluation trace. A nonterminal level 0 or 1 state without a
+complete packing assignment is unsupported.
 
 Commitment identity records the coefficient representation and the A and B
 matrices. It does not record the consuming opening method, `s`, or challenge.

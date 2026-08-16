@@ -473,7 +473,10 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
 
     let precommitted_honest_fold_policies = vec![
         akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::new(Cfg::decomposition().field_bits(), 1, 256),
+            akita_types::sis::UnitOneHotFoldPolicy::canonical(
+                Cfg::decomposition().field_bits(),
+                256,
+            ),
         ),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
             akita_types::sis::BalancedSignedDigitFoldPolicy::universal(

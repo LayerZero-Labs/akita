@@ -150,6 +150,12 @@ fn universal_fold_digit_depth(
     BalancedSignedDigitFoldPolicy::universal(field_bits, witness_norms).num_digits_fold(
         HonestFoldSizingQuery {
             ring_dimension: d_a,
+            challenge_dimension: match params.opening_method() {
+                akita_types::OpeningMethod::EvaluationTrace => d_a,
+                akita_types::OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension,
+                } => challenge_subring_dimension,
+            },
             num_claims,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim(),
             num_live_blocks: params.num_live_blocks(),
@@ -207,6 +213,7 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
         )
         .num_digits_fold(HonestFoldSizingQuery {
             ring_dimension: terminal_d,
+            challenge_dimension: terminal_d,
             num_claims: 1,
             num_live_ring_elements_per_claim: terminal_witness.num_live_ring_elements_per_claim,
             num_live_blocks,

@@ -647,7 +647,6 @@ pub(crate) fn root_group_source_moments(
                     .root_source_l2_sq(
                         logical_len,
                         group_params.inner_commit_matrix_params().ring_dimension(),
-                        group_layout.num_vars(),
                     )
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup(

@@ -91,6 +91,7 @@ impl SetupPrefixCandidateContext<'_> {
             policy: self.policy,
             fold_policy: &fold_policy,
             ring_challenge_cfg: &self.opening.challenge_config(),
+            challenge_dimension: self.opening.challenge_dimension(d_a),
             dimensions: self.dimensions,
             num_claims: 1,
             num_live_ring_elements_per_claim: self.ring_slots,

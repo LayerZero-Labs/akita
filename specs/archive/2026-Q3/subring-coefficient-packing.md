@@ -1166,9 +1166,8 @@ The policy applies to every field profile.
 6. The planner does not add a fold to reach the two level subring packing
    scope.
 7. If the complete level has no statically feasible packing assignment, the
-   planner retains `EvaluationTrace` for every group in that fold. This
-   compatibility fallback covers frozen tensor-encoded profiles and MUST NOT
-   create a mixed-method fold.
+   schedule is unsupported. Frozen tensor-encoded root profiles are not
+   reinterpreted as canonical coefficient commitments.
 
 A precommitted root group freezes its commitment profile. Its root opening plan
 may choose any certified `s` compatible with the frozen `d_A` and security
@@ -1385,9 +1384,9 @@ The planner MUST keep the search bounded in the following ways.
 
 ### Planner and sizing
 
-- [x] Generated schedules for every field tier use `SubringCoefficientPacking` at existing
-      nonterminal levels 0 and 1 whenever a complete compatible packing
-      assignment exists, with a whole-fold `EvaluationTrace` fallback otherwise.
+- [x] Generated schedules for every field tier use `SubringCoefficientPacking`
+      at existing nonterminal levels 0 and 1. Rows without a complete compatible
+      packing assignment are unsupported.
 - [x] Extension field packing schedules contain no EOR at levels 0 and 1.
 - [x] Later folds and the terminal retain `EvaluationTrace`.
 - [x] Short schedule tests cover root to terminal and root to one recursive

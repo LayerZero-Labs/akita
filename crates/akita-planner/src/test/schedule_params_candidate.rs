@@ -661,11 +661,11 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn tensor_frozen_precommit_uses_uniform_evaluation_trace_fallback() {
+fn tensor_frozen_precommit_is_unsupported_at_the_root() {
     use akita_config::{
         honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
     };
-    use akita_types::{AkitaScheduleLookupKey, OpeningMethod};
+    use akita_types::AkitaScheduleLookupKey;
 
     let mut policy = policy_of::<Dense>();
     let dimensions = CommitmentRingDims::uniform(256);
@@ -708,22 +708,15 @@ fn tensor_frozen_precommit_uses_uniform_evaluation_trace_fallback() {
         final_group: PolynomialGroupLayout::new(16, 1),
         precommitteds: vec![precommitted],
     };
-    let planned = crate::planner::find_schedule(
+    let error = crate::planner::find_schedule(
         &key,
         honest_fold_policy_of::<Dense>(),
         &[honest_fold_policy_of::<Dense>()],
         &policy,
         Dense::ring_challenge_config,
     )
-    .expect("grouped ET fallback schedule");
-    let root = &planned.schedule.root.params;
-    assert_eq!(
-        root.final_group.commitment.opening_method,
-        OpeningMethod::EvaluationTrace,
-    );
-    assert!(root.precommitted_groups.iter().all(|group| {
-        group.commitment.opening.opening_method == OpeningMethod::EvaluationTrace
-    }));
+    .expect_err("tensor-frozen root precommits cannot use coefficient packing");
+    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -826,11 +819,12 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
 
     let policy = policy_of::<OneHot>();
     let challenge = SparseChallengeConfig::pm1_only(3);
-    let candidate = |dimensions, outer_slice_count, width_s| {
+    let candidate = |dimensions: CommitmentRingDims, outer_slice_count, width_s| {
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
             fold_policy: &FixedFoldPolicy,
             ring_challenge_cfg: &challenge,
+            challenge_dimension: dimensions.d_a(),
             dimensions,
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
@@ -874,6 +868,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             policy: &policy,
             fold_policy: &FixedFoldPolicy,
             ring_challenge_cfg: &challenge,
+            challenge_dimension: 64,
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
@@ -904,6 +899,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             policy: &policy,
             fold_policy: &OversizedFoldPolicy,
             ring_challenge_cfg: &challenge,
+            challenge_dimension: 64,
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
@@ -945,6 +941,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         policy: &policy,
         fold_policy: &FixedFoldPolicy,
         ring_challenge_cfg: &challenge,
+        challenge_dimension: dimensions.d_a(),
         dimensions,
         payload_mode: akita_types::CommitmentPayloadMode::Raw,
         num_claims,

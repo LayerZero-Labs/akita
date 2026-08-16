@@ -651,33 +651,28 @@ key supported without that heuristic.
 #### Unit one-hot root
 
 A unit one-hot source permits any hot position inside each policy-owned source
-chunk. Tensor projection can map one logical hot to more than one physical
-coefficient, and different projected monomials can coalesce. The L2 root model
-therefore enumerates the same physical source classes as the tensor projection
-kernel. For each class it computes
+chunk. Root commitment and opening use the canonical coefficient table. For a
+ring of dimension `D` and source chunk size `K`, one physical ring therefore
+contains at most
 
 ```text
-class energy = count_abs_1 + 4 * count_abs_2,
+max nonzero coefficients = D / K, when K < D,
+                           1,     when K >= D.
 ```
 
-then takes the maximum class energy and multiplies by the exact number of
-independent physical groups. The peak coefficient square is four if any class
-contains a magnitude-two collision and one otherwise. This is a deterministic
-maximum over the public unit one-hot contract. It does not average over hot
-positions.
-
-This distinction matters for proper extension fields. For fp64 with extension
-degree two and chunk size 256, a hot at coordinate zero emits one monomial but
-every nonzero coordinate emits two. The older coordinate average
-`(2K - 1) / K` underestimated a witness that chooses nonzero coordinates in
-every chunk. The corrected root bound charges two units of physical energy per
-chunk. The fp32 policy uses the same kernel-faithful maximum.
+Distinct chunks occupy distinct canonical coefficients, so there are no
+coefficient collisions and every nonzero coefficient has magnitude one. The
+total root energy is the exact number of source chunks and the peak coefficient
+square is one. This is a deterministic maximum over the public unit one-hot
+contract and is independent of the extension degree.
 
 The Linf root policy also evaluates the exact one-coordinate moment generating
-function for the signed sparse challenge. Directed floating-point inflation
-makes each sampled Chernoff value an upper bound. The final digit depth is never
-larger than the universal bound and never relies on the exact policy outside
-its declared one-hot geometry.
+function for the signed sparse challenge. For coefficient packing, the MGF
+population is the challenge subring dimension `s`, while source occupancy is
+still derived from the ambient canonical table. Directed floating-point
+inflation makes each sampled Chernoff value an upper bound. The final digit
+depth is never larger than the universal bound and never relies on the exact
+policy outside its declared one-hot geometry.
 
 ### Recursive witness components
 

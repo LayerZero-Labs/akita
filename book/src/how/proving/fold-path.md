@@ -5,8 +5,8 @@ opening method for each nonterminal fold.
 
 | Opening method | Production use | EOR |
 |----------------|----------------|-----|
-| `SubringCoefficientPacking` | Existing nonterminal folds at absolute levels 0 and 1, when the planner finds a feasible packing assignment | omitted |
-| `EvaluationTrace` | Later folds, fallback rows, and the terminal path | required only when the claim field is a proper extension |
+| `SubringCoefficientPacking` | Required for nonterminal folds at absolute levels 0 and 1 | omitted |
+| `EvaluationTrace` | Later nonterminal folds and the terminal path | required only when the claim field is a proper extension |
 
 See [base-field coefficients vs extension evaluation points](../../foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points).
 

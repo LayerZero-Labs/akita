@@ -56,17 +56,15 @@ fn materialize_precommitted_group_for_open_basis(
     let group_claims = layout.group.num_polynomials();
     let num_digits_fold = honest_fold_policy.num_digits_fold(HonestFoldSizingQuery {
         ring_dimension,
+        challenge_dimension: opening.challenge_dimension(ring_dimension),
         num_claims: group_claims,
         num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
         num_live_blocks: layout.num_live_blocks,
         num_positions_per_block: layout.num_positions_per_block,
         num_chunks,
         num_fold_coeffs,
-        witness_norms: honest_fold_policy.witness_norms_for_inner_basis(
-            layout.log_basis_inner,
-            ring_dimension,
-            layout.group.num_vars(),
-        ),
+        witness_norms: honest_fold_policy
+            .witness_norms_for_inner_basis(layout.log_basis_inner, ring_dimension),
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
     })?;
@@ -406,15 +404,14 @@ fn root_final_group_level_params_candidate(
         return Ok(None);
     };
     let num_chunks = policy.chunks_at_level(0);
-    let witness_norms = ctx.final_honest_fold_policy.witness_norms_for_inner_basis(
-        log_basis_inner,
-        d_a,
-        ctx.final_num_vars,
-    );
+    let witness_norms = ctx
+        .final_honest_fold_policy
+        .witness_norms_for_inner_basis(log_basis_inner, d_a);
     let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
         policy,
         fold_policy: &ctx.final_honest_fold_policy,
         ring_challenge_cfg: &ctx.opening.challenge_config(),
+        challenge_dimension: ctx.opening.challenge_dimension(d_a),
         dimensions,
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         num_claims: ctx.main_num_polys,

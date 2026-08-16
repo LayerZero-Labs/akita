@@ -82,6 +82,15 @@ impl PlannerOpeningCandidate {
         self.challenge_config
     }
 
+    pub(crate) const fn challenge_dimension(self, ambient_dimension: usize) -> usize {
+        match self.method {
+            akita_types::OpeningMethod::EvaluationTrace => ambient_dimension,
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => challenge_subring_dimension,
+        }
+    }
+
     pub(crate) const fn is_coefficient_packing(self) -> bool {
         self.packing_geometry.is_some()
     }

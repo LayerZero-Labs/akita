@@ -70,19 +70,6 @@ fn enumerate_suffixes(
     let (min_log_basis, max_log_basis) =
         crate::policy::log_basis_search_range_at_level(policy, level);
     let mut schedules = Vec::new();
-    let early_packing_available = level <= 1
-        && dimensions.candidates().iter().any(|candidate_dimensions| {
-            let suffix_dimensions = CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION);
-            let dimension_is_admissible = if level >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
-                *candidate_dimensions == suffix_dimensions
-            } else {
-                componentwise_dimensions_at_most(*candidate_dimensions, dimension_ceiling)
-            };
-            dimension_is_admissible
-                && !packing_opening_domain(level, policy.claim_ext_degree, *candidate_dimensions)
-                    .is_empty()
-        });
-
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
         for candidate_dimensions in dimensions.candidates() {
             let suffix_dimensions = CommitmentRingDims::uniform(ADAPTIVE_SUFFIX_RING_DIMENSION);
@@ -157,84 +144,73 @@ fn enumerate_suffixes(
                     }
                 };
 
-            if dimensions.candidates().len() == 1
-                || level >= akita_schedules::ADAPTIVE_SEARCH_LEVELS
-            {
-                if let Some((trace_opening, terminal_eor_bytes)) = trace_work {
-                    for &payload_mode in payload_phase.candidate_modes(level, false) {
-                        for params in derive_terminal_candidate_params(
-                            policy,
-                            payload_mode,
-                            trace_opening,
-                            *candidate_dimensions,
-                            input_witness_len,
-                            crate::InnerBasisSource::BalancedDigits {
-                                log_basis: current_log_basis,
-                            },
-                            current_log_basis,
-                            log_basis,
-                            level,
-                            source_moment,
-                        )? {
-                            if let Some((mut terminal, terminal_bytes)) =
-                                suffix_dp::try_terminal_direct_suffix_cost(
-                                    policy,
-                                    input_witness_len,
-                                    &params,
-                                    field_bits,
-                                    key,
-                                    level,
-                                    None,
-                                    source_moment,
-                                )?
-                            {
-                                let direct_bytes = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
-                                    .checked_add(terminal_eor_bytes)
-                                    .ok_or_else(|| {
+            if let Some((trace_opening, terminal_eor_bytes)) = trace_work {
+                for &payload_mode in payload_phase.candidate_modes(level, false) {
+                    for params in derive_terminal_candidate_params(
+                        policy,
+                        payload_mode,
+                        trace_opening,
+                        *candidate_dimensions,
+                        input_witness_len,
+                        crate::InnerBasisSource::BalancedDigits {
+                            log_basis: current_log_basis,
+                        },
+                        current_log_basis,
+                        log_basis,
+                        level,
+                        source_moment,
+                    )? {
+                        if let Some((mut terminal, terminal_bytes)) =
+                            suffix_dp::try_terminal_direct_suffix_cost(
+                                policy,
+                                input_witness_len,
+                                &params,
+                                field_bits,
+                                key,
+                                level,
+                                None,
+                                source_moment,
+                            )?
+                        {
+                            let direct_bytes = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
+                                .checked_add(terminal_eor_bytes)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "unpruned traversal terminal proof size overflow".into(),
+                                    )
+                                })?;
+                            terminal.estimated_direct_payload_bytes = direct_bytes;
+                            schedules.push(ScheduleCandidate {
+                                first_direct_setup_field_len: std::num::NonZeroUsize::new(
+                                    akita_types::active_setup_field_len(
+                                        &params,
+                                        &suffix_opening_layout(input_witness_len, None)?,
+                                    )?,
+                                ),
+                                total_bytes: direct_bytes.checked_add(terminal_bytes).ok_or_else(
+                                    || {
                                         AkitaError::InvalidSetup(
                                             "unpruned traversal terminal proof size overflow"
                                                 .into(),
                                         )
-                                    })?;
-                                terminal.estimated_direct_payload_bytes = direct_bytes;
-                                schedules.push(ScheduleCandidate {
-                                    first_direct_setup_field_len: std::num::NonZeroUsize::new(
-                                        akita_types::active_setup_field_len(
-                                            &params,
-                                            &suffix_opening_layout(input_witness_len, None)?,
-                                        )?,
-                                    ),
-                                    total_bytes: direct_bytes
-                                        .checked_add(terminal_bytes)
-                                        .ok_or_else(|| {
-                                            AkitaError::InvalidSetup(
-                                                "unpruned traversal terminal proof size overflow"
-                                                    .into(),
-                                            )
-                                        })?,
-                                    setup_field_elements: terminal_setup_field_elements(
-                                        &terminal.params,
-                                    )?,
-                                    folds: CandidateFoldChain::default(),
-                                    terminal: Arc::new(terminal),
-                                });
-                            }
+                                    },
+                                )?,
+                                setup_field_elements: terminal_setup_field_elements(
+                                    &terminal.params,
+                                )?,
+                                folds: CandidateFoldChain::default(),
+                                terminal: Arc::new(terminal),
+                            });
                         }
                     }
                 }
             }
 
             let fold_work = if level <= 1 {
-                let packing =
-                    packing_opening_domain(level, policy.claim_ext_degree, *candidate_dimensions);
-                if !early_packing_available {
-                    trace_work.into_iter().collect()
-                } else {
-                    packing
-                        .into_iter()
-                        .map(|opening| (opening, 0))
-                        .collect::<Vec<_>>()
-                }
+                packing_opening_domain(level, policy.claim_ext_degree, *candidate_dimensions)
+                    .into_iter()
+                    .map(|opening| (opening, 0))
+                    .collect::<Vec<_>>()
             } else {
                 trace_work.into_iter().collect()
             };
@@ -363,10 +339,6 @@ pub(super) fn find_schedule(
     let inner_source =
         root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
     let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
-    let root_packing_available = dimensions.candidates().iter().any(|dimensions| {
-        !packing_opening_domain(0, policy.claim_ext_degree, *dimensions).is_empty()
-    });
-
     for log_basis in min_log_basis..=max_log_basis {
         for inner_basis in min_inner_basis..=max_inner_basis {
             for root_dimensions in dimensions.candidates() {
@@ -375,16 +347,8 @@ pub(super) fn find_schedule(
                 if reduced_vars == 0 {
                     continue;
                 }
-                let packing = packing_opening_domain(0, policy.claim_ext_degree, *root_dimensions);
-                let root_openings = if !root_packing_available {
-                    ring_challenge_config(root_dimensions.d_a())
-                        .ok()
-                        .map(crate::schedule_params::PlannerOpeningCandidate::evaluation_trace)
-                        .into_iter()
-                        .collect()
-                } else {
-                    packing
-                };
+                let root_openings =
+                    packing_opening_domain(0, policy.claim_ext_degree, *root_dimensions);
                 for root_opening in root_openings {
                     for (root_params, output_witness_len) in
                         crate::planner::root_level_candidates_for_basis(

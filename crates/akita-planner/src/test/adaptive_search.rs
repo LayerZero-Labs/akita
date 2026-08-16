@@ -214,7 +214,7 @@ fn terminal_candidates_compete_across_opening_bases() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn statically_infeasible_packing_domain_falls_back_to_evaluation_trace() {
+fn statically_infeasible_early_packing_domain_is_unsupported() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     let dimensions = RingDimensionSearchDomain::uniform(128).unwrap();
@@ -225,29 +225,29 @@ fn statically_infeasible_packing_domain_falls_back_to_evaluation_trace() {
     };
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
-    let selected = find_schedule(
+    let error = find_schedule(
         onehot_group(14, 1),
         &policy,
         OneHot::root_honest_fold_policy(),
         &dimensions,
         OneHot::ring_challenge_config,
     )
-    .expect("EvaluationTrace fallback schedule");
-    assert_eq!(
-        selected
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .opening_method,
-        akita_types::OpeningMethod::EvaluationTrace,
-    );
+    .expect_err("an early fold without packing geometry must be unsupported");
+    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
+    let error = unpruned_search::find_schedule(
+        onehot_group(14, 1),
+        &policy,
+        OneHot::root_honest_fold_policy(),
+        &dimensions,
+        OneHot::ring_challenge_config,
+    )
+    .expect_err("the bounds-disabled oracle must use the same hard packing policy");
+    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
 }
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn feasible_packing_dimension_suppresses_smaller_et_fallback() {
+fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot, CommitmentConfig};
 
     let dimensions = RingDimensionSearchDomain::new([
@@ -256,15 +256,8 @@ fn feasible_packing_dimension_suppresses_smaller_et_fallback() {
         CommitmentRingDims::uniform(256),
     ])
     .unwrap();
-    let mut policy = policy_of::<OneHot>();
+    let mut policy = policy_for_domain(policy_of::<OneHot>(), &dimensions);
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
-    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::AdaptiveDimension {
-        num_search_levels: 2,
-        suffix_dimensions: &[64, 128],
-        potential_a_dimensions: &[64, 128, 256],
-        potential_b_dimensions: &[64, 128, 256],
-        potential_d_dimensions: &[64, 128, 256],
-    };
     let key = onehot_group(14, 1);
     let selected = find_schedule(
         key,
@@ -302,6 +295,20 @@ fn feasible_packing_dimension_suppresses_smaller_et_fallback() {
             .opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
+    assert_eq!(
+        selected.estimate.estimated_num_setup_field_elements,
+        unpruned.estimate.estimated_num_setup_field_elements,
+    );
+    assert_eq!(
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
+    );
+    assert_eq!(
+        selected.schedule.canonical_descriptor_bytes(),
+        unpruned.schedule.canonical_descriptor_bytes(),
+    );
+    assert!(selected.schedule.recursive_folds.is_empty());
+    assert_eq!(selected.schedule.terminal.params.witness.d_a(), 256);
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -562,61 +569,6 @@ fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
         .map(|handle| handle.join().expect("planner thread"))
         .collect::<Vec<_>>();
     assert!(descriptors.windows(2).all(|pair| pair[0] == pair[1]));
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn root_eor_pricing_uses_candidate_a_dimension() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
-
-    let mut policy = policy_of::<OneHot>();
-    policy.claim_ext_degree = 64;
-    let key = onehot_group(16, 1);
-    let input_witness_len = 1usize << key.num_vars();
-    let challenge_field_bits = policy.challenge_field_bits().expect("valid policy");
-
-    let candidate_eor_bytes = extension_opening_reduction_level_bytes(
-        challenge_field_bits,
-        policy.claim_ext_degree,
-        0,
-        key,
-        input_witness_len,
-        64,
-    )
-    .expect("D64 root EOR bytes");
-    let uniform_eor_bytes = extension_opening_reduction_level_bytes(
-        challenge_field_bits,
-        policy.claim_ext_degree,
-        0,
-        key,
-        input_witness_len,
-        policy.uniform_ring_dimension,
-    )
-    .expect("D256 root EOR bytes");
-    assert_eq!(candidate_eor_bytes, 0);
-    assert!(uniform_eor_bytes > 0);
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn recursive_tensor_encoding_infeasibility_is_pruned() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
-
-    let mut policy = policy_of::<OneHot>();
-    policy.claim_ext_degree = 64;
-    let dimensions = CommitmentRingDims::uniform(64);
-    let domain = RingDimensionSearchDomain::new([dimensions]).expect("D64 domain");
-    policy = policy_for_domain(policy, &domain);
-
-    let error = find_schedule(
-        onehot_group(16, 1),
-        &policy,
-        OneHot::root_honest_fold_policy(),
-        &domain,
-        OneHot::ring_challenge_config,
-    )
-    .expect_err("k=64 cannot tensor-project into the half-ring of d_A=64");
-    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
 }
 
 #[cfg(feature = "catalog-gen")]

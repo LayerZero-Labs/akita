@@ -492,9 +492,9 @@ impl FoldSchedule {
     /// Validate the opening methods currently admitted by nonterminal proving
     /// and verification.
     ///
-    /// Evaluation trace remains valid at every nonterminal level. Subring
-    /// coefficient packing is restricted to absolute levels 0 and 1, uses one
-    /// method across every group consumed by that fold, and requires the
+    /// Subring coefficient packing is required at absolute levels 0 and 1.
+    /// Evaluation trace is required at later nonterminal levels. Every group
+    /// consumed by one fold uses the same method family. Packing requires the
     /// audited production challenge family under the L-infinity A route.
     pub fn validate_nonterminal_opening_execution(
         &self,
@@ -639,6 +639,17 @@ fn validate_level_opening_execution(
         first.params.opening_method(),
         OpeningMethod::SubringCoefficientPacking { .. }
     );
+    let packing_required = absolute_level <= 1;
+    if packing_family != packing_required {
+        let required = if packing_required {
+            "subring coefficient packing"
+        } else {
+            "evaluation trace"
+        };
+        return Err(AkitaError::InvalidSetup(format!(
+            "nonterminal level {absolute_level} requires {required}"
+        )));
+    }
     if groups.iter().any(|group| {
         matches!(
             group.params.opening_method(),

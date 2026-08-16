@@ -113,6 +113,7 @@ impl RecursiveCandidateContext<'_> {
                 policy,
                 fold_policy: &fold_policy,
                 ring_challenge_cfg: &ring_challenge_cfg,
+                challenge_dimension: self.opening.challenge_dimension(d_a),
                 dimensions,
                 num_claims: 1,
                 num_live_ring_elements_per_claim: num_ring_elems,

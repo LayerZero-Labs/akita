@@ -517,9 +517,8 @@ macro_rules! impl_proof_optimized_preset {
                 let legacy_witness = $fold_norms;
                 if $log_commit_bound == 1 {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::new(
+                        akita_types::sis::UnitOneHotFoldPolicy::canonical(
                             $field_bits,
-                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
                             STANDARD_ONEHOT_CHUNK_SIZE,
                         ),
                     )
@@ -592,9 +591,8 @@ macro_rules! impl_proof_optimized_preset {
                 let legacy_witness = $fold_norms;
                 if $log_commit_bound == 1 {
                     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::new(
+                        akita_types::sis::UnitOneHotFoldPolicy::canonical(
                             $field_bits,
-                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
                             STANDARD_ONEHOT_CHUNK_SIZE,
                         ),
                     )
