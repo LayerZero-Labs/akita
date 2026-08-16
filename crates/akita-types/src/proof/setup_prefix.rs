@@ -22,7 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
-pub const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF3";
+pub const SETUP_PREFIX_CONTENT_TAG: &[u8; 4] = b"SPF4";
 
 #[path = "setup_prefix_helpers.rs"]
 mod helpers;
@@ -296,15 +296,6 @@ fn serialize_committed_group_profile<W: Write>(
         .group
         .num_polynomials()
         .serialize_with_mode(&mut writer, compress)?;
-    match params.source_encoding {
-        crate::CommittedSourceEncoding::CanonicalCoefficientTable => {
-            0u8.serialize_with_mode(&mut writer, compress)?;
-        }
-        crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
-            1u8.serialize_with_mode(&mut writer, compress)?;
-            extension_degree.serialize_with_mode(&mut writer, compress)?;
-        }
-    }
     params
         .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
@@ -347,17 +338,6 @@ fn deserialize_committed_group_profile<R: Read>(
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group = PolynomialGroupLayout::new(group_num_vars, group_num_polynomials);
-    let source_encoding = match u8::deserialize_with_mode(&mut reader, compress, validate, &())? {
-        0 => crate::CommittedSourceEncoding::CanonicalCoefficientTable,
-        1 => crate::CommittedSourceEncoding::TensorSubfieldProjection {
-            extension_degree: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        },
-        tag => {
-            return Err(SerializationError::InvalidData(format!(
-                "unknown committed source encoding tag {tag}"
-            )))
-        }
-    };
     let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_positions_per_block =
@@ -377,7 +357,6 @@ fn deserialize_committed_group_profile<R: Read>(
     Ok(CommittedGroupProfile {
         version,
         group,
-        source_encoding,
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
@@ -399,14 +378,6 @@ fn committed_group_profile_serialized_size(
     params.version.serialized_size(compress)
         + params.group.num_vars().serialized_size(compress)
         + params.group.num_polynomials().serialized_size(compress)
-        + match params.source_encoding {
-            crate::CommittedSourceEncoding::CanonicalCoefficientTable => {
-                0u8.serialized_size(compress)
-            }
-            crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
-                1u8.serialized_size(compress) + extension_degree.serialized_size(compress)
-            }
-        }
         + params
             .num_live_ring_elements_per_claim
             .serialized_size(compress)
@@ -1211,7 +1182,6 @@ pub fn setup_prefix_precommitted_params(
                 layout: CommittedGroupProfile {
                     version: CommittedGroupProfile::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                    source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,

@@ -14,12 +14,11 @@ pub(in crate::protocol::core) use coefficient_packing::{
     verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix,
 };
 pub(in crate::protocol::core) use extension_claim::{
-    verify_extension_claim_root_prefix, verify_extension_claim_suffix_prefix,
-    verify_extension_claim_terminal_suffix,
+    verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix,
 };
 pub(in crate::protocol::core) use single_field::{
     absorb_protocol_opening_points, prepare_single_field_suffix_groups,
-    prepare_single_field_terminal_suffix, verify_single_field_root_prefix,
+    prepare_single_field_terminal_suffix,
 };
 
 /// Common prepared fold prefix produced by the single-field and

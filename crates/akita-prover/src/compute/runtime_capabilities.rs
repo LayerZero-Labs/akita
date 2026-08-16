@@ -3,9 +3,8 @@
 use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
 use super::kernels::{RootCommitKernel, SubringCoefficientPackingBatchKernel};
 use super::poly::{
-    OpeningProveBackendFor, ProveBackendFor, ProveFlowBackendFor, RingSwitchProveBackend,
-    RootCommitBackend, RootCommitPoly, RootCommitSource, RootOpeningSource, RootPolyMeta,
-    RootProvePoly, RootTensorSource, TensorBackendFor,
+    OpeningProveBackendFor, ProveFlowBackendFor, RingSwitchProveBackend, RootCommitSource,
+    RootOpeningSource, RootPolyMeta, RootTensorSource, TensorBackendFor,
 };
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::RootTensorProjectionPoly;
@@ -131,7 +130,7 @@ macro_rules! runtime_capabilities {
 
         /// Root polynomial usable for proving at every runtime dimension.
         pub trait RuntimeRootProvePoly<F>:
-            RootPolyMeta<F> + RootProvePoly<F, $first> $(+ RootProvePoly<F, $rest>)*
+            RootPolyMeta<F> + RootOpeningSource<F, $first> $(+ RootOpeningSource<F, $rest>)*
         where
             F: FieldCore,
         {
@@ -140,22 +139,7 @@ macro_rules! runtime_capabilities {
         impl<F, P> RuntimeRootProvePoly<F> for P
         where
             F: FieldCore,
-            P: RootPolyMeta<F> + RootProvePoly<F, $first> $(+ RootProvePoly<F, $rest>)*,
-        {
-        }
-
-        /// Root polynomial committable at every runtime dimension.
-        pub trait RuntimeRootCommitPoly<F>:
-            RootPolyMeta<F> + RootCommitPoly<F, $first> $(+ RootCommitPoly<F, $rest>)*
-        where
-            F: FieldCore,
-        {
-        }
-
-        impl<F, P> RuntimeRootCommitPoly<F> for P
-        where
-            F: FieldCore,
-            P: RootPolyMeta<F> + RootCommitPoly<F, $first> $(+ RootCommitPoly<F, $rest>)*,
+            P: RootPolyMeta<F> + RootOpeningSource<F, $first> $(+ RootOpeningSource<F, $rest>)*,
         {
         }
 
@@ -256,48 +240,6 @@ macro_rules! runtime_capabilities {
                 $(+ for<'a> RootCommitKernel<
                     <P as RootCommitSource<F, $rest>>::CommitView<'a>, F, $rest
                 >)*,
-        {
-        }
-
-        /// Scheme-level commit bundle at every runtime dimension.
-        pub trait RuntimeRootCommitBackend<F, P, E>:
-            RootCommitBackend<F, P, E, $first> $(+ RootCommitBackend<F, P, E, $rest>)*
-        where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-            E: ExtField<F>,
-            P: RuntimeRootCommitPoly<F>,
-        {
-        }
-
-        impl<F, P, E, B> RuntimeRootCommitBackend<F, P, E> for B
-        where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-            E: ExtField<F>,
-            P: RuntimeRootCommitPoly<F>,
-            B: RootCommitBackend<F, P, E, $first> $(+ RootCommitBackend<F, P, E, $rest>)*,
-        {
-        }
-
-        /// Opening and tensor backend for `P` at every runtime dimension.
-        pub trait RuntimeProveBackendFor<F, P, E>:
-            ProveBackendFor<F, P, E, $first> $(+ ProveBackendFor<F, P, E, $rest>)*
-        where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-            E: ExtField<F>,
-            P: RuntimeRootProvePoly<F>,
-        {
-        }
-
-        impl<F, P, E, B> RuntimeProveBackendFor<F, P, E> for B
-        where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-            E: ExtField<F>,
-            P: RuntimeRootProvePoly<F>,
-            B: ProveBackendFor<F, P, E, $first> $(+ ProveBackendFor<F, P, E, $rest>)*,
         {
         }
 

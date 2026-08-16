@@ -3,7 +3,7 @@ use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend};
 use crate::{AkitaProverSetup, CommitInnerWitness, CpuBackend, DensePoly};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{Ext2, Fp64};
+use akita_field::Fp64;
 use akita_types::{
     CommittedGroupProfile, CommittedSourceEncoding, OpenCommitMatrixParams, OpeningMethod,
     PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
@@ -581,7 +581,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
 }
 
 #[test]
-fn commitment_bytes_follow_source_encoding_not_opening_method() {
+fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     const NUM_VARS: usize = 10;
     let canonical = commitment_params_for_slice_count(akita_types::CommitmentSliceCount::ONE);
     let mut packing_plan = canonical.clone();
@@ -592,7 +592,6 @@ fn commitment_bytes_follow_source_encoding_not_opening_method() {
     let profile = |params: &CommittedGroupParams| CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
         group,
-        source_encoding: params.source_encoding,
         num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
         num_positions_per_block: params.num_positions_per_block,
         num_live_blocks: params.num_live_blocks,
@@ -646,23 +645,5 @@ fn commitment_bytes_follow_source_encoding_not_opening_method() {
     tensor.source_encoding = CommittedSourceEncoding::TensorSubfieldProjection {
         extension_degree: 2,
     };
-    assert_ne!(
-        profile(&canonical),
-        profile(&tensor),
-        "different physical source encodings must have different commitment identities",
-    );
-    let transformed = tensor_project_roots::<F, DensePoly<F>, Ext2<F>, CpuBackend>(
-        D,
-        &ctx,
-        std::slice::from_ref(&polynomial),
-    )
-    .unwrap();
-    let projected = commit_with_validated_geometry::<F, RootTensorProjectionPoly<F>, CpuBackend>(
-        &transformed,
-        &ctx,
-        (&tensor).into(),
-        &slice_geometry,
-    )
-    .unwrap();
-    assert_ne!(raw.0, projected.0);
+    assert!(CommittedGroupProfile::try_from_params(group, &tensor).is_err());
 }

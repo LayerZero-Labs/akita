@@ -989,7 +989,6 @@ fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
     let outer_width = inner_commit_matrix.output_rank() * num_live_blocks;
     CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
-        source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
         group: PolynomialGroupLayout::new(num_vars, 1),
         num_live_ring_elements_per_claim: 1usize << (num_vars - 6),
         num_positions_per_block: 16,
@@ -1370,9 +1369,7 @@ fn schedule_row_identity_binds_main_opening_method() {
             .expect("changed main opening-method digest")
     );
     assert!(changed.validate_structure().is_ok());
-    changed
-        .validate_nonterminal_opening_execution(1)
-        .expect("root packing schedule should be admitted");
+    assert!(changed.validate_nonterminal_opening_execution(1).is_err());
 }
 
 #[test]

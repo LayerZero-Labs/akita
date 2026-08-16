@@ -294,6 +294,13 @@ impl<Envelope, Final> Clone for EnvelopeFinalGroupConfig<Envelope, Final> {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct RootCoefficientPackingConfig<Base>(PhantomData<fn() -> Base>);
 
+/// Test-only adapter that exposes an otherwise well-formed early
+/// EvaluationTrace row so public prove/verify admission can prove it rejects
+/// before transcript mutation. `LEVEL=0` mutates the root; `LEVEL=1` mutates
+/// the first recursive witness and its incoming prefix.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct EarlyEvaluationTraceConfig<Base, const LEVEL: usize>(PhantomData<fn() -> Base>);
+
 impl<Base> RootCoefficientPackingConfig<Base>
 where
     Base: CommitmentConfig + 'static,
@@ -308,6 +315,25 @@ where
             ));
         }
         let base = Base::resolve_catalog_row_for_key(key)?;
+        let successor_template = match base.schedule().recursive_folds.first() {
+            Some(successor) => successor.clone(),
+            None => {
+                let grouped_key = AkitaScheduleLookupKey {
+                    final_group: key.final_group,
+                    precommitteds: vec![base.profiles().final_group.clone()],
+                };
+                Base::resolve_catalog_row_for_key(&grouped_key)?
+                    .schedule()
+                    .recursive_folds
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "packing Stage 3 test requires a recursive successor template".into(),
+                        )
+                    })?
+            }
+        };
         let mut schedule = base.into_schedule();
         let policy = policy_of::<Self>();
         let root = &mut schedule.root.params.final_group.commitment;
@@ -385,9 +411,7 @@ where
         )?;
         schedule.root.output_witness_len = root_output_witness_len;
 
-        let mut successor = schedule.recursive_folds.first().cloned().ok_or_else(|| {
-            AkitaError::InvalidSetup("packing Stage 3 test requires one recursive successor".into())
-        })?;
+        let mut successor = successor_template;
         successor.input_witness_len = root_output_witness_len;
         let successor_witness = &mut successor.params.witness;
         if successor_witness.log_basis_inner != root.log_basis_open
@@ -622,6 +646,72 @@ where
     }
 }
 
+impl<Base, const LEVEL: usize> EarlyEvaluationTraceConfig<Base, LEVEL>
+where
+    Base: CommitmentConfig + 'static,
+{
+    fn derive_row(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        let base = RootCoefficientPackingConfig::<Base>::derive_catalog_row(key, 64)?;
+        let profiles = base.profiles().clone();
+        let mut schedule = base.into_schedule();
+        let params = if LEVEL == 0 {
+            &mut schedule.root.params.final_group.commitment
+        } else if LEVEL == 1 {
+            let step = schedule.recursive_folds.first_mut().ok_or_else(|| {
+                AkitaError::InvalidSetup("early-ET test row needs a recursive fold".into())
+            })?;
+            if let Some(prefix) = step.params.incoming_setup_prefix.as_mut() {
+                prefix.commitment_params.opening.opening_method =
+                    akita_types::OpeningMethod::EvaluationTrace;
+                let d_a = prefix
+                    .commitment_params
+                    .layout
+                    .inner_commit_matrix
+                    .ring_dimension();
+                prefix.commitment_params.opening.fold_challenge_config =
+                    SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {
+                        AkitaError::InvalidSetup("missing early-ET prefix challenge family".into())
+                    })?;
+                step.params.incoming_setup_prefix = Some(prefix.clone());
+            }
+            step.params.witness.setup_prefix = step.params.incoming_setup_prefix.clone();
+            &mut step.params.witness
+        } else {
+            return Err(AkitaError::InvalidSetup(
+                "early-ET test level must be zero or one".into(),
+            ));
+        };
+        params.opening_method = akita_types::OpeningMethod::EvaluationTrace;
+        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(params.d_a())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("missing early-ET witness challenge family".into())
+            })?;
+        params.source_encoding = akita_types::CommittedSourceEncoding::for_producer(
+            params.opening_method,
+            Self::EXT_DEGREE,
+            params.d_a(),
+            0,
+            LEVEL == 0,
+        );
+        if LEVEL == 1 {
+            schedule.recursive_folds[0].params.sparse_challenge_config =
+                params.fold_challenge_config;
+        }
+        schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
+        let selection = OpeningScheduleSelection {
+            row_digest: akita_types::schedule_row_digest(&profiles, &schedule)?,
+        };
+        akita_config::ResolvedScheduleRow::try_new(
+            selection,
+            profiles,
+            schedule,
+            &policy_of::<Self>(),
+        )
+    }
+}
+
 impl<Base> CommitmentConfig for RootCoefficientPackingConfig<Base>
 where
     Base: CommitmentConfig + 'static,
@@ -701,6 +791,98 @@ where
         selection: OpeningScheduleSelection,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         resolve_synthetic_schedule_row::<Self>(selection)
+    }
+}
+
+impl<Base, const LEVEL: usize> CommitmentConfig for EarlyEvaluationTraceConfig<Base, LEVEL>
+where
+    Base: CommitmentConfig + 'static,
+{
+    type Field = Base::Field;
+    type ExtField = Base::ExtField;
+
+    const D: usize = Base::D;
+    const EXT_DEGREE: usize = Base::EXT_DEGREE;
+    const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+        Base::RING_DIMENSION_SCHEDULE_MODE;
+
+    fn decomposition() -> DecompositionParams {
+        Base::decomposition()
+    }
+
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Base::ring_challenge_config(d)
+    }
+
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        Base::sis_modulus_profile()
+    }
+
+    fn setup_matrix_capacity(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        RootCoefficientPackingConfig::<Base>::setup_matrix_capacity(
+            max_num_vars,
+            max_num_batched_polys,
+        )
+    }
+
+    fn setup_prefix_inner_ring_dimension() -> usize {
+        Base::setup_prefix_inner_ring_dimension()
+    }
+
+    fn opening_basis_range() -> (u32, u32) {
+        Base::opening_basis_range()
+    }
+
+    fn inner_basis_range() -> (u32, u32) {
+        Base::inner_basis_range()
+    }
+
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Base::root_honest_fold_policy()
+    }
+
+    fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+        Base::chunked_witness_cfg()
+    }
+
+    fn recursive_setup_planning() -> bool {
+        Base::recursive_setup_planning()
+    }
+
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        Base::selection_policy()
+    }
+
+    fn resolve_catalog_row_for_key(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        Self::derive_row(key)
+    }
+
+    fn resolve_catalog_row_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        Self::derive_row(&AkitaScheduleLookupKey {
+            final_group: profiles.final_group.group,
+            precommitteds: profiles.precommitteds.clone(),
+        })
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        let row = Self::derive_row(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::singleton(20),
+        ))?;
+        if row.selection() != selection {
+            return Err(AkitaError::UnsupportedSchedule(
+                "unknown early-ET test row".into(),
+            ));
+        }
+        Ok(row)
     }
 }
 

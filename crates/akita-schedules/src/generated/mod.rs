@@ -477,7 +477,6 @@ mod mixed_dimension_key_tests {
     fn descriptor() -> CommittedGroupProfile {
         CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
-            source_encoding: akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             group: PolynomialGroupLayout::new(12, 1),
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 8,

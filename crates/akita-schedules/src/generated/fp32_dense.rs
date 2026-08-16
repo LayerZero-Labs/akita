@@ -22,17 +22,15 @@ pub(crate) static FP32_DENSE_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 256, log_basis: 3 },
             witness_partition: GeneratedWitnessPartition::Single,
         },
-        recursive_folds: &[
-            GeneratedRecursiveFold { payload_mode: CommitmentPayloadMode::Compressed, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 128 }, witness: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 2096, positions_per_block: 128, live_blocks: 17 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 1024, log_basis: 3 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 256, log_basis: 6 }, outer_slice_count: 1 }, num_digits_fold: 2, response_l2_sq_cap: None, open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 256, log_basis: 6 }, incoming_setup_prefix: None, witness_partition: GeneratedWitnessPartition::Single },
-        ],
-        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 7074, positions_per_block: 2, live_blocks: 3537 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 6 }, num_digits_inner: 1, fold_log_basis: 6, fold_digit_count: 3, inner_output_rank: 2, inner_coeff_linf_bound: 67108863, response_l2_sq_cap: None, z_linf_cap: Some(29234), z_rice_low_bits: 12, z_payload_bytes: 256 },
+        recursive_folds: &[],
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 2096, positions_per_block: 128, live_blocks: 17 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 1024, log_basis: 3 }, num_digits_inner: 1, fold_log_basis: 3, fold_digit_count: 3, inner_output_rank: 1, inner_coeff_linf_bound: 65535, response_l2_sq_cap: None, z_linf_cap: Some(219), z_rice_low_bits: 5, z_payload_bytes: 147456 },
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(20, 1), num_digits_inner: 4, num_digits_fold: 6, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 },
                 commitment: GeneratedCommittedGroup { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1024, positions_per_block: 32, live_blocks: 32 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 1024, log_basis: 8 }, outer_commit_matrix: GeneratedOuterCommitMatrix { ring_dimension: 256, log_basis: 3 }, outer_slice_count: 4 } },
             precommitted_groups: &[
-                GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { version: CommittedGroupProfile::VERSION, group: PolynomialGroupLayout::new(20, 1), source_encoding: akita_types::CommittedSourceEncoding::CanonicalCoefficientTable, num_live_ring_elements_per_claim: 1024, num_positions_per_block: 16, num_live_blocks: 64, outer_slice_count: akita_types::CommitmentSliceCount::EIGHT, log_basis_inner: 8, num_digits_inner: 4, inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([242, 228, 119, 109, 33, 25, 231, 43, 203, 140, 11, 93, 57, 15, 147, 234, 80, 167, 7, 242, 178, 210, 29, 149, 120, 103, 249, 50, 46, 32, 225, 109]), SisModulusProfileId::Q32Offset99, 2, 64, 67108863, 1024), log_basis_outer: 3, num_digits_outer: 11, outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([242, 228, 119, 109, 33, 25, 231, 43, 203, 140, 11, 93, 57, 15, 147, 234, 80, 167, 7, 242, 178, 210, 29, 149, 120, 103, 249, 50, 46, 32, 225, 109]), SisModulusProfileId::Q32Offset99, 1, 704, 7, 256) }, num_digits_fold: 6, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 } },
+                GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { version: CommittedGroupProfile::VERSION, group: PolynomialGroupLayout::new(20, 1), num_live_ring_elements_per_claim: 1024, num_positions_per_block: 16, num_live_blocks: 64, outer_slice_count: akita_types::CommitmentSliceCount::EIGHT, log_basis_inner: 8, num_digits_inner: 4, inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([242, 228, 119, 109, 33, 25, 231, 43, 203, 140, 11, 93, 57, 15, 147, 234, 80, 167, 7, 242, 178, 210, 29, 149, 120, 103, 249, 50, 46, 32, 225, 109]), SisModulusProfileId::Q32Offset99, 2, 64, 67108863, 1024), log_basis_outer: 3, num_digits_outer: 11, outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([242, 228, 119, 109, 33, 25, 231, 43, 203, 140, 11, 93, 57, 15, 147, 234, 80, 167, 7, 242, 178, 210, 29, 149, 120, 103, 249, 50, 46, 32, 225, 109]), SisModulusProfileId::Q32Offset99, 1, 704, 7, 256) }, num_digits_fold: 6, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 } },
             ],
             open_commit_matrix: GeneratedOpenCommitMatrix { ring_dimension: 256, log_basis: 3 },
             witness_partition: GeneratedWitnessPartition::Single,
@@ -73,7 +71,7 @@ pub(crate) static CATALOG_POTENTIAL_B_DIMENSIONS: &[usize] = &[64, 128, 256];
 #[rustfmt::skip]
 pub(crate) static CATALOG_POTENTIAL_D_DIMENSIONS: &[usize] = &[64, 128, 256];
 #[rustfmt::skip]
-pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024];
+pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128, 256, 512, 1024];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp32_dense",
@@ -101,5 +99,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12423973825851036286,
     key_count: 3,
-    key_digest: 17193694337142723133,
+    key_digest: 15134433564559185608,
 };

@@ -576,7 +576,9 @@ impl PlannedGroupReport {
             d_a: role_dims.d_a(),
             d_b: role_dims.d_b(),
             d_d: role_dims.d_d(),
-            source_encoding: source_encoding_name(layout.source_encoding),
+            source_encoding: source_encoding_name(
+                akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+            ),
             extension_degree,
             opening_method: opening.method,
             challenge_subring_dimension: opening.challenge_subring_dimension,

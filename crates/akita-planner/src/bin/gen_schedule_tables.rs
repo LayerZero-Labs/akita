@@ -419,7 +419,7 @@ fn catalog_policy_signature(
                     ";pre{index}={}",
                     opening_policy_signature(
                         group.commitment.opening.opening_method,
-                        group.commitment.layout.source_encoding,
+                        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                         spec.policy.claim_ext_degree,
                         group.commitment.layout.inner_commit_matrix.ring_dimension(),
                         group.commitment.layout.inner_commit_matrix.security_route(),
@@ -437,7 +437,7 @@ fn catalog_policy_signature(
                 ";prefix={}",
                 opening_policy_signature(
                     prefix.commitment_params.opening.opening_method,
-                    prefix.commitment_params.layout.source_encoding,
+                    akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                     spec.policy.claim_ext_degree,
                     prefix
                         .commitment_params

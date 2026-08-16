@@ -211,40 +211,19 @@ enum ExtensionOpeningReductionGeometry {
 fn extension_opening_reduction_level_geometry(
     extension_opening_width: usize,
     fold_level: usize,
-    key: PolynomialGroupLayout,
+    _key: PolynomialGroupLayout,
     input_witness_len: usize,
-    ring_d: usize,
+    _ring_d: usize,
 ) -> Result<ExtensionOpeningReductionGeometry, AkitaError> {
     if extension_opening_width != 1 && !extension_opening_width.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(format!(
             "extension opening width must be one or a power of two, got {extension_opening_width}"
         )));
     }
-    let opening_num_vars = if fold_level == 0 {
-        key.num_vars()
-    } else {
-        padded_boolean_opening_vars(input_witness_len)?
-    };
-    let requires_eor = if fold_level == 0 {
-        crate::proof::root_tensor_projection_enabled_for_width(
-            extension_opening_width,
-            ring_d,
-            opening_num_vars,
-        )
-    } else {
-        extension_opening_width > 1
-    };
-    if !requires_eor {
+    if fold_level == 0 || extension_opening_width == 1 {
         return Ok(ExtensionOpeningReductionGeometry::NotRequired);
     }
-    let (partials, opening_vars) = if fold_level == 0 {
-        (
-            extension_opening_width.saturating_mul(key.num_polynomials()),
-            key.num_vars(),
-        )
-    } else {
-        (extension_opening_width, opening_num_vars)
-    };
+    let opening_vars = padded_boolean_opening_vars(input_witness_len)?;
     let split_bits = extension_opening_width.trailing_zeros() as usize;
     if split_bits > opening_vars {
         return Ok(ExtensionOpeningReductionGeometry::Infeasible {
@@ -253,7 +232,7 @@ fn extension_opening_reduction_level_geometry(
         });
     }
     Ok(ExtensionOpeningReductionGeometry::Required {
-        partials,
+        partials: extension_opening_width,
         opening_vars,
     })
 }
@@ -318,14 +297,19 @@ mod tests {
             0,
             "single-field geometry contributes no EOR bytes"
         );
-        assert!(
-            level_bytes(4, 0, 128).expect("gate-on root") > 0,
-            "gate-on extension root prices the reduction"
+        assert_eq!(
+            level_bytes(4, 0, 128).expect("packing root"),
+            0,
+            "root coefficient packing omits EOR"
         );
         assert_eq!(
             level_bytes(8, 0, 4).expect("gate-off root"),
             0,
             "valid width below the tensor-projection gate prices zero, not an error"
+        );
+        assert!(
+            level_bytes(4, 1, 128).expect("extension suffix") > 0,
+            "extension-field EvaluationTrace suffixes retain EOR"
         );
     }
 

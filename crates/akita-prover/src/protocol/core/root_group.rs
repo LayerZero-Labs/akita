@@ -4,7 +4,7 @@ use super::*;
 use crate::compute::{
     tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
     RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor, RuntimeRootProvePoly,
-    RuntimeTensorBackendFor, SubringCoefficientPackingBatchKernel,
+    RuntimeTensorBackendFor, RuntimeTensorSource, SubringCoefficientPackingBatchKernel,
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::{PreparedProverGroup, RootTensorProjectionPoly};
@@ -315,7 +315,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
-    P: RuntimeRootProvePoly<F>,
+    P: RuntimeRootProvePoly<F> + RuntimeTensorSource<F>,
     B: ComputeBackendSetup<F> + RuntimeTensorBackendFor<F, P, E>,
 {
     fn prepare_extension_opening(

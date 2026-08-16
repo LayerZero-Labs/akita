@@ -32,11 +32,6 @@ fn materialize_precommitted_group_for_open_basis(
     log_basis_open: u32,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     let ring_dimension = layout.inner_commit_matrix.ring_dimension();
-    if opening.is_coefficient_packing()
-        && layout.source_encoding != akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
-    {
-        return Ok(None);
-    }
     opening.validate_for(
         0,
         policy.claim_ext_degree,

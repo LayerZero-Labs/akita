@@ -23,7 +23,7 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
     RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor,
-    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
+    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeRootProvePoly,
 };
 use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly};
@@ -42,7 +42,7 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: RuntimeRootProvePoly<FF> + RuntimeRootCommitPoly<FF>,
+    P: RuntimeRootProvePoly<FF> + RuntimeCommitSource<FF>,
 >(
     label: &str,
     setup: &AkitaProverSetup<Cfg::Field>,
@@ -79,7 +79,7 @@ fn run_prove<
         + HasOptimizedFold
         + AkitaSerialize
         + Valid,
-    CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
+    CpuBackend: RuntimeCommitBackendFor<FF, P>
         + RecursiveProveBackend<FF, P, Cfg::ExtField>
         + RuntimeCoefficientPackingBackendFor<FF, P, Cfg::ExtField>,
 {

@@ -4,7 +4,7 @@ use crate::{
     OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
-use akita_serialization::{AkitaSerialize, Compress};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 use std::collections::{BTreeSet, HashSet};
 
 fn sample_level_params() -> CommittedGroupParams {
@@ -206,6 +206,26 @@ fn setup_prefix_slot_identity_excludes_consuming_opening_plan() {
     evaluation_trace_id
         .serialize_with_mode(&mut evaluation_trace_wire, Compress::Yes)
         .expect("serialize evaluation-trace slot id");
+    assert_eq!(&evaluation_trace_wire[..4], b"SPF4");
+    assert_eq!(
+        SetupPrefixSlotId::deserialize_with_mode(
+            evaluation_trace_wire.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .expect("deserialize SPF4 setup-prefix slot"),
+        evaluation_trace_id,
+    );
+    let mut previous_wire = evaluation_trace_wire.clone();
+    previous_wire[..4].copy_from_slice(b"SPF3");
+    assert!(SetupPrefixSlotId::deserialize_with_mode(
+        previous_wire.as_slice(),
+        Compress::Yes,
+        Validate::Yes,
+        &(),
+    )
+    .is_err());
     let mut subring_packing_wire = Vec::new();
     subring_packing_id
         .serialize_with_mode(&mut subring_packing_wire, Compress::Yes)

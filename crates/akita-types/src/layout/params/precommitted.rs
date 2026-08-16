@@ -523,7 +523,7 @@ impl LevelParamsLike for CommittedGroupParams {
 
 impl LevelParamsLike for PrecommittedLevelParams {
     fn source_encoding(&self) -> crate::CommittedSourceEncoding {
-        self.layout.source_encoding
+        crate::CommittedSourceEncoding::CanonicalCoefficientTable
     }
 
     fn opening_method(&self) -> OpeningMethod {

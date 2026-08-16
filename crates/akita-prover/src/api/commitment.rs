@@ -2,24 +2,21 @@
 
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
-    tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta,
-    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    UniformProverStack,
+    CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta, RuntimeCommitBackendFor,
+    RuntimeCommitSource, UniformProverStack,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
-use crate::RootTensorProjectionPoly;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
 };
 use akita_types::{
-    dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
-    validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommitmentRingDims, CommitmentSliceCount, CommittedGroup, CommittedGroupParams,
-    CommittedGroupProfile, CommittedSourceEncoding, CompressionChainPlan, FpExtEncoding,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PrecommittedGroupProfiles, RingVec,
+    dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims,
+    CommitmentSliceCount, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
+    CommittedSourceEncoding, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
 
 mod inner;
@@ -312,34 +309,6 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
     })
 }
 
-/// A-role root tensor projection at `transform_ring_d` when the schedule calls for it.
-fn tensor_project_roots<F, P, E, B>(
-    transform_ring_d: usize,
-    tensor_ctx: &OperationCtx<'_, F, B>,
-    polys: &[P],
-) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: FpExtEncoding<F>,
-    P: RuntimeRootCommitPoly<F>,
-    B: RuntimeRootCommitBackend<F, P, E>,
-{
-    let backend = tensor_ctx.backend();
-    let prepared = tensor_ctx.prepared();
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        transform_ring_d,
-        |D| {
-            polys
-                .iter()
-                .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), poly))
-                .collect()
-        }
-    )
-}
-
 fn commit_with_validated_geometry<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
@@ -508,10 +477,7 @@ fn validate_explicit_context(
 ///
 /// Scheduler contexts select an existing S or G catalog row. Explicit
 /// contexts validate caller-supplied root parameters without catalog lookup.
-/// The commitment-owned source encoding selects either the canonical
-/// coefficient table or the tensor/subfield projection.
-/// Geometry validation, commitment arithmetic, and result assembly are shared
-/// by every context.
+/// Root commitments always consume the canonical coefficient table.
 ///
 /// # Errors
 ///
@@ -534,8 +500,8 @@ where
         + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    P: RuntimeRootCommitPoly<Cfg::Field>,
-    B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+    P: RuntimeCommitSource<Cfg::Field>,
+    B: RuntimeCommitBackendFor<Cfg::Field, P>,
 {
     let opening_layout = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let group_layout = opening_layout.root_final_group_layout()?;
@@ -577,41 +543,17 @@ where
     let slice_geometry =
         validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
     let geometry: CommitmentGeometry<'_> = params.into();
-    let transform_ring_d = geometry.inner_matrix.ring_dimension();
-    let (commitment, hint) = match params.source_encoding {
-        CommittedSourceEncoding::CanonicalCoefficientTable => {
-            commit_with_validated_geometry::<Cfg::Field, P, B>(
-                polys,
-                stack.commit(),
-                geometry,
-                &slice_geometry,
-            )?
-        }
-        CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
-            if extension_degree != <Cfg::ExtField as akita_field::ExtField<Cfg::Field>>::EXT_DEGREE
-                || !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
-                    transform_ring_d,
-                    group_layout.num_vars(),
-                )
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "root tensor source encoding is incompatible with the field or root geometry"
-                        .into(),
-                ));
-            }
-            let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
-                transform_ring_d,
-                stack.tensor(),
-                polys,
-            )?;
-            commit_with_validated_geometry::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
-                &transformed,
-                stack.commit(),
-                geometry,
-                &slice_geometry,
-            )?
-        }
-    };
+    if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
+        return Err(AkitaError::InvalidSetup(
+            "root commitments require canonical coefficient-table source encoding".into(),
+        ));
+    }
+    let (commitment, hint) = commit_with_validated_geometry::<Cfg::Field, P, B>(
+        polys,
+        stack.commit(),
+        geometry,
+        &slice_geometry,
+    )?;
 
     Ok(CommitOutput {
         committed_group: CommittedGroup::new(profile, commitment),

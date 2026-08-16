@@ -182,7 +182,6 @@ fn precommit_admission_fixture() -> (
     .expect("audited B matrix");
     let layout = CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
-        source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
         group: PolynomialGroupLayout::new(14, 1),
         num_live_ring_elements_per_claim: 256,
         num_positions_per_block: 32,

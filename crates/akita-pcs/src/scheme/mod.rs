@@ -8,10 +8,9 @@ use akita_field::{
 };
 use akita_prover::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
-    RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
-    UniformProverStack,
+    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeCommitSource,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend, UniformProverStack,
 };
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
@@ -145,8 +144,8 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RuntimeRootCommitPoly<Cfg::Field>,
-        B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+        P: RuntimeCommitSource<Cfg::Field>,
+        B: RuntimeCommitBackendFor<Cfg::Field, P>,
     {
         Self::validate_cfg_ring_policy()?;
         akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, context)
@@ -177,7 +176,7 @@ where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B, B>,
+        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,
         B: ComputeBackendSetup<Cfg::Field>
             + RuntimeCommitBackendFor<Cfg::Field, akita_prover::RecursiveWitnessFlat>
             + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>

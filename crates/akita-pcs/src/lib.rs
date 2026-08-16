@@ -65,9 +65,9 @@ pub use akita_prover::{
     DecomposeFoldWitness, DigitRowsComputeBackend, GroupContext, LevelProveStacks,
     OpeningProveBackendFor, OperationCtx, PreparedGroupProveOps, PreparedProverGroup,
     ProveBackendFor, ProverOpeningData, RecursiveProveBackend, RingSwitchRelationRows,
-    RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend,
-    RootProvePoly, RootTensorSource, SelectedProverOpeningData, SparseRingBlockEntry,
-    TensorBackendFor, TieredProveStacks, UniformProverStack,
+    RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly,
+    RootTensorSource, SelectedProverOpeningData, SparseRingBlockEntry, TensorBackendFor,
+    TieredProveStacks, UniformProverStack,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{AkitaTranscript, Transcript};

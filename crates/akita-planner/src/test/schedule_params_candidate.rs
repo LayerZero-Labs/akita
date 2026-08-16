@@ -4,7 +4,7 @@ use super::recursive::{
 };
 use super::*;
 use akita_challenges::SparseChallengeConfig;
-use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
+use akita_types::{LevelParamsLike, PolynomialGroupLayout, SisModulusProfileId};
 
 fn synthetic_profile(
     group: PolynomialGroupLayout,
@@ -12,7 +12,6 @@ fn synthetic_profile(
 ) -> CommittedGroupProfile {
     CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
-        source_encoding: akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
         group,
         num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
         num_positions_per_block: params.num_positions_per_block,
@@ -301,7 +300,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             }
         );
         assert_eq!(
-            prefix.commitment_params.layout.source_encoding,
+            prefix.commitment_params.source_encoding(),
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         let d_d = params.role_dims().d_d();
@@ -639,29 +638,11 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         opening.method(),
         OpeningMethod::SubringCoefficientPacking { .. }
     )));
-    let mut tensor_profile = product_key.precommitteds[0];
-    tensor_profile.source_encoding =
-        akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
-            extension_degree: policy.claim_ext_degree,
-        };
-    let tensor_key = AkitaScheduleLookupKey {
-        final_group: product_key.final_group,
-        precommitteds: vec![tensor_profile],
-    };
-    assert!(
-        crate::schedule_params::suffix_dp::packing_precommit_opening_products(
-            &policy,
-            dimensions,
-            &tensor_key,
-        )
-        .unwrap()
-        .is_empty()
-    );
 }
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn tensor_frozen_precommit_is_unsupported_at_the_root() {
+fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
     use akita_config::{
         honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
     };
@@ -693,30 +674,18 @@ fn tensor_frozen_precommit_is_unsupported_at_the_root() {
         false,
     )
     .expect("standalone precommit candidates");
-    let mut precommitted = CommittedGroupProfile::try_from_params(
-        pre_group,
-        &pre_candidates.first().expect("precommit candidate").0,
-    )
-    .expect("standalone precommit profile");
-    precommitted.source_encoding = akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
-        extension_degree: 2,
-    };
-    precommitted
-        .validate_frozen_precommit(policy.decomposition.field_bits())
-        .expect("tensor source is valid for the frozen A ring");
-    let key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(16, 1),
-        precommitteds: vec![precommitted],
-    };
-    let error = crate::planner::find_schedule(
-        &key,
-        honest_fold_policy_of::<Dense>(),
-        &[honest_fold_policy_of::<Dense>()],
-        &policy,
-        Dense::ring_challenge_config,
-    )
-    .expect_err("tensor-frozen root precommits cannot use coefficient packing");
-    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
+    let mut tensor_params = pre_candidates
+        .first()
+        .expect("precommit candidate")
+        .0
+        .clone();
+    tensor_params.source_encoding =
+        akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
+            extension_degree: 2,
+        };
+    let error = CommittedGroupProfile::try_from_params(pre_group, &tensor_params)
+        .expect_err("tensor params cannot be frozen into canonical commitment identity");
+    assert!(matches!(error, AkitaError::InvalidSetup(_)));
 }
 
 #[cfg(feature = "catalog-gen")]

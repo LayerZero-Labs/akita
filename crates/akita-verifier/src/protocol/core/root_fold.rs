@@ -36,12 +36,28 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
+    if proof.extension_opening_reduction().is_some()
+        || root_lp.source_encoding
+            != akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    root_lp.validate_opening_batch(opening_batch)?;
+    for group_index in 0..opening_batch.num_groups() {
+        if !matches!(
+            root_lp
+                .group_params_geometry(opening_batch, group_index)?
+                .opening_method(),
+            akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        ) {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
     let setup_contribution_mode = next_fold_params
         .map_or(SetupContributionMode::Direct, |params| {
             params.predecessor_setup_contribution_mode()
         });
     let next_fold_level_params = next_fold_params.map(|params| &params.witness);
-    let extension_opening_reduction = proof.extension_opening_reduction();
     let stage3_sumcheck_proof = proof
         .stage3_for_mode(setup_contribution_mode, next_fold_level_params)?
         .map(|(proof, _)| proof);
@@ -104,7 +120,6 @@ where
         claims,
         &openings,
         opening_batch,
-        extension_opening_reduction,
         stage3_sumcheck_proof,
         next_fold_level_params,
         next_witness_ring_dim,
@@ -140,7 +155,6 @@ fn verify_root_inner<F, E, T>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
     next_fold_level_params: Option<&CommittedGroupParams>,
     next_witness_ring_dim: usize,
@@ -158,50 +172,14 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let prefix = if matches!(
-        root_lp.opening_method,
-        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-    ) {
-        if extension_opening_reduction.is_some() {
-            return Err(AkitaError::InvalidProof);
-        }
-        verify_coefficient_packing_root_prefix::<F, E, T>(
-            claims,
-            openings,
-            opening_batch,
-            basis,
-            root_lp,
-            transcript,
-        )?
-    } else if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
-        if extension_opening_reduction.is_some() {
-            return Err(AkitaError::InvalidProof);
-        }
-        verify_single_field_root_prefix::<F, E, T>(
-            claims,
-            openings,
-            opening_batch,
-            basis,
-            root_lp,
-            transcript,
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!("single-field root prefix failed: {error:?}"))
-        })?
-    } else {
-        verify_extension_claim_root_prefix::<F, E, T>(
-            claims,
-            openings,
-            opening_batch,
-            extension_opening_reduction,
-            basis,
-            root_lp,
-            transcript,
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!("extension root prefix failed: {error:?}"))
-        })?
-    };
+    let prefix = verify_coefficient_packing_root_prefix::<F, E, T>(
+        claims,
+        openings,
+        opening_batch,
+        basis,
+        root_lp,
+        transcript,
+    )?;
     // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and
     // `relation_rhs_layout_for` block order.

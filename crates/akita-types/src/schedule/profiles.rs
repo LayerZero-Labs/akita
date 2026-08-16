@@ -31,18 +31,13 @@ impl CommittedSourceEncoding {
     pub fn for_producer(
         opening_method: crate::OpeningMethod,
         extension_degree: usize,
-        ring_dimension: usize,
-        source_num_vars: usize,
+        _ring_dimension: usize,
+        _source_num_vars: usize,
         is_root: bool,
     ) -> Self {
-        if matches!(opening_method, crate::OpeningMethod::EvaluationTrace)
+        if !is_root
+            && matches!(opening_method, crate::OpeningMethod::EvaluationTrace)
             && extension_degree > 1
-            && (!is_root
-                || crate::root_tensor_projection_enabled_for_width(
-                    extension_degree,
-                    ring_dimension,
-                    source_num_vars,
-                ))
         {
             Self::TensorSubfieldProjection { extension_degree }
         } else {
@@ -91,8 +86,6 @@ pub struct CommittedGroupProfile {
     pub version: u8,
     /// Per-group root schedule entry shape.
     pub group: PolynomialGroupLayout,
-    /// Physical source encoding fixed by this commitment.
-    pub source_encoding: CommittedSourceEncoding,
     /// Exact number of live source ring elements per claim (`N`).
     pub num_live_ring_elements_per_claim: usize,
     /// Number of positions per block (`M`), power-of-two in the current Boolean layout.
@@ -117,7 +110,7 @@ pub struct CommittedGroupProfile {
 
 impl CommittedGroupProfile {
     /// Current committed-profile format.
-    pub const VERSION: u8 = 3;
+    pub const VERSION: u8 = 4;
 
     /// Build and validate frozen group metadata from concrete root commitment parameters.
     ///
@@ -129,6 +122,11 @@ impl CommittedGroupProfile {
         group: PolynomialGroupLayout,
         params: &CommittedGroupParams,
     ) -> Result<Self, AkitaError> {
+        if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
+            return Err(AkitaError::InvalidSetup(
+                "standalone commitment profiles require canonical coefficient sources".into(),
+            ));
+        }
         let profile = Self::from_params_fields(group, params);
         profile.validate_frozen_precommit(
             profile
@@ -143,7 +141,6 @@ impl CommittedGroupProfile {
         Self {
             version: Self::VERSION,
             group,
-            source_encoding: params.source_encoding,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
@@ -176,7 +173,6 @@ impl CommittedGroupProfile {
         bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
-        self.source_encoding.append_descriptor_bytes(bytes);
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
@@ -201,7 +197,6 @@ impl CommittedGroupProfile {
         self.inner_commit_matrix.validate()?;
         self.outer_commit_matrix.validate()?;
         let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
-        self.source_encoding.validate(inner_ring_dimension)?;
         let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
         if !inner_ring_dimension.is_power_of_two()
             || !outer_ring_dimension.is_power_of_two()
@@ -467,12 +462,10 @@ mod source_encoding_tests {
     use crate::OpeningMethod;
 
     #[test]
-    fn producer_encoding_preserves_existing_tensor_gate() {
+    fn producer_encoding_is_canonical_at_root_and_tensor_only_for_recursive_et() {
         assert_eq!(
             CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 512, 20, true,),
-            CommittedSourceEncoding::TensorSubfieldProjection {
-                extension_degree: 4,
-            },
+            CommittedSourceEncoding::CanonicalCoefficientTable,
         );
         assert_eq!(
             CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 512, 8, true,),

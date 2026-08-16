@@ -105,12 +105,6 @@ pub(super) fn packing_precommit_opening_products(
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
     let mut products = vec![Vec::new()];
     for profile in &key.precommitteds {
-        if !matches!(
-            profile.source_encoding,
-            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
-        ) {
-            return Ok(Vec::new());
-        }
         let domain = crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
             0,
             policy.claim_ext_degree,

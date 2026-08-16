@@ -3,12 +3,18 @@ use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
 use akita_field::LiftBase;
-use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
+use akita_types::{
+    basis_weights, AkitaScheduleLookupKey, LevelParamsLike, OpeningMethod, PolynomialGroupLayout,
+};
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
 type PackingField = <PackingCfg as CommitmentConfig>::Field;
 type PackingExt = <PackingCfg as CommitmentConfig>::ExtField;
 type PackingScheme = AkitaCommitmentScheme<PackingCfg>;
+#[cfg(feature = "logging-transcript")]
+type RootEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConfig<fp32::Dense, 0>;
+#[cfg(feature = "logging-transcript")]
+type RecursiveEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConfig<fp32::Dense, 1>;
 
 #[test]
 fn synthetic_packing_row_is_derived_from_one_checked_authority() {
@@ -77,7 +83,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         .as_ref()
         .expect("synthetic successor must consume the root setup prefix");
     assert_eq!(
-        prefix.commitment_params.layout.source_encoding,
+        prefix.commitment_params.source_encoding(),
         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
     assert!(matches!(
@@ -371,38 +377,75 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         "unexpected packing EOR must reject before transcript replay"
                     );
 
-                    let mut tensor_profile = *committed_group.profile();
-                    tensor_profile.source_encoding =
-                        akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
-                            extension_degree: PackingCfg::EXT_DEGREE,
-                        };
-                    let tensor_group = akita_types::CommittedGroup::new(
-                        tensor_profile,
-                        committed_group.commitment().clone(),
+                    macro_rules! assert_early_evaluation_trace_rejects_before_transcript {
+                        ($config:ty, $context:literal) => {{
+                            let claims =
+                                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                                    point.clone(),
+                                    vec![PackingExt::zero()],
+                                    committed_group.clone(),
+                                )
+                                .unwrap()])
+                                .unwrap();
+                            let prover_data = selected_prover_data::<PackingCfg, _>(
+                                claims,
+                                vec![hint.clone()],
+                                vec![&polynomial_refs],
+                            )
+                            .unwrap();
+                            let selection = prover_data.selection();
+                            let mut transcript =
+                                akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<
+                                    PackingField,
+                                >::new(label));
+                            assert!(AkitaCommitmentScheme::<$config>::batched_prove::<_, _, _>(
+                                &setup,
+                                prover_data,
+                                &stack,
+                                &mut transcript,
+                                basis,
+                            )
+                            .is_err());
+                            assert!(
+                                transcript.events().is_empty(),
+                                concat!($context, " must reject before prover transcript work")
+                            );
+
+                            let claims =
+                                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                                    point.clone(),
+                                    vec![expected],
+                                    &committed_group,
+                                )
+                                .unwrap()])
+                                .unwrap();
+                            let statement = GroupBatchStatement::new(selection, claims).unwrap();
+                            let mut transcript =
+                                akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<
+                                    PackingField,
+                                >::new(label));
+                            assert!(AkitaCommitmentScheme::<$config>::batched_verify(
+                                &proof,
+                                &verifier_setup,
+                                &mut transcript,
+                                statement,
+                                basis,
+                            )
+                            .is_err());
+                            assert!(
+                                transcript.events().is_empty(),
+                                concat!($context, " must reject before verifier transcript work")
+                            );
+                        }};
+                    }
+
+                    assert_early_evaluation_trace_rejects_before_transcript!(
+                        RootEvaluationTraceCfg,
+                        "root EvaluationTrace"
                     );
-                    let verifier_claims =
-                        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                            point.clone(),
-                            vec![expected],
-                            &tensor_group,
-                        )
-                        .unwrap()])
-                        .unwrap();
-                    let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
-                    let mut transcript = akita_transcript::LoggingTranscript::wrap(
-                        AkitaTranscript::<PackingField>::new(label),
-                    );
-                    assert!(PackingScheme::batched_verify(
-                        &proof,
-                        &verifier_setup,
-                        &mut transcript,
-                        statement,
-                        basis,
-                    )
-                    .is_err());
-                    assert!(
-                        transcript.events().is_empty(),
-                        "packing over a tensor source must reject before transcript replay"
+                    assert_early_evaluation_trace_rejects_before_transcript!(
+                        RecursiveEvaluationTraceCfg,
+                        "level-1 EvaluationTrace"
                     );
                 }
             }

@@ -58,16 +58,15 @@ pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttR
 pub use poly::{
     CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
     ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend,
-    RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    TensorBackendFor,
+    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend,
+    RootProvePoly, RootTensorSource, TensorBackendFor,
 };
 pub use runtime_capabilities::{
     RootProveFlowBackend, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
     RuntimeCommitSource, RuntimeOpeningProveBackendFor, RuntimeOpeningSource,
-    RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
-    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    RuntimeTensorSource, SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
+    RuntimeTensorBackendFor, RuntimeTensorSource, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 pub use stack::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,

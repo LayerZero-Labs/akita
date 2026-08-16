@@ -1,10 +1,9 @@
 use super::*;
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
-    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
+    RuntimeCommitBackendFor, RuntimeRingSwitchProveBackend,
 };
-use crate::{RecursiveWitnessFlat, RootTensorProjectionPoly};
+use crate::RecursiveWitnessFlat;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
@@ -63,53 +62,36 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
+    P: RootProverGroupOpening<F, E, O> + Clone,
     TS: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
-        + RuntimeCoefficientPackingBackendFor<F, RootTensorProjectionPoly<F>, E>,
+    O: DigitRowsComputeBackend<F>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = claims.opening_layout()?;
-    let opening_num_vars = opening_batch.max_num_vars();
     let opening_method = super::fold::uniform_opening_method(root_params, &opening_batch)?;
+    if !matches!(
+        opening_method,
+        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+    ) || root_params.source_encoding
+        != akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
+    {
+        return Err(AkitaError::InvalidSetup(
+            "root folds require canonical coefficient packing".into(),
+        ));
+    }
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.role_dims().d_a();
     let alpha_bits = root_ring_d.trailing_zeros() as usize;
-    let needs_extension_reduction = super::fold::extension_opening_reduction_enabled(
-        opening_method,
-        root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars),
-    );
-    let tensor_project_committed_root = matches!(
-        root_params.source_encoding,
-        akita_types::CommittedSourceEncoding::TensorSubfieldProjection { .. }
-    );
-
-    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
-        prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
-            stack,
-            claims,
-            false,
-            transcript,
-            || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
-            root_params,
-            basis,
-        )
-    } else {
-        prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
-            stack,
-            needs_extension_reduction,
-            tensor_project_committed_root,
-            claims,
-            ExtensionOpeningSource::CurrentClaims,
-            false,
-            transcript,
-            || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
-            root_params,
-            basis,
-        )
-    }
+    prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
+        stack,
+        claims,
+        false,
+        transcript,
+        || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
+        root_params,
+        basis,
+    )
 }
 
 /// Prove the folded-root proof payload for an intermediate root.
@@ -161,16 +143,10 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS> + Clone,
+    P: RootProverGroupOpening<F, E, O> + Clone,
     C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
-    O: RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
-        + RuntimeCoefficientPackingBackendFor<F, RootTensorProjectionPoly<F>, E>
-        + DigitRowsComputeBackend<F>
-        + ComputeBackendSetup<F>
-        + 'stack,
-    TS: RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
-        + ComputeBackendSetup<F>
-        + 'stack,
+    O: DigitRowsComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
+    TS: ComputeBackendSetup<F> + 'stack,
     R: RuntimeRingSwitchProveBackend<F>
         + DigitRowsComputeBackend<F>
         + ComputeBackendSetup<F>
@@ -183,6 +159,18 @@ where
 {
     let stack = stacks.prove_stack_at_level(0);
     let root_params = &scheduled.params.final_group.commitment;
+    let opening_layout = claims.opening_layout()?;
+    let opening_method = super::fold::uniform_opening_method(root_params, &opening_layout)?;
+    if !matches!(
+        opening_method,
+        akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+    ) || root_params.source_encoding
+        != akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
+    {
+        return Err(AkitaError::InvalidSetup(
+            "root folds require canonical coefficient packing".into(),
+        ));
+    }
 
     // Absorb root claims through the D-free flat commitment encoder keyed on the
     // root level's B-role dimension (byte-identical to the verifier's

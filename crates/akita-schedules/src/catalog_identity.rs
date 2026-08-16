@@ -452,17 +452,11 @@ fn validate_entry_dimensions(
             previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;
-        let terminal_is_admitted = match mode {
-            RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-                terminal_d == ring_dimension
-            }
-            RingDimensionScheduleMode::AdaptiveDimension {
-                suffix_dimensions, ..
-            } => suffix_dimensions.contains(&terminal_d),
-        };
+        let terminal_level = entry.recursive_folds.len() + 1;
+        let terminal_is_admitted = terminal_dimension_is_admitted(mode, terminal_level, terminal_d);
         if !terminal_is_admitted {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal D{terminal_d} is outside the policy suffix domain for key {:?}",
+                "generated terminal D{terminal_d} is outside the policy terminal dimension domain for key {:?}",
                 entry.root.final_group.layout
             )));
         }
@@ -477,6 +471,30 @@ fn validate_entry_dimensions(
         }
     }
     Ok(())
+}
+
+fn terminal_dimension_is_admitted(
+    mode: RingDimensionScheduleMode,
+    terminal_level: usize,
+    terminal_d: usize,
+) -> bool {
+    match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            terminal_d == ring_dimension
+        }
+        RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            suffix_dimensions,
+            potential_a_dimensions,
+            ..
+        } => {
+            if terminal_level < num_search_levels {
+                potential_a_dimensions.contains(&terminal_d)
+            } else {
+                suffix_dimensions.contains(&terminal_d)
+            }
+        }
+    }
 }
 
 fn validate_level_dimensions(
@@ -753,6 +771,26 @@ impl Fnv64 {
 
     fn finish(self) -> u64 {
         self.state
+    }
+}
+
+#[cfg(test)]
+mod terminal_dimension_tests {
+    use super::*;
+
+    #[test]
+    fn adaptive_terminal_uses_potential_dimensions_only_before_suffix_cutover() {
+        let mode = RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels: 2,
+            suffix_dimensions: &[64],
+            potential_a_dimensions: &[64, 128],
+            potential_b_dimensions: &[64],
+            potential_d_dimensions: &[64],
+        };
+
+        assert!(terminal_dimension_is_admitted(mode, 1, 128));
+        assert!(!terminal_dimension_is_admitted(mode, 2, 128));
+        assert!(terminal_dimension_is_admitted(mode, 2, 64));
     }
 }
 

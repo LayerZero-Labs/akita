@@ -10,7 +10,6 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::AdditiveGroup;
 
 pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
-    CurrentClaims,
     Logical(&'a [G]),
 }
 
@@ -59,10 +58,8 @@ where
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let tensor = stack.tensor();
     let (protocol_points, row_coefficients, reduction) = if run_eor {
-        let eor_groups: Vec<&P> = match eor_source {
-            ExtensionOpeningSource::CurrentClaims => block_claims.groups().collect(),
-            ExtensionOpeningSource::Logical(groups) => groups.iter().collect(),
-        };
+        let ExtensionOpeningSource::Logical(groups) = eor_source;
+        let eor_groups: Vec<&P> = groups.iter().collect();
         if eor_groups.len() != opening_batch.num_groups() {
             return Err(AkitaError::InvalidInput(
                 "extension-opening source group count mismatch".to_string(),

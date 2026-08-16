@@ -60,7 +60,7 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
+    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     C: ComputeBackendSetup<Cfg::Field>
         + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + 'a,
@@ -174,7 +174,7 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
+    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     C: ComputeBackendSetup<Cfg::Field>
         + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + 'a,
