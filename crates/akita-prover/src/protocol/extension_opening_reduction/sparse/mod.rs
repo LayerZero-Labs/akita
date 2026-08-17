@@ -12,7 +12,7 @@ pub use term::ExtensionOpeningReductionTerm;
 pub use witness::SparseExtensionOpeningWitness;
 
 pub(in crate::protocol::extension_opening_reduction) use tables::{
-    fused_fold_and_accumulate_sparse, ExtensionOpeningTables,
+    fused_fold_and_accumulate_sparse, DenseEorFactor, ExtensionOpeningTables,
 };
 pub(in crate::protocol::extension_opening_reduction) use tensor_factor::{
     SparseFactor, TensorEqualityFactor,

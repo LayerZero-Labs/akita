@@ -352,16 +352,26 @@ where
             actual: claim_coefficients.len(),
         });
     }
-    polys
+    let witnesses = polys
         .iter()
-        .zip(claim_coefficients)
-        .map(|(poly, &coefficient)| {
-            let witness = {
-                let _s = tracing::info_span!("eor_packed_witness").entered();
-                TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
-            };
+        .map(|poly| {
+            let _s = tracing::info_span!("eor_packed_witness").entered();
+            TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let dense_factor = witnesses
+        .iter()
+        .any(|witness| matches!(witness, TensorPackedWitness::Dense(_)))
+        .then(|| tensor_equality_factor_evals::<F, E>(tail_point, eta))
+        .transpose()?
+        .map(std::sync::Arc::new);
+    witnesses
+        .into_iter()
+        .zip(claim_coefficients.iter().copied())
+        .map(|(witness, coefficient)| {
             extension_opening_term_from_packed_witness::<F, E>(
                 witness,
+                dense_factor.as_ref(),
                 tail_point,
                 eta,
                 coefficient,
@@ -372,6 +382,7 @@ where
 
 fn extension_opening_term_from_packed_witness<F, E>(
     witness: TensorPackedWitness<E>,
+    dense_factor: Option<&std::sync::Arc<Vec<E>>>,
     tail_point: &[E],
     eta: &[E],
     coeff: E,
@@ -382,8 +393,12 @@ where
 {
     match witness {
         TensorPackedWitness::Dense(witness_evals) => {
-            let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-            ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, coeff)
+            let factor_evals = dense_factor.ok_or(AkitaError::InvalidProof)?;
+            ExtensionOpeningReductionTerm::new_with_shared_factor(
+                witness_evals,
+                std::sync::Arc::clone(factor_evals),
+                coeff,
+            )
         }
         TensorPackedWitness::Sparse(witness) => {
             let lazy_rounds = tail_point.len().min(SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS);
@@ -402,6 +417,5 @@ where
         }
     }
 }
-
 pub(in crate::protocol::core) type FoldedClaimEvals<F, const D: usize> =
     (Vec<CyclotomicRing<F, D>>, Vec<Vec<CyclotomicRing<F, D>>>);
