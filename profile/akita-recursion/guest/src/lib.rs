@@ -19,7 +19,6 @@
 //! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
@@ -30,7 +29,8 @@ use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
 type Cfg = fp128::OneHot;
-const D: usize = <Cfg as CommitmentConfig>::D;
+/// Concrete ring view used by the recursion artifact's fixed input schema.
+const SOURCE_VIEW_D: usize = 256;
 
 fn verification_status(result: Result<(), AkitaError>) -> u32 {
     match result {
@@ -73,12 +73,13 @@ fn akita_verify(input: &[u8]) -> u32 {
         feature = "trusted-benchmark-artifact",
         akita_trusted_benchmark_artifact
     ))]
-    let decoded_result = AkitaJoltInputs::<F, D>::read_trusted_host_artifact_bytes(input);
+    let decoded_result =
+        AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_trusted_host_artifact_bytes(input);
     #[cfg(not(any(
         feature = "trusted-benchmark-artifact",
         akita_trusted_benchmark_artifact
     )))]
-    let decoded_result = AkitaJoltInputs::<F, D>::read_from_bytes(input);
+    let decoded_result = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes(input);
 
     let decoded = match decoded_result {
         Ok(decoded) => decoded,
