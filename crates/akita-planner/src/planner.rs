@@ -1,5 +1,7 @@
 //! Root schedule planning.
 
+use std::time::Instant;
+
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
@@ -515,6 +517,8 @@ pub fn find_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    let diagnostics = crate::diagnostics::active();
+    let diagnostics = diagnostics.as_deref();
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
     if matches!(
@@ -552,6 +556,7 @@ pub fn find_schedule(
         })?;
     let suffix_ctx = SuffixCtx {
         policy: active_policy,
+        diagnostics,
         ring_challenge_config,
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
@@ -562,6 +567,7 @@ pub fn find_schedule(
     };
     let mut memo = ScheduleMemo::new();
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
+    let suffix_started = diagnostics.map(|_| Instant::now());
     let suffix = derive_selected_suffix_schedule(
         &suffix_ctx,
         &mut memo,
@@ -575,16 +581,26 @@ pub fn find_schedule(
             payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
         },
         0,
-    )?;
+    );
+    if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
+        diagnostics.add_suffix_dp_time(started.elapsed());
+        let (hits, misses) = memo.setup_prefix_cache_diagnostics();
+        diagnostics.record_setup_prefix_cache(hits, misses);
+    }
+    let suffix = suffix?;
     let best = match active_policy.selection_policy {
         crate::SelectionPolicyId::MinEstimatedProofPayload => {
-            select_complete_candidate(active_policy, suffix.payload_candidates())?
+            select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-            select_complete_candidate(active_policy, suffix.mixed_frontier.candidates())?
+            select_complete_candidate(
+                active_policy,
+                suffix.mixed_frontier.candidates(),
+                diagnostics,
+            )?
         }
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-            select_complete_candidate(active_policy, suffix.setup_candidates())?
+            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
     };
 
@@ -619,11 +635,30 @@ pub fn find_schedule(
     } else {
         None
     };
-    materialize_candidate_schedule(
+    if let Some(diagnostics) = diagnostics {
+        let metrics = best.metrics();
+        diagnostics.record_selected(
+            active_policy.selection_policy,
+            metrics.proof_bytes,
+            metrics.setup_field_elements,
+            metrics.first_direct_setup_capacity.field_elements(),
+            best.folds
+                .to_vec()
+                .iter()
+                .map(|fold| fold.params.role_dims())
+                .collect(),
+        );
+    }
+    let materialization_started = diagnostics.map(|_| Instant::now());
+    let planned = materialize_candidate_schedule(
         best.total_bytes,
         best.setup_field_elements,
         first_direct_setup_field_len,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),
-    )
+    );
+    if let (Some(diagnostics), Some(started)) = (diagnostics, materialization_started) {
+        diagnostics.add_final_materialization_time(started.elapsed());
+    }
+    planned
 }

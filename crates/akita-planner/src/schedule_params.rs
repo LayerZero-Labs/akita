@@ -327,44 +327,51 @@ impl ScheduleCandidate {
 
 pub(crate) fn candidate_schedule_descriptor_bytes(
     choice: &ScheduleCandidate,
+    diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<Vec<u8>, AkitaError> {
-    if choice.folds.is_empty() {
-        return Ok(akita_types::TerminalFoldStep {
-            params: akita_types::TerminalFoldParams {
-                witness: choice.terminal.params.clone(),
-                sparse_challenge_config: choice.terminal.sparse_challenge_config,
-                response_shape: choice.terminal.response_shape.clone(),
-            },
-            input_witness_len: choice.terminal.input_witness_len,
+    let started = diagnostics.map(|_| std::time::Instant::now());
+    let result = (|| {
+        if choice.folds.is_empty() {
+            return Ok(akita_types::TerminalFoldStep {
+                params: akita_types::TerminalFoldParams {
+                    witness: choice.terminal.params.clone(),
+                    sparse_challenge_config: choice.terminal.sparse_challenge_config,
+                    response_shape: choice.terminal.response_shape.clone(),
+                },
+                input_witness_len: choice.terminal.input_witness_len,
+            }
+            .canonical_descriptor_bytes());
         }
-        .canonical_descriptor_bytes());
+        let mut folds = choice.folds.to_vec();
+        let carrier_prefix_len = folds.len().min(2);
+        let carrier_payload_modes = folds
+            .iter()
+            .take(carrier_prefix_len)
+            .map(|fold| fold.params.payload_mode)
+            .collect::<Vec<_>>();
+        for fold in folds.iter_mut().take(carrier_prefix_len) {
+            Arc::make_mut(&mut fold.params).payload_mode =
+                akita_types::CommitmentPayloadMode::Compressed;
+        }
+        let mut bytes = materialize_candidate_schedule(
+            choice.total_bytes,
+            choice.setup_field_elements,
+            choice.first_direct_setup_field_len.map(NonZeroUsize::get),
+            folds,
+            choice.terminal.as_ref().clone(),
+        )?
+        .schedule
+        .canonical_descriptor_bytes();
+        let mut prefix = Vec::with_capacity(carrier_prefix_len + 1);
+        prefix.push(carrier_prefix_len as u8);
+        prefix.extend(carrier_payload_modes.into_iter().map(|mode| mode.tag()));
+        prefix.append(&mut bytes);
+        Ok(prefix)
+    })();
+    if let (Some(diagnostics), Some(started)) = (diagnostics, started) {
+        diagnostics.record_descriptor(started.elapsed());
     }
-    let mut folds = choice.folds.to_vec();
-    let carrier_prefix_len = folds.len().min(2);
-    let carrier_payload_modes = folds
-        .iter()
-        .take(carrier_prefix_len)
-        .map(|fold| fold.params.payload_mode)
-        .collect::<Vec<_>>();
-    for fold in folds.iter_mut().take(carrier_prefix_len) {
-        Arc::make_mut(&mut fold.params).payload_mode =
-            akita_types::CommitmentPayloadMode::Compressed;
-    }
-    let mut bytes = materialize_candidate_schedule(
-        choice.total_bytes,
-        choice.setup_field_elements,
-        choice.first_direct_setup_field_len.map(NonZeroUsize::get),
-        folds,
-        choice.terminal.as_ref().clone(),
-    )?
-    .schedule
-    .canonical_descriptor_bytes();
-    let mut prefix = Vec::with_capacity(carrier_prefix_len + 1);
-    prefix.push(carrier_prefix_len as u8);
-    prefix.extend(carrier_payload_modes.into_iter().map(|mode| mode.tag()));
-    prefix.append(&mut bytes);
-    let bytes = prefix;
-    Ok(bytes)
+    result
 }
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.

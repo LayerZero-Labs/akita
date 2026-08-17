@@ -934,7 +934,7 @@ fn main() -> Result<(), String> {
             let (index, family) = *item;
             let family_started = Instant::now();
             eprintln!(
-                "planning schedule family {}/{}: {}",
+                "preparing schedule family requests and dependency schedules {}/{}: {}",
                 index + 1,
                 family_count,
                 family.module_name
@@ -947,7 +947,7 @@ fn main() -> Result<(), String> {
                 generator_command,
             )?;
             eprintln!(
-                "planned schedule family {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
+                "prepared schedule family requests and dependency schedules {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
                 index + 1,
                 family_count,
                 family.module_name,
@@ -1016,7 +1016,21 @@ fn main() -> Result<(), String> {
             ));
         }
     }
+    let publish_started = args.row_progress.then(Instant::now);
+    if args.row_progress {
+        eprintln!(
+            "schedule generation phase: publish {} generated outputs",
+            outputs.len(),
+        );
+    }
     let destinations = publish_generated_outputs(outputs)?;
+    if let Some(started) = publish_started {
+        eprintln!(
+            "schedule generation phase complete: published {} outputs in {:.2?}",
+            destinations.len(),
+            started.elapsed(),
+        );
+    }
     for destination in &destinations {
         println!("wrote {}", destination.display());
     }

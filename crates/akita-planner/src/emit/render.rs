@@ -109,9 +109,46 @@ pub fn render_generated_outputs_with_validation(
     diagnostics: MaterializationDiagnostics,
     mut validate: impl FnMut(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
 ) -> Result<Vec<GeneratedOutput>, String> {
+    let materialization_started = diagnostics.row_progress.then(Instant::now);
+    if diagnostics.row_progress {
+        let row_count = specs
+            .iter()
+            .map(|spec| spec.keys.len() + spec.group_batch_keys.len())
+            .sum::<usize>();
+        eprintln!(
+            "schedule generation phase: materialize {row_count} rows across {} families",
+            specs.len(),
+        );
+    }
     let materialized = materialized_entries_for_specs(specs, diagnostics)?;
+    if let Some(started) = materialization_started {
+        eprintln!(
+            "schedule generation phase complete: materialized rows in {:.2?}",
+            started.elapsed(),
+        );
+    }
+    let validation_started = diagnostics.row_progress.then(Instant::now);
+    if diagnostics.row_progress {
+        eprintln!(
+            "schedule generation phase: validate {} materialized families",
+            specs.len(),
+        );
+    }
     for (spec, entries) in specs.iter().zip(&materialized) {
         validate(spec, entries)?;
+    }
+    if let Some(started) = validation_started {
+        eprintln!(
+            "schedule generation phase complete: validated materialized families in {:.2?}",
+            started.elapsed(),
+        );
+    }
+    let rendering_started = diagnostics.row_progress.then(Instant::now);
+    if diagnostics.row_progress {
+        eprintln!(
+            "schedule generation phase: render {} family modules",
+            specs.len(),
+        );
     }
     let mut outputs = specs
         .iter()
@@ -126,6 +163,13 @@ pub fn render_generated_outputs_with_validation(
             destination: mod_path.to_path_buf(),
             body: replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?,
         });
+    }
+    if let Some(started) = rendering_started {
+        eprintln!(
+            "schedule generation phase complete: rendered {} outputs in {:.2?}",
+            outputs.len(),
+            started.elapsed(),
+        );
     }
     Ok(outputs)
 }

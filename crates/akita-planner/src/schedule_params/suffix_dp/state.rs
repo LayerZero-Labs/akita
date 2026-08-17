@@ -34,6 +34,10 @@ impl MixedFrontier {
     pub(crate) fn candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.by_parent.values().flatten()
     }
+
+    pub(super) fn candidate_count(&self) -> usize {
+        self.by_parent.values().map(Vec::len).sum()
+    }
 }
 
 impl SuffixResult {
@@ -174,6 +178,10 @@ impl ScheduleMemo {
     pub(super) fn insert(&mut self, key: ScheduleMemoKey, result: Arc<SuffixResult>) {
         self.entries.insert(key, result);
     }
+
+    pub(crate) fn setup_prefix_cache_diagnostics(&self) -> (usize, usize) {
+        self.setup_prefixes.diagnostics()
+    }
 }
 
 pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
@@ -192,6 +200,7 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
+    pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     pub(crate) key: PolynomialGroupLayout,

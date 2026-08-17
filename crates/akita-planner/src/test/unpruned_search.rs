@@ -428,7 +428,7 @@ pub(super) fn find_schedule(
     let supported = complete
         .iter()
         .filter(|candidate| policy.admits_setup_field_elements(candidate.setup_field_elements));
-    let Some(selected) = select_complete_candidate(policy, supported)?.cloned() else {
+    let Some(selected) = select_complete_candidate(policy, supported, None)?.cloned() else {
         return Err(AkitaError::UnsupportedSchedule(
             "unpruned traversal found no complete schedule".into(),
         ));

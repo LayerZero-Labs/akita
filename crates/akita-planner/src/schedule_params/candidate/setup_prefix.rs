@@ -16,6 +16,14 @@ struct SetupPrefixSearchKey {
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+    hits: usize,
+    misses: usize,
+}
+
+impl SetupPrefixSearchCache {
+    pub(crate) const fn diagnostics(&self) -> (usize, usize) {
+        (self.hits, self.misses)
+    }
 }
 
 pub(crate) struct SetupPrefixSearchRequest<'a> {
@@ -253,8 +261,10 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         outer_ring_dimension,
     };
     if let Some(cached) = cache.entries.get(&cache_key) {
+        cache.hits = cache.hits.saturating_add(1);
         return Ok(cached.to_vec());
     }
+    cache.misses = cache.misses.saturating_add(1);
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
         || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)

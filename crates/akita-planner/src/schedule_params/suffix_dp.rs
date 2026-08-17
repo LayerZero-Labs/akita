@@ -60,6 +60,7 @@ fn offloaded_witness_contracts(
 
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
+    diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
     next_witness_len: usize,
@@ -289,7 +290,12 @@ fn price_terminal_candidate(
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
     };
-    frontier.consider_candidate(policy, candidate.clone(), direct_projection)?;
+    frontier.consider_candidate(
+        policy,
+        ctx.diagnostics,
+        candidate.clone(),
+        direct_projection,
+    )?;
     insert_mixed_frontier(policy, mixed_frontier, candidate)?;
     Ok(())
 }
@@ -322,6 +328,7 @@ fn price_level_candidate_with_children(
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
+        diagnostics: ctx.diagnostics,
         candidate_params: Arc::new(candidate_params.clone()),
         current_witness_len: state.current_witness_len,
         next_witness_len,
@@ -390,6 +397,7 @@ pub(crate) fn derive_selected_suffix_schedule(
 ) -> Result<Arc<SuffixResult>, AkitaError> {
     let SuffixCtx {
         policy,
+        diagnostics,
         ring_challenge_config,
         key: _,
         setup_field_budget: _,
@@ -398,6 +406,9 @@ pub(crate) fn derive_selected_suffix_schedule(
         precommitted_honest_fold_policies,
         level_zero_is_root,
     } = *ctx;
+    if let Some(diagnostics) = diagnostics {
+        diagnostics.record_suffix_call();
+    }
     let SuffixState {
         level,
         current_witness_len,
@@ -409,7 +420,11 @@ pub(crate) fn derive_selected_suffix_schedule(
     } = state;
     let memo_key = state.memo_key(policy);
     if depth <= MAX_RECURSION_DEPTH {
-        if let Some(cached) = memo.get(&memo_key) {
+        let cached = memo.get(&memo_key);
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_memo_result(cached.is_some());
+        }
+        if let Some(cached) = cached {
             return Ok(Arc::clone(cached));
         }
     }
@@ -820,6 +835,10 @@ pub(crate) fn derive_selected_suffix_schedule(
         // discard the A matrix or basis that is optimal after terminal
         // conversion. The terminal objective frontier below compares the
         // actual setup and response bytes.
+        let generated_candidate_count = terminal_candidates
+            .len()
+            .saturating_add(fold_candidates.len());
+        let terminal_candidate_count = terminal_candidates.len();
         for (candidate_params, _, opening_reduction_bytes) in terminal_candidates {
             let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
             price_terminal_candidate(
@@ -836,6 +855,12 @@ pub(crate) fn derive_selected_suffix_schedule(
             current_opening_layout,
             attach_source_moments(fold_candidates)?,
         )?;
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_candidates(
+                generated_candidate_count,
+                terminal_candidate_count.saturating_add(candidates.len()),
+            );
+        }
         if candidates.is_empty() {
             continue;
         }
@@ -918,6 +943,13 @@ pub(crate) fn derive_selected_suffix_schedule(
                 &mut mixed_frontier,
             )?;
         }
+    }
+    if let Some(diagnostics) = diagnostics {
+        diagnostics.record_completed_state(
+            frontier
+                .candidate_count()
+                .saturating_add(mixed_frontier.candidate_count()),
+        );
     }
     for (key, choices) in frontier.by_parent_cost {
         if retains_setup_projection {

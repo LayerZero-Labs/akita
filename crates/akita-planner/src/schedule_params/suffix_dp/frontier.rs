@@ -42,7 +42,13 @@ pub(super) fn consider_child_suffixes<'a>(
         }) {
             continue;
         }
-        frontier.consider_pending(edge.policy, &parent_cost, candidate, projection)?;
+        frontier.consider_pending(
+            edge.policy,
+            edge.diagnostics,
+            &parent_cost,
+            candidate,
+            projection,
+        )?;
     }
     Ok(())
 }
@@ -143,6 +149,10 @@ pub(crate) struct ObjectiveChoices {
 }
 
 impl ObjectiveChoices {
+    pub(super) fn candidate_count(&self) -> usize {
+        self.setup.len().saturating_add(self.payload.len())
+    }
+
     pub(super) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.setup.iter().map(|candidate| &candidate.schedule)
     }
@@ -165,15 +175,24 @@ pub(super) struct ProjectedFrontier {
 }
 
 impl ProjectedFrontier {
+    pub(super) fn candidate_count(&self) -> usize {
+        self.by_parent_cost
+            .values()
+            .map(ObjectiveChoices::candidate_count)
+            .sum()
+    }
+
     fn consider(
         &mut self,
         policy: &PlannerPolicy,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         parent_cost: ParentObservableKey,
         candidate: ScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
         let projected = ProjectedCandidate {
-            descriptor: super::super::candidate_schedule_descriptor_bytes(&candidate)?.into(),
+            descriptor: super::super::candidate_schedule_descriptor_bytes(&candidate, diagnostics)?
+                .into(),
             descriptor_context: DescriptorOrderContext::for_candidate(&candidate),
             admission: ParentAdmissionClass::for_candidate(&candidate),
             schedule: candidate,
@@ -191,22 +210,25 @@ impl ProjectedFrontier {
     pub(super) fn consider_candidate(
         &mut self,
         policy: &PlannerPolicy,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         candidate: ScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
         let parent_cost = first_parent_visible_cost(policy, &candidate)?;
-        self.consider(policy, parent_cost, candidate, projection)
+        self.consider(policy, diagnostics, parent_cost, candidate, projection)
     }
 
     fn consider_pending(
         &mut self,
         policy: &PlannerPolicy,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         parent_cost: &ParentObservableKey,
         pending: PendingScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
         self.consider(
             policy,
+            diagnostics,
             parent_cost.clone(),
             pending.into_candidate(),
             projection,

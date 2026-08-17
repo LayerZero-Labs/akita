@@ -36,8 +36,7 @@ pub use render::{
 
 /// Optional observability for the offline row-materialization queue.
 ///
-/// This boundary is outside the planner candidate loops. Disabled generation
-/// performs no timing, formatting, or atomic updates for individual rows.
+/// Disabled generation performs no per-row timing or search-counter updates.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MaterializationDiagnostics {
     pub row_progress: bool,
@@ -798,7 +797,10 @@ pub(super) fn materialized_entries_for_specs(
             );
             (Instant::now(), label)
         });
-        let outcome = materialized_entry(spec, &indexed.request);
+        let (outcome, planner_diagnostics) =
+            crate::diagnostics::capture(diagnostics.row_progress, || {
+                materialized_entry(spec, &indexed.request)
+            });
         if let Some((started, label)) = progress {
             let counters = &counters.as_ref().expect("progress counters")[indexed.spec_index];
             match &outcome {
@@ -843,6 +845,15 @@ pub(super) fn materialized_entries_for_specs(
                         started.elapsed(),
                     );
                 }
+            }
+            if let Some(planner_diagnostics) = planner_diagnostics
+                .as_ref()
+                .filter(|diagnostics| diagnostics.suffix_calls != 0)
+            {
+                eprintln!(
+                    "planner diagnostics {} {label}: {planner_diagnostics}",
+                    spec.module_name,
+                );
             }
         }
         outcome.map(|outcome| match outcome {

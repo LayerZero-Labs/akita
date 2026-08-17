@@ -28,8 +28,9 @@ pub(crate) enum CompleteScheduleScore {
 pub(crate) fn complete_schedule_score(
     policy: &PlannerPolicy,
     candidate: &ScheduleCandidate,
+    diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<CompleteScheduleScore, AkitaError> {
-    let descriptor = candidate_schedule_descriptor_bytes(candidate)?;
+    let descriptor = candidate_schedule_descriptor_bytes(candidate, diagnostics)?;
     let metrics = candidate.metrics();
     match policy.selection_policy {
         SelectionPolicyId::MinEstimatedProofPayload => Ok(CompleteScheduleScore::Direct {
@@ -64,10 +65,11 @@ pub(crate) fn complete_schedule_score(
 pub(crate) fn select_complete_candidate<'a>(
     policy: &PlannerPolicy,
     candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
+    diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<Option<&'a ScheduleCandidate>, AkitaError> {
     let mut best = None;
     for candidate in candidates {
-        let score = complete_schedule_score(policy, candidate)?;
+        let score = complete_schedule_score(policy, candidate, diagnostics)?;
         if best
             .as_ref()
             .is_none_or(|(best_score, _)| score < *best_score)
