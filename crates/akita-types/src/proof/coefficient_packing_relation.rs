@@ -3,10 +3,9 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use akita_algebra::offset_eq::{
-    eq_eval_at_index, eval_affine_digit_intervals, eval_boolean_pair_tensor_families,
-    EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS,
-};
+#[cfg(test)]
+use akita_algebra::offset_eq::eq_eval_at_index;
+use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
@@ -480,100 +479,6 @@ struct CoefficientPackingAffineRelationFamily<E: FieldCore> {
     digit_stride: usize,
     digit_weights: Arc<[E]>,
     outer_weights: Arc<[E]>,
-}
-
-impl<E: FieldCore> CoefficientPackingAffineRelationFamily<E> {
-    fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        let coefficient_len = self.coefficient_len;
-        if coefficient_len == 0 || !coefficient_len.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "packing affine coefficient axis is malformed".into(),
-            ));
-        }
-        let coefficient_bits = coefficient_len.trailing_zeros() as usize;
-        let (coefficient_point, outer_point) = point
-            .split_at_checked(coefficient_bits)
-            .ok_or(AkitaError::InvalidProof)?;
-        let coefficient_evaluation = self
-            .coefficient_weights
-            .get(..coefficient_len)
-            .ok_or(AkitaError::InvalidProof)?
-            .iter()
-            .enumerate()
-            .fold(E::zero(), |sum, (coefficient, &weight)| {
-                sum + weight * eq_eval_at_index(coefficient_point, coefficient)
-            });
-        let affine = eval_affine_digit_intervals(
-            outer_point,
-            &[self.base_offset],
-            0,
-            self.outer_len,
-            self.outer_stride,
-            self.digit_stride,
-            self.digit_weights.as_ref(),
-            self.outer_weights.as_ref(),
-            &[],
-            &[],
-        )?;
-        Ok(self.scalar * coefficient_evaluation * affine)
-    }
-}
-
-impl<E: FieldCore> CoefficientPackingCompactFactors<E> {
-    fn validate_point(&self, point: &[E]) -> Result<(), AkitaError> {
-        let point_variables = u32::try_from(point.len())
-            .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
-        let expected = 1usize
-            .checked_shl(point_variables)
-            .ok_or_else(|| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
-        let padded = self
-            .physical_field_len
-            .checked_next_power_of_two()
-            .ok_or_else(|| AkitaError::InvalidSetup("packing field domain overflow".into()))?;
-        if expected != padded {
-            return Err(AkitaError::InvalidSize {
-                expected: padded.trailing_zeros() as usize,
-                actual: point.len(),
-            });
-        }
-        Ok(())
-    }
-
-    /// Evaluate packed E and Q relation weights without expanding their
-    /// claim/block/digit/plane support.
-    pub fn evaluate_relation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        self.validate_point(point)?;
-        let affine = self
-            .affine_relation_families
-            .iter()
-            .try_fold(E::zero(), |sum, family| {
-                Ok(sum + family.evaluate_at_point(point)?)
-            })?;
-        Ok(affine
-            + eval_boolean_pair_tensor_families::<_, false, false>(
-                &[],
-                point,
-                &self.quotient_families,
-            )?)
-    }
-
-    /// Evaluate the direct-opening and packing-Z structured terms from their
-    /// retained tensor factors.
-    pub fn evaluate_stage2_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        self.validate_point(point)?;
-        let evaluate = |left: &[E], families: &[EqPairTensorFamily<E>]| match self.basis {
-            crate::BasisMode::Lagrange => {
-                eval_boolean_pair_tensor_families::<_, false, false>(left, point, families)
-            }
-            crate::BasisMode::Monomial => {
-                eval_boolean_pair_tensor_families::<_, true, false>(left, point, families)
-            }
-        };
-        Ok(
-            evaluate(&self.direct_opening_point, &self.direct_opening_families)?
-                + evaluate(&self.packing_z_point, &self.packing_z_families)?,
-        )
-    }
 }
 
 /// Exact authority used to prepare every packing group in one fold.

@@ -1291,6 +1291,9 @@ The planner MUST keep the search bounded in the following ways.
 - Keep the LS18 prime congruence and shortness condition with the fixed
   production field profiles rather than making it planner state.
 - Bind the challenge subring dimension and opening method in the draw domain.
+- Split the packing draw into fixed batches of 128 challenges. Derive each
+  batch from the transcript seed, the packing batch domain, and its canonical
+  batch index. Keep challenge order independent of the worker count.
 - Do not create a second A ring challenge draw.
 
 ### `akita-prover`

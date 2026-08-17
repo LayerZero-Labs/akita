@@ -143,14 +143,21 @@ pub trait FoldDraw {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
         let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
-        let mut cursor = XofCursor::from_seed(&seed);
-        let challenges = crate::sampler::sample_challenges_from_xof_cursor(
-            &mut cursor,
-            ring_d,
-            total,
-            cfg,
-            rejection,
-        )?;
+        let challenges = if matches!(
+            domain,
+            FoldChallengeDrawDomain::SubringCoefficientPacking { .. }
+        ) {
+            crate::sampler::sample_batched_challenges_from_seed(&seed, ring_d, total, cfg)?
+        } else {
+            let mut cursor = XofCursor::from_seed(&seed);
+            crate::sampler::sample_challenges_from_xof_cursor(
+                &mut cursor,
+                ring_d,
+                total,
+                cfg,
+                rejection,
+            )?
+        };
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }

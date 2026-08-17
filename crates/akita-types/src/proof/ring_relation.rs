@@ -13,6 +13,9 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
+use challenge_validation::validate_packing_challenge_weights;
+
+mod challenge_validation;
 
 /// Ring-column counts per witness segment in emission order (`z ‖ e ‖ t ‖ …`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,27 +110,7 @@ impl<F: FieldCore> RingRelationGroupOpening<F> {
         subring_challenges: Challenges,
     ) -> Result<Self, AkitaError> {
         let config = geometry.fold_challenge_config();
-        for challenge in subring_challenges.as_slice() {
-            challenge.validate_dyn(geometry.challenge_subring_dimension())?;
-            let mut count_pm1 = 0usize;
-            let mut count_pm2 = 0usize;
-            for &coefficient in challenge.coeffs.iter() {
-                match coefficient.unsigned_abs() {
-                    1 => count_pm1 += 1,
-                    2 => count_pm2 += 1,
-                    _ => {
-                        return Err(AkitaError::InvalidInput(
-                            "coefficient-packing challenge is outside its audited family".into(),
-                        ));
-                    }
-                }
-            }
-            if count_pm1 != config.count_pm1 || count_pm2 != config.count_pm2 {
-                return Err(AkitaError::InvalidInput(
-                    "coefficient-packing challenge weight disagrees with its audited family".into(),
-                ));
-            }
-        }
+        validate_packing_challenge_weights(&subring_challenges, &config)?;
         let embedded_a_challenges = subring_challenges.embed_subring_positions(
             geometry.challenge_subring_dimension(),
             geometry.subring_embedding_stride(),

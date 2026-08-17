@@ -6,6 +6,7 @@ use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
 };
+use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced,
@@ -196,15 +197,24 @@ where
             self.witness_eval
         };
 
-        let relation_weight = {
+        let evaluate_relation_weight = || {
             let _span = tracing::info_span!("stage2_relation_weight").entered();
             self.relation_matrix_evaluator.eval_flat_at_point::<F>(
                 challenges,
                 self.setup,
                 self.alpha,
                 self.setup_claim,
-            )?
+            )
         };
+        let (relation_weight, coefficient_packing_weight) =
+            if self.coefficient_packing_groups.is_empty() {
+                (evaluate_relation_weight()?, E::zero())
+            } else {
+                let (relation_weight, coefficient_packing_weight) =
+                    cfg_join!(evaluate_relation_weight, || self
+                        .coefficient_packing_weight_at_point(challenges));
+                (relation_weight?, coefficient_packing_weight?)
+            };
         let compression_oracle = match (
             self.compression_relation_weights,
             self.negative_binary_support,
@@ -220,7 +230,6 @@ where
             (None, None, None) => E::zero(),
             _ => return Err(AkitaError::InvalidProof),
         };
-        let coefficient_packing_weight = self.coefficient_packing_weight_at_point(challenges)?;
         let relation_oracle =
             w_eval * (relation_weight + coefficient_packing_weight) + compression_oracle;
         let trace_oracle = if let Some(evaluation_trace) = &self.evaluation_trace {

@@ -135,6 +135,12 @@ transcript also binds the method, challenge subring dimension, challenge
 family, group order, claim count, and block count. After challenge folding, the
 prover binds `Q_pack` and the next witness before sampling `alpha`.
 
+Packing challenge generation divides the canonical claim and block order into
+fixed batches of 128 challenges. Each batch uses a SHAKE256 stream derived from
+the transcript seed, a packing batch domain, and the batch index. The prover
+and verifier therefore get the same challenge order for every worker count.
+Evaluation trace challenge generation keeps its existing single stream.
+
 The production primes satisfy the fixed LS18 congruence and shortness
 condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does

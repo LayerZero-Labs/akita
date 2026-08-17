@@ -230,13 +230,7 @@ impl Challenges {
                 "subring challenge embedding dimensions are inconsistent".into(),
             ));
         }
-        let mut embedded = Vec::new();
-        embedded
-            .try_reserve_exact(self.challenges.len())
-            .map_err(|_| {
-                AkitaError::InvalidInput("subring challenge embedding allocation failed".into())
-            })?;
-        for challenge in &self.challenges {
+        let embed = |challenge: &SparseChallenge| {
             challenge.validate_dyn(challenge_subring_dimension)?;
             let mut positions = crate::SparseChallengePositions::new();
             positions
@@ -257,11 +251,43 @@ impl Challenges {
                     })?;
                 positions.push(embedded_position);
             }
-            embedded.push(SparseChallenge {
+            Ok::<_, AkitaError>(SparseChallenge {
                 positions,
                 coeffs: challenge.coeffs.clone(),
-            });
-        }
+            })
+        };
+        #[cfg(feature = "parallel")]
+        let embedded = {
+            let work = self
+                .challenges
+                .len()
+                .checked_mul(
+                    self.challenges
+                        .first()
+                        .map_or(0, |challenge| challenge.positions.len()),
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("subring challenge embedding work overflow".into())
+                })?;
+            const PARALLEL_THRESHOLD: usize = 1 << 14;
+            if work >= PARALLEL_THRESHOLD {
+                self.challenges
+                    .par_iter()
+                    .map(embed)
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                self.challenges
+                    .iter()
+                    .map(embed)
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        };
+        #[cfg(not(feature = "parallel"))]
+        let embedded = self
+            .challenges
+            .iter()
+            .map(embed)
+            .collect::<Result<Vec<_>, _>>()?;
         Self::from_sparse(embedded, self.num_live_blocks_per_claim, self.num_claims)
     }
 }
