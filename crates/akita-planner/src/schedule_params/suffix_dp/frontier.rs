@@ -4,7 +4,10 @@ use akita_field::AkitaError;
 
 use crate::{schedule_params::CompleteObjectiveBound, PlannerPolicy};
 
-use super::{child_choice, ParentObservableKey, PendingScheduleCandidate, ScheduleCandidate};
+use super::{
+    child_choice, child_edge_price, ParentObservableKey, PendingScheduleCandidate,
+    ScheduleCandidate,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum FrontierProjection {
@@ -30,9 +33,14 @@ pub(super) fn consider_child_suffixes<'a>(
     projection: FrontierProjection,
     frontier: &mut ProjectedFrontier,
 ) -> Result<(), AkitaError> {
+    let mut child_candidates = child_candidates.into_iter();
+    let Some(first) = child_candidates.next() else {
+        return Ok(());
+    };
+    let edge_price = child_edge_price(edge, first.first_fold_params())?;
     let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params))?;
-    for suffix in child_candidates {
-        let Some(candidate) = child_choice(edge, suffix)? else {
+    for suffix in std::iter::once(first).chain(child_candidates) {
+        let Some(candidate) = child_choice(edge, edge_price, suffix)? else {
             continue;
         };
         if incoming_setup_prefix.is_some_and(|natural_len| {

@@ -71,6 +71,12 @@ struct ChildEdge<'a> {
     setup_field_budget: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
+struct ChildEdgePrice {
+    direct_payload_bytes: usize,
+    stage3_payload_bytes: usize,
+}
+
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
     total_bytes: usize,
@@ -213,8 +219,32 @@ impl PendingScheduleCandidate {
     }
 }
 
+fn child_edge_price(
+    edge: &ChildEdge<'_>,
+    successor: Option<&CommittedGroupParams>,
+) -> Result<ChildEdgePrice, AkitaError> {
+    let (direct_payload_bytes, stage3_payload_bytes) =
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            edge.policy,
+            &edge.candidate_params,
+            successor,
+            edge.current_witness_len,
+            edge.next_witness_len,
+        )?;
+    if edge.offloaded != (stage3_payload_bytes != 0) {
+        return Err(AkitaError::InvalidSetup(
+            "setup edge topology disagrees with Stage-3 accounting".to_string(),
+        ));
+    }
+    Ok(ChildEdgePrice {
+        direct_payload_bytes,
+        stage3_payload_bytes,
+    })
+}
+
 fn child_choice(
     edge: &ChildEdge<'_>,
+    edge_price: ChildEdgePrice,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
     if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
@@ -225,21 +255,9 @@ fn child_choice(
         return Ok(None);
     }
 
-    let (direct_payload_bytes, stage3_payload_bytes) =
-        akita_schedules::planner_support::nonterminal_level_payload_bytes(
-            edge.policy,
-            &edge.candidate_params,
-            suffix.first_fold_params(),
-            edge.current_witness_len,
-            edge.next_witness_len,
-        )?;
-    if edge.offloaded != (stage3_payload_bytes != 0) {
-        return Err(AkitaError::InvalidSetup(
-            "setup edge topology disagrees with Stage-3 accounting".to_string(),
-        ));
-    }
-    let total_bytes = direct_payload_bytes
-        .checked_add(stage3_payload_bytes)
+    let total_bytes = edge_price
+        .direct_payload_bytes
+        .checked_add(edge_price.stage3_payload_bytes)
         .and_then(|value| value.checked_add(suffix.total_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
     let setup_field_elements = edge
@@ -264,8 +282,8 @@ fn child_choice(
         params: Arc::clone(&edge.candidate_params),
         input_witness_len: edge.current_witness_len,
         output_witness_len: edge.next_witness_len,
-        estimated_direct_payload_bytes: direct_payload_bytes,
-        estimated_stage3_payload_bytes: stage3_payload_bytes,
+        estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
+        estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
@@ -279,11 +297,16 @@ fn child_choice(
 
 fn consider_mixed_child_suffixes<'a>(
     edge: &ChildEdge<'_>,
-    child_candidates: impl Iterator<Item = &'a ScheduleCandidate>,
+    child_candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
     frontier: &mut MixedFrontier,
 ) -> Result<(), AkitaError> {
-    for suffix in child_candidates {
-        let Some(candidate) = child_choice(edge, suffix)? else {
+    let mut child_candidates = child_candidates.into_iter();
+    let Some(first) = child_candidates.next() else {
+        return Ok(());
+    };
+    let edge_price = child_edge_price(edge, first.first_fold_params())?;
+    for suffix in std::iter::once(first).chain(child_candidates) {
+        let Some(candidate) = child_choice(edge, edge_price, suffix)? else {
             continue;
         };
         insert_mixed_frontier(edge.policy, frontier, candidate.into_candidate())?;
@@ -504,19 +527,28 @@ fn price_level_candidate_with_children(
         setup_field_budget: ctx.setup_field_budget,
     };
     if let Some(direct_child) = direct_child {
-        consider_child_suffixes(
-            &direct_edge,
-            direct_child.payload_candidates(),
-            state.incoming_setup_prefix,
-            direct_projection,
-            frontier,
-        )?;
-        if state.incoming_setup_prefix.is_none() {
-            consider_mixed_child_suffixes(
+        for candidates in direct_child.payload_only.values() {
+            consider_child_suffixes(
                 &direct_edge,
-                direct_child.mixed_frontier.candidates(),
-                mixed_frontier,
+                candidates,
+                state.incoming_setup_prefix,
+                direct_projection,
+                frontier,
             )?;
+        }
+        for choices in direct_child.setup_and_payload.values() {
+            consider_child_suffixes(
+                &direct_edge,
+                choices.payload_candidates(),
+                state.incoming_setup_prefix,
+                direct_projection,
+                frontier,
+            )?;
+        }
+        if state.incoming_setup_prefix.is_none() {
+            for candidates in direct_child.mixed_frontier.buckets() {
+                consider_mixed_child_suffixes(&direct_edge, candidates, mixed_frontier)?;
+            }
         }
     }
     if let Some(offloaded_child) = offloaded_child {
@@ -524,20 +556,22 @@ fn price_level_candidate_with_children(
             offloaded: true,
             ..direct_edge
         };
-        consider_child_suffixes(
-            &offloaded_edge,
-            offloaded_child.setup_candidates(),
-            state.incoming_setup_prefix,
-            FrontierProjection::FirstDirectSetup,
-            frontier,
-        )?;
-        consider_child_suffixes(
-            &offloaded_edge,
-            offloaded_child.payload_candidates(),
-            state.incoming_setup_prefix,
-            FrontierProjection::Payload,
-            frontier,
-        )?;
+        for choices in offloaded_child.setup_and_payload.values() {
+            consider_child_suffixes(
+                &offloaded_edge,
+                choices.setup_candidates(),
+                state.incoming_setup_prefix,
+                FrontierProjection::FirstDirectSetup,
+                frontier,
+            )?;
+            consider_child_suffixes(
+                &offloaded_edge,
+                choices.payload_candidates(),
+                state.incoming_setup_prefix,
+                FrontierProjection::Payload,
+                frontier,
+            )?;
+        }
     }
 
     Ok(())

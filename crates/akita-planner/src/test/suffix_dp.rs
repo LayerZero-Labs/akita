@@ -63,6 +63,25 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
         super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
         "a parent prices only the successor outer payload and setup-prefix payload"
     );
+    assert_eq!(
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            &policy,
+            &evaluation_trace,
+            Some(&evaluation_trace),
+            1024,
+            512,
+        )
+        .unwrap(),
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            &policy,
+            &evaluation_trace,
+            Some(&packing),
+            1024,
+            512,
+        )
+        .unwrap(),
+        "successors in one parent-observable bucket must price identically"
+    );
 
     let outer = packing.outer_commit_matrix;
     packing.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(

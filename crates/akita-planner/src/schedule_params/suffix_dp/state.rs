@@ -35,6 +35,10 @@ impl MixedFrontier {
         self.by_parent.values().flatten()
     }
 
+    pub(super) fn buckets(&self) -> impl Iterator<Item = &[ScheduleCandidate]> {
+        self.by_parent.values().map(Vec::as_slice)
+    }
+
     pub(super) fn candidate_count(&self) -> usize {
         self.by_parent.values().map(Vec::len).sum()
     }
