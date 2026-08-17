@@ -38,10 +38,6 @@ impl MixedFrontier {
     pub(super) fn candidate_count(&self) -> usize {
         self.by_parent.values().map(Vec::len).sum()
     }
-
-    pub(super) fn best_score(&self) -> Option<MixedScore> {
-        self.candidates().map(mixed_score).min()
-    }
 }
 
 impl SuffixResult {

@@ -51,7 +51,7 @@ pub(crate) use candidate::{
 pub(crate) use candidate::{
     derive_candidate_level_params_split_frontier_without_bounds, derive_linf_candidate_level_params,
 };
-pub(crate) use objective::select_complete_candidate;
+pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };

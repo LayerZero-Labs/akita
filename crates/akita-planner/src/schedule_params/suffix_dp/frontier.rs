@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use akita_field::AkitaError;
 
-use crate::PlannerPolicy;
+use crate::{schedule_params::CompleteObjectiveBound, PlannerPolicy};
 
 use super::{child_choice, ParentObservableKey, PendingScheduleCandidate, ScheduleCandidate};
 
@@ -157,6 +157,10 @@ impl ObjectiveChoices {
         self.setup.iter().map(|candidate| &candidate.schedule)
     }
 
+    fn setup_projected_candidates(&self) -> impl Iterator<Item = &ProjectedCandidate> {
+        self.setup.iter()
+    }
+
     pub(super) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.payload.iter().map(|candidate| &candidate.schedule)
     }
@@ -180,6 +184,29 @@ impl ProjectedFrontier {
             .values()
             .map(ObjectiveChoices::candidate_count)
             .sum()
+    }
+
+    pub(super) fn recursive_direct_bound_is_strictly_worse(
+        &self,
+        parent_cost: &ParentObservableKey,
+        first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
+        lower_bound: CompleteObjectiveBound,
+    ) -> bool {
+        let candidate_admission = ParentAdmissionClass {
+            fold_depth: 2,
+            first_direct_setup_capacity,
+        };
+        self.by_parent_cost
+            .get(parent_cost)
+            .into_iter()
+            .flat_map(ObjectiveChoices::setup_projected_candidates)
+            .any(|incumbent| {
+                incumbent
+                    .admission
+                    .admits_every_parent_of(candidate_admission)
+                    && lower_bound
+                        .is_strictly_worse_for_recursive_parent(incumbent.schedule.metrics())
+            })
     }
 
     fn consider(

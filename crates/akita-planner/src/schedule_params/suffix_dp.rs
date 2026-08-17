@@ -17,8 +17,8 @@ use super::{
     derive_candidate_level_params, derive_candidate_level_params_split_frontier,
     derive_recursive_candidate_views, derive_terminal_candidate_params, dimension_candidates,
     level_setup_field_elements, suffix_opening_layout, terminal_setup_field_elements,
-    CandidateFoldStep, CandidateTerminalResponse, MixedScore, ScheduleCandidate,
-    SetupPrefixSearchCache,
+    CandidateFoldStep, CandidateTerminalResponse, CompleteObjectiveBound, MixedScore,
+    ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -88,6 +88,60 @@ struct OpeningWork {
     opening_reduction_bytes: usize,
     allows_terminal: bool,
     allows_fold: bool,
+}
+
+type LevelCandidate = (
+    CommittedGroupParams,
+    usize,
+    usize,
+    Option<crate::response_model::SourceMomentEstimate>,
+);
+
+type GuidedLevelCandidate = (CompleteObjectiveBound, Option<usize>, LevelCandidate);
+
+enum CandidateTraversal {
+    Plain(std::vec::IntoIter<LevelCandidate>),
+    Guided(std::vec::IntoIter<GuidedLevelCandidate>),
+}
+
+#[derive(Clone, Copy)]
+enum GuideScope {
+    CompleteRoot,
+    RecursivePrefix,
+}
+
+impl GuideScope {
+    fn for_state(
+        policy: &PlannerPolicy,
+        is_complete_root: bool,
+        incoming_setup_prefix: Option<usize>,
+    ) -> Option<Self> {
+        if is_complete_root {
+            Some(Self::CompleteRoot)
+        } else if incoming_setup_prefix.is_some()
+            && policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+        {
+            Some(Self::RecursivePrefix)
+        } else {
+            None
+        }
+    }
+}
+
+impl Iterator for CandidateTraversal {
+    type Item = (
+        Option<(CompleteObjectiveBound, Option<usize>)>,
+        LevelCandidate,
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Plain(candidates) => candidates.next().map(|candidate| (None, candidate)),
+            Self::Guided(candidates) => candidates
+                .next()
+                .map(|(bound, natural_len, candidate)| (Some((bound, natural_len)), candidate)),
+        }
+    }
 }
 
 pub(super) const fn state_allows_terminal_seed(
@@ -237,12 +291,13 @@ fn consider_mixed_child_suffixes<'a>(
     Ok(())
 }
 
-fn root_candidate_lower_bound(
+fn direct_edge_lower_bound(
     policy: &PlannerPolicy,
     params: &CommittedGroupParams,
     input_witness_len: usize,
     output_witness_len: usize,
-) -> Result<MixedScore, AkitaError> {
+    natural_setup_field_len: usize,
+) -> Result<CompleteObjectiveBound, AkitaError> {
     let (proof_bytes, stage3_bytes) =
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             policy,
@@ -253,19 +308,98 @@ fn root_candidate_lower_bound(
         )?;
     if stage3_bytes != 0 {
         return Err(AkitaError::InvalidSetup(
-            "direct root lower bound unexpectedly includes Stage-3 bytes".into(),
+            "direct-edge lower bound unexpectedly includes Stage-3 bytes".into(),
         ));
     }
-    Ok(MixedScore {
-        setup_field_elements: level_setup_field_elements(params)?,
+    Ok(CompleteObjectiveBound::for_direct_edge(
+        policy,
+        SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
         proof_bytes,
-    })
+        level_setup_field_elements(params)?,
+    ))
 }
 
-fn root_lower_bound_is_strictly_worse(lower_bound: MixedScore, incumbent: MixedScore) -> bool {
-    lower_bound.setup_field_elements > incumbent.setup_field_elements
-        || (lower_bound.setup_field_elements == incumbent.setup_field_elements
-            && lower_bound.proof_bytes > incumbent.proof_bytes)
+fn complete_root_bound_is_strictly_worse(
+    policy: &PlannerPolicy,
+    lower_bound: CompleteObjectiveBound,
+    frontier: &ProjectedFrontier,
+    mixed_frontier: &MixedFrontier,
+) -> bool {
+    match policy.selection_policy {
+        crate::SelectionPolicyId::MinEstimatedProofPayload => frontier
+            .by_parent_cost
+            .values()
+            .flat_map(frontier::ObjectiveChoices::payload_candidates)
+            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => mixed_frontier
+            .candidates()
+            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => frontier
+            .by_parent_cost
+            .values()
+            .flat_map(frontier::ObjectiveChoices::setup_candidates)
+            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+    }
+}
+
+fn direct_edge_bound_is_strictly_worse(
+    policy: &PlannerPolicy,
+    guide_scope: GuideScope,
+    params: &CommittedGroupParams,
+    natural_setup_field_len: usize,
+    lower_bound: CompleteObjectiveBound,
+    frontier: &ProjectedFrontier,
+    mixed_frontier: &MixedFrontier,
+) -> Result<bool, AkitaError> {
+    match guide_scope {
+        GuideScope::CompleteRoot => Ok(complete_root_bound_is_strictly_worse(
+            policy,
+            lower_bound,
+            frontier,
+            mixed_frontier,
+        )),
+        GuideScope::RecursivePrefix => {
+            let parent_cost = ParentObservableKey::new(policy, Some(params))?;
+            Ok(frontier.recursive_direct_bound_is_strictly_worse(
+                &parent_cost,
+                SetupPrefixCapacity::for_natural_len(natural_setup_field_len),
+                lower_bound,
+            ))
+        }
+    }
+}
+
+fn candidate_traversal(
+    policy: &PlannerPolicy,
+    guide_scope: Option<GuideScope>,
+    opening_layout: &OpeningClaimsLayout,
+    current_witness_len: usize,
+    candidates: Vec<LevelCandidate>,
+) -> Result<CandidateTraversal, AkitaError> {
+    if guide_scope.is_none() {
+        return Ok(CandidateTraversal::Plain(candidates.into_iter()));
+    }
+    let mut guided = candidates
+        .into_iter()
+        .map(|candidate| {
+            let natural_len = (policy.selection_policy
+                == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload)
+                .then(|| active_setup_field_len(&candidate.0, opening_layout))
+                .transpose()?;
+            let lower_bound = direct_edge_lower_bound(
+                policy,
+                &candidate.0,
+                current_witness_len,
+                candidate.1,
+                natural_len.unwrap_or_default(),
+            )?;
+            Ok((lower_bound, natural_len, candidate))
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    guided.sort_by_key(|(lower_bound, _, (_, next_witness_len, _, _))| {
+        (*lower_bound, *next_witness_len)
+    });
+    Ok(CandidateTraversal::Guided(guided.into_iter()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -896,46 +1030,17 @@ pub(crate) fn derive_selected_suffix_schedule(
             continue;
         }
 
-        let guide_complete_root = root_level_key.is_some()
-            && policy.selection_policy
-                == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload;
-        let mut candidates = candidates;
-        if guide_complete_root {
-            let mut guided = candidates
-                .into_iter()
-                .map(|candidate| {
-                    let lower_bound = root_candidate_lower_bound(
-                        policy,
-                        &candidate.0,
-                        current_witness_len,
-                        candidate.1,
-                    )?;
-                    Ok((lower_bound, candidate))
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            guided.sort_by_key(|(lower_bound, (_, next_witness_len, _, _))| {
-                (*lower_bound, *next_witness_len)
-            });
-            candidates = guided.into_iter().map(|(_, candidate)| candidate).collect();
-        }
+        let guide_scope =
+            GuideScope::for_state(policy, root_level_key.is_some(), incoming_setup_prefix);
+        let candidates = candidate_traversal(
+            policy,
+            guide_scope,
+            current_opening_layout,
+            current_witness_len,
+            candidates,
+        )?;
 
-        for (candidate_params, next_witness_len, _, next_source_moment) in candidates {
-            if guide_complete_root {
-                let lower_bound = root_candidate_lower_bound(
-                    policy,
-                    &candidate_params,
-                    current_witness_len,
-                    next_witness_len,
-                )?;
-                if mixed_frontier.best_score().is_some_and(|incumbent| {
-                    root_lower_bound_is_strictly_worse(lower_bound, incumbent)
-                }) {
-                    if let Some(diagnostics) = diagnostics {
-                        diagnostics.record_root_incumbent_prune();
-                    }
-                    continue;
-                }
-            }
+        for (guide, (candidate_params, next_witness_len, _, next_source_moment)) in candidates {
             if let Some(natural_prefix_len) = incoming_setup_prefix {
                 let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
                 if !offloaded_witness_contracts(
@@ -950,12 +1055,42 @@ pub(crate) fn derive_selected_suffix_schedule(
                     continue;
                 }
             }
-            let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
+            let natural_len = guide.and_then(|(_, natural_len)| natural_len).map_or_else(
+                || active_setup_field_len(&candidate_params, current_opening_layout),
+                Ok,
+            )?;
             let direct_edge_is_admissible = incoming_setup_prefix.is_none_or(|incoming_len| {
                 akita_types::padded_setup_prefix_len(natural_len)
                     < akita_types::padded_setup_prefix_len(incoming_len)
             });
-            let direct_child = if !direct_edge_is_admissible {
+            let prune_direct_edge = if direct_edge_is_admissible {
+                guide
+                    .zip(guide_scope)
+                    .map(|((lower_bound, _), guide_scope)| {
+                        direct_edge_bound_is_strictly_worse(
+                            policy,
+                            guide_scope,
+                            &candidate_params,
+                            natural_len,
+                            lower_bound,
+                            &frontier,
+                            &mixed_frontier,
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if prune_direct_edge {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics.record_guided_direct_edge_prune();
+                }
+                if !policy.recursive_setup_planning {
+                    continue;
+                }
+            }
+            let direct_child = if !direct_edge_is_admissible || prune_direct_edge {
                 None
             } else if depth == MAX_RECURSION_DEPTH {
                 Some(empty_suffix_result())
