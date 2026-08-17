@@ -22,8 +22,8 @@ ring elements, define that multiplication as a `TraceOpen` operation, and then
 write the same evaluation claim directly as a linear relation on the committed
 fold witness.
 
-Base-field polynomials evaluated at extension-field points are left as a stub
-at the end of the page.
+Base-field polynomials evaluated at extension-field points require the
+extension-opening reduction summarized at the end of this page.
 
 ## The evaluation problem
 
@@ -308,7 +308,7 @@ the ring element $Y$ and the witness polynomials $\hat e_{b,h}(X)$. Hachi
 sends $Y$ to the verifier, which checks Equation (13) directly. The prover
 then proves Equation (15) using the same ring-relation machinery as the other
 constraints that bind the previous witness to the next witness, as described
-in Section 2.5.2.
+in [Semantic relations in an Akita fold](./akita-fold.md).
 
 ### Akita: compose the two checks
 
@@ -537,4 +537,17 @@ directly from the committed digit witness.
 
 ## Base-field polynomial at an extension-field point
 
-> **Status:** stub.
+When `CommitmentConfig::EXT_DEGREE > 1`, Akita does not treat a base-field
+multilinear polynomial as an ordinary extension-valued opening of the same
+arity. It first runs the
+[extension-opening reduction](./extension-opening-reduction.md): the low
+$\log_2[\mathbb E:\mathbb F]$ variables are packed into extension-field
+coefficients, and one degree-two tensor sumcheck reduces the original claim to
+a claim on that packed polynomial with fewer variables.
+
+The resulting extension-valued claim, rather than the unreduced base-field
+claim, enters the later fold and evaluation trace. The trace represents its
+extension weights by canonical subfield coordinates; the verifier rejects
+invalid shapes, coordinate counts, and noncanonical images before using them.
+See [extension-field evaluation traces](../verifying/evaluation_trace.md#extension-field-openings).
+Single-field configurations with `EXT_DEGREE == 1` skip this reduction.

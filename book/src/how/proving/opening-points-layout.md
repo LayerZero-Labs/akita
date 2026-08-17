@@ -44,7 +44,7 @@ physical unit is
 [z_hat | e_hat | t_hat]
 ```
 
-and one shared `r_hat` quotient tail follows every unit. The logical orders are
+The logical orders are
 
 ```text
 z_hat[position][commit_digit][fold_digit][A_coefficient]
@@ -67,12 +67,43 @@ t_hat[claim][block_idx][A_row][B_subcolumn][outer_digit][B_coefficient]
 Only live subcolumns are stored. When every role dimension equals A, the
 subcolumn axis has length one and the byte order is the uniform layout.
 
-`WitnessLayout` is the range authority shared by planning, proving, setup,
-relation evaluation, recursive handoff, and verification. Units are ordered by
-chunk and then authenticated relation group. Each unit records its exact
-`global_block_start`, `num_live_blocks`, and coefficient ranges. The one shared
-native quotient tail follows all units. Any successor alignment and Boolean
-padding is one zero suffix after the complete live prefix.
+[`WitnessLayout`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/witness.rs)
+is the range authority shared by planning, proving, setup, relation evaluation,
+recursive handoff, and verification. Units are ordered by chunk and then
+authenticated relation group. Each unit records its exact
+`global_block_start`, `num_live_blocks`, and coefficient ranges.
+
+The complete physical order depends on the realization:
+
+```text
+raw:
+  [chunk-major, relation-group-ordered Z | E | T units]
+  [ordinary consistency, A, B, and D quotient rows]
+
+compressed:
+  [chunk-major, relation-group-ordered Z | E | T units]
+  [ordinary consistency, A, B, and D quotient rows]
+  [alignment to the common relation coefficient block]
+  for compression layer l = 1, 2:
+    [alignment to the largest native F_l or H_l ring dimension]
+    [F_l digit spans, one per group in relation order]
+    [the shared H_l digit span]
+    [F_l quotient rows, in the same group order]
+    [the H_l quotient row]
+  [suffix alignment to the common relation coefficient block]
+```
+
+Thus `r_hat` is logically one quotient family in relation-row order, but its
+compression rows are physically interleaved with the corresponding digit
+layer rather than stored in one contiguous quotient tail. Every alignment
+range is zero. Boolean padding, if needed by a later flat-table sumcheck, is a
+separate zero suffix after the complete live witness.
+
+In compressed mode, the negative-binary constraint is active exactly on one
+interval per layer, from that layer's first `F` digit through the end of its
+shared `H` digit. These intervals include the padded `F` and `H` digit spans,
+but exclude all ordinary and compression quotient rows and all alignment
+ranges. Raw mode has no compression layers or such support intervals.
 
 ## Chunks and fold challenges
 

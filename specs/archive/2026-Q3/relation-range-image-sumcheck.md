@@ -4,12 +4,18 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
-| Revised | 2026-07-31 |
-| Status | implemented; verifier relation/setup unification under review |
+| Revised | 2026-07-31; 2026-08-13 folded into the book and archived |
+| Status | archived |
+| PR | #309 (implementation baseline); #340 (book fold and archive) |
+| Book-chapter | book/src/how/proving/sumcheck-stages.md |
 | Branch | `quang/unify-verifier-setup-weights` |
 | Base | `feat/planner-per-matrix-d` |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
-| Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
+| Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](../../digit-innermost-layout.md), [`role-native-projected-digit-layout.md`](../../role-native-projected-digit-layout.md), [`runtime-ring-cutover.md`](../../runtime-ring-cutover.md), [`packed-sumcheck.md`](../../packed-sumcheck.md) |
+
+> Stage 2's durable relation, range-image, EvaluationTrace, compression, and
+> setup-contribution behavior now lives in the book chapter above. This file is
+> retained as the implementation and performance review record.
 
 ## Summary
 
@@ -489,7 +495,7 @@ own one extra block. Kernels iterate prepared units and runs. They do not assume
 chunk widths, `groups * chunks` rectangularity, or reconstruct offsets.
 
 The coefficient order inside projected E and T ranges is defined by
-[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+[`role-native-projected-digit-layout.md`](../../role-native-projected-digit-layout.md).
 
 ### What generalizes without special arithmetic
 
