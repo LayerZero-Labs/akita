@@ -98,7 +98,9 @@ pub fn sis_role_cell(
 /// Enumerate every exact production matrix-role coverage cell.
 pub fn sis_role_cells() -> Vec<SisRoleCell> {
     let profiles = [
+        SisModulusProfileId::Q31Offset19,
         SisModulusProfileId::Q32Offset99,
+        SisModulusProfileId::Q63Offset259,
         SisModulusProfileId::Q64Offset59,
         SisModulusProfileId::Q128OffsetA7F7,
     ];

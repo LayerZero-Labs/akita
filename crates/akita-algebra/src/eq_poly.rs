@@ -28,8 +28,9 @@ thread_local! {
 ///
 /// This is deliberately separate from serialization's generic sequence cap:
 /// equality tables may be larger than serialized proof vectors, but verifier-
-/// reachable code still needs an explicit allocation ceiling.
-pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 30;
+/// reachable code still needs an explicit allocation ceiling. Two GiB admits
+/// the `2^27`-entry Ext2 factor used by dense 63- and 64-bit nv28 profiles.
+pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 31;
 
 /// Utilities for the equality polynomial `eq(x, y) = Πᵢ (xᵢ yᵢ + (1 − xᵢ)(1 − yᵢ))`.
 pub struct EqPolynomial<E: FieldCore>(PhantomData<E>);
@@ -371,7 +372,7 @@ impl<E: FieldCore> SplitEqEvals<E> {
 mod tests {
     use super::*;
     use crate::RandomSampling;
-    use akita_field::Fp64;
+    use akita_field::{Ext2, Fp64};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -508,6 +509,17 @@ mod tests {
             .checked_mul(2)
             .unwrap();
         EqPolynomial::<F>::check_element_budget("test eq table", entries).unwrap();
+    }
+
+    #[test]
+    fn materialized_budget_covers_nv28_ext2_factor() {
+        type E = Ext2<F>;
+
+        let entries = 1usize << 27;
+        EqPolynomial::<E>::check_element_budget("test nv28 Ext2 factor", entries).unwrap();
+        assert!(
+            EqPolynomial::<E>::check_element_budget("test nv28 Ext2 factor", entries + 1).is_err()
+        );
     }
 
     #[test]

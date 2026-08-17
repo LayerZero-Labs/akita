@@ -8,7 +8,7 @@ use crate::workload::{
     onehot_k_for_num_vars, profile_setup_contribution_mode, run_batched_onehot, run_dense_for,
     run_onehot, run_recursive_multi_group_onehot,
 };
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::proof_optimized::{fp128, fp31, fp32, fp63, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::TranscriptChallenge;
@@ -243,6 +243,26 @@ const PROFILE_SELECTED_MODES: &[ProfileMode] = &[
         name: "onehot_fp32",
         run: run_profile_onehot_fp32,
     },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp32"))]
+    ProfileMode {
+        name: "dense_fp31",
+        run: run_profile_dense_fp31,
+    },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp32"))]
+    ProfileMode {
+        name: "onehot_fp31",
+        run: run_profile_onehot_fp31,
+    },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp64"))]
+    ProfileMode {
+        name: "dense_fp63",
+        run: run_profile_dense_fp63,
+    },
+    #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp64"))]
+    ProfileMode {
+        name: "onehot_fp63",
+        run: run_profile_onehot_fp63,
+    },
     #[cfg(any(feature = "profile-ci", feature = "profile-ci-fp64"))]
     ProfileMode {
         name: "dense_fp64",
@@ -305,6 +325,22 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp32,
     },
     ProfileMode {
+        name: "dense_fp31",
+        run: run_profile_dense_fp31,
+    },
+    ProfileMode {
+        name: "onehot_fp31",
+        run: run_profile_onehot_fp31,
+    },
+    ProfileMode {
+        name: "dense_fp63",
+        run: run_profile_dense_fp63,
+    },
+    ProfileMode {
+        name: "onehot_fp63",
+        run: run_profile_onehot_fp63,
+    },
+    ProfileMode {
         name: "dense_fp64",
         run: run_profile_dense_fp64,
     },
@@ -341,6 +377,10 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     // with an explicit compatible `AKITA_MODE=` and `AKITA_NUM_VARS=`.
     "dense_fp32",
     "onehot_fp32",
+    "dense_fp31",
+    "onehot_fp31",
+    "dense_fp63",
+    "onehot_fp63",
     "dense_fp64",
     "onehot_fp64",
 ];
@@ -570,6 +610,19 @@ fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32", &title, nv, num_polys);
 }
 
+fn run_profile_onehot_fp31(nv: usize, num_polys: usize) {
+    type Cfg = fp31::OneHot;
+    let title = small_field_onehot_title("fp31", nv, num_polys);
+    run_onehot_mode_for::<fp31::Field, { Cfg::D }, Cfg>("onehot_fp31", &title, nv, num_polys);
+}
+
+fn run_profile_dense_fp31(nv: usize, num_polys: usize) {
+    type Cfg = fp31::Dense;
+    assert_singleton_mode("dense_fp31", num_polys);
+    let title = small_field_dense_title("fp31");
+    run_dense_mode_for::<fp31::Field, { Cfg::D }, Cfg>("dense_fp31", &title, nv);
+}
+
 fn run_profile_dense_fp32(nv: usize, num_polys: usize) {
     type Cfg = fp32::Dense;
     assert_singleton_mode("dense_fp32", num_polys);
@@ -582,6 +635,19 @@ fn run_profile_dense_fp64(nv: usize, num_polys: usize) {
     assert_singleton_mode("dense_fp64", num_polys);
     let title = small_field_dense_title("fp64");
     run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64", &title, nv);
+}
+
+fn run_profile_dense_fp63(nv: usize, num_polys: usize) {
+    type Cfg = fp63::Dense;
+    assert_singleton_mode("dense_fp63", num_polys);
+    let title = small_field_dense_title("fp63");
+    run_dense_mode_for::<fp63::Field, { Cfg::D }, Cfg>("dense_fp63", &title, nv);
+}
+
+fn run_profile_onehot_fp63(nv: usize, num_polys: usize) {
+    type Cfg = fp63::OneHot;
+    let title = small_field_onehot_title("fp63", nv, num_polys);
+    run_onehot_mode_for::<fp63::Field, { Cfg::D }, Cfg>("onehot_fp63", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp64(nv: usize, num_polys: usize) {

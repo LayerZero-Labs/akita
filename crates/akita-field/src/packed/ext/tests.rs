@@ -4,6 +4,7 @@ use crate::Fp32;
 use crate::Fp64;
 use crate::Prime31Offset19;
 use crate::Prime32Offset99;
+use crate::Prime63Offset259;
 use crate::Prime64Offset59;
 use crate::RandomSampling;
 use crate::RingCore;
@@ -31,6 +32,8 @@ type R4Prime32 = FpExt4<Prime32Offset99>;
 type PR4Prime32 = PackedFpExt4<Prime32Offset99, <Prime32Offset99 as HasPacking>::Packing>;
 type Fp64Ext2 = FpExt2<Prime64Offset59, TwoNr>;
 type PFp64Ext2 = PackedFpExt2<Prime64Offset59, TwoNr, <Prime64Offset59 as HasPacking>::Packing>;
+type Fp63Ext2 = FpExt2<Prime63Offset259, TwoNr>;
+type PFp63Ext2 = PackedFpExt2<Prime63Offset259, TwoNr, <Prime63Offset259 as HasPacking>::Packing>;
 
 fn fp32_ext_edge_values<const P: u32>() -> [Fp32<P>; 4] {
     [
@@ -122,6 +125,36 @@ fn packed_fp_ext2_mul_fp64() {
             pc.extract(i),
             *a * *b,
             "word-sized packed FpExt2 mul mismatch at lane {i}"
+        );
+    }
+}
+
+#[test]
+fn packed_fp_ext2_mul_fp63_fused() {
+    let mut rng = StdRng::seed_from_u64(263);
+    let width = <PFp63Ext2 as PackedValue>::WIDTH;
+    let mut a_elems: Vec<Fp63Ext2> = (0..width).map(|_| Fp63Ext2::random(&mut rng)).collect();
+    let mut b_elems: Vec<Fp63Ext2> = (0..width).map(|_| Fp63Ext2::random(&mut rng)).collect();
+
+    let max = Prime63Offset259::zero() - Prime63Offset259::one();
+    a_elems[0] = Fp63Ext2::new(max, max);
+    b_elems[0] = Fp63Ext2::new(max, max);
+
+    let pa = PFp63Ext2::from_fn(|i| a_elems[i]);
+    let pb = PFp63Ext2::from_fn(|i| b_elems[i]);
+    let product = pa * pb;
+    let square = pa.square();
+
+    for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
+        assert_eq!(
+            product.extract(i),
+            *a * *b,
+            "63-bit packed FpExt2 mul mismatch at lane {i}"
+        );
+        assert_eq!(
+            square.extract(i),
+            a.square(),
+            "63-bit packed FpExt2 square mismatch at lane {i}"
         );
     }
 }

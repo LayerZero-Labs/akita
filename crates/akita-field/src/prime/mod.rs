@@ -23,6 +23,6 @@ pub use fp64::Fp64;
 pub use pseudo_mersenne::{
     is_registered_prime_offset, pseudo_mersenne_modulus, registered_prime_offset_spec,
     Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195,
-    Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
+    Prime48Offset59, Prime56Offset27, Prime63Offset259, Prime64Offset59, PrimeOffsetSpec,
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };

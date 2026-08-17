@@ -20,14 +20,18 @@ pub struct CompressionSisCell {
     pub sis_max_width: u64,
 }
 
-/// Six rank-one cells: `(profile, ring_dimension, sis_max_width)`.
+/// Ten rank-one cells: `(profile, ring_dimension, sis_max_width)`.
 const COMPRESSION_SIS_CELLS: &[(SisModulusProfileId, u32, u64)] = &[
     (SisModulusProfileId::Q128OffsetA7F7, 8, 508),
     (SisModulusProfileId::Q128OffsetA7F7, 16, 7_077),
     (SisModulusProfileId::Q64Offset59, 16, 254),
     (SisModulusProfileId::Q64Offset59, 32, 3_538),
+    (SisModulusProfileId::Q63Offset259, 16, 236),
+    (SisModulusProfileId::Q63Offset259, 32, 3_256),
     (SisModulusProfileId::Q32Offset99, 32, 127),
     (SisModulusProfileId::Q32Offset99, 64, 1_769),
+    (SisModulusProfileId::Q31Offset19, 32, 110),
+    (SisModulusProfileId::Q31Offset19, 64, 1_497),
 ];
 
 /// Enumerate the exact production compression coverage cells.
@@ -94,7 +98,7 @@ mod tests {
 
     #[test]
     fn coverage_is_exactly_the_six_rank_one_compression_cells() {
-        assert_eq!(COMPRESSION_SIS_CELLS.len(), 6);
+        assert_eq!(COMPRESSION_SIS_CELLS.len(), 10);
         for &(profile, d, _) in COMPRESSION_SIS_CELLS {
             assert!(compression_sis_cell(profile, d, 1).is_some());
         }

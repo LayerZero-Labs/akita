@@ -151,7 +151,7 @@ pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::Hones
 ///   and Fiat-Shamir challenges.
 ///
 /// The degree-one specialization `Field = ExtField` is the production fp128
-/// path. For fp32/fp64 presets, extension-opening reduction still aligns the
+/// path. For fp31/fp32/fp63/fp64 presets, extension-opening reduction still aligns the
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.

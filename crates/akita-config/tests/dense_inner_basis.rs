@@ -26,9 +26,9 @@ struct Snapshot {
 
 fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
     let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(26),
+        PolynomialGroupLayout::singleton(28),
     ))
-    .expect("generated dense nv=26 schedule");
+    .expect("generated dense nv=28 schedule");
     let root = &schedule.schedule().root.params.final_group.commitment;
     Snapshot {
         inner_basis: root.log_basis_inner,
@@ -51,7 +51,7 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
 }
 
 #[test]
-fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
+fn dense_nv28_proof_first_winners_keep_inner_basis_independent() {
     let fp32 = snapshot::<fp32::Dense>();
     let fp64 = snapshot::<fp64::Dense>();
     let fp128 = snapshot::<fp128::Dense>();
@@ -61,20 +61,20 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
         Snapshot {
             inner_basis: 5,
             opening_basis: 3,
-            positions: 256,
-            blocks: 512,
+            positions: 512,
+            blocks: 1024,
             outer_slices: 4,
             inner_digits: 7,
             n_a: 3,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 917_504,
+            a_input_raw: 1_835_008,
             a_output_raw: 1_536,
-            b_input_raw: 2_162_688,
+            b_input_raw: 4_325_376,
             b_output_raw: 256,
-            d_input_raw: 2_883_584,
+            d_input_raw: 5_767_168,
             d_output_raw: 256,
-            next_witness: 16_205_824,
+            next_witness: 32_327_680,
         }
     );
 
@@ -84,20 +84,20 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
         Snapshot {
             inner_basis: 8,
             opening_basis: 3,
-            positions: 512,
+            positions: 1024,
             blocks: 512,
-            outer_slices: 4,
+            outer_slices: 2,
             inner_digits: 8,
-            n_a: 4,
+            n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 1_048_576,
+            a_input_raw: 4_194_304,
             a_output_raw: 1_024,
-            b_input_raw: 2_883_584,
+            b_input_raw: 5_767_168,
             b_output_raw: 256,
-            d_input_raw: 2_883_584,
+            d_input_raw: 5_767_168,
             d_output_raw: 256,
-            next_witness: 20_854_016,
+            next_witness: 42_573_568,
         }
     );
 
@@ -107,20 +107,20 @@ fn dense_nv26_proof_first_winners_keep_inner_basis_independent() {
         Snapshot {
             inner_basis: 7,
             opening_basis: 3,
-            positions: 512,
-            blocks: 512,
+            positions: 1024,
+            blocks: 1024,
             outer_slices: 2,
             inner_digits: 19,
             n_a: 2,
             n_b: 1,
             n_d: 1,
-            a_input_raw: 2_490_368,
+            a_input_raw: 4_980_736,
             a_output_raw: 512,
-            b_input_raw: 5_636_096,
+            b_input_raw: 11_272_192,
             b_output_raw: 64,
-            d_input_raw: 5_636_096,
+            d_input_raw: 11_272_192,
             d_output_raw: 64,
-            next_witness: 31_922_560,
+            next_witness: 63_773_056,
         }
     );
 }

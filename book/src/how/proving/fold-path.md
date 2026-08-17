@@ -9,7 +9,7 @@ the claim field coincides with the coefficient field.
 | Geometry | Criterion | Production presets | EOR |
 |----------|-----------|--------------------|-----|
 | **Single-field** | `CommitmentConfig::EXT_DEGREE == 1` (`Field` plays both roles) | `fp128::*` | never |
-| **Extension-claim** | `EXT_DEGREE > 1` (claims in a proper extension of the coefficient field) | `fp32::*`, `fp64::*` | root when enabled; suffix always |
+| **Extension-claim** | `EXT_DEGREE > 1` (claims in a proper extension of the coefficient field) | `fp31::*`, `fp32::*`, `fp63::*`, `fp64::*` | root when enabled; suffix always |
 
 See [base-field coefficients vs extension evaluation points](../../foundations/rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points).
 

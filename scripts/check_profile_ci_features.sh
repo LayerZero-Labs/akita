@@ -26,8 +26,12 @@ profile_modes = repo / "crates/akita-pcs/examples/profile/modes.rs"
 modes_rs = profile_modes
 
 MODE_FEATURE = {
+    "onehot_fp31": "schedules-fp31-onehot",
+    "dense_fp31": "schedules-fp31-dense",
     "onehot_fp32": "schedules-fp32-onehot",
     "dense_fp32": "schedules-fp32-dense",
+    "onehot_fp63": "schedules-fp63-onehot",
+    "dense_fp63": "schedules-fp63-dense",
     "onehot_fp64": "schedules-fp64-onehot",
     "dense_fp64": "schedules-fp64-dense",
     "dense_fp128": "schedules-fp128-dense",
@@ -40,8 +44,12 @@ MODE_FEATURE = {
     "onehot_fp128_multi_chunk_w4r2": "schedules-fp128-onehot-multi-chunk-w4r2",
 }
 MODE_NUM_POLYS = {
+    "onehot_fp31": {1},
+    "dense_fp31": {1},
     "onehot_fp32": {1},
     "dense_fp32": {1},
+    "onehot_fp63": {1},
+    "dense_fp63": {1},
     "onehot_fp64": {1},
     "dense_fp64": {1},
     "dense_fp128": {1},
@@ -54,10 +62,14 @@ MODE_NUM_POLYS = {
     "onehot_fp128_multi_chunk_w4r2": {1},
 }
 MODE_NUM_VARS = {
+    "onehot_fp31": {30},
+    "dense_fp31": {28},
     "onehot_fp32": {30},
-    "dense_fp32": {26},
+    "dense_fp32": {28},
+    "onehot_fp63": {30},
+    "dense_fp63": {28},
     "onehot_fp64": {30},
-    "dense_fp64": {26},
+    "dense_fp64": {28},
     "dense_fp128": {28},
     "onehot_fp128": {36},
     "onehot_fp128_multi_group": {32},

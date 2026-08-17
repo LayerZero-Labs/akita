@@ -16,7 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const DEFAULT_EUCLIDEAN_TARGET_BITS: f64 = 128.0;
 /// Exact modulus domain owned by the independent Euclidean table.
 pub const EUCLIDEAN_FAMILIES: &[AkitaModulusProfileId] = &[
+    AkitaModulusProfileId::Q31Offset19,
     AkitaModulusProfileId::Q32Offset99,
+    AkitaModulusProfileId::Q63Offset259,
     AkitaModulusProfileId::Q64Offset59,
     AkitaModulusProfileId::Q128OffsetA7F7,
 ];

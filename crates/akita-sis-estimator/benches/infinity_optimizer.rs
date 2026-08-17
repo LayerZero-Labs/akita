@@ -346,7 +346,9 @@ fn format_case_label(
 
 fn family_label(family: AkitaModulusProfileId) -> &'static str {
     match family {
+        AkitaModulusProfileId::Q31Offset19 => "q31",
         AkitaModulusProfileId::Q32Offset99 => "q32",
+        AkitaModulusProfileId::Q63Offset259 => "q63",
         AkitaModulusProfileId::Q64Offset59 => "q64",
         AkitaModulusProfileId::Q128OffsetA7F7 => "q128",
     }

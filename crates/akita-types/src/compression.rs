@@ -233,8 +233,8 @@ pub const COMPRESSION_POLICY: CompressionPolicyId =
 pub const fn compression_ring_dimensions(profile: SisModulusProfileId) -> [usize; 2] {
     match profile {
         SisModulusProfileId::Q128OffsetA7F7 => [16, 8],
-        SisModulusProfileId::Q64Offset59 => [32, 16],
-        SisModulusProfileId::Q32Offset99 => [64, 32],
+        SisModulusProfileId::Q63Offset259 | SisModulusProfileId::Q64Offset59 => [32, 16],
+        SisModulusProfileId::Q31Offset19 | SisModulusProfileId::Q32Offset99 => [64, 32],
     }
 }
 

@@ -113,6 +113,33 @@ fn prime_offset_profiles_are_probable_primes() {
 }
 
 #[test]
+fn selected_subword_primes_are_largest_admissible_candidates() {
+    let selected31 = pseudo_mersenne_modulus(31, 19).expect("valid modulus");
+    assert_eq!(selected31 % 8, 5);
+    assert!(is_probable_prime_miller_rabin(selected31));
+    for offset in 1..19 {
+        let candidate = pseudo_mersenne_modulus(31, offset).expect("valid modulus");
+        if candidate % 8 == 5 {
+            assert!(!is_probable_prime_miller_rabin(candidate));
+        }
+    }
+
+    let selected63 = pseudo_mersenne_modulus(63, 259).expect("valid modulus");
+    assert_eq!(selected63 % 8, 5);
+    assert!(is_probable_prime_miller_rabin(selected63));
+    for offset in 1..259 {
+        let candidate = pseudo_mersenne_modulus(63, offset).expect("valid modulus");
+        let admissible = candidate % 8 == 5 || candidate % 16 == 9 || candidate % 32 == 17;
+        if admissible {
+            assert!(
+                !is_probable_prime_miller_rabin(candidate),
+                "found larger admissible 63-bit prime: {candidate}"
+            );
+        }
+    }
+}
+
+#[test]
 fn miller_rabin_rejects_known_composites() {
     let composites: [u128; 9] = [4, 9, 15, 21, 341, 561, 645, 1105, 1729];
     for n in composites {

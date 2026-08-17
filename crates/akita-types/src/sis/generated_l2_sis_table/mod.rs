@@ -5,15 +5,17 @@
 // Keys bound the squared norm of the complete scalar collision vector.
 
 mod q128;
+mod q31;
 mod q32;
+mod q63;
 mod q64;
 
 use super::SisModulusProfileId;
 
 /// SHA-256 digest of the generated audit CSV, including every accepted boundary and rejected successor.
 pub(crate) const TABLE_DIGEST: [u8; 32] = [
-    0xa1, 0xcc, 0x0a, 0x06, 0x08, 0x97, 0x44, 0x14, 0x5b, 0x61, 0x91, 0x9c, 0xf0, 0x01, 0xea, 0x26,
-    0x0c, 0x95, 0xa4, 0xbb, 0xa1, 0x61, 0xff, 0xda, 0xff, 0x55, 0x39, 0x1d, 0x0d, 0xfa, 0x10, 0x2a,
+    0x88, 0x94, 0x7c, 0x2a, 0x24, 0x2e, 0xaa, 0x27, 0x95, 0xa4, 0x88, 0xd3, 0x81, 0x3e, 0x3d, 0x38,
+    0x90, 0x31, 0x58, 0x89, 0xc4, 0x1d, 0x0c, 0x3d, 0xad, 0x15, 0x20, 0xa2, 0x1f, 0xd1, 0x2d, 0xfa,
 ];
 
 /// Generated SIS max-width table: for each `(family, d, collision_l2_sq)` the
@@ -25,7 +27,9 @@ pub(crate) fn sis_max_widths(
     collision_l2_sq: u128,
 ) -> Option<&'static [u64]> {
     match family {
+        SisModulusProfileId::Q31Offset19 => q31::sis_max_widths(d, collision_l2_sq),
         SisModulusProfileId::Q32Offset99 => q32::sis_max_widths(d, collision_l2_sq),
+        SisModulusProfileId::Q63Offset259 => q63::sis_max_widths(d, collision_l2_sq),
         SisModulusProfileId::Q64Offset59 => q64::sis_max_widths(d, collision_l2_sq),
         SisModulusProfileId::Q128OffsetA7F7 => q128::sis_max_widths(d, collision_l2_sq),
     }

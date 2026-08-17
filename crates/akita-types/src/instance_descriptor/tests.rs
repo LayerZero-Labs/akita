@@ -104,10 +104,26 @@ fn schedule_selection_is_bound_into_the_v1_instance_descriptor() {
 }
 
 #[test]
-fn rejects_removed_q16_sis_modulus_profile_tag() {
-    let err = decode_sis_modulus_profile(std::io::Cursor::new([3u8]), Compress::No, Validate::Yes)
-        .expect_err("historical Q16 tag 3 must be rejected");
-    assert!(matches!(err, SerializationError::InvalidData(_)));
+fn setup_section_roundtrips_new_sis_modulus_profiles() {
+    for (profile, expected_tag) in [
+        (SisModulusProfileId::Q31Offset19, 3),
+        (SisModulusProfileId::Q63Offset259, 4),
+    ] {
+        let mut setup = sample_descriptor().setup;
+        setup.sis_modulus_profile = profile;
+        let mut bytes = Vec::new();
+        setup
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize setup section");
+
+        let profile_offset = decomposition_size(&setup.decomposition, Compress::No);
+        assert_eq!(bytes[profile_offset], expected_tag);
+        assert_eq!(
+            SetupSection::deserialize_uncompressed(&bytes[..], &())
+                .expect("deserialize setup section"),
+            setup
+        );
+    }
 }
 
 #[test]

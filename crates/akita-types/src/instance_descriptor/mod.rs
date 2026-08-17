@@ -862,6 +862,8 @@ fn decode_sis_modulus_profile<R: Read>(
         0 => Ok(SisModulusProfileId::Q32Offset99),
         1 => Ok(SisModulusProfileId::Q64Offset59),
         2 => Ok(SisModulusProfileId::Q128OffsetA7F7),
+        3 => Ok(SisModulusProfileId::Q31Offset19),
+        4 => Ok(SisModulusProfileId::Q63Offset259),
         other => Err(SerializationError::InvalidData(format!(
             "unknown SisModulusProfileId tag {other}"
         ))),

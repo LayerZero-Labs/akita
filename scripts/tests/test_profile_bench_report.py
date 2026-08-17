@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 class ProfileBenchReportTests(unittest.TestCase):
@@ -56,6 +57,46 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             profile_modes_from_modes_rs(modes_rs, profile_ci=True),
             {"dense_fp128", "onehot_fp128"},
         )
+
+    def test_merge_base_policy_allows_an_unavailable_merge_base(self) -> None:
+        from scripts.profile_bench_merge_base_policy import (
+            SKIP_UNSET_MERGE_BASE,
+            resolve_baseline,
+        )
+
+        decision = resolve_baseline(None, ["dense_fp32:28:1"])
+
+        self.assertFalse(decision.available)
+        self.assertEqual(decision.skip_reason, SKIP_UNSET_MERGE_BASE)
+
+    def test_merge_base_policy_skips_comparison_when_old_catalog_fails_smoke(self) -> None:
+        from scripts.profile_bench_merge_base_policy import (
+            SKIP_SMOKE_FAILED,
+            modes_defined_on_merge_base,
+            resolve_baseline,
+        )
+
+        smoke_binary = pathlib.Path("/tmp/profile-base")
+        case_spec = "dense_fp32:28:1"
+        with (
+            mock.patch(
+                "scripts.profile_bench_merge_base_policy.missing_modes_for_cases",
+                return_value=[],
+            ),
+            mock.patch.object(pathlib.Path, "is_file", return_value=True),
+            mock.patch(
+                "scripts.profile_bench_merge_base_policy.smoke_profile_cases",
+                return_value=[case_spec],
+            ),
+        ):
+            decision = resolve_baseline(
+                "merge-base", [case_spec], smoke_binary=smoke_binary
+            )
+
+        self.assertFalse(decision.available)
+        self.assertEqual(decision.skip_reason, SKIP_SMOKE_FAILED)
+        self.assertEqual(decision.smoke_failures, (case_spec,))
+        self.assertTrue(modes_defined_on_merge_base(decision))
 
     def test_plan_case_runs_orders_warmups_then_measured(self) -> None:
         from scripts.profile_bench_report import BenchmarkCaseSpec, ScheduledRun, plan_case_runs
@@ -1239,7 +1280,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             normalize_case_summary(
                 {
                     "mode": "dense_fp32",
-                    "num_vars": 26,
+                    "num_vars": 28,
                     "num_polys": 1,
                     "benchmark_shard": "1-fp32-base",
                 }
@@ -1255,7 +1296,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             normalize_case_summary(
                 {
                     "mode": "dense_fp64",
-                    "num_vars": 26,
+                    "num_vars": 28,
                     "num_polys": 1,
                     "benchmark_shard": "2-fp64-base",
                 }
@@ -1270,24 +1311,24 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         shard_section, statement_section = report.split("### Public opening statements")
         self.assertIn("### Benchmark shards", shard_section)
         self.assertIn(
-            "| <code>1-fp32-base</code> | Fp32 dense nv26, direct setup check<br>Fp32 one\\-hot nv30, direct setup check |",
+            "| <code>1-fp32-base</code> | Fp32 dense nv28, direct setup check<br>Fp32 one\\-hot nv30, direct setup check |",
             shard_section,
         )
         self.assertIn(
-            "| <code>2-fp64-base</code> | Fp64 dense nv26, direct setup check |",
+            "| <code>2-fp64-base</code> | Fp64 dense nv28, direct setup check |",
             shard_section,
         )
         self.assertIn("Over Fp32", statement_section)
-        self.assertIn("Fp32 dense nv26, direct setup check", statement_section)
+        self.assertIn("Fp32 dense nv28, direct setup check", statement_section)
         self.assertIn("Over Fp64", statement_section)
-        self.assertIn("Fp64 dense nv26, direct setup check", statement_section)
+        self.assertIn("Fp64 dense nv28, direct setup check", statement_section)
 
     def test_partial_merge_base_coverage_is_explicit(self) -> None:
         from scripts.profile_bench_report import render_report
 
         case = {
             "mode": "dense_fp32",
-            "num_vars": 26,
+            "num_vars": 28,
             "num_polys": 1,
             "benchmark_shard": "1-fp32-base",
             "exit_code": 1,
@@ -1693,7 +1734,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             write_aggregate_summaries,
         )
 
-        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=26, num_polys=1)
+        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=28, num_polys=1)
         summary = {
             "case_id": case.case_id,
             "exit_code": 0,

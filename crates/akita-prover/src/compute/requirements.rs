@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "schedules-default")]
-    fn dense_small_field_nv26_cache_plan_matches_adaptive_geometry() {
+    fn dense_small_field_nv28_cache_plan_matches_adaptive_geometry() {
         for (
             schedule,
             expected_root_d,
@@ -694,25 +694,25 @@ mod tests {
         ) in [
             (
                 fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-                    PolynomialGroupLayout::singleton(26),
+                    PolynomialGroupLayout::singleton(28),
                 ))
                 .expect("generated fp32 dense schedule")
                 .into_schedule(),
                 512,
                 5,
-                5376,
+                10_752,
                 false,
             ),
             (
                 fp64::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-                    PolynomialGroupLayout::singleton(26),
+                    PolynomialGroupLayout::singleton(28),
                 ))
                 .expect("generated fp64 dense schedule")
                 .into_schedule(),
-                256,
+                512,
                 8,
                 16_384,
-                false,
+                true,
             ),
         ] {
             let root = &schedule.root.params.final_group.commitment;

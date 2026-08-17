@@ -23,7 +23,7 @@ use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
 };
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::proof_optimized::{fp128, fp31, fp32, fp63, fp64};
 use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 
 struct ScalarPreplan {
@@ -168,7 +168,7 @@ const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
 
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
-    PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
 ];
 
 const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
@@ -181,7 +181,7 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     // the planned schedule disagree on the fold-level-1 witness length.
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
-    PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
 ];
 
 const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1)];
@@ -398,6 +398,16 @@ fn fp32_onehot_group_batch_keys(
     )
 }
 
+fn fp31_onehot_group_batch_keys(
+    preplans: &GenerationPreplans,
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    single_pre_group_batch_keys::<fp31::OneHot>(
+        preplans,
+        PolynomialGroupLayout::new(14, 1),
+        PolynomialGroupLayout::new(20, 1),
+    )
+}
+
 /// Precommit-plus-final row backing the `fp32 × Dense × pre` matrix cell.
 fn fp32_dense_group_batch_keys(
     preplans: &GenerationPreplans,
@@ -406,6 +416,16 @@ fn fp32_dense_group_batch_keys(
     // with at least two folds below 20, so 14 cannot produce the row this
     // group's frozen profile is read from.
     single_pre_group_batch_keys::<fp32::Dense>(
+        preplans,
+        PolynomialGroupLayout::new(20, 1),
+        PolynomialGroupLayout::new(20, 1),
+    )
+}
+
+fn fp31_dense_group_batch_keys(
+    preplans: &GenerationPreplans,
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    single_pre_group_batch_keys::<fp31::Dense>(
         preplans,
         PolynomialGroupLayout::new(20, 1),
         PolynomialGroupLayout::new(20, 1),
@@ -422,6 +442,16 @@ fn fp64_dense_group_batch_keys(
     preplans: &GenerationPreplans,
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     single_pre_group_batch_keys::<fp64::Dense>(
+        preplans,
+        PolynomialGroupLayout::new(16, 1),
+        PolynomialGroupLayout::new(20, 1),
+    )
+}
+
+fn fp63_dense_group_batch_keys(
+    preplans: &GenerationPreplans,
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+    single_pre_group_batch_keys::<fp63::Dense>(
         preplans,
         PolynomialGroupLayout::new(16, 1),
         PolynomialGroupLayout::new(20, 1),
@@ -689,6 +719,22 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         no_group_batch_keys
     ),
     family_row!(
+        "fp63_dense",
+        "FP63_DENSE_SCHEDULES",
+        "fp63-dense",
+        FP64_DENSE_KEYS,
+        fp63::Dense,
+        fp63_dense_group_batch_keys
+    ),
+    family_row!(
+        "fp63_onehot",
+        "FP63_ONEHOT_SCHEDULES",
+        "fp63-onehot",
+        FP64_ONEHOT_KEYS,
+        fp63::OneHot,
+        no_group_batch_keys
+    ),
+    family_row!(
         "fp64_dense",
         "FP64_DENSE_SCHEDULES",
         "fp64-dense",
@@ -703,6 +749,22 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         FP64_ONEHOT_KEYS,
         fp64::OneHot,
         no_group_batch_keys
+    ),
+    family_row!(
+        "fp31_dense",
+        "FP31_DENSE_SCHEDULES",
+        "fp31-dense",
+        FP32_DENSE_KEYS,
+        fp31::Dense,
+        fp31_dense_group_batch_keys
+    ),
+    family_row!(
+        "fp31_onehot",
+        "FP31_ONEHOT_SCHEDULES",
+        "fp31-onehot",
+        FP32_ONEHOT_KEYS,
+        fp31::OneHot,
+        fp31_onehot_group_batch_keys
     ),
     family_row!(
         "fp32_dense",
@@ -725,6 +787,22 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn small_field_dense_families_emit_nv28_without_nv26() {
+        for family_name in ["fp31_dense", "fp32_dense", "fp63_dense", "fp64_dense"] {
+            let family = ALL_GENERATED_FAMILIES
+                .iter()
+                .find(|family| family.module_name == family_name)
+                .expect("known small-field dense family");
+            assert!(family
+                .scalar_keys
+                .contains(&PolynomialGroupLayout::singleton(28)));
+            assert!(!family
+                .scalar_keys
+                .contains(&PolynomialGroupLayout::singleton(26)));
+        }
+    }
 
     #[test]
     fn scalar_preplans_deduplicate_by_exact_producer_and_layout() {

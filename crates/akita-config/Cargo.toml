@@ -36,6 +36,10 @@ schedules-default = [
   "schedules-fp128-dense",
   "schedules-fp32-dense",
   "schedules-fp32-onehot",
+  "schedules-fp31-dense",
+  "schedules-fp31-onehot",
+  "schedules-fp63-dense",
+  "schedules-fp63-onehot",
   "schedules-fp64-dense",
   "schedules-fp64-onehot",
 ]
@@ -71,6 +75,10 @@ schedules-fp128-dense-multi-chunk = ["akita-schedules/fp128-dense-multi-chunk"]
 
 schedules-fp32-dense = ["akita-schedules/fp32-dense"]
 schedules-fp32-onehot = ["akita-schedules/fp32-onehot"]
+schedules-fp31-dense = ["akita-schedules/fp31-dense"]
+schedules-fp31-onehot = ["akita-schedules/fp31-onehot"]
+schedules-fp63-dense = ["akita-schedules/fp63-dense"]
+schedules-fp63-onehot = ["akita-schedules/fp63-onehot"]
 schedules-fp64-dense = ["akita-schedules/fp64-dense"]
 schedules-fp64-onehot = ["akita-schedules/fp64-onehot"]
 

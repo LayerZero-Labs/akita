@@ -70,6 +70,8 @@ pub(crate) const PRIME40_OFFSET195_OFFSET: u16 = 195;
 pub(crate) const PRIME48_OFFSET59_OFFSET: u16 = 59;
 /// `offset` for `k = 56`.
 pub(crate) const PRIME56_OFFSET27_OFFSET: u16 = 27;
+/// `offset` for `k = 63`.
+pub(crate) const PRIME63_OFFSET259_OFFSET: u16 = 259;
 /// `offset` for `k = 64`.
 pub(crate) const PRIME64_OFFSET59_OFFSET: u16 = 59;
 /// `offset` for `k = 128`.
@@ -96,6 +98,9 @@ pub(crate) const PRIME48_OFFSET59_MODULUS: u64 =
 /// `2^56 - 27`.
 pub(crate) const PRIME56_OFFSET27_MODULUS: u64 =
     ((1u128 << 56) - (PRIME56_OFFSET27_OFFSET as u128)) as u64;
+/// `2^63 - 259`.
+pub(crate) const PRIME63_OFFSET259_MODULUS: u64 =
+    ((1u128 << 63) - (PRIME63_OFFSET259_OFFSET as u128)) as u64;
 /// `2^64 - 59`.
 pub(crate) const PRIME64_OFFSET59_MODULUS: u64 = u64::MAX - ((PRIME64_OFFSET59_OFFSET as u64) - 1);
 /// `2^128 - 275`.
@@ -116,13 +121,15 @@ pub type Prime40Offset195 = Fp64<PRIME40_OFFSET195_MODULUS>;
 pub type Prime48Offset59 = Fp64<PRIME48_OFFSET59_MODULUS>;
 /// Prime field for `2^56 - 27`.
 pub type Prime56Offset27 = Fp64<PRIME56_OFFSET27_MODULUS>;
+/// Prime field for `2^63 - 259`.
+pub type Prime63Offset259 = Fp64<PRIME63_OFFSET259_MODULUS>;
 /// Prime field for `2^64 - 59`.
 pub type Prime64Offset59 = Fp64<PRIME64_OFFSET59_MODULUS>;
 
 /// `2^k - offset` profiles currently enabled in-code.
 ///
 /// Every enabled entry satisfies the current in-code `2^k - offset` policy.
-pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
+pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 10] = [
     PrimeOffsetSpec {
         bits: 24,
         offset: PRIME24_OFFSET3_OFFSET,
@@ -159,6 +166,11 @@ pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
         modulus: PRIME56_OFFSET27_MODULUS as u128,
     },
     PrimeOffsetSpec {
+        bits: 63,
+        offset: PRIME63_OFFSET259_OFFSET,
+        modulus: PRIME63_OFFSET259_MODULUS as u128,
+    },
+    PrimeOffsetSpec {
         bits: 64,
         offset: PRIME64_OFFSET59_OFFSET,
         modulus: PRIME64_OFFSET59_MODULUS as u128,
@@ -171,4 +183,4 @@ pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
 ];
 
 // All PseudoMersenneField impls for Fp32/Fp64/Fp128 are blanket impls in
-// their respective modules (fp32.rs, fp64.rs, fp128.rs).
+// their respective storage-width modules (fp32.rs, fp64.rs, fp128.rs).

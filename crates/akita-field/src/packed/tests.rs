@@ -1,7 +1,7 @@
 use super::{HasPacking, PackedField, PackedValue};
 use crate::{
     CanonicalField, FieldCore, Fp32, Prime128Offset275, Prime24Offset3, Prime31Offset19,
-    Prime32Offset99, Prime40Offset195, Prime64Offset59, RandomSampling,
+    Prime32Offset99, Prime40Offset195, Prime63Offset259, Prime64Offset59, RandomSampling,
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -91,6 +91,32 @@ where
         Fp32::<P>::one(),
         p_minus_two,
         p_minus_one,
+    ];
+    let a = PF::from_fn(|i| values[i % values.len()]);
+    let b = PF::from_fn(|i| values[(i + 1) % values.len()]);
+
+    let add = a + b;
+    let sub = a - b;
+    let mul = a * b;
+
+    for lane in 0..PF::WIDTH {
+        let lhs = values[lane % values.len()];
+        let rhs = values[(lane + 1) % values.len()];
+        assert_eq!(add.extract(lane), lhs + rhs, "packed add edge lane {lane}");
+        assert_eq!(sub.extract(lane), lhs - rhs, "packed sub edge lane {lane}");
+        assert_eq!(mul.extract(lane), lhs * rhs, "packed mul edge lane {lane}");
+    }
+}
+
+fn check_packed_fp64_edge_lanes<const P: u64, PF>()
+where
+    PF: PackedField<Scalar = crate::Fp64<P>> + PackedValue<Value = crate::Fp64<P>>,
+{
+    let values = [
+        crate::Fp64::<P>::zero(),
+        crate::Fp64::<P>::one(),
+        crate::Fp64::<P>::from_canonical_u64(P - 2),
+        crate::Fp64::<P>::from_canonical_u64(P - 1),
     ];
     let a = PF::from_fn(|i| values[i % values.len()]);
     let b = PF::from_fn(|i| values[(i + 1) % values.len()]);
@@ -322,6 +348,30 @@ fn packed_fp64_40b_add_sub_mul() {
     type F = Prime40Offset195;
     type PF = <F as HasPacking>::Packing;
     check_packed_add_sub_mul::<F, PF>(0xaa40_bb40_cc40_dd40);
+}
+
+#[test]
+fn packed_fp64_63b_add_sub_mul() {
+    type F = Prime63Offset259;
+    type PF = <F as HasPacking>::Packing;
+    check_packed_add_sub_mul::<F, PF>(0xaa63_bb63_cc63_dd63);
+}
+
+/// Regression guard for the carry in the first packed Solinas fold.
+///
+/// For `2^63 - 259`, `259 * (product >> 63)` exceeds one `u64` lane for
+/// large products. Dropping that carry makes `(P - 1)^2` differ from one.
+#[test]
+fn packed_fp64_63b_mul_first_fold_carry() {
+    type F = Prime63Offset259;
+    type PF = <F as HasPacking>::Packing;
+    const P: u64 = crate::prime::pseudo_mersenne::PRIME63_OFFSET259_MODULUS;
+
+    check_packed_fp64_edge_lanes::<P, PF>();
+
+    let p_minus_one = F::from_canonical_u64(P - 1);
+    let got = (PF::broadcast(p_minus_one) * PF::broadcast(p_minus_one)).extract(0);
+    assert_eq!(got, F::one());
 }
 
 #[test]

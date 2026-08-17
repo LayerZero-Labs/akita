@@ -489,6 +489,35 @@ fn fp_ext2_fp64_product_accum_matches_direct_mul_large_operands() {
 }
 
 #[test]
+fn fp_ext2_fp64_product_accum_arbitrary_non_residue_fallback() {
+    use num_traits::Zero;
+
+    type F = Fp64<{ (1u64 << 62) - 143 }>;
+    struct ThreeNr;
+    impl FpExt2Config<F> for ThreeNr {
+        fn non_residue() -> F {
+            F::from_u64(3)
+        }
+    }
+    type E = FpExt2<F, ThreeNr>;
+
+    let mut rng = StdRng::seed_from_u64(0xF62A);
+    let pairs: Vec<(E, E)> = (0..256)
+        .map(|_| (E::random(&mut rng), E::random(&mut rng)))
+        .collect();
+    let direct = pairs
+        .iter()
+        .map(|(a, b)| *a * *b)
+        .fold(E::zero(), |sum, product| sum + product);
+    let delayed = pairs.iter().fold(
+        <E as HasUnreducedOps>::ProductAccum::zero(),
+        |sum, (a, b)| sum + a.mul_to_product_accum(*b),
+    );
+
+    assert_eq!(direct, E::reduce_product_accum(delayed));
+}
+
+#[test]
 fn fp_ext2_fp64_accum_summation_large_operands() {
     use crate::Prime64Offset59;
     use num_traits::Zero;

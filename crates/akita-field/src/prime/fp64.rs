@@ -226,9 +226,9 @@ impl<const P: u64> Fp64<P> {
         }
     }
 
-    /// BMI2 fast path: avoid re-materializing `u128` product in the common
-    /// sub-word configuration where reduction stays in `u64`.
-    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    /// Reduce a multiplication product supplied as exact low and high words.
+    /// This avoids wide shifts and masks for sub-word fields even when the
+    /// first Solinas fold itself needs two words.
     #[inline(always)]
     fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
         if Self::FOLD_IN_U64 {
@@ -237,6 +237,16 @@ impl<const P: u64> Fp64<P> {
             let f2 = (f1 & Self::MASK64) + Self::mul_c_narrow(f1 >> Self::BITS);
             let reduced = f2.wrapping_sub(P);
             let borrow = reduced >> 63;
+            reduced.wrapping_add(borrow.wrapping_neg() & P)
+        } else if Self::BITS < 64 {
+            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+            let c_high = Self::mul_c(high);
+            let (fold1_lo, carry) = (lo & Self::MASK64).overflowing_add(c_high as u64);
+            let fold1_hi = ((c_high >> 64) as u64) + u64::from(carry);
+            let fold1_high = (fold1_lo >> Self::BITS) | (fold1_hi << (64 - Self::BITS));
+            let fold2 = (fold1_lo & Self::MASK64) + Self::mul_c_narrow(fold1_high);
+            let reduced = fold2.wrapping_sub(P);
+            let borrow = u64::from(fold2 < P);
             reduced.wrapping_add(borrow.wrapping_neg() & P)
         } else {
             Self::reduce_product(lo as u128 | ((hi as u128) << 64))
@@ -251,16 +261,11 @@ impl<const P: u64> Fp64<P> {
             let reduced = folded.wrapping_sub(P);
             let borrow = (folded < P) as u64;
             reduced.wrapping_add(borrow.wrapping_neg() & P)
-        } else if Self::BITS <= 62 {
-            let s = a + b;
-            let reduced = s.wrapping_sub(P);
-            let borrow = reduced >> 63;
-            reduced.wrapping_add(borrow.wrapping_neg() & P)
         } else {
-            let s = (a as u128) + (b as u128);
-            let reduced = s.wrapping_sub(P as u128);
-            let borrow = reduced >> 127;
-            reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+            // For every sub-word modulus, 2P < 2^64, so canonical inputs
+            // cannot overflow this addition.
+            let sum = a + b;
+            sum.min(sum.wrapping_sub(P))
         }
     }
 
@@ -269,28 +274,16 @@ impl<const P: u64> Fp64<P> {
         if Self::BITS == 64 {
             let (diff, underflow) = a.overflowing_sub(b);
             diff.wrapping_sub((underflow as u64).wrapping_neg() & Self::C)
-        } else if Self::BITS <= 62 {
-            let diff = a.wrapping_sub(b);
-            let borrow = diff >> 63;
-            diff.wrapping_add(borrow.wrapping_neg() & P)
         } else {
-            let diff = (a as u128).wrapping_sub(b as u128);
-            let borrow = diff >> 127;
-            diff.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+            let diff = a.wrapping_sub(b);
+            diff.min(diff.wrapping_add(P))
         }
     }
 
     #[inline(always)]
     fn mul_raw(a: u64, b: u64) -> u64 {
-        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-        {
-            let (lo, hi) = mul64_wide(a, b);
-            Self::reduce_product_wide(lo, hi)
-        }
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
-        {
-            Self::reduce_product((a as u128) * (b as u128))
-        }
+        let (lo, hi) = mul64_wide(a, b);
+        Self::reduce_product_wide(lo, hi)
     }
 
     #[inline(always)]

@@ -385,10 +385,18 @@ pub mod fp128_onehot_multi_chunk_w4r2;
 pub mod fp128_onehot_recursive;
 #[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
 pub mod fp128_onehot_recursive_multi_chunk_w8r2;
+#[cfg(feature = "fp31-dense")]
+pub mod fp31_dense;
+#[cfg(feature = "fp31-onehot")]
+pub mod fp31_onehot;
 #[cfg(feature = "fp32-dense")]
 pub mod fp32_dense;
 #[cfg(feature = "fp32-onehot")]
 pub mod fp32_onehot;
+#[cfg(feature = "fp63-dense")]
+pub mod fp63_dense;
+#[cfg(feature = "fp63-onehot")]
+pub mod fp63_onehot;
 #[cfg(feature = "fp64-dense")]
 pub mod fp64_dense;
 #[cfg(feature = "fp64-onehot")]
@@ -458,6 +466,22 @@ pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable
     }
 }
 
+#[cfg(feature = "fp31-dense")]
+pub fn fp31_dense_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp31_dense::FP31_DENSE_SCHEDULES,
+        identity: fp31_dense::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp31-onehot")]
+pub fn fp31_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp31_onehot::FP31_ONEHOT_SCHEDULES,
+        identity: fp31_onehot::CATALOG_IDENTITY,
+    }
+}
+
 #[cfg(feature = "fp32-dense")]
 pub fn fp32_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
@@ -471,6 +495,22 @@ pub fn fp32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp32_onehot::FP32_ONEHOT_SCHEDULES,
         identity: fp32_onehot::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp63-dense")]
+pub fn fp63_dense_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp63_dense::FP63_DENSE_SCHEDULES,
+        identity: fp63_dense::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp63-onehot")]
+pub fn fp63_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp63_onehot::FP63_ONEHOT_SCHEDULES,
+        identity: fp63_onehot::CATALOG_IDENTITY,
     }
 }
 

@@ -3,7 +3,7 @@
 #![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::proof_optimized::{fp128, fp31, fp32, fp63, fp64};
 use akita_config::CommitmentConfig;
 use akita_types::{
     validate_schedule_ring_dims, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
@@ -44,10 +44,24 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {
 }
 
 #[test]
+fn accepts_real_fp63_adaptive_schedule() {
+    let schedule = schedule::<fp63::Dense>(20);
+    validate_schedule_ring_dims(&schedule).expect("adaptive fp63 schedule");
+    assert_schedule_geometry(&schedule, &[64, 128, 256, 512]);
+}
+
+#[test]
 fn accepts_real_fp64_adaptive_schedule() {
     let schedule = schedule::<fp64::Dense>(20);
     validate_schedule_ring_dims(&schedule).expect("adaptive fp64 schedule");
     assert_schedule_geometry(&schedule, &[64, 128, 256, 512]);
+}
+
+#[test]
+fn accepts_real_fp31_adaptive_schedule() {
+    let schedule = schedule::<fp31::OneHot>(16);
+    validate_schedule_ring_dims(&schedule).expect("adaptive fp31 schedule");
+    assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024]);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp31, fp32, fp63, fp64};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
 use akita_prover::protocol::extension_opening_reduction::{
@@ -177,7 +177,9 @@ where
 }
 
 fn bench_extension_opening_reduction(c: &mut Criterion) {
+    bench_case::<fp31::Field, fp31::ExtensionField>(c, "fp31_d64");
     bench_case::<fp32::Field, fp32::ExtensionField>(c, "fp32_d64");
+    bench_case::<fp63::Field, fp63::ExtensionField>(c, "fp63_d64");
     bench_case::<fp64::Field, fp64::ExtensionField>(c, "fp64_d64");
 }
 
