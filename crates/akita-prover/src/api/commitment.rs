@@ -8,6 +8,7 @@ use crate::compute::{
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use crate::RootTensorProjectionPoly;
+use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
@@ -339,6 +340,65 @@ where
     )
 }
 
+/// Reject a group whose sources do not fit the scheduled A-role digit envelope.
+///
+/// The commitment stores `num_digits_inner` balanced base-`2^log_basis_inner`
+/// digits per source coefficient and the decomposition kernel discards anything
+/// beyond that, so an out-of-range coefficient would be committed as a *different*
+/// value than the caller later opens. Only a bounded committed source
+/// (see [`akita_types::DecompositionParams::log_commit_bound`]) can reach that
+/// state; a full-field depth is representable for every field element and returns
+/// early without scanning.
+///
+/// Both the coverage test and the per-source comparison are stated against
+/// [`decompose_centering_threshold`] — the exact sign rule the decomposition uses.
+/// That matters: for a depth where `num_digits · log_basis == field_bits` (base 4,
+/// 16, or 256 on a 128-bit field) the threshold drops below `q / 2` precisely so
+/// that values above the shorter positive reach are centered negative instead,
+/// where the longer negative reach covers them. Testing against `q / 2` would
+/// declare those full-field depths uncovered and then reject valid field elements.
+fn ensure_sources_fit_committed_digit_envelope<F, P, const D: usize>(
+    polys: &[P],
+    plan: CommitInnerPlan,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: RootCommitSource<F, D>,
+{
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let threshold =
+        decompose_centering_threshold(plan.num_digits_inner, plan.log_basis_inner, modulus);
+    // Exact reaches, not the saturating ones: a saturated lower bound would
+    // reject legitimate coefficients. `None` means the side is beyond every
+    // `u128` and so cannot be exceeded.
+    let (negative_reach, positive_reach) =
+        akita_types::sis::checked_balanced_digit_representable_bounds(
+            plan.log_basis_inner,
+            plan.num_digits_inner,
+        );
+    let exceeds = |negative_abs: u128, positive: u128| {
+        negative_reach.is_some_and(|reach| negative_abs > reach)
+            || positive_reach.is_some_and(|reach| positive > reach)
+    };
+    // Widest reach the threshold rule can produce over all of `[0, q)`.
+    if !exceeds(modulus.saturating_sub(threshold + 1), threshold) {
+        return Ok(());
+    }
+    for poly in polys {
+        let (negative_abs, positive) =
+            RootCommitSource::<F, D>::committed_centered_reach(poly, modulus, threshold)?;
+        if exceeds(negative_abs, positive) {
+            return Err(AkitaError::InvalidInput(format!(
+                "committed source exceeds the scheduled bound: centered coefficients reach \
+                 [-{negative_abs}, {positive}] but {} balanced base-2^{} digits represent only \
+                 [-{negative_reach:?}, {positive_reach:?}]",
+                plan.num_digits_inner, plan.log_basis_inner,
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn commit_with_validated_geometry<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
@@ -382,6 +442,10 @@ where
         F,
         dims.d_a(),
         |D_A| {
+            // The A-role digit envelope is what a source has to fit, so this
+            // belongs to the inner dispatch and runs once, before any commitment
+            // arithmetic touches the coefficients.
+            ensure_sources_fit_committed_digit_envelope::<F, P, D_A>(polys, plan)?;
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 F,

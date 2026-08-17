@@ -63,6 +63,25 @@
 //!
 //! Every ✓ cell resolves against a real shipped catalog row; no cell here is
 //! backed by a schedule added solely to make a test pass.
+//!
+//! # Group E — heterogeneous cells (see `akita_fp128_e2e/heterogeneous.rs`)
+//!
+//! The matrix above is indexed by polynomial type; the committed-source **bound**
+//! is a second, orthogonal axis. `Dense` rows are full-width
+//! (`log_commit_bound = 128`) and `OneHot` rows are the unit endpoint
+//! (`log_commit_bound = 1`); a bounded source is any value in between. Group E
+//! carries the mixed-bound cell:
+//!
+//! - `bounded_dense_precommit_with_onehot_final_group` — cfg=schedules-fp128-dense64.
+//!   A `fp128::Dense64` precommit (bound 64 inside the 128-bit field) opened
+//!   jointly with a `fp128::OneHot` final group, so the two groups in one root
+//!   disagree on their committed-source bound.
+//! - `bounded_dense_roundtrip_at_every_catalog_size` — cfg=same. The bounded
+//!   family's own scalar rows [14, 24, 26], with coefficients filling the declared
+//!   64-bit signed range on both sides.
+//! - `bounded_dense_commit_rejects_a_coefficient_above_the_bound` — cfg=same.
+//!   The producer-side guard: an out-of-range coefficient is an input error at
+//!   commit, never a silently truncated commitment.
 
 #![allow(missing_docs)]
 #![cfg(feature = "schedules-default")]

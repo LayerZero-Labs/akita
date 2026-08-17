@@ -350,18 +350,52 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
     );
 }
 
+/// The layout scan enumerates single-group shapes only.
+///
+/// `proof_optimized_schedule_key` is the only route from an
+/// `OpeningClaimsLayout` to a catalog row and rejects layouts with more than one
+/// group, so a multi-group layout in this list could never be priced. Grouped
+/// rows reach the envelope through the catalog scan instead, which
+/// `grouped_catalog_rows_are_priced_without_a_multi_group_layout_scan` covers.
 #[cfg(feature = "schedules-default")]
 #[test]
-fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
-    let layouts = setup_capacity_scan_layouts::<fp128::OneHot>(14, 3).expect("setup scan layouts");
+fn setup_envelope_scan_enumerates_only_single_group_layouts() {
+    let layouts = setup_capacity_scan_layouts(14, 3).expect("setup scan layouts");
 
-    assert!(layouts.iter().any(|layout| {
-        layout.groups()
-            == [
-                PolynomialGroupLayout::new(14, 2),
-                PolynomialGroupLayout::new(14, 1),
-            ]
-    }));
+    assert!(!layouts.is_empty());
+    assert!(layouts.iter().all(|layout| layout.groups().len() == 1));
+    assert!(layouts
+        .iter()
+        .any(|layout| layout.groups() == [PolynomialGroupLayout::new(14, 3)]));
+    for layout in &layouts {
+        assert!(
+            crate::proof_optimized::proof_optimized_schedule_key(layout).is_ok(),
+            "every scanned layout must be resolvable to a catalog key"
+        );
+    }
+}
+
+/// A grouped catalog row still raises the setup envelope.
+///
+/// This is the coverage the deleted multi-group layout enumeration appeared to
+/// provide: the envelope for a request that admits a two-group root must be at
+/// least the grouped row's own matrix footprint.
+#[cfg(feature = "schedules-default")]
+#[test]
+fn grouped_catalog_rows_are_priced_without_a_multi_group_layout_scan() {
+    let pre = fp128::OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(14, 1))
+        .expect("independent one-hot profile");
+    let key = akita_types::AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(16, 1),
+        precommitteds: vec![pre],
+    };
+    let grouped = fp128::OneHot::resolve_catalog_row_for_key(&key).expect("grouped catalog row");
+    let grouped_fields = setup_matrix_capacity_for_schedule(grouped.schedule())
+        .expect("grouped setup capacity")
+        .num_field_elements;
+
+    let capacity = fp128::OneHot::setup_matrix_capacity(16, 2).expect("one-hot setup capacity");
+    assert!(capacity.num_field_elements >= grouped_fields);
 }
 
 #[cfg(feature = "schedules-default")]

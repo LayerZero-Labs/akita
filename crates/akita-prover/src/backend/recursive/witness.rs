@@ -593,6 +593,31 @@ where
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         self.view::<F, D>()
     }
+
+    /// A recursive witness is already stored as signed `i8` digits, so its exact
+    /// reach is the largest stored magnitude on each side. It is never
+    /// field-wide, and recursive levels commit against `log_basis` rather than a
+    /// declared source bound, so this is only ever a lower-cost restatement of an
+    /// already-small range.
+    fn committed_centered_reach(
+        &self,
+        _modulus: u128,
+        _centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: akita_field::CanonicalField,
+    {
+        let mut negative_abs_max = 0u128;
+        let mut positive_max = 0u128;
+        for &digit in self.as_ref() {
+            if digit < 0 {
+                negative_abs_max = negative_abs_max.max(u128::from(digit.unsigned_abs()));
+            } else {
+                positive_max = positive_max.max(digit as u128);
+            }
+        }
+        Ok((negative_abs_max, positive_max))
+    }
 }
 
 impl<F, const D: usize> RootOpeningSource<F, D> for RecursiveWitnessFlat

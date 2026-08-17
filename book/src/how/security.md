@@ -122,6 +122,30 @@ model error. The planner freezes the resulting cap into the schedule. The
 verifier enforces that exact cap. A model error can make proving fail more
 often, but it cannot make the verifier accept a response above the cap.
 
+### The accepted committed-source space
+
+A committed level stores `num_digits_inner` balanced base-`2^log_basis_inner`
+digits per source coefficient, so the polynomials it is binding for are exactly
+those whose centered coefficients lie in the interval those digits represent. The
+declared committed-source bound `DecompositionParams::log_commit_bound` chooses
+that digit depth: `1` for a unit one-hot source, the field width for a full-field
+dense source, and any value in between for a bounded source.
+
+A smaller bound is a smaller accepted witness space, not a weaker commitment. The
+A-role collision bounds above are computed from the same digit envelope the
+verifier admits, so a bounded family is priced for exactly what it accepts —
+identical to how one-hot has always been priced. The declared bound is inside
+`DecompositionParams`, which is hashed into the generated catalog identity and
+serialized into the instance descriptor, so a proof cannot be replayed against a
+family with a different bound.
+
+The obligation the smaller space creates is on the *producer*: because the
+decomposition keeps only the scheduled digits and discards the remainder,
+committing an out-of-range coefficient would bind a different polynomial than the
+caller opens. `commit` therefore rejects such a source instead of committing a
+truncation. See
+[Bounded committed sources](./configuration.md#bounded-committed-sources).
+
 The fold nonce does not incur a fixed 12-bit soundness loss. Every nonce trial
 is another random-oracle query, so the Fiat-Shamir reduction charges it through
 the adversary's total query budget. See
@@ -145,3 +169,4 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
+- `specs/bounded-dense-schedules.md` (declared committed-source bounds).

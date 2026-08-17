@@ -43,6 +43,16 @@ Different protocol components use different bases: commitment depth
 \\( \delta_{\mathsf{open}} = \lceil \log_{b_1} q \rceil \\); when to keep the base
 explicit.
 
+The commitment depth is also not fixed to the field width. It is
+\\( \delta_{\mathsf{com}} = \lceil B / \log_2 b \rceil \\) for a **declared**
+committed-source bound \\( B \\) (`DecompositionParams::log_commit_bound`), of
+which the field width is only the largest legal value. A source declared at
+\\( B < \log_2 q \\) needs proportionally fewer digit planes, and the accepted
+coefficient interval \\( [-M_{\delta}, T_{\delta}] \\) above becomes the exact
+witness space that commitment is binding for — so a producer must reject a
+coefficient outside it instead of committing the truncation. See
+[Bounded committed sources](../how/configuration.md#bounded-committed-sources).
+
 **Sources to fold in**
 
 - Paper §2.2 (commitment vs opening bases).

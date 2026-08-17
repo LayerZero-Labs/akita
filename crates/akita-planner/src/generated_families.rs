@@ -166,6 +166,18 @@ const FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] = onehot_keys
 const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(16)];
 
+/// Bounded dense keys.
+///
+/// 14 is the producer for the bounded precommit descriptor embedded in the
+/// `fp128_onehot` grouped catalog (see [`bounded_dense_onehot_catalog_key`]); 24
+/// and 26 are the sizes where the bound's setup and next-witness savings are
+/// measured against the matching `fp128_dense` rows.
+const FP128_DENSE64_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(14),
+    PolynomialGroupLayout::singleton(24),
+    PolynomialGroupLayout::singleton(26),
+];
+
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
@@ -324,6 +336,7 @@ fn fp128_onehot_group_batch_keys(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
     let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>(preplans)?;
     keys.push(heterogeneous_onehot_catalog_key(preplans)?);
+    keys.push(bounded_dense_onehot_catalog_key(preplans)?);
     keys.extend(onehot_group_batch_test_keys::<fp128::OneHot>(preplans)?);
     // Single-poly pre + single-poly final: the `fp128 × OneHot × pre` matrix
     // cell. Every other combined OneHot row is heterogeneous or multi-poly.
@@ -473,6 +486,32 @@ fn heterogeneous_onehot_catalog_key(
             precommitteds: vec![onehot, dense],
         },
         vec![onehot_policy, dense_policy],
+    ))
+}
+
+/// Grouped-root key pairing a **bounded** dense precommit with a one-hot final
+/// group.
+///
+/// This is the mixed-bound cell: the precommitted group is frozen by
+/// `fp128::Dense64` (`log_commit_bound = 64` inside the 128-bit field) while the
+/// root is planned under `fp128::OneHot` (`log_commit_bound = 1`). It exercises
+/// the fact that a precommitted group carries its own committed-source bound in
+/// its frozen `inner_commit_matrix` and does not have to agree with the planning
+/// config's bound — only the shared full-width opening geometry has to line up.
+fn bounded_dense_onehot_catalog_key(
+    preplans: &GenerationPreplans,
+) -> Result<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), AkitaError> {
+    let bounded_dense_group = PolynomialGroupLayout::new(14, 1);
+    let bounded_dense = planned_profile_without_precommitted_groups::<fp128::Dense64>(
+        preplans,
+        bounded_dense_group,
+    )?;
+    Ok((
+        AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(16, 1),
+            precommitteds: vec![bounded_dense],
+        },
+        vec![honest_fold_policy_of::<fp128::Dense64>()],
     ))
 }
 
@@ -686,6 +725,14 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-dense-multi-chunk",
         FP128_DENSE_MULTI_CHUNK_KEYS,
         fp128::DenseMultiChunk,
+        no_group_batch_keys
+    ),
+    family_row!(
+        "fp128_dense64",
+        "FP128_DENSE64_SCHEDULES",
+        "fp128-dense64",
+        FP128_DENSE64_KEYS,
+        fp128::Dense64,
         no_group_batch_keys
     ),
     family_row!(

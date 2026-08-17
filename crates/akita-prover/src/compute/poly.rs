@@ -103,6 +103,64 @@ where
 
     /// Borrow a commit view of this polynomial.
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError>;
+
+    /// Largest centered coefficient magnitudes this source commits, as
+    /// `(negative_abs_max, positive_max)`, under the balanced-decomposition sign
+    /// rule for `modulus` and `centering_threshold`.
+    ///
+    /// A commitment stores `num_digits_inner` balanced digits per coefficient and
+    /// the decomposition kernel silently discards anything above that envelope.
+    /// When the schedule's envelope is narrower than the field — the
+    /// bounded-committed-source case, see
+    /// [`akita_types::DecompositionParams::log_commit_bound`] — committing a
+    /// truncation would bind a *different* polynomial than the caller opens, so
+    /// the commit path compares this reach against
+    /// [`akita_types::sis::checked_balanced_digit_representable_bounds`] and
+    /// rejects the commitment instead.
+    ///
+    /// `centering_threshold` comes from
+    /// `akita_algebra::ring::cyclotomic::decompose_centering_threshold`, so a
+    /// source reports its reach under exactly the sign rule its digits will be
+    /// produced with instead of a locally assumed one.
+    ///
+    /// Every source must answer: there is no safe default. Sources whose
+    /// representation is structurally inside every envelope (unit one-hot, or an
+    /// already-decomposed digit witness) report their small exact reach without
+    /// scanning. This is never called for a full-field depth, so an unbounded
+    /// source never pays for it.
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: CanonicalField;
+}
+
+/// Largest centered magnitudes over a flat field slice, as
+/// `(negative_abs_max, positive_max)`.
+///
+/// Shared by every dense-like [`RootCommitSource::committed_centered_reach`]
+/// implementation so the centering convention is written once: a canonical
+/// residue at or below `centering_threshold` is the positive side, anything above
+/// it is negative with magnitude `modulus - canonical`. That is the same split
+/// `akita_algebra::ring::cyclotomic::center_for_decomposition` applies.
+pub fn centered_reach_of_field_coeffs<F: FieldCore + CanonicalField>(
+    coeffs: &[F],
+    modulus: u128,
+    centering_threshold: u128,
+) -> (u128, u128) {
+    let mut negative_abs_max = 0u128;
+    let mut positive_max = 0u128;
+    for coeff in coeffs {
+        let canonical = coeff.to_canonical_u128();
+        if canonical <= centering_threshold {
+            positive_max = positive_max.max(canonical);
+        } else {
+            negative_abs_max = negative_abs_max.max(modulus - canonical);
+        }
+    }
+    (negative_abs_max, positive_max)
 }
 
 /// Capability: expose borrowed opening views for the opening fold kernels.

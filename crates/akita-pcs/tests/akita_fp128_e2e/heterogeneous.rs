@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(feature = "schedules-fp128-dense64")]
+use akita_field::FromPrimitiveInt;
+
 // ============================================================================
 // GROUP E — Heterogeneous configurations (fp128)
 //
@@ -226,6 +229,352 @@ fn heterogeneous_group_types() {
             BasisMode::Lagrange,
         )
         .expect("heterogeneous verify");
+    });
+}
+
+// fp128: a **bounded** dense precommit opened jointly with a one-hot final
+// group. The two groups declare different committed-source bounds inside the same
+// 128-bit field — `fp128::Dense64` commits against `log_commit_bound = 64` while
+// the root is planned under `fp128::OneHot`'s `log_commit_bound = 1` — so this is
+// the mixed-bound multi-group cell. It proves the bound is a per-group property
+// frozen into each group's own A matrix, not a batch-wide one, and that a bounded
+// group's full-width opening geometry still lines up with the shared root.
+#[cfg(feature = "schedules-fp128-dense64")]
+#[test]
+fn bounded_dense_precommit_with_onehot_final_group() {
+    type BoundedDenseCfg = fp128::Dense64;
+    const BOUNDED_PRE_NV: usize = 14;
+    const FINAL_NV: usize = 16;
+    const BOUNDED_D: usize = BoundedDenseCfg::D;
+
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        // Coefficients that fill the declared 64-bit signed bound on both sides,
+        // so the test exercises the endpoints of the representable range rather
+        // than only small values. `log_commit_bound = 64` means the centered
+        // magnitude fits 64 signed bits, i.e. `[-2^63, 2^63 - 1]`.
+        let bounded_evals = (0..(1usize << BOUNDED_PRE_NV))
+            .map(|i| {
+                let magnitude = F::from_u64(match i % 4 {
+                    0 => 0,
+                    1 => 1,
+                    2 => (1u64 << 63) - 1,
+                    _ => u64::from((i % 1_000) as u32) + 7,
+                });
+                if i % 2 == 0 {
+                    magnitude
+                } else {
+                    -magnitude
+                }
+            })
+            .collect::<Vec<_>>();
+        let bounded_dense =
+            akita_prover::DensePoly::from_field_evals(BOUNDED_PRE_NV, BOUNDED_D, &bounded_evals)
+                .expect("bounded dense poly");
+        let final_onehot = make_onehot_poly(FINAL_NV, 0x8064_0000);
+
+        // Each group commits under the config that owns its bound, so its frozen
+        // profile matches the descriptor the catalog row carries.
+        let bounded_setup =
+            AkitaCommitmentScheme::<BoundedDenseCfg>::setup_prover(BOUNDED_PRE_NV, 1)
+                .expect("bounded dense setup");
+        let bounded_prepared = CpuBackend::DEFAULT
+            .prepare_setup(&bounded_setup)
+            .expect("bounded dense prepared");
+        let bounded_stack = UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &bounded_prepared,
+            bounded_setup.expanded.as_ref(),
+        )
+        .expect("bounded dense stack");
+        let akita_prover::CommitOutput {
+            committed_group: bounded_commitment,
+            hint: bounded_hint,
+        } = AkitaCommitmentScheme::<BoundedDenseCfg>::commit(
+            &bounded_setup,
+            std::slice::from_ref(&bounded_dense),
+            &bounded_stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("bounded dense precommit");
+
+        // The bounded group's A matrix must be narrower than the full-width dense
+        // config would produce for the same group — otherwise this test would
+        // pass without the bound doing anything.
+        let full_width_profile = DenseCfg::profile_without_precommitted_groups(
+            akita_types::PolynomialGroupLayout::new(BOUNDED_PRE_NV, 1),
+        )
+        .expect("full-width dense profile");
+        assert!(
+            bounded_commitment.profile.num_digits_inner < full_width_profile.num_digits_inner,
+            "bounded precommit digit depth {} must be below full-width {}",
+            bounded_commitment.profile.num_digits_inner,
+            full_width_profile.num_digits_inner,
+        );
+
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 2)
+            .expect("one-hot root setup");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
+        let stack =
+            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+                .expect("stack");
+
+        let precommitteds =
+            PrecommittedGroupProfiles::from_profiles(vec![bounded_commitment.profile])
+                .expect("nonempty precommitted groups");
+        let final_polys = [MultilinearPolynomial::onehot(final_onehot.clone())];
+        let akita_prover::CommitOutput {
+            committed_group: final_commitment,
+            hint: final_hint,
+        } = AkitaCommitmentScheme::<OneHotCfg>::commit(
+            &setup,
+            &final_polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .expect("one-hot final commit against a bounded precommit");
+
+        let bounded_point: Vec<F> = (0..BOUNDED_PRE_NV)
+            .map(|i| F::from_u64((i + 11) as u64))
+            .collect();
+        let final_point: Vec<F> = (0..FINAL_NV)
+            .map(|i| F::from_u64((i + 53) as u64))
+            .collect();
+        let bounded_opening = dense_opening_lagrange(&bounded_evals, &bounded_point);
+        let final_opening = onehot_opening_lagrange(&final_onehot, &final_point);
+        let bounded_point_for_tamper = bounded_point.clone();
+        let final_point_for_tamper = final_point.clone();
+
+        let bounded_refs = [&MultilinearPolynomial::dense(bounded_dense.clone())];
+        let final_refs = [&final_polys[0]];
+
+        let prover_data = selected_prover_data::<OneHotCfg, _>(
+            OpeningClaims::from_groups(vec![
+                PolynomialGroupClaims::new(
+                    bounded_point.clone(),
+                    vec![bounded_opening],
+                    bounded_commitment.clone(),
+                )
+                .expect("bounded dense prover group"),
+                PolynomialGroupClaims::new(
+                    final_point.clone(),
+                    vec![final_opening],
+                    final_commitment.clone(),
+                )
+                .expect("final prover group"),
+            ])
+            .expect("prover claims"),
+            vec![bounded_hint, final_hint],
+            vec![&bounded_refs, &final_refs],
+        );
+        let selection = prover_data.selection();
+
+        let schedule = OneHotCfg::resolve_schedule_selection(selection)
+            .expect("mixed-bound schedule")
+            .schedule()
+            .clone();
+        let precommitted = schedule
+            .root
+            .params
+            .precommitted_groups
+            .first()
+            .expect("mixed-bound selection must resolve the one-precommit entry");
+        assert_eq!(schedule.root.params.precommitted_groups.len(), 1);
+        assert_eq!(
+            precommitted.commitment.layout.num_digits_inner,
+            bounded_commitment.profile.num_digits_inner,
+            "the resolved row must carry the bounded producer's own digit depth"
+        );
+        // The root itself is planned at the one-hot bound, so the two groups
+        // really do disagree on their committed-source depth.
+        assert_eq!(
+            schedule.root.params.final_group.commitment.num_digits_inner,
+            1,
+        );
+
+        let mut prover_transcript =
+            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove(
+            &setup,
+            prover_data,
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("mixed-bound prove");
+
+        let shape = proof.shape();
+        let mut bytes = Vec::new();
+        proof.serialize_compressed(&mut bytes).expect("serialize");
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
+            &mut std::io::Cursor::new(bytes),
+            &shape,
+        )
+        .expect("deserialize");
+
+        let verifier_setup =
+            AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
+        let verify_claims = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(bounded_point, vec![bounded_opening], &bounded_commitment)
+                .expect("bounded dense verifier group"),
+            PolynomialGroupClaims::new(final_point, vec![final_opening], &final_commitment)
+                .expect("final verifier group"),
+        ])
+        .expect("verifier claims");
+        let mut verifier_transcript =
+            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
+        AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
+        .expect("mixed-bound verify");
+
+        // Proves the verification above is load-bearing: the same proof against a
+        // tampered bounded-group claim must be rejected.
+        let tampered = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(
+                bounded_point_for_tamper,
+                vec![bounded_opening + F::one()],
+                &bounded_commitment,
+            )
+            .expect("tampered bounded verifier group"),
+            PolynomialGroupClaims::new(
+                final_point_for_tamper,
+                vec![final_opening],
+                &final_commitment,
+            )
+            .expect("final verifier group"),
+        ])
+        .expect("tampered claims");
+        let mut tampered_transcript =
+            AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
+        assert!(
+            AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut tampered_transcript,
+                GroupBatchStatement::new(selection, tampered).expect("statement"),
+                BasisMode::Lagrange,
+            )
+            .is_err(),
+            "a tampered bounded-group opening must not verify"
+        );
+    });
+}
+
+// The bounded family's own scalar rows: a direct commit/prove/verify round trip
+// at every `nv` its catalog ships, with coefficients that fill the declared
+// 64-bit signed range on both sides.
+#[cfg(feature = "schedules-fp128-dense64")]
+#[test]
+fn bounded_dense_roundtrip_at_every_catalog_size() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        prove_verify_dense_roundtrip_with_evals::<fp128::Dense64>(
+            &[14, 24, 26],
+            b"completeness/fp128_dense64",
+            |nv, seed| bounded_dense_field_evals(nv, seed, fp128::Dense64::LOG_COMMIT_BOUND),
+        );
+    });
+}
+
+// A polynomial outside the declared bound must be rejected at commit time.
+//
+// The decomposition kernel peels exactly `num_digits_inner` digits and discards
+// the rest, so without this guard the commitment would silently bind the
+// truncated polynomial and the caller's opening claim would be for a different
+// one. The failure must be a clear input error at commit, not an opaque
+// verification failure later.
+#[cfg(feature = "schedules-fp128-dense64")]
+#[test]
+fn bounded_dense_commit_rejects_a_coefficient_above_the_bound() {
+    type BoundedDenseCfg = fp128::Dense64;
+    const NV: usize = 14;
+    const BOUNDED_D: usize = BoundedDenseCfg::D;
+
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let setup =
+            AkitaCommitmentScheme::<BoundedDenseCfg>::setup_prover(NV, 1).expect("bounded setup");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
+        let stack =
+            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+                .expect("stack");
+
+        let commit = |evals: &[F]| {
+            let poly = akita_prover::DensePoly::from_field_evals(NV, BOUNDED_D, evals)
+                .expect("dense poly");
+            AkitaCommitmentScheme::<BoundedDenseCfg>::commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .map(|_| ())
+        };
+
+        // The scheduled envelope for this row, taken from the row itself rather
+        // than recomputed, so the test cannot drift from the shipped schedule.
+        let profile = BoundedDenseCfg::profile_without_precommitted_groups(
+            akita_types::PolynomialGroupLayout::new(NV, 1),
+        )
+        .expect("bounded profile");
+        // The checked bounds, so the test reads the same exact interval the commit
+        // guard enforces rather than a saturating lower bound.
+        let (negative_reach, positive_reach) =
+            akita_types::sis::checked_balanced_digit_representable_bounds(
+                profile.log_basis_inner,
+                profile.num_digits_inner,
+            );
+        let negative_reach = negative_reach.expect("bounded negative reach fits u128");
+        let positive_reach = positive_reach.expect("bounded positive reach fits u128");
+
+        let mut in_bound = vec![F::zero(); 1usize << NV];
+        in_bound[0] = F::from_u128(positive_reach);
+        in_bound[1] = -F::from_u128(negative_reach);
+        commit(&in_bound).expect("both signed endpoints of the envelope are representable");
+
+        let mut over_positive = vec![F::zero(); 1usize << NV];
+        over_positive[3] = F::from_u128(positive_reach + 1);
+        let error = commit(&over_positive)
+            .expect_err("a coefficient above the positive reach must be rejected");
+        assert!(
+            matches!(error, akita_field::AkitaError::InvalidInput(_)),
+            "expected InvalidInput, got {error:?}"
+        );
+
+        let mut over_negative = vec![F::zero(); 1usize << NV];
+        over_negative[3] = -F::from_u128(negative_reach + 1);
+        assert!(
+            commit(&over_negative).is_err(),
+            "a coefficient below the negative reach must be rejected"
+        );
+
+        // A full-width dense commitment of the same out-of-range polynomial is
+        // fine: its envelope covers the whole centered field, so the guard is
+        // specific to a bounded source and costs unbounded configs nothing.
+        let full_setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).expect("setup");
+        let full_prepared = CpuBackend::DEFAULT
+            .prepare_setup(&full_setup)
+            .expect("prepared");
+        let full_stack = UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &full_prepared,
+            full_setup.expanded.as_ref(),
+        )
+        .expect("stack");
+        let poly = akita_prover::DensePoly::from_field_evals(NV, DENSE_D, &over_positive)
+            .expect("dense poly");
+        AkitaCommitmentScheme::<DenseCfg>::commit(
+            &full_setup,
+            std::slice::from_ref(&poly),
+            &full_stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("full-width dense accepts every field element");
     });
 }
 

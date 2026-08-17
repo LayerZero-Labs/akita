@@ -62,10 +62,8 @@ impl SetupPrefixCandidateContext<'_> {
         split: SetupPrefixSplit,
     ) -> Result<Option<InnerCommitmentCandidate>, AkitaError> {
         let d_a = self.dimensions.d_a();
-        let fold_policy = BalancedSignedDigitFoldPolicy::universal(
-            self.policy.decomposition.field_bits(),
-            FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
-        );
+        let fold_policy =
+            BalancedSignedDigitFoldPolicy::universal(self.policy.decomposition.field_bits());
         let Some(num_fold_coeffs) = split
             .width_s
             .checked_mul(d_a)

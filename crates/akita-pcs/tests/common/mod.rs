@@ -371,6 +371,36 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     out
 }
 
+/// Dense evaluations whose **centered** magnitudes fit `log_bound` signed bits.
+///
+/// A bounded committed source declares
+/// `DecompositionParams::log_commit_bound = log_bound`, i.e. the centered range
+/// `[-2^(log_bound-1), 2^(log_bound-1) - 1]`. [`dense_field_evals`] draws a full
+/// unsigned `u64`, which overshoots a 64-bit *signed* bound by a factor of two,
+/// so a bounded family needs its own generator. Both signs are produced, and the
+/// magnitudes reach the top of the range, so the fixture exercises the endpoints
+/// rather than staying comfortably small.
+pub(super) fn bounded_dense_field_evals(nv: usize, seed: u64, log_bound: u32) -> Vec<F> {
+    assert!(
+        (2..=64).contains(&log_bound),
+        "log_bound must fit a u64 draw"
+    );
+    let magnitude_mask = (1u64 << (log_bound - 1)) - 1;
+    let n = 1usize << nv;
+    let mut out = Vec::with_capacity(n);
+    let mut state = seed;
+    for _ in 0..n {
+        let draw = splitmix64_next(&mut state);
+        let magnitude = F::from_canonical_u128_reduced(u128::from(draw & magnitude_mask));
+        out.push(if draw & (1 << 63) == 0 {
+            magnitude
+        } else {
+            -magnitude
+        });
+    }
+    out
+}
+
 pub(super) fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
     &schedule.root.params.final_group.commitment
 }

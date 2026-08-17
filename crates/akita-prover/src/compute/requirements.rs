@@ -374,10 +374,8 @@ impl NttExecutionRequirements {
             NttCacheKey::from_matrix_shape(d_b, n_b, width_b, NttTransformDomain::Cyclic)?,
             matrix_extent(n_b, width_b)?,
         )?;
-        let (negative, positive) = akita_types::sis::fold_witness_representable_linf_bounds(
-            log_basis_open,
-            num_digits_fold,
-        );
+        let (negative, positive) =
+            akita_types::sis::balanced_digit_representable_bounds(log_basis_open, num_digits_fold);
         let rhs_abs_bound = u64::try_from(negative.max(positive)).map_err(|_| {
             AkitaError::InvalidSetup("folded-witness bound exceeds NTT capacity model".into())
         })?;

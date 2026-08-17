@@ -39,6 +39,16 @@ one-hot preset now chooses dimensions per fold from generated adaptive tables;
 
 Use `fp128::OneHot` for direct one-hot and `fp128::Dense` for direct dense.
 
+**Bounded dense.** If every coefficient of your dense polynomial fits a known bit
+width narrower than the field, `fp128::Dense64` (bound 64 inside the 128-bit
+field, behind `schedules-fp128-dense64`) sizes the commitment for that bound
+instead of the full field. It halves the A-role digit depth, and with it the
+shared setup matrix and the prover-side witness the recursion suffix inherits;
+proof size is roughly unchanged. The trade is that `commit` **rejects** a
+coefficient outside the bound rather than committing a truncated value, so use
+`fp128::Dense` when the bound cannot be guaranteed. See
+[Bounded committed sources](../how/configuration.md#bounded-committed-sources).
+
 **Test harness vs profile defaults.** Direct protocol tests should use
 `fp128::OneHot` and `fp128::Dense`. Recursive and multi-chunk tests use their
 dedicated companion configs and generated catalogs.

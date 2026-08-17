@@ -465,10 +465,7 @@ mod tests {
 
         fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
             akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
-                    32,
-                    akita_types::sis::FoldWitnessNorms::bounded(8, Self::D),
-                ),
+                akita_types::sis::BalancedSignedDigitFoldPolicy::universal(32),
             )
         }
     }

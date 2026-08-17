@@ -198,6 +198,28 @@ where
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         Ok(MultilinearPolynomialView { poly: self })
     }
+
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: CanonicalField,
+    {
+        match self {
+            Self::Dense(poly) => RootCommitSource::<F, D>::committed_centered_reach(
+                poly,
+                modulus,
+                centering_threshold,
+            ),
+            Self::OneHot(poly) => RootCommitSource::<F, D>::committed_centered_reach(
+                poly,
+                modulus,
+                centering_threshold,
+            ),
+        }
+    }
 }
 
 impl<F, const D: usize, I> RootOpeningSource<F, D> for MultilinearPolynomial<F, I>

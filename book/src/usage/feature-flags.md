@@ -23,6 +23,7 @@ Disable parallel locally: `cargo build --no-default-features` (or add only the f
 | `profile-ci` | Compatibility union of schedule features needed by the CI profile benchmark matrix |
 | `profile-ci-*` | Narrow schedule and mode groups used by individual CI profile benchmark jobs (see [Profiling](./profiling.md)) |
 | `profile-bench-selected` | Internal mode-registry marker enabled by each narrow profile benchmark group; do not enable it alone |
+| `schedules-fp128-dense64` | Generated catalog for the bounded dense preset `fp128::Dense64` (committed-source bound 64 inside the 128-bit field). Not in `schedules-default`; see [Bounded committed sources](../how/configuration.md#bounded-committed-sources) |
 
 Per-crate feature tables live in each `crates/*/Cargo.toml`.
 Schedule catalog features (`schedules-fp128-onehot`, etc.) are documented in

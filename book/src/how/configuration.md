@@ -74,8 +74,11 @@ because it has no product-stage prefix.
 The planner estimates the squared norm of the actual recursive witness. It
 applies the following rules.
 
-* A dense root uses the deterministic maximum squared digit energy for every
-  coefficient. A one-hot root maximizes the physical squared energy over every
+* A balanced signed-digit root uses the deterministic maximum squared digit
+  energy for every coefficient, summed over the digit planes its declared source
+  bound needs. A bounded source stops short of the field width, so its final
+  plane is charged only the range the bound leaves rather than a full
+  `log_basis`. A one-hot root maximizes the physical squared energy over every
   hot position allowed by its policy-owned chunk contract. This follows the
   tensor projection kernel and includes coefficient collisions.
 * The Z part uses the centered residues of a rounded normal variable. Its
@@ -142,3 +145,88 @@ presets own different offline policies and generated catalogs, but equivalent
 polynomial groups have the same runtime geometry. In particular, one-hot chunk
 size is an input to `UnitOneHotFoldPolicy`; it is not serialized in a
 commitment, proof, opening layout, or transcript.
+
+The committed-source *bound* is different: it **is** part of runtime schedule
+identity. See [Bounded committed sources](#bounded-committed-sources).
+
+## Bounded committed sources
+
+`DecompositionParams::log_commit_bound` is the declared bit width of the largest
+centered coefficient a commitment must represent. It is the general parameter of
+the committed-source class, not a per-preset constant with two legal values:
+
+| `log_commit_bound` | Source | Example preset |
+|---|---|---|
+| `1` | unit one-hot | `fp128::OneHot` |
+| `1 < B < field_bits` | bounded | `fp128::Dense64` (`B = 64`) |
+| `field_bits` | full field | `fp128::Dense` |
+
+The bound enters the protocol at exactly one place: the A-role digit depth
+`num_digits_inner = ceil(B / log_basis_inner)`. From there it fixes the A input
+width, the SIS rank that width demands, the shared setup matrix, and the
+level-1 witness the whole recursion suffix inherits. A caller who knows their
+witness fits 64 bits of a 128-bit field therefore pays for 64 bits of range
+instead of 128.
+
+The bound does **not** change the honest-fold sizing rule. A bounded source and
+a full-field source both decompose into the same balanced digit alphabet and
+share `BalancedSignedDigitFoldPolicy`; the folded response is sized from one
+digit plane, whose norms do not depend on the bound. `UnitOneHotFoldPolicy` is
+not the `B = 1` case of a bounded policy — its gains come from source sparsity,
+which a dense source does not have.
+
+### What a bounded commitment binds
+
+A commitment sized from `B` is binding and complete only for polynomials whose
+centered coefficients lie inside the range its digit depth represents
+(`akita_types::sis::balanced_digit_representable_bounds`). That is a smaller
+accepted witness space than full-field dense, priced by exactly the digit
+envelope the A-role SIS route already prices — the same statement one-hot has
+always made, generalized.
+
+Because the space is smaller, an out-of-range coefficient must be rejected
+rather than committed: the decomposition keeps `num_digits_inner` digits and
+discards the rest, so a truncated commitment would bind a different polynomial
+than the caller opens. `commit` compares each source's centered reach against
+the scheduled envelope and returns an error. A schedule whose envelope already
+covers every centered field residue skips the check, so full-field presets pay
+nothing.
+
+### Identity and per-group bounds
+
+`log_commit_bound` lives in `DecompositionParams`, which is hashed into both
+`policy_digest` and `identity_digest` and serialized into the instance
+descriptor. Two families differing only in their bound therefore have distinct
+catalog identities and cannot resolve each other's rows, and no new wire field
+is needed.
+
+The bound is per config, and a precommitted group freezes its own
+`inner_commit_matrix` — so one grouped root can open groups with different
+bounds. The `bounded_dense_precommit_with_onehot_final_group` end-to-end test
+covers a `fp128::Dense64` precommit under a `fp128::OneHot` root. Only the
+shared full-width opening geometry has to agree, which is why a bounded preset
+keeps `log_open_bound` at the true field width: `t̂` and `ŵ` carry genuine field
+elements.
+
+### Choosing a bound
+
+Adaptive presets select with
+`SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload`, i.e.
+setup-first. The bound's return is a smaller setup matrix and a smaller
+prover-side witness, not a smaller proof; at small `nv` the objective can even
+trade a noticeably larger proof for a smaller setup. Review proof size per
+`(nv, bound)` pair before adding a key to a bounded catalog. See
+[`specs/bounded-dense-schedules.md`](https://github.com/LayerZero-Labs/akita/blob/main/specs/bounded-dense-schedules.md)
+for measurements.
+
+**Implementation map**
+
+- `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`,
+  `validate`, `has_bounded_committed_source`).
+- `crates/akita-types/src/sis/decomposition_digits.rs`
+  (`balanced_digit_representable_bounds`, `balanced_digits_cover_centered_field`,
+  `num_digits_inner_for_bound`).
+- `crates/akita-config/src/proof_optimized/fp128.rs` (`Dense64`).
+- `crates/akita-prover/src/api/commitment.rs` (the producer-side guard) and
+  `crates/akita-prover/src/compute/poly.rs`
+  (`RootCommitSource::committed_centered_reach`).

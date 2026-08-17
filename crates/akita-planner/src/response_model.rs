@@ -330,13 +330,22 @@ pub(crate) fn uniform_field_source_moment(
         .ok_or_else(|| AkitaError::InvalidSetup("uniform field source is empty".into()))
 }
 
+/// Deterministic maximum squared digit energy of a balanced signed-digit source
+/// whose centered coefficients fit `source_log_bound` bits.
+///
+/// `source_log_bound` is the **declared committed-source bound**, not the field
+/// width: a bounded source stops short of the field, so its final digit plane
+/// only spans the bits the bound leaves. Charging that plane a full `log_basis`
+/// of range would over-estimate its energy and inflate the L2 response cap the
+/// A rank is priced against. A full-field source passes its own field width and
+/// is unaffected.
 fn bounded_field_source_moment(
     scalar_count: usize,
-    field_bits: u32,
+    source_log_bound: u32,
     log_basis: u32,
     digit_count: usize,
 ) -> Result<SourceMomentEstimate, AkitaError> {
-    if scalar_count == 0 || field_bits == 0 || log_basis == 0 || digit_count == 0 {
+    if scalar_count == 0 || source_log_bound == 0 || log_basis == 0 || digit_count == 0 {
         return Err(AkitaError::InvalidSetup(
             "bounded field source requires positive geometry".into(),
         ));
@@ -347,10 +356,10 @@ fn bounded_field_source_moment(
         let consumed = (plane as u32)
             .checked_mul(log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane width overflow".into()))?;
-        if consumed >= field_bits {
+        if consumed >= source_log_bound {
             break;
         }
-        let plane_bits = log_basis.min(field_bits - consumed);
+        let plane_bits = log_basis.min(source_log_bound - consumed);
         let half_basis = 1u128
             .checked_shl(plane_bits - 1)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane bound overflow".into()))?;
@@ -608,13 +617,20 @@ fn checked_logical_group_len(num_vars: usize, num_polynomials: usize) -> Result<
 }
 
 /// Source moments of each root opening group before its first fold.
+///
+/// `decomposition` supplies both the field width and the final group's declared
+/// committed-source bound (`log_commit_bound`). Precommitted groups were frozen
+/// by a possibly different producer whose bound is not carried in their params,
+/// so they are priced at the shared field width — always a valid upper bound on
+/// their source energy, and exactly the previous behavior.
 pub(crate) fn root_group_source_moments(
     params: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
     final_policy: HonestFoldPolicySpec,
     precommitted_policies: &[HonestFoldPolicySpec],
-    field_bits: u32,
+    decomposition: akita_types::DecompositionParams,
 ) -> Result<Vec<SourceMomentEstimate>, AkitaError> {
+    let field_bits = decomposition.field_bits();
     let final_group_index = opening_layout.root_final_group_index()?;
     if precommitted_policies.len() != final_group_index {
         return Err(AkitaError::InvalidSetup(
@@ -671,12 +687,19 @@ pub(crate) fn root_group_source_moments(
                     AkitaError::InvalidSetup("unit one-hot source moments overflow".into())
                 })?
             }
-            HonestFoldPolicySpec::BalancedSignedDigit(_) => bounded_field_source_moment(
-                logical_len,
-                field_bits,
-                group_params.log_basis_inner(),
-                group_params.num_digits_inner(),
-            )?,
+            HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+                let source_log_bound = if group_index == final_group_index {
+                    decomposition.log_commit_bound
+                } else {
+                    field_bits
+                };
+                bounded_field_source_moment(
+                    logical_len,
+                    source_log_bound,
+                    group_params.log_basis_inner(),
+                    group_params.num_digits_inner(),
+                )?
+            }
         };
         moments.push(moment);
     }

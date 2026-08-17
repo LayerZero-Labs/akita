@@ -47,6 +47,29 @@ pub struct OneHotMultiChunkW4R2;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DenseMultiChunk;
 
+/// Dense preset for witnesses known to fit 64 signed bits of the 128-bit field.
+///
+/// Same field, same SIS modulus profile, and the same balanced signed-digit
+/// source class as [`Dense`]; the only difference is the declared committed-source
+/// bound (`log_commit_bound = 64` instead of `128`). That halves the A-role digit
+/// depth, and with it the A input width, the shared setup matrix, and the
+/// level-1 witness the whole recursion suffix inherits. Opening witnesses stay
+/// full-width (`log_open_bound = Some(128)`), because `t̂` / `ŵ` carry genuine
+/// field elements.
+///
+/// This is a **different commitment**, not a cheaper encoding of [`Dense`]: its
+/// catalog identity differs, and it is binding and complete only for polynomials
+/// whose centered coefficients fit the scheduled digit envelope. `commit` rejects
+/// an out-of-range coefficient rather than committing a truncation, so a caller
+/// that cannot guarantee the bound must use [`Dense`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Dense64;
+
+impl Dense64 {
+    /// Committed-source bound in signed bits.
+    pub const LOG_COMMIT_BOUND: u32 = 64;
+}
+
 impl_proof_optimized_preset!(
     Dense,
     Field,
@@ -55,8 +78,30 @@ impl_proof_optimized_preset!(
     256,
     128,
     128,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
+    source = balanced_digits,
     schedules = ("schedules-fp128-dense", "fp128_dense", fp128_dense_table),
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
+        potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
+        potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
+    }
+);
+impl_proof_optimized_preset!(
+    Dense64,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    64,
+    source = balanced_digits,
+    schedules = (
+        "schedules-fp128-dense64",
+        "fp128_dense64",
+        fp128_dense64_table
+    ),
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
         suffix_dimensions: &[64],
@@ -73,7 +118,7 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    source = unit_one_hot,
     schedules = ("schedules-fp128-onehot", "fp128_onehot", fp128_onehot_table),
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
