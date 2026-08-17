@@ -731,7 +731,15 @@ fn adaptive_search_requires_a_monotonic_d64_suffix_domain() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
-    let missing_d64 = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(128)]).unwrap();
+    let missing_d64 = RingDimensionSearchDomain::new([
+        CommitmentRingDims::uniform(128),
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ])
+    .unwrap();
     let missing_policy = policy_for_domain(base_policy, &missing_d64);
     let error = find_schedule(
         onehot_group(16, 1),
