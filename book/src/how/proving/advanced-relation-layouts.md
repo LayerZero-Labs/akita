@@ -24,7 +24,7 @@ field-valued evaluation trace, just as in the basic setting.
   - [Why multiple commitment groups](#why-multiple-commitment-groups)
   - [Group-local folded responses and relations](#group-local-folded-responses-and-relations)
   - [The shared opening-commitment relation](#the-shared-opening-commitment-relation)
-  - [Physical row and witness layout](#physical-row-and-witness-layout)
+  - [Semantic row and witness layout](#semantic-row-and-witness-layout)
   - [Return to the single-group recursion](#return-to-the-single-group-recursion)
 - [Multiple witness chunks](#multiple-witness-chunks)
 - [Different ring dimensions](#different-ring-dimensions)
@@ -38,10 +38,11 @@ preprocessed data may be committed at different times. When one commitment is
 formed, the prover may not yet know which other commitments it will later be
 opened with, the opening point, or the root schedule that will combine them.
 Akita calls the polynomials held under one independently formed outer
-commitment a **commitment group**. All claims in one group share an opening
-point. In the current implementation, all groups are opened at one shared root
-point. One group is the **final/new group**, while commitments formed earlier
-enter as **precommitted groups** with already-fixed parameters.
+commitment a **commitment group**. The layout associates one complete opening
+point with each group, shared by all claims in that group. Different groups may
+be opened at different points. One group is the **final/new group**, while
+commitments formed earlier enter as **precommitted groups** with already-fixed
+parameters.
 
 Proving each commitment group separately would repeat the entire recursive
 opening protocol. Akita instead batches the groups in one root transition and
@@ -49,9 +50,9 @@ then resumes the ordinary single-opening recursion. The batching preserves
 the separate group commitments and folded responses: each group has its own
 $\mathbf z_g$, $\hat{\mathbf t}_g$, and group-local `consistency | A | B`
 relations. On the opening side, however, every group contributes an
-$\hat{\mathbf e}_g$ segment to one concatenated vector. One $\mathbf D$ matrix
-binds that entire vector, and the field-level evaluation trace separately
-batches the claimed evaluations.
+$\hat{\mathbf e}_g$ segment to one logically concatenated vector. One
+$\mathbf D$ matrix binds that entire vector, and the field-level evaluation
+trace separately batches the claimed evaluations at their group-local points.
 
 ### Group-local folded responses and relations
 
@@ -69,17 +70,17 @@ $$
 
 There is no sum over $g$: the folded responses $\mathbf z_g$ remain separate.
 The basic consistency, $\mathbf A$, and $\mathbf B$ relations are repeated
-independently for every group. In particular, the $\mathbf B_g$ rows bind
-$\hat{\mathbf t}_g$ to that group's public commitment $\mathbf u_g$. Each
-group also produces opening digits $\hat{\mathbf e}_g$, which become one
-segment of the shared opening vector below.
+independently for every group. In the semantic relation, the $\mathbf B_g$
+rows bind $\hat{\mathbf t}_g$ to that group's outer commitment $\mathbf u_g$.
+Each group also produces opening digits $\hat{\mathbf e}_g$, which become one
+segment of the shared opening vector.
 
 The fold and outer-commitment parts remain group-local because each commitment
 fixes its own $\mathbf A_g$ and $\mathbf B_g$ matrices, decomposition
-parameters, and public target $\mathbf u_g$. Its folded response $\mathbf z_g$
-is formed with that group's challenges and must be checked against those fixed
-parameters. Combining the responses across groups would lose these
-group-specific commitment bindings.
+parameters, and semantic target $\mathbf u_g$. Its folded response
+$\mathbf z_g$ is formed with that group's challenges and must be checked
+against those fixed parameters. Combining the responses across groups would
+lose these group-specific commitment bindings.
 
 ### The shared opening-commitment relation
 
@@ -87,15 +88,8 @@ The $\mathbf D$ relation can be shared for a different reason. Unlike
 $\mathbf A_g$ and $\mathbf B_g$, $\mathbf D$ is owned by the fold level rather
 than by an individual commitment group. Every $\hat{\mathbf e}_g$ segment uses
 the same opening-role ring dimension and decomposition basis, so the segments
-can occupy disjoint column ranges of one matrix
-
-$$
-\mathbf D
-=
-[\mathbf D_0\mid\mathbf D_1\mid\cdots],
-$$
-
-and be concatenated into one input vector:
+can occupy disjoint column ranges of the single opening-commitment matrix
+$\mathbf D$ and form one input vector:
 
 $$
 \hat{\mathbf e}_{\mathrm{all}}
@@ -104,22 +98,22 @@ $$
 \qquad
 \mathbf D\hat{\mathbf e}_{\mathrm{all}}
 =
-\sum_g\mathbf D_g\hat{\mathbf e}_g
-=
 \mathbf v_D.
 $$
 
-Thus the opening digits are not committed separately by group: they are
-concatenated and bound together by the single relation
-$\mathbf D\hat{\mathbf e}_{\mathrm{all}}=\mathbf v_D$. The fixed column ranges
-record which coordinates came from each group, and the group-local consistency
-rows prove what each $\hat{\mathbf e}_g$ segment represents.
+Here the concatenation is logical and follows relation order: the final/new
+group first, then the precommitted groups in public order. It combines only the
+opening-digit inputs to $\mathbf D$; the original group witnesses, folded
+responses, and outer-commitment digits remain group-local. The fixed column
+ranges record which coordinates came from each group, and the group-local
+consistency rows prove what each $\hat{\mathbf e}_g$ segment represents at that
+group's own opening point.
 
-### Physical row and witness layout
+### Semantic row and witness layout
 
-In the canonical physical row order, the final/new group is placed first,
-followed by the precommitted groups. The shared $\mathbf D$ rows remain at the
-end:
+In the canonical semantic-row order, the final/new group is placed first,
+followed by the precommitted groups. The shared $\mathbf D$ rows follow all
+group-local rows:
 
 $$
 \begin{aligned}
@@ -136,7 +130,7 @@ $$
 \end{aligned}
 $$
 
-Consequently, the full right-hand side is
+The semantic target vector is therefore
 
 $$
 \mathbf y
@@ -147,13 +141,13 @@ $$
 \mathbf v_D.
 $$
 
-This relation is block sparse: a group's consistency, $\mathbf A_g$, and
-$\mathbf B_g$ rows touch only that group's witness segment, whereas the
-shared $\mathbf D$ rows touch the $\hat{\mathbf e}_g$ segments from every
-group. Stage 2 batches all physical rows into one sumcheck, but this batching
+The semantic layout is block sparse: a group's consistency, $\mathbf A_g$, and
+$\mathbf B_g$ rows touch only that group's witness segment, whereas the shared
+$\mathbf D$ rows touch the $\hat{\mathbf e}_g$ segments from every group.
+Stage 2 batches the realized physical rows into one sumcheck, but this batching
 does not merge the group-local relations.
 
-For a single chunk per group, the corresponding pre-switch witness layout is
+The corresponding logical witness layout is
 
 $$
 \mathbf w_0
@@ -162,25 +156,33 @@ $$
 [\hat{\mathbf z}_g\mid\hat{\mathbf e}_g\mid\hat{\mathbf t}_g].
 $$
 
-The quotient digits for all physical rows are stored once, in one shared
-$\hat{\mathbf r}$ tail after these group segments.
+The displayed rows, target vector, and $\mathbf w_0$ describe only the semantic
+layout. In the compressed realization, each semantic group commitment
+$\mathbf u_g$ is compressed through its own $\mathbf F_g$ chain. That chain
+adds distinct group-local compression digits and quotient coordinates to the
+eventual flat witness; it does not create a separate committed witness for the
+group. The single shared commitment $\mathbf v_D$ is compressed once through
+one $\mathbf H$ chain, whose compression digits and quotient coordinates form
+one level-shared segment in the eventual flat witness. These are the same
+constructions as in the basic case, so their expanded rows, right-hand sides,
+and witness suffix are omitted here; see the
+[realizations page](./akita-fold-realizations.md).
 
 ### Return to the single-group recursion
 
-The root fold consumes this multi-group structure. After ring switching, the
-group segments and the shared quotient tail form one witness
+The root fold consumes this multi-group semantic structure. After the semantic
+rows have been realized and lifted as described on the previous page, their
+witness coordinates form one complete flat ring-switch witness. That witness
+is aligned to the successor commitment ring dimension and committed once.
+Stage 2 evaluates it at its sumcheck-derived opening point, producing one
+witness-side opening claim for the next fold.
 
-$$
-\mathbf w^{\mathrm{next}}
-=
-\mathbf w_0\Vert\hat{\mathbf r},
-$$
-
-which is committed once for the next level. The output of the multi-group root
-is therefore the basic recursive object: one polynomial group, one committed
-witness, and one opening claim at one point. The original root groups remain
-only as ranges inside the flat witness; they no longer define separate folded
-responses or relation rows.
+Thus the contribution descended from the original root batch is one committed
+witness and one opening claim. Its coordinates retain the original group ranges
+inside the flat layout, but those root groups no longer define separate folded
+responses or relation rows. If setup offloading is active, the next fold may
+also receive an independent setup-prefix group; that extra group does not
+preserve or recreate the original root grouping.
 
 ## Multiple witness chunks
 
