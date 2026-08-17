@@ -38,9 +38,10 @@ trace separately batches the claimed evaluations at their group-local points.
 
 ### Group-local folded responses and relations
 
-To show only what changes from the basic setting, assume one polynomial claim
-per group and add a group index $g$ to the previous notation. Group $g$ has
-its own blocks $\mathbf s_{g,b}$, fold challenges $c_{g,b}$, and folded response
+To isolate the group axis, assume one witness chunk, one common ring dimension,
+and one polynomial claim per group, then add a group index $g$ to the previous
+notation. Group $g$ has its own blocks $\mathbf s_{g,b}$, fold challenges
+$c_{g,b}$, and folded response
 
 $$
 \boxed{
@@ -91,7 +92,7 @@ ranges record which coordinates came from each group, and the group-local
 consistency rows prove what each $\hat{\mathbf e}_g$ segment represents at that
 group's own opening point.
 
-### Semantic relations and physical realizations
+### Semantic relations and witness layout
 
 In the canonical semantic-row order, the final/new group is placed first,
 followed by the precommitted groups. The shared $\mathbf D$ rows follow all
@@ -138,24 +139,16 @@ $$
 [\hat{\mathbf z}_g\mid\hat{\mathbf e}_g\mid\hat{\mathbf t}_g].
 $$
 
-The displayed rows, target vector, and $\mathbf w_0$ describe only the semantic
-relation. Raw and compressed payloads realize it with different physical rows
-and flat witness suffixes.
-
-Both realizations use the row-wise quotient lift from [Raw and compressed
-physical realizations](./akita-fold-realizations.md#lift-the-physical-ring-relations-before-sumcheck).
-Every physical row has one quotient polynomial in that row's native ring. Its
-digit decomposition becomes part of the flat witness, and evaluation at the
-ring-switch point multiplies it by the row-specific denominator
-$\alpha^{d_i}+1$. The construction below changes only which rows and witness
-segments are present, so the quotient derivation is not repeated here.
+The displayed rows, target vector, and $\mathbf w_0$ are the complete semantic
+multi-group relation under this section's single-chunk, common-ring assumptions.
+They specify the algebraic variables, row support, and group ordering without
+choosing a public payload representation.
 
 #### Raw realization
 
-Raw mode keeps exactly the semantic row order displayed above and places the
-full $\mathbf u_g$ targets on the group-local $\mathbf B_g$ rows and
-$\mathbf v_D$ on the shared $\mathbf D$ rows. It adds no compression rows.
-After digit-decomposing the quotient of every ordinary row, the flat witness is
+Raw mode realizes these rows directly: the full $\mathbf u_g$ targets occupy
+the group-local $\mathbf B_g$ rows, and $\mathbf v_D$ occupies the shared
+$\mathbf D$ rows. Applying the ordinary row-wise quotient lift gives
 
 $$
 \boxed{
@@ -169,64 +162,12 @@ $$
 
 Here $\hat{\mathbf r}_{\mathrm{ord}}$ follows the same canonical row order:
 each group's `consistency | A | B` quotient digits first, followed by the
-quotient digits for the shared $\mathbf D$ rows. It is one contiguous physical
-suffix, but each quotient-row span retains that row's native ring dimension.
-
-#### Compressed realization
-
-Compressed mode replaces each semantic $\mathbf u_g$ by its own
-$\mathbf F_g$ compression chain and replaces the single shared
-$\mathbf v_D$ by one $\mathbf H$ chain. The ordinary $\mathbf B_g$ and
-$\mathbf D$ right-hand sides become zero because their outputs recompose from
-the first compression-digit layer. For each compression layer, the physical
-row order is every group-local $\mathbf F_g$ row in relation order followed by
-the one shared $\mathbf H$ row. Only the terminal rows carry the public
-compressed payloads. The chain equations are the same as in the basic case and
-are not expanded again here.
-
-Suppressing the derived zero-alignment ranges, the flat witness layout for the
-two compression layers is
-
-$$
-\boxed{
-\begin{aligned}
-\mathbf w_{\mathrm{comp}}
-={}&
-\mathbf w_0
-\Vert
-\hat{\mathbf r}_{\mathrm{ord}}
-\\
-&\Vert
-\mathop{\Big\Vert}_{\ell=1}^{2}
-\left[
-\left(
-\big\Vert_{g\in\mathrm{relation\ order}}
-\boldsymbol\xi_{F_g,\ell}
-\right)
-\Vert
-\boldsymbol\xi_{H,\ell}
-\right.
-\\[-2pt]
-&\hspace{92pt}\left.
-\Vert
-\left(
-\big\Vert_{g\in\mathrm{relation\ order}}
-\hat{\mathbf r}_{F_g,\ell}
-\right)
-\Vert
-\hat{\mathbf r}_{H,\ell}
-\right].
-\end{aligned}
-}
-$$
-
-Thus one layer stores all group-local $\mathbf F$ digits, the shared
-$\mathbf H$ digits, the corresponding group-local $\mathbf F$ quotient digits,
-and the shared $\mathbf H$ quotient digits, in that order. When there is only
-one group, suppressing alignment reduces this expression exactly to the basic
-one-group compressed layout. The ordering is by relation family and compression
-layer rather than by a global sort on ring dimension: every quotient and
-compression span still retains its own native dimension.
+quotient digits for the shared $\mathbf D$ rows. The quotient construction is
+unchanged from the [basic realization](./akita-fold-realizations.md#lift-the-physical-ring-relations-before-sumcheck).
+The implemented root transition uses compressed payloads, but compression does
+not change the semantic multi-group relation above; its $\mathbf F/\mathbf H$
+chains are the same realization step already owned by the
+[realizations page](./akita-fold-realizations.md) and are not expanded here.
 
 ### Return to the single-group recursion
 
