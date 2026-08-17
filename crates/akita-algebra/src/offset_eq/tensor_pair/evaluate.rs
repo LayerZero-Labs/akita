@@ -319,6 +319,7 @@ fn eval_multi_axis_families<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT
     }
     let bit_count = left_challenges.len().max(right_challenges.len());
     let mut introductions = vec![Vec::<BitIntroduction<F>>::new(); bit_count];
+    let mut forced_zero_weight = F::one();
     let first_family = families.first().ok_or(AkitaError::InvalidProof)?;
     for &(axis_index, axis_len, left_stride, right_stride) in recurrence_geometry {
         let axis = first_family
@@ -355,23 +356,33 @@ fn eval_multi_axis_families<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor unit axis is constant".into())
                 })?;
+            let factors = axis
+                .bit_factors(coordinate_bit)
+                .ok_or(AkitaError::InvalidProof)?;
             if let Some(at_bit) = introductions.get_mut(start_bit) {
                 at_bit.push(BitIntroduction {
                     left: left >> start_bit,
                     right: right >> start_bit,
-                    factors: axis
-                        .bit_factors(coordinate_bit)
-                        .ok_or(AkitaError::InvalidProof)?,
+                    factors,
                 });
             } else {
                 // Both nonzero shifted strides start beyond every equality bit.
                 // The coordinate-one branch is therefore out of domain on both
-                // sides and contributes zero.
+                // sides and contributes zero. The forced coordinate-zero
+                // branch still carries its factored axis weight.
                 debug_assert!(
                     (left == 0 || left >= 1usize << left_challenges.len())
                         && (right == 0 || right >= 1usize << right_challenges.len())
                 );
+                forced_zero_weight *= factors[0];
             }
+        }
+    }
+
+    if forced_zero_weight != F::one() {
+        charge_work(work, seeds.len())?;
+        for seed in &mut seeds {
+            seed.weight *= forced_zero_weight;
         }
     }
 

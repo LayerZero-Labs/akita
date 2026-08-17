@@ -203,3 +203,22 @@ fn bit_product_axes_match_dense_coordinate_oracle() {
         expected
     );
 }
+
+#[test]
+fn out_of_domain_bit_product_axis_keeps_zero_branch_factor() {
+    let right = vec![F::from_u64(7)];
+    let scalar = F::from_u64(11);
+    let zero_factor = F::from_u64(13);
+    let family = EqPairTensorFamily::new(
+        0,
+        0,
+        scalar,
+        vec![EqPairTensorAxis::bit_product(0, 2, vec![[zero_factor, F::from_u64(17)]]).unwrap()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        eval_boolean_pair_tensor_families::<_, false, false>(&[], &right, &[family]).unwrap(),
+        scalar * zero_factor * eq_eval_at_index(&right, 0)
+    );
+}
