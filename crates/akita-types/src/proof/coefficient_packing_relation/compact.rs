@@ -2,6 +2,7 @@ use akita_algebra::offset_eq::{
     eq_eval_at_index, eval_affine_digit_intervals, eval_boolean_pair_tensor_families,
     EqPairTensorAxis, EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
 };
+use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore};
 use std::ops::Range;
 use std::sync::Arc;
@@ -98,84 +99,90 @@ impl<E: FieldCore> CoefficientPackingCompactFactors<E> {
     /// claim/block/digit/plane support.
     pub fn evaluate_relation_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         self.validate_point(point)?;
-        let mut coefficient_evaluations = [None; usize::BITS as usize];
-        let mut affine = E::zero();
-        let mut family_index = 0usize;
-        while let Some(family) = self.affine_relation_families.get(family_index) {
-            let coefficient_bits = family.coefficient_len.trailing_zeros() as usize;
-            let coefficient_evaluation = if let Some(evaluation) = coefficient_evaluations
-                .get(coefficient_bits)
-                .copied()
-                .flatten()
-            {
-                evaluation
-            } else {
-                let evaluation = family.coefficient_evaluation_at_point(point)?;
-                let slot = coefficient_evaluations
-                    .get_mut(coefficient_bits)
+        let evaluate_affine = || -> Result<E, AkitaError> {
+            let mut coefficient_evaluations = [None; usize::BITS as usize];
+            let mut affine = E::zero();
+            let mut family_index = 0usize;
+            while let Some(family) = self.affine_relation_families.get(family_index) {
+                let coefficient_bits = family.coefficient_len.trailing_zeros() as usize;
+                let coefficient_evaluation = if let Some(evaluation) = coefficient_evaluations
+                    .get(coefficient_bits)
+                    .copied()
+                    .flatten()
+                {
+                    evaluation
+                } else {
+                    let evaluation = family.coefficient_evaluation_at_point(point)?;
+                    let slot = coefficient_evaluations
+                        .get_mut(coefficient_bits)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    *slot = Some(evaluation);
+                    evaluation
+                };
+                let (_, outer_point) = point
+                    .split_at_checked(coefficient_bits)
                     .ok_or(AkitaError::InvalidProof)?;
-                *slot = Some(evaluation);
-                evaluation
-            };
-            let (_, outer_point) = point
-                .split_at_checked(coefficient_bits)
-                .ok_or(AkitaError::InvalidProof)?;
-            let next_family_index = family_index.checked_add(1).ok_or_else(|| {
-                AkitaError::InvalidSetup("packing affine family index overflow".into())
-            })?;
-            let remaining_families = self
-                .affine_relation_families
-                .get(next_family_index..)
-                .ok_or(AkitaError::InvalidProof)?;
-            let incompatible_offset = remaining_families
-                .iter()
-                .position(|candidate| !family.shares_contraction_geometry(candidate));
-            let group_end = if let Some(offset) = incompatible_offset {
-                next_family_index.checked_add(offset).ok_or_else(|| {
+                let next_family_index = family_index.checked_add(1).ok_or_else(|| {
                     AkitaError::InvalidSetup("packing affine family index overflow".into())
-                })?
-            } else {
-                self.affine_relation_families.len()
-            };
-            let group_len = group_end
-                .checked_sub(family_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut base_offsets = Vec::new();
-            let mut base_scales = Vec::new();
-            base_offsets.try_reserve_exact(group_len).map_err(|_| {
-                AkitaError::InvalidInput("packing affine base allocation failed".into())
-            })?;
-            base_scales.try_reserve_exact(group_len).map_err(|_| {
-                AkitaError::InvalidInput("packing affine scale allocation failed".into())
-            })?;
-            let family_group = self
-                .affine_relation_families
-                .get(family_index..group_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            for candidate in family_group {
-                base_offsets.push(candidate.base_offset);
-                base_scales.push(candidate.scalar * coefficient_evaluation);
+                })?;
+                let remaining_families = self
+                    .affine_relation_families
+                    .get(next_family_index..)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let incompatible_offset = remaining_families
+                    .iter()
+                    .position(|candidate| !family.shares_contraction_geometry(candidate));
+                let group_end = if let Some(offset) = incompatible_offset {
+                    next_family_index.checked_add(offset).ok_or_else(|| {
+                        AkitaError::InvalidSetup("packing affine family index overflow".into())
+                    })?
+                } else {
+                    self.affine_relation_families.len()
+                };
+                let group_len = group_end
+                    .checked_sub(family_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let mut base_offsets = Vec::new();
+                let mut base_scales = Vec::new();
+                base_offsets.try_reserve_exact(group_len).map_err(|_| {
+                    AkitaError::InvalidInput("packing affine base allocation failed".into())
+                })?;
+                base_scales.try_reserve_exact(group_len).map_err(|_| {
+                    AkitaError::InvalidInput("packing affine scale allocation failed".into())
+                })?;
+                let family_group = self
+                    .affine_relation_families
+                    .get(family_index..group_end)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for candidate in family_group {
+                    base_offsets.push(candidate.base_offset);
+                    base_scales.push(candidate.scalar * coefficient_evaluation);
+                }
+                affine += eval_affine_digit_intervals(
+                    outer_point,
+                    &base_offsets,
+                    0,
+                    family.outer_len,
+                    family.outer_stride,
+                    family.digit_stride,
+                    family.digit_weights.as_ref(),
+                    family.outer_weights.as_ref(),
+                    &[],
+                    &base_scales,
+                )?;
+                family_index = group_end;
             }
-            affine += eval_affine_digit_intervals(
-                outer_point,
-                &base_offsets,
-                0,
-                family.outer_len,
-                family.outer_stride,
-                family.digit_stride,
-                family.digit_weights.as_ref(),
-                family.outer_weights.as_ref(),
-                &[],
-                &base_scales,
-            )?;
-            family_index = group_end;
-        }
-        Ok(affine
-            + eval_boolean_pair_tensor_families::<_, false, false>(
+            Ok(affine)
+        };
+        let evaluate_quotient = || {
+            eval_boolean_pair_tensor_families::<_, false, false>(
                 &[],
                 point,
                 &self.quotient_families,
-            )?)
+            )
+        };
+        let (affine, quotient) = cfg_join!(evaluate_affine, evaluate_quotient);
+        Ok(affine? + quotient?)
     }
 
     /// Evaluate the direct-opening and packing-Z structured terms from their

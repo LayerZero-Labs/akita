@@ -147,25 +147,41 @@ where
     }
 
     fn coefficient_packing_weight_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        self.coefficient_packing_groups
-            .iter()
-            .try_fold(E::zero(), |sum, semantics| {
-                let relation = {
+        let evaluate_group = |semantics: &CoefficientPackingVerifierGroupSemantics<E>| {
+            let (relation, structured) = cfg_join!(
+                || {
                     let _span =
                         tracing::info_span!("coefficient_packing_relation_weight").entered();
                     semantics
                         .compact_factors()
-                        .evaluate_relation_at_point(point)?
-                };
-                let structured = {
+                        .evaluate_relation_at_point(point)
+                },
+                || {
                     let _span =
                         tracing::info_span!("coefficient_packing_structured_weight").entered();
-                    semantics
-                        .compact_factors()
-                        .evaluate_stage2_at_point(point)?
-                };
-                Ok(sum + relation + structured)
-            })
+                    semantics.compact_factors().evaluate_stage2_at_point(point)
+                }
+            );
+            Ok::<_, AkitaError>(relation? + structured?)
+        };
+        if let [semantics] = self.coefficient_packing_groups {
+            return evaluate_group(semantics);
+        }
+        #[cfg(feature = "parallel")]
+        {
+            self.coefficient_packing_groups
+                .par_iter()
+                .map(evaluate_group)
+                .try_reduce(|| E::zero(), |left, right| Ok(left + right))
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.coefficient_packing_groups
+                .iter()
+                .try_fold(E::zero(), |sum, semantics| {
+                    Ok(sum + evaluate_group(semantics)?)
+                })
+        }
     }
 }
 
