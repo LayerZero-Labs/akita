@@ -415,21 +415,26 @@ where
 
 fn extension_opening_term_from_packed_witness<F, E>(
     witness: TensorPackedWitness<E>,
-    tail_point: &[E],
-    eta: &[E],
+    factor_evals: &std::sync::Arc<Vec<E>>,
     coeff: E,
 ) -> Result<ExtensionOpeningReductionTerm<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
     match witness {
         TensorPackedWitness::Dense(witness_evals) => {
-            ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, coeff)
+            ExtensionOpeningReductionTerm::new_with_shared_factor(
+                witness_evals,
+                std::sync::Arc::clone(factor_evals),
+                coeff,
+            )
         }
+        // The sparse term folds its factor from round one, so it takes an
+        // owned copy; sparse witnesses do not occur on the dense-group path
+        // that shares the table across many terms.
         TensorPackedWitness::Sparse(witness) => {
-            ExtensionOpeningReductionTerm::new_sparse(witness, factor_evals, coeff)
+            ExtensionOpeningReductionTerm::new_sparse(witness, factor_evals.as_ref().clone(), coeff)
         }
     }
 }
@@ -450,6 +455,10 @@ where
 {
     let _span =
         tracing::info_span!("extension_opening_dense_witnesses", num_terms = polys.len()).entered();
+    // One transparent factor table per batch: every term uses the same
+    // (tail_point, eta) equality table, and the terms fold under the same
+    // challenges, so the full-size table is built once and shared.
+    let factor_evals = std::sync::Arc::new(tensor_equality_factor_evals::<F, E>(tail_point, eta)?);
     polys
         .iter()
         .zip(row_coefficients.iter().copied())
@@ -458,7 +467,7 @@ where
                 let _s = tracing::info_span!("eor_packed_witness").entered();
                 TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
             };
-            extension_opening_term_from_packed_witness::<F, E>(witness, tail_point, eta, coeff)
+            extension_opening_term_from_packed_witness::<F, E>(witness, &factor_evals, coeff)
         })
         .collect()
 }

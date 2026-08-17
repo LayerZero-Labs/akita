@@ -24,7 +24,34 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
         Ok(Self {
             tables: ExtensionOpeningTables::Dense {
                 witness: witness_evals,
-                factor: factor_evals,
+                factor: DenseEorFactor::Owned(factor_evals),
+            },
+            coeff,
+            cached_accumulate: None,
+        })
+    }
+
+    /// Construct one term whose factor table is shared with the other terms
+    /// of the same reduction batch.
+    ///
+    /// All terms of one batch fold under the same challenges, so the shared
+    /// full-size table is only read until the first fold replaces it with an
+    /// owned half-size table; the folded values are identical to an owned
+    /// factor's.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the witness/factor tables are malformed.
+    pub fn new_with_shared_factor(
+        witness_evals: Vec<E>,
+        factor_evals: std::sync::Arc<Vec<E>>,
+        coeff: E,
+    ) -> Result<Self, AkitaError> {
+        validate_reduction_tables(&witness_evals, &factor_evals)?;
+        Ok(Self {
+            tables: ExtensionOpeningTables::Dense {
+                witness: witness_evals,
+                factor: DenseEorFactor::Shared(factor_evals),
             },
             coeff,
             cached_accumulate: None,

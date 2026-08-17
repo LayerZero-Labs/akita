@@ -1,3 +1,4 @@
+use super::sparse::DenseEorFactor;
 use super::*;
 
 #[cfg(feature = "parallel")]
@@ -70,31 +71,20 @@ where
     acc.finish()
 }
 
-pub(crate) fn fold_dense_reduction_tables_in_place<E: HasUnreducedOps + HasOptimizedFold>(
-    witness_evals: &mut Vec<E>,
-    factor_evals: &mut Vec<E>,
-    r_round: E,
-) {
-    let _span = tracing::trace_span!(
-        "fold_dense_reduction_tables_in_place",
-        table_len = witness_evals.len()
-    )
-    .entered();
-    debug_assert_eq!(witness_evals.len(), factor_evals.len());
-    fold_evals_in_place(witness_evals, r_round);
-    fold_evals_in_place(factor_evals, r_round);
-}
-
 /// Fold both tables by one variable AND pre-compute the next round's
 /// `(constant, quadratic)` accumulation in a single pass over the data.
-pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
+///
+/// A [`DenseEorFactor::Shared`] factor is read in place and its folded half
+/// is written to a fresh owned table (identical values); owned tables fold
+/// in place exactly as before.
+pub(in crate::protocol::extension_opening_reduction) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     witness_evals: &mut Vec<E>,
-    factor_evals: &mut Vec<E>,
+    factor: &mut DenseEorFactor<E>,
     r_round: E,
 ) -> (E, E) {
     let _span = tracing::trace_span!("fused_fold_and_accumulate", table_len = witness_evals.len())
         .entered();
-    debug_assert_eq!(witness_evals.len(), factor_evals.len());
+    debug_assert_eq!(witness_evals.len(), factor.as_slice().len());
     debug_assert!(witness_evals.len().is_power_of_two());
     debug_assert!(witness_evals.len() >= 4);
 
@@ -102,15 +92,15 @@ pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     // accumulation respects `DELAYED_PRODUCT_SUM_IS_EXACT`, matching
     // `accumulate_dense_round`.
     if E::DELAYED_PRODUCT_SUM_IS_EXACT {
-        fused_fold_and_accumulate_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals, r_round)
+        fused_fold_and_accumulate_with::<E, DelayedDeg2<E>>(witness_evals, factor, r_round)
     } else {
-        fused_fold_and_accumulate_with::<E, DirectDeg2<E>>(witness_evals, factor_evals, r_round)
+        fused_fold_and_accumulate_with::<E, DirectDeg2<E>>(witness_evals, factor, r_round)
     }
 }
 
 fn fused_fold_and_accumulate_with<E, A>(
     witness_evals: &mut Vec<E>,
-    factor_evals: &mut Vec<E>,
+    factor: &mut DenseEorFactor<E>,
     r_round: E,
 ) -> (E, E)
 where
@@ -139,7 +129,7 @@ where
 
             let acc = {
                 let input_w: &[E] = witness_evals;
-                let input_f: &[E] = factor_evals;
+                let input_f: &[E] = factor.as_slice();
 
                 folded_w
                     .par_chunks_mut(2)
@@ -165,27 +155,53 @@ where
             };
 
             *witness_evals = folded_w;
-            *factor_evals = folded_f;
+            *factor = DenseEorFactor::Owned(folded_f);
             return acc.finish();
         }
     }
 
-    let mut acc = A::zero();
-    for i in 0..quarter {
-        let fw0 = E::fold_one(&ctx, witness_evals[4 * i], witness_evals[4 * i + 1]);
-        let fw1 = E::fold_one(&ctx, witness_evals[4 * i + 2], witness_evals[4 * i + 3]);
-        let fa0 = E::fold_one(&ctx, factor_evals[4 * i], factor_evals[4 * i + 1]);
-        let fa1 = E::fold_one(&ctx, factor_evals[4 * i + 2], factor_evals[4 * i + 3]);
+    match factor {
+        DenseEorFactor::Owned(factor_evals) => {
+            let mut acc = A::zero();
+            for i in 0..quarter {
+                let fw0 = E::fold_one(&ctx, witness_evals[4 * i], witness_evals[4 * i + 1]);
+                let fw1 = E::fold_one(&ctx, witness_evals[4 * i + 2], witness_evals[4 * i + 3]);
+                let fa0 = E::fold_one(&ctx, factor_evals[4 * i], factor_evals[4 * i + 1]);
+                let fa1 = E::fold_one(&ctx, factor_evals[4 * i + 2], factor_evals[4 * i + 3]);
 
-        acc.add_constant_product(fw0, fa0);
-        acc.add_quadratic_product(fw1 - fw0, fa1 - fa0);
+                acc.add_constant_product(fw0, fa0);
+                acc.add_quadratic_product(fw1 - fw0, fa1 - fa0);
 
-        witness_evals[2 * i] = fw0;
-        witness_evals[2 * i + 1] = fw1;
-        factor_evals[2 * i] = fa0;
-        factor_evals[2 * i + 1] = fa1;
+                witness_evals[2 * i] = fw0;
+                witness_evals[2 * i + 1] = fw1;
+                factor_evals[2 * i] = fa0;
+                factor_evals[2 * i + 1] = fa1;
+            }
+            witness_evals.truncate(half);
+            factor_evals.truncate(half);
+            acc.finish()
+        }
+        DenseEorFactor::Shared(shared) => {
+            let input_f: &[E] = shared;
+            let mut folded_f = Vec::<E>::with_capacity(half);
+            let mut acc = A::zero();
+            for i in 0..quarter {
+                let fw0 = E::fold_one(&ctx, witness_evals[4 * i], witness_evals[4 * i + 1]);
+                let fw1 = E::fold_one(&ctx, witness_evals[4 * i + 2], witness_evals[4 * i + 3]);
+                let fa0 = E::fold_one(&ctx, input_f[4 * i], input_f[4 * i + 1]);
+                let fa1 = E::fold_one(&ctx, input_f[4 * i + 2], input_f[4 * i + 3]);
+
+                acc.add_constant_product(fw0, fa0);
+                acc.add_quadratic_product(fw1 - fw0, fa1 - fa0);
+
+                witness_evals[2 * i] = fw0;
+                witness_evals[2 * i + 1] = fw1;
+                folded_f.push(fa0);
+                folded_f.push(fa1);
+            }
+            witness_evals.truncate(half);
+            *factor = DenseEorFactor::Owned(folded_f);
+            acc.finish()
+        }
     }
-    witness_evals.truncate(half);
-    factor_evals.truncate(half);
-    acc.finish()
 }

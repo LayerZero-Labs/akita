@@ -1,5 +1,70 @@
 use super::*;
 
+/// Dense factor table of a [`ExtensionOpeningTables::Dense`] term.
+///
+/// Every dense term of one reduction batch starts from the same transparent
+/// tail-point equality table, so the full-size table is built once and
+/// shared; the first fold writes a fresh half-size owned table (identical
+/// values to an in-place fold) and later rounds fold in place.
+#[derive(Debug, Clone)]
+pub(in crate::protocol::extension_opening_reduction) enum DenseEorFactor<E> {
+    Shared(std::sync::Arc<Vec<E>>),
+    Owned(Vec<E>),
+}
+
+impl<E: FieldCore> DenseEorFactor<E> {
+    pub(in crate::protocol::extension_opening_reduction) fn as_slice(&self) -> &[E] {
+        match self {
+            Self::Shared(factor) => factor,
+            Self::Owned(factor) => factor,
+        }
+    }
+}
+
+impl<E: FieldCore + HasOptimizedFold> DenseEorFactor<E> {
+    pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(&mut self, r_round: E) {
+        match self {
+            Self::Owned(factor) => fold_evals_in_place(factor, r_round),
+            Self::Shared(factor) => {
+                *self = Self::Owned(fold_evals_shared(factor, r_round));
+            }
+        }
+    }
+}
+
+/// Fold a shared evaluation table into a fresh half-size owned table.
+///
+/// Same per-pair `fold_one` arithmetic as
+/// [`fold_evals_in_place`](akita_algebra::fold_evals_in_place), so the
+/// folded values are byte-identical; only the destination differs.
+pub(in crate::protocol::extension_opening_reduction) fn fold_evals_shared<
+    E: FieldCore + HasOptimizedFold,
+>(
+    src: &[E],
+    r: E,
+) -> Vec<E> {
+    assert!(
+        src.len().is_power_of_two(),
+        "evals length must be a power of two"
+    );
+    assert!(src.len() >= 2, "evals must have at least 2 elements");
+    let half = src.len() / 2;
+    let ctx = E::precompute_fold(r);
+    #[cfg(feature = "parallel")]
+    {
+        const PAR_FOLD_THRESHOLD: usize = 1 << 12;
+        if half >= PAR_FOLD_THRESHOLD {
+            return (0..half)
+                .into_par_iter()
+                .map(|i| E::fold_one(&ctx, src[2 * i], src[2 * i + 1]))
+                .collect();
+        }
+    }
+    (0..half)
+        .map(|i| E::fold_one(&ctx, src[2 * i], src[2 * i + 1]))
+        .collect()
+}
+
 ///
 /// - [`Dense`](Self::Dense): dense witness paired with a dense factor. The
 ///   initial shape for non-onehot terms and the steady state of the recursive
@@ -14,7 +79,7 @@ use super::*;
 pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables<E: FieldCore> {
     Dense {
         witness: Vec<E>,
-        factor: Vec<E>,
+        factor: DenseEorFactor<E>,
     },
     Sparse {
         witness: SparseExtensionOpeningWitness<E>,
@@ -50,7 +115,9 @@ impl<E: FieldCore> ExtensionOpeningTables<E> {
 
     pub(in crate::protocol::extension_opening_reduction) fn claim(&self) -> Result<E, AkitaError> {
         match self {
-            Self::Dense { witness, factor } => extension_opening_reduction_claim(witness, factor),
+            Self::Dense { witness, factor } => {
+                extension_opening_reduction_claim(witness, factor.as_slice())
+            }
             Self::Sparse { witness, factor } => match factor {
                 SparseFactor::Dense(factor_evals) => witness.claim_with_factor(factor_evals),
                 SparseFactor::Tensor(factor) => {
@@ -72,6 +139,7 @@ impl<E: FieldCore> ExtensionOpeningTables<E> {
     ) -> Option<(E, E)> {
         match self {
             Self::Dense { witness, factor } => {
+                let factor = factor.as_slice();
                 (factor.len() == 1 && witness.len() == 1).then(|| (witness[0], factor[0]))
             }
             Self::Sparse { witness, factor } => match factor {
@@ -104,7 +172,7 @@ impl<E: FieldCore + HasUnreducedOps> ExtensionOpeningTables<E> {
         match self {
             Self::Dense { witness, factor } => {
                 let (round_constant, round_quadratic) =
-                    accumulate_dense_round(witness, factor, coeff);
+                    accumulate_dense_round(witness, factor.as_slice(), coeff);
                 *constant += round_constant;
                 *quadratic += round_quadratic;
             }
@@ -160,7 +228,8 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningTables<E
     pub(in crate::protocol::extension_opening_reduction) fn fold_in_place(&mut self, r_round: E) {
         match self {
             Self::Dense { witness, factor } => {
-                fold_dense_reduction_tables_in_place(witness, factor, r_round);
+                fold_evals_in_place(witness, r_round);
+                factor.fold_in_place(r_round);
             }
             Self::Sparse { witness, factor } => {
                 witness.fold_in_place(r_round);
