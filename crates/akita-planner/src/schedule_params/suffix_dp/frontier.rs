@@ -217,18 +217,47 @@ impl ProjectedFrontier {
         candidate: ScheduleCandidate,
         projection: FrontierProjection,
     ) -> Result<(), AkitaError> {
+        let admission = ParentAdmissionClass::for_candidate(&candidate);
+        let metrics = candidate.metrics();
+        let choices = self.by_parent_cost.get(&parent_cost);
+        let keep_setup = policy.recursive_setup_planning
+            && projection.includes_first_direct_setup()
+            && !choices.is_some_and(|choices| {
+                choices.setup.iter().any(|existing| {
+                    setup_primary_strictly_dominates(
+                        setup_score(existing.schedule.metrics()),
+                        existing.admission,
+                        setup_score(metrics),
+                        admission,
+                    )
+                })
+            });
+        let keep_payload = projection.includes_payload()
+            && !choices.is_some_and(|choices| {
+                choices.payload.iter().any(|existing| {
+                    payload_primary_strictly_dominates(
+                        payload_score(existing.schedule.metrics()),
+                        existing.admission,
+                        payload_score(metrics),
+                        admission,
+                    )
+                })
+            });
+        if !keep_setup && !keep_payload {
+            return Ok(());
+        }
         let projected = ProjectedCandidate {
             descriptor: super::super::candidate_schedule_descriptor_bytes(&candidate, diagnostics)?
                 .into(),
             descriptor_context: DescriptorOrderContext::for_candidate(&candidate),
-            admission: ParentAdmissionClass::for_candidate(&candidate),
+            admission,
             schedule: candidate,
         };
         let choices = self.by_parent_cost.entry(parent_cost).or_default();
-        if policy.recursive_setup_planning && projection.includes_first_direct_setup() {
+        if keep_setup {
             insert_projected(&mut choices.setup, projected.clone(), setup_dominates);
         }
-        if projection.includes_payload() {
+        if keep_payload {
             insert_projected(&mut choices.payload, projected, payload_dominates);
         }
         Ok(())
@@ -280,6 +309,17 @@ fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> boo
     )
 }
 
+fn setup_primary_strictly_dominates(
+    left_score: (crate::schedule_params::SetupPrefixCapacity, usize, usize),
+    left_admission: ParentAdmissionClass,
+    right_score: (crate::schedule_params::SetupPrefixCapacity, usize, usize),
+    right_admission: ParentAdmissionClass,
+) -> bool {
+    left_admission.admits_every_parent_of(right_admission)
+        && (left_score.0 < right_score.0
+            || (left_score.0 == right_score.0 && left_score.1 < right_score.1))
+}
+
 #[derive(Clone, Copy)]
 struct ProjectionOrder<'a, Score> {
     score: Score,
@@ -319,6 +359,15 @@ fn payload_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> b
     )
 }
 
+fn payload_primary_strictly_dominates(
+    left_score: (usize, usize),
+    left_admission: ParentAdmissionClass,
+    right_score: (usize, usize),
+    right_admission: ParentAdmissionClass,
+) -> bool {
+    left_admission.admits_every_parent_of(right_admission) && left_score.0 < right_score.0
+}
+
 fn payload_projection_dominates(
     left: ProjectionOrder<'_, (usize, usize)>,
     right: ProjectionOrder<'_, (usize, usize)>,
@@ -351,7 +400,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        payload_projection_dominates, setup_projection_dominates, DescriptorOrderContext,
+        payload_primary_strictly_dominates, payload_projection_dominates,
+        setup_primary_strictly_dominates, setup_projection_dominates, DescriptorOrderContext,
         ParentAdmissionClass, ProjectionOrder,
     };
     use crate::schedule_params::SetupPrefixCapacity;
@@ -464,5 +514,41 @@ mod tests {
         assert!(!admission(1, 8).is_admitted_by(false, true, 16));
         assert!(admission(2, 8).is_admitted_by(false, true, 16));
         assert!(!admission(2, 16).is_admitted_by(false, true, 16));
+    }
+
+    #[test]
+    fn strict_primary_dominance_does_not_consider_maskable_setup_or_ties() {
+        let capacity = SetupPrefixCapacity::for_natural_len(8);
+        let compatible = admission(2, 8);
+        assert!(setup_primary_strictly_dominates(
+            (capacity, 99, 256),
+            compatible,
+            (capacity, 100, 64),
+            compatible,
+        ));
+        assert!(!setup_primary_strictly_dominates(
+            (capacity, 100, 64),
+            compatible,
+            (capacity, 100, 128),
+            compatible,
+        ));
+        assert!(payload_primary_strictly_dominates(
+            (99, 256),
+            compatible,
+            (100, 64),
+            compatible,
+        ));
+        assert!(!payload_primary_strictly_dominates(
+            (100, 64),
+            compatible,
+            (100, 128),
+            compatible,
+        ));
+        assert!(!payload_primary_strictly_dominates(
+            (99, 32),
+            admission(1, 8),
+            (100, 64),
+            compatible,
+        ));
     }
 }
