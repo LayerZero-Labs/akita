@@ -773,11 +773,31 @@ mod tests {
 
         let mut bytes = Vec::new();
         setup.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaVerifierSetup::<F>::deserialize_compressed(&bytes[..], &()).expect("deserialize");
+        let decoded = AkitaVerifierSetup::<F>::deserialize_compressed_exact(&bytes, &())
+            .expect("deserialize");
 
         assert_eq!(decoded.prefix_slots.len(), 1);
         assert_eq!(decoded, setup);
+
+        for suffix in [0, 0xa5] {
+            let mut suffixed = bytes.clone();
+            suffixed.push(suffix);
+            assert!(AkitaVerifierSetup::<F>::deserialize_compressed_exact(&suffixed, &()).is_err());
+        }
+
+        let mut expanded_bytes = Vec::new();
+        setup
+            .expanded
+            .serialize_compressed(&mut expanded_bytes)
+            .expect("serialize expanded setup");
+        assert!(
+            AkitaExpandedSetup::<F>::deserialize_compressed_exact(&expanded_bytes, &()).is_ok()
+        );
+        for suffix in [0, 0xa5] {
+            let mut suffixed = expanded_bytes.clone();
+            suffixed.push(suffix);
+            assert!(AkitaExpandedSetup::<F>::deserialize_compressed_exact(&suffixed, &()).is_err());
+        }
     }
 
     #[test]

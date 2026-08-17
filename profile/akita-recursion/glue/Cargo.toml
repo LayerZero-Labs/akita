@@ -11,17 +11,31 @@ readme = "../../../README.md"
 publish = false
 
 [features]
-default = []
+default = ["transcript-blake2b"]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-types/transcript-keccak",
+]
 trusted-benchmark-artifact = []
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
+akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
 akita-field = { version = "0.1.0", path = "../../../crates/akita-field" }
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
-akita-types = { version = "0.1.0", path = "../../../crates/akita-types" }
+akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default-features = false }
 
 [dev-dependencies]
-akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges" }
+akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges", default-features = false }
+akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false, features = [
+  "schedules-fp128-onehot",
+  "test-support",
+  "transcript-blake2b",
+] }
 
 [lints.rust]
 missing_docs = "warn"

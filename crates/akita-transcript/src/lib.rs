@@ -4,7 +4,17 @@ mod label;
 pub mod labels;
 #[cfg(feature = "logging-transcript")]
 mod logging;
+#[cfg(any(
+    all(feature = "transcript-blake2b", not(feature = "transcript-keccak")),
+    all(feature = "transcript-keccak", not(feature = "transcript-blake2b"))
+))]
 mod sponge;
+
+#[cfg(not(any(feature = "transcript-blake2b", feature = "transcript-keccak")))]
+compile_error!("enable exactly one transcript backend: transcript-blake2b or transcript-keccak");
+
+#[cfg(all(feature = "transcript-blake2b", feature = "transcript-keccak"))]
+compile_error!("enable exactly one transcript backend: transcript-blake2b or transcript-keccak");
 
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
@@ -12,6 +22,10 @@ use akita_serialization::AkitaSerialize;
 pub use label::Label;
 #[cfg(feature = "logging-transcript")]
 pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
+#[cfg(any(
+    all(feature = "transcript-blake2b", not(feature = "transcript-keccak")),
+    all(feature = "transcript-keccak", not(feature = "transcript-blake2b"))
+))]
 pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 
 /// Transcript interface for protocol Fiat-Shamir transforms.

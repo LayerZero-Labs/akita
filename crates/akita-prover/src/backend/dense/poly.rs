@@ -80,9 +80,9 @@ impl<F: FieldCore + Eq> Eq for DensePoly<F> {}
 
 /// Reinterpret a flat coefficient slice as ring elements of dimension `D`.
 ///
-/// This is the sub-slice counterpart of [`RingVec::as_ring_slice_trusted`]:
+/// This is the private sub-slice counterpart of [`RingVec::as_ring_slice`]:
 /// callers slice the live prefix for their view dimension first, then
-/// reinterpret.
+/// reinterpret after checking divisibility.
 #[inline]
 fn as_ring_view<F: FieldCore, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>] {
     debug_assert!(D > 0);

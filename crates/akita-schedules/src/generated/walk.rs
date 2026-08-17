@@ -9,9 +9,9 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, AkitaScheduleLookupKey,
-    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalResponseShape,
+    extension_opening_reduction_level_bytes, level_proof_bytes, padded_boolean_opening_vars,
+    AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
 
 use crate::generated::{validate_entry_key, GeneratedFoldScheduleEntry};
@@ -186,6 +186,18 @@ pub(crate) fn walk_generated_schedule_entry(
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {
         let next_lp = expanded.get(fold_level + 1).map(|(params, _, _)| params);
         let binds_terminal = next_lp.is_none();
+        let eor_key = if fold_level == 0 {
+            root_eor_key
+        } else {
+            let opening_layout = akita_types::suffix_opening_layout(
+                *input_witness_len,
+                lp.setup_prefix.as_ref().map(|prefix| prefix.natural_len),
+            )?;
+            PolynomialGroupLayout::new(
+                opening_layout.max_num_vars(),
+                opening_layout.num_total_polynomials(),
+            )
+        };
         let direct_level_bytes = level_proof_bytes(
             field_bits,
             challenge_field_bits,
@@ -202,7 +214,7 @@ pub(crate) fn walk_generated_schedule_entry(
             challenge_field_bits,
             policy.claim_ext_degree,
             fold_level,
-            root_eor_key,
+            eor_key,
             *input_witness_len,
             lp.role_dims().d_a(),
         )?)
@@ -229,7 +241,7 @@ pub(crate) fn walk_generated_schedule_entry(
             challenge_field_bits,
             policy.claim_ext_degree,
             terminal_level,
-            root_eor_key,
+            PolynomialGroupLayout::singleton(padded_boolean_opening_vars(input_witness_len)?),
             input_witness_len,
             terminal_params.d_a(),
         )?)

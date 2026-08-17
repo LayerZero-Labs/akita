@@ -10,9 +10,8 @@ use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
-use akita_transcript::labels::{self, ABSORB_OPENING_PAYLOAD};
+use akita_transcript::labels;
 use akita_transcript::{sample_ext_challenge, Transcript};
-use akita_types::proof::append_flat_coefficients;
 use akita_types::{
     append_digit_range_child_claims, AkitaStage1Proof, CommittedGroupParams,
     DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
@@ -43,8 +42,6 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     transcript: &mut T,
-    opening_payload_coeffs: &[F],
-    v_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
     grind_nonce: u32,
@@ -53,12 +50,6 @@ where
     F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
-    append_flat_coefficients(
-        ABSORB_OPENING_PAYLOAD,
-        opening_payload_coeffs,
-        v_ring_d,
-        transcript,
-    )?;
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params(opening_batch, group_index)?;

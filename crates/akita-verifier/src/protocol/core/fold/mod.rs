@@ -26,6 +26,73 @@ pub(in crate::protocol::core) struct FoldPrefix<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) trace_claim_coefficients: Vec<E>,
 }
 
+/// Fold material fixed before the shared opening payload is absorbed.
+pub(in crate::protocol::core) struct FoldClaimMaterial<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) openings: Vec<E>,
+    pub(in crate::protocol::core) reduction_final_claims: Option<Vec<E>>,
+    pub(in crate::protocol::core) reduction_factors: Option<Vec<E>>,
+}
+
+pub(in crate::protocol::core) fn bind_opening_payload_and_finalize_claims<F, E, T>(
+    lp: &CommittedGroupParams,
+    opening_shape: &OpeningClaimsLayout,
+    opening_payload: &RingVec<F>,
+    material: FoldClaimMaterial<F, E>,
+    transcript: &mut T,
+) -> Result<FoldPrefix<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    let geometry = relation_rhs_layout_for(lp, opening_shape)?.opening_payload_geometry()?;
+    if opening_payload.coeff_len() != geometry.transmitted_coefficients() {
+        return Err(AkitaError::InvalidProof);
+    }
+    opening_payload.append_flat_to_transcript(
+        ABSORB_OPENING_PAYLOAD,
+        geometry.transcript_ring_dimension(),
+        transcript,
+    )?;
+    if material.openings.len() != opening_shape.num_total_polynomials()
+        || material.prepared_points.len() != opening_shape.num_groups()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
+        opening_shape,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        transcript,
+    )?;
+    let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(
+        || Ok(row_coefficients.clone()),
+        |factors| opening_shape.scale_row_coefficients_by_group(&row_coefficients, factors),
+    )?;
+    let trace_eval_target = if let Some(final_claims) = &material.reduction_final_claims {
+        if final_claims.len() != row_coefficients.len() || material.reduction_factors.is_none() {
+            return Err(AkitaError::InvalidProof);
+        }
+        final_claims
+            .iter()
+            .zip(&row_coefficients)
+            .fold(E::zero(), |acc, (&claim, &coefficient)| {
+                acc + coefficient * claim
+            })
+    } else {
+        if material.reduction_factors.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        opening_shape.batched_eval_target(&trace_claim_coefficients, &material.openings)?
+    };
+    Ok(FoldPrefix {
+        prepared_points: material.prepared_points,
+        row_coefficients,
+        trace_eval_target,
+        trace_claim_coefficients,
+    })
+}
+
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a CommittedGroupParams,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
@@ -332,13 +399,6 @@ where
             ));
         }
     }
-    let opening_payload_geometry = relation_rhs_layout.opening_payload_geometry()?;
-    if prepared.opening_payload.coeff_len() != opening_payload_geometry.transmitted_coefficients() {
-        return Err(AkitaError::InvalidInput(
-            "opening payload length mismatch".into(),
-        ));
-    }
-    let opening_payload_ring_dim = opening_payload_geometry.transcript_ring_dimension();
     let _fold_span = tracing::info_span!(
         "verify_fold",
         d_a = role_dims.d_a(),
@@ -360,8 +420,6 @@ where
         let _span = tracing::info_span!("fold_derive_stage1_challenges").entered();
         derive_multi_group_stage1_challenges::<F, T>(
             transcript,
-            prepared.opening_payload.coeffs(),
-            opening_payload_ring_dim,
             &opening_shape,
             prepared.lp,
             prepared.fold_grind_nonce,

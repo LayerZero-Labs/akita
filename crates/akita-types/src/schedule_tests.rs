@@ -895,6 +895,7 @@ fn planned_root_extension_reduction_bytes_match_payload() {
             opening_vars - extension_width.trailing_zeros() as usize,
             EXTENSION_OPENING_REDUCTION_DEGREE,
         ),
+        final_claims: vec![F::zero(); num_claims],
     };
     let sumcheck_bytes = reduction.sumcheck.serialized_size(Compress::No);
 
@@ -906,7 +907,12 @@ fn planned_root_extension_reduction_bytes_match_payload() {
             .iter()
             .map(|partial| partial.serialized_size(Compress::No))
             .sum::<usize>()
-            + sumcheck_bytes,
+            + sumcheck_bytes
+            + reduction
+                .final_claims
+                .iter()
+                .map(|claim| claim.serialized_size(Compress::No))
+                .sum::<usize>(),
         "planned root EOR bytes should match the headerless serialized payload"
     );
 }

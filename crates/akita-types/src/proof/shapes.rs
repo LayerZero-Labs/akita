@@ -1,4 +1,5 @@
 use super::*;
+use crate::{CommittedGroupParams, FoldSchedule};
 
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
@@ -17,7 +18,9 @@ pub struct AkitaStage1StageShape {
 pub struct ExtensionOpeningReductionShape {
     /// Number of partial evaluations serialized before the sumcheck.
     pub partials: usize,
-    /// Reduction sumcheck shape: one compact coefficient count per round.
+    /// Number of individual terminal claims serialized after the sumcheck.
+    pub final_claims: usize,
+    /// One compact coefficient count per round of the batched reduction.
     pub sumcheck: SumcheckProofShape,
 }
 
@@ -30,9 +33,10 @@ pub struct SetupProductSumcheckShape {
 
 impl ExtensionOpeningReductionShape {
     /// Construct the standard degree-two reduction shape.
-    pub fn standard(partials: usize, num_rounds: usize) -> Self {
+    pub fn standard(partials: usize, num_rounds: usize, num_claims: usize) -> Self {
         Self {
             partials,
+            final_claims: num_claims,
             sumcheck: uniform_sumcheck_shape(num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
         }
     }
@@ -57,7 +61,13 @@ impl Valid for SetupProductSumcheckShape {
 impl Valid for ExtensionOpeningReductionShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.partials)?;
+        checked_shape_len(self.final_claims)?;
         checked_shape_sequence_len(self.sumcheck.len())?;
+        if self.final_claims == 0 {
+            return Err(SerializationError::InvalidData(
+                "extension opening reduction shape must contain terminal claims".to_string(),
+            ));
+        }
         for &degree in &self.sumcheck {
             checked_shape_len(degree)?;
             if degree != EXTENSION_OPENING_REDUCTION_DEGREE {
@@ -133,6 +143,98 @@ pub struct AkitaBatchedProofShape {
     pub recursive_folds: Vec<LevelProofShape>,
     /// Required terminal fold shape.
     pub terminal: TerminalLevelProofShape,
+}
+
+/// Derive the only accepted headerless proof shape for a base-field schedule.
+///
+/// This is the verifier-side owner for decoding proofs whose claim field is the
+/// base field. Proper extension fields add an extension-opening reduction shape
+/// and must use their configuration-specific derivation.
+pub fn canonical_base_field_proof_shape(
+    schedule: &FoldSchedule,
+) -> Result<AkitaBatchedProofShape, AkitaError> {
+    fn stage3_shape(
+        successor: Option<&CommittedGroupParams>,
+    ) -> Result<Option<SetupProductSumcheckShape>, AkitaError> {
+        let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
+            return Ok(None);
+        };
+        let n_prefix = prefix.n_prefix()?;
+        let setup_ring_len = n_prefix.checked_div(prefix.d_setup()).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup-prefix ring dimension is zero".to_string())
+        })?;
+        if setup_ring_len == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix field length does not align with its ring dimension".to_string(),
+            ));
+        }
+        let rounds = (prefix.d_setup().trailing_zeros() as usize)
+            .checked_add(setup_ring_len.next_power_of_two().trailing_zeros() as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("stage-3 round count overflow".to_string()))?;
+        Ok(Some(SetupProductSumcheckShape {
+            sumcheck: vec![SETUP_SUMCHECK_DEGREE; rounds],
+        }))
+    }
+
+    fn level_shape(
+        params: &CommittedGroupParams,
+        output_witness_len: usize,
+        successor: Option<&CommittedGroupParams>,
+    ) -> Result<LevelProofShape, AkitaError> {
+        let rounds = crate::sumcheck_rounds(params.d_a(), output_witness_len);
+        let basis = 1usize.checked_shl(params.log_basis_open).ok_or_else(|| {
+            AkitaError::InvalidSetup("digit-range basis does not fit usize".to_string())
+        })?;
+        let (stage1_stages, stage1_norm) = DigitRangePlan::new(basis)?
+            .proof_shapes_for_route(rounds, params.inner_commit_matrix.security_route())?;
+        let next_witness_binding = match successor {
+            Some(next) => NextWitnessBindingShape::OuterPayload {
+                coeffs: next.outer_payload_geometry()?.transmitted_coefficients(),
+            },
+            None => NextWitnessBindingShape::TerminalInnerState,
+        };
+        Ok(LevelProofShape {
+            extension_opening_reduction: None,
+            opening_payload_coeffs: params
+                .opening_payload_geometry()?
+                .transmitted_coefficients(),
+            stage1_stages,
+            stage1_norm,
+            stage2_sumcheck_proof: vec![3; rounds],
+            stage3_sumcheck: stage3_shape(successor)?,
+            next_witness_binding,
+        })
+    }
+
+    let root_successor = schedule
+        .recursive_folds
+        .first()
+        .map(|step| &step.params.witness);
+    let root = level_shape(
+        &schedule.root.params.final_group.commitment,
+        schedule.root.output_witness_len,
+        root_successor,
+    )?;
+    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
+    for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        let successor = schedule
+            .recursive_folds
+            .get(index + 1)
+            .map(|next| &next.params.witness);
+        recursive_folds.push(level_shape(
+            &step.params.witness,
+            step.output_witness_len,
+            successor,
+        )?);
+    }
+    Ok(AkitaBatchedProofShape {
+        root,
+        recursive_folds,
+        terminal: TerminalLevelProofShape {
+            extension_opening_reduction: None,
+            terminal_response: schedule.terminal.params.response_shape.clone(),
+        },
+    })
 }
 
 pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
@@ -382,6 +484,9 @@ impl AkitaSerialize for LevelProofShape {
                 .partials
                 .serialize_with_mode(&mut writer, compress)?;
             reduction
+                .final_claims
+                .serialize_with_mode(&mut writer, compress)?;
+            reduction
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
@@ -424,6 +529,7 @@ impl AkitaSerialize for LevelProofShape {
                 .as_ref()
                 .map_or(0, |reduction| {
                     reduction.partials.serialized_size(compress)
+                        + reduction.final_claims.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
         reduction_size
@@ -462,8 +568,13 @@ impl AkitaDeserialize for LevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let final_claims = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
             let sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
-            Some(ExtensionOpeningReductionShape { partials, sumcheck })
+            Some(ExtensionOpeningReductionShape {
+                partials,
+                final_claims,
+                sumcheck,
+            })
         } else {
             None
         };
@@ -543,6 +654,9 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 .partials
                 .serialize_with_mode(&mut writer, compress)?;
             reduction
+                .final_claims
+                .serialize_with_mode(&mut writer, compress)?;
+            reduction
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
@@ -558,6 +672,7 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 .as_ref()
                 .map_or(0, |reduction| {
                     reduction.partials.serialized_size(compress)
+                        + reduction.final_claims.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
         reduction_size + self.terminal_response.serialized_size(compress)
@@ -576,8 +691,13 @@ impl AkitaDeserialize for TerminalLevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let final_claims = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
             let sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
-            Some(ExtensionOpeningReductionShape { partials, sumcheck })
+            Some(ExtensionOpeningReductionShape {
+                partials,
+                final_claims,
+                sumcheck,
+            })
         } else {
             None
         };
@@ -600,6 +720,103 @@ impl Valid for AkitaBatchedProofShape {
         checked_shape_sequence_len(self.recursive_folds.len())?;
         self.recursive_folds.check()?;
         self.terminal.check()?;
+        Ok(())
+    }
+}
+
+impl AkitaBatchedProofShape {
+    /// Reject a base-field proof shape whose aggregate declared payload cannot
+    /// fit in the bytes available to the proof decoder.
+    pub fn validate_base_field_decode_budget(
+        &self,
+        available_bytes: usize,
+        field_bytes: usize,
+    ) -> Result<(), SerializationError> {
+        if field_bytes == 0 {
+            return Err(SerializationError::InvalidData(
+                "base field wire size must be nonzero".to_string(),
+            ));
+        }
+        fn add(total: &mut usize, value: usize) -> Result<(), SerializationError> {
+            *total = total.checked_add(value).ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "aggregate proof shape field count overflow".to_string(),
+                )
+            })?;
+            Ok(())
+        }
+        fn add_sumcheck(total: &mut usize, shape: &[usize]) -> Result<(), SerializationError> {
+            for &stored_coefficients in shape {
+                add(total, stored_coefficients)?;
+            }
+            Ok(())
+        }
+        fn add_extension(
+            total: &mut usize,
+            shape: Option<&ExtensionOpeningReductionShape>,
+        ) -> Result<(), SerializationError> {
+            if let Some(shape) = shape {
+                add(total, shape.partials)?;
+                add_sumcheck(total, &shape.sumcheck)?;
+                add(total, shape.final_claims)?;
+            }
+            Ok(())
+        }
+        fn add_level(total: &mut usize, shape: &LevelProofShape) -> Result<(), SerializationError> {
+            add_extension(total, shape.extension_opening_reduction.as_ref())?;
+            add(total, shape.opening_payload_coeffs)?;
+            for stage in &shape.stage1_stages {
+                let (rounds, stored_coefficients) = stage.sumcheck_proof;
+                add(
+                    total,
+                    rounds.checked_mul(stored_coefficients).ok_or_else(|| {
+                        SerializationError::InvalidData(
+                            "stage-1 proof shape field count overflow".to_string(),
+                        )
+                    })?,
+                )?;
+                add(total, stage.child_claims)?;
+            }
+            add(total, 1)?;
+            add_sumcheck(total, &shape.stage2_sumcheck_proof)?;
+            match shape.next_witness_binding {
+                NextWitnessBindingShape::OuterPayload { coeffs } => add(total, coeffs)?,
+                NextWitnessBindingShape::TerminalInnerState => {}
+            }
+            add(total, 1)?;
+            if let Some(stage3) = &shape.stage3_sumcheck {
+                add(total, 2)?;
+                add_sumcheck(total, &stage3.sumcheck)?;
+            }
+            Ok(())
+        }
+
+        let mut field_elements = 0usize;
+        add_level(&mut field_elements, &self.root)?;
+        for shape in &self.recursive_folds {
+            add_level(&mut field_elements, shape)?;
+        }
+        add_extension(
+            &mut field_elements,
+            self.terminal.extension_opening_reduction.as_ref(),
+        )?;
+        add(
+            &mut field_elements,
+            self.terminal.terminal_response.layout.e_field_elems(),
+        )?;
+        add(
+            &mut field_elements,
+            self.terminal.terminal_response.layout.t_field_elems(),
+        )?;
+        let required_bytes = field_elements.checked_mul(field_bytes).ok_or_else(|| {
+            SerializationError::InvalidData("aggregate proof byte budget overflow".to_string())
+        })?;
+        if required_bytes > available_bytes {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(required_bytes).unwrap_or(u64::MAX),
+                max: available_bytes,
+            });
+        }
         Ok(())
     }
 }

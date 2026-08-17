@@ -393,7 +393,7 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("encode jolt inputs blob failed: {err}"))?;
     // Round-trip before publishing so a buggy encoding fails on the host
     // instead of leaving a trusted benchmark artifact on disk.
-    let decoded = AkitaJoltInputs::<F, D>::read_from_bytes(&blob)
+    let decoded = AkitaJoltInputs::<F, D>::read_from_bytes::<Cfg>(&blob)
         .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);

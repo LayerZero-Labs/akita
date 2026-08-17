@@ -199,8 +199,13 @@ jobs:
           git worktree add "$RUNNER_TEMP/bench-base" "$AKITA_BENCH_MERGE_BASE_SHA"
           mkdir -p "$RUNNER_TEMP/bench-bins"
           features="parallel,$AKITA_BENCH_PROFILE_FEATURE"
+          fallback_features="parallel,profile-ci"
           (
             cd "$RUNNER_TEMP/bench-base" &&
+            if python3 scripts/cargo_feature_exists.py akita-pcs transcript-blake2b; then
+              features="$features,transcript-blake2b"
+              fallback_features="$fallback_features,transcript-blake2b"
+            fi
             if python3 scripts/cargo_feature_exists.py akita-pcs "$AKITA_BENCH_PROFILE_FEATURE"; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
@@ -208,7 +213,7 @@ jobs:
             elif python3 scripts/cargo_feature_exists.py akita-pcs profile-ci; then
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile \
-                  --no-default-features --features "parallel,profile-ci"
+                  --no-default-features --features "$fallback_features"
             else
               CARGO_TARGET_DIR="$RUNNER_TEMP/bench-base-target" \
                 cargo build --release --quiet --example profile
@@ -239,7 +244,7 @@ jobs:
         env:
           AKITA_BENCH_PROFILE_FEATURE: ${{ matrix.group.profile_feature }}
         run: |
-          features="parallel,$AKITA_BENCH_PROFILE_FEATURE"
+          features="parallel,$AKITA_BENCH_PROFILE_FEATURE,transcript-blake2b"
           cargo build --release --quiet --example profile \
             --no-default-features --features "$features"
 

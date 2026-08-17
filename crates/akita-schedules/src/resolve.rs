@@ -6,14 +6,16 @@ use std::sync::{Arc, LazyLock, Mutex};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, OpeningScheduleSelection,
+    root_input_witness_len, schedule_row_digest, validate_schedule_ring_dims,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile, FoldSchedule,
+    OpeningScheduleSelection,
 };
 
 use crate::audit::audit_resolved_schedule;
 use crate::catalog_identity::{identity_digest, policy_digest, validate_catalog_identity};
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry_range, GeneratedFoldScheduleEntry, GeneratedScheduleTable};
+use crate::runtime::planned_next_witness_len;
 use crate::runtime::validate_policy;
 use crate::PlannerPolicy;
 
@@ -66,6 +68,8 @@ impl ResolvedScheduleRow {
         policy: &PlannerPolicy,
     ) -> Result<Self, AkitaError> {
         audit_resolved_schedule(&profiles, &schedule, policy)?;
+        validate_schedule_ring_dims(&schedule)?;
+        validate_canonical_transition_lengths(&profiles, &schedule, policy)?;
         if schedule_row_digest(&profiles, &schedule)? != selection.row_digest {
             return Err(AkitaError::InvalidSetup(
                 "schedule row digest does not match the supplied profiles and schedule".to_string(),
@@ -97,6 +101,78 @@ impl ResolvedScheduleRow {
     pub fn into_schedule(self) -> FoldSchedule {
         self.schedule
     }
+}
+
+fn validate_canonical_transition_lengths(
+    profiles: &CommittedGroupBatchProfile,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<(), AkitaError> {
+    let field_bits = policy.decomposition.field_bits();
+    let root_params = &schedule.root.params.final_group.commitment;
+    let expected_root_input = root_input_witness_len(root_params);
+    if schedule.root.input_witness_len != expected_root_input {
+        return Err(AkitaError::InvalidSetup(format!(
+            "root input witness length {} is not canonical; expected {expected_root_input}",
+            schedule.root.input_witness_len
+        )));
+    }
+    let expected_root_output = if root_params.has_precommitted_groups() {
+        root_params.output_witness_len_for_field_bits(field_bits, &profiles.opening_layout()?)?
+    } else {
+        planned_next_witness_len(
+            field_bits,
+            root_params,
+            profiles.final_group.group.num_polynomials(),
+            root_params.witness_chunk.num_chunks,
+        )?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "root schedule uses unsupported compression source geometry".to_string(),
+            )
+        })?
+    };
+    if schedule.root.output_witness_len != expected_root_output {
+        return Err(AkitaError::InvalidSetup(format!(
+            "root output witness length {} is not canonical; expected {expected_root_output}",
+            schedule.root.output_witness_len
+        )));
+    }
+
+    let mut expected_input = expected_root_output;
+    for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        if step.input_witness_len != expected_input {
+            return Err(AkitaError::InvalidSetup(format!(
+                "recursive fold {index} input witness length {} is not canonical; expected {expected_input}",
+                step.input_witness_len
+            )));
+        }
+        let expected_output = planned_next_witness_len(
+            field_bits,
+            &step.params.witness,
+            1,
+            step.params.witness.witness_chunk.num_chunks,
+        )?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "recursive fold {index} uses unsupported compression source geometry"
+            ))
+        })?;
+        if step.output_witness_len != expected_output {
+            return Err(AkitaError::InvalidSetup(format!(
+                "recursive fold {index} output witness length {} is not canonical; expected {expected_output}",
+                step.output_witness_len
+            )));
+        }
+        expected_input = expected_output;
+    }
+    if schedule.terminal.input_witness_len != expected_input {
+        return Err(AkitaError::InvalidSetup(format!(
+            "terminal input witness length {} is not canonical; expected {expected_input}",
+            schedule.terminal.input_witness_len
+        )));
+    }
+    Ok(())
 }
 
 fn profiles_for_entry(

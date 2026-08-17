@@ -516,7 +516,6 @@ pub fn find_schedule(
         policy: active_policy,
         default_ring_challenge_cfg: &ring_challenge_cfg,
         ring_challenge_config,
-        num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
         root_lookup_key: Some(key),

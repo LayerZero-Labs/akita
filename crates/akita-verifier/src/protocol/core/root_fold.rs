@@ -5,8 +5,10 @@ use akita_types::Commitment;
 ///
 /// This replays the canonical root transcript layout: batch-shape header,
 /// commitments, padded opening points, per-claim field openings, row
-/// coefficients, EOR if present, y-rings, ring switch, stage-1 when present,
-/// stage-2, and stage-3 setup sumcheck when required by the intermediate branch.
+/// EOR if present, the complete opening payload, native public row coefficients,
+/// y-rings, ring switch, stage-1 when present, stage-2, and stage-3 setup
+/// sumcheck when required by the intermediate branch. Extension-field EOR
+/// retains its earlier internally coupled row coefficients.
 ///
 /// # Errors
 ///
@@ -90,6 +92,7 @@ where
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
         }
     }
+    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
 
     // D-free root replay: typed kernels dispatch inside `verify_fold` and the
     // geometry prefix modules on per-role dimensions. A scalar root is the
@@ -156,21 +159,21 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let claim_material = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        verify_single_field_root_prefix::<F, E, T>(
+        let material = verify_single_field_root_prefix::<F, E>(
             claims,
             openings,
             opening_batch,
             basis,
             root_lp,
-            transcript,
         )
         .map_err(|error| {
             AkitaError::InvalidInput(format!("single-field root prefix failed: {error:?}"))
-        })?
+        })?;
+        material
     } else {
         verify_extension_claim_root_prefix::<F, E, T>(
             claims,
@@ -198,6 +201,13 @@ where
     let witness_len = root_lp.output_witness_len::<F>(opening_batch)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
     let opening_payload = proof.opening_payload.clone();
+    let prefix = bind_opening_payload_and_finalize_claims(
+        root_lp,
+        opening_batch,
+        &opening_payload,
+        claim_material,
+        transcript,
+    )?;
     let committed_witness_len =
         akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;
     let prepared = PreparedFoldReplay {

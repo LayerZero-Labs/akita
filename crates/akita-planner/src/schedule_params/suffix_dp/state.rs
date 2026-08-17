@@ -200,16 +200,14 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
 
 /// DP-invariant inputs for the suffix search.
 ///
-/// `policy`, `ring_challenge_cfg`, and `num_vars` are constant across the whole
-/// recursion, so they are carried in one context value rather than as
-/// per-call arguments (keeps the recursive signature small).
+/// Values that remain constant across the whole recursion are carried in one
+/// context value rather than as per-call arguments.
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
