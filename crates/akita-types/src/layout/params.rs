@@ -608,7 +608,15 @@ impl CommittedGroupParams {
     /// Kept next to [`CommittedGroupParams`] so protocol-affecting field changes are
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(self.payload_mode.tag());
+        self.append_descriptor_bytes_with_payload_mode(bytes, self.payload_mode);
+    }
+
+    pub(crate) fn append_descriptor_bytes_with_payload_mode(
+        &self,
+        bytes: &mut Vec<u8>,
+        payload_mode: crate::CommitmentPayloadMode,
+    ) {
+        bytes.push(payload_mode.tag());
         self.source_encoding.append_descriptor_bytes(bytes);
         self.opening_method.append_descriptor_bytes(bytes);
         push_u32(bytes, self.log_basis_inner);

@@ -242,6 +242,28 @@ struct CandidateFoldNode {
     tail: Option<Arc<CandidateFoldNode>>,
 }
 
+struct CandidateFoldIter<'a> {
+    next: Option<&'a CandidateFoldNode>,
+    remaining: usize,
+}
+
+impl<'a> Iterator for CandidateFoldIter<'a> {
+    type Item = &'a CandidateFoldStep;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.next?;
+        self.next = node.tail.as_deref();
+        self.remaining -= 1;
+        Some(&node.step)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for CandidateFoldIter<'_> {}
+
 impl CandidateFoldChain {
     pub(crate) fn is_empty(&self) -> bool {
         self.head.is_none()
@@ -253,6 +275,13 @@ impl CandidateFoldChain {
 
     pub(crate) fn first(&self) -> Option<&CandidateFoldStep> {
         self.head.as_deref().map(|node| &node.step)
+    }
+
+    fn iter(&self) -> impl ExactSizeIterator<Item = &CandidateFoldStep> {
+        CandidateFoldIter {
+            next: self.head.as_deref(),
+            remaining: self.len,
+        }
     }
 
     pub(crate) fn prepend(&self, step: CandidateFoldStep) -> Self {
@@ -332,41 +361,48 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
     let started = diagnostics.map(|_| std::time::Instant::now());
     let result = (|| {
         if choice.folds.is_empty() {
-            return Ok(akita_types::TerminalFoldStep {
-                params: akita_types::TerminalFoldParams {
-                    witness: choice.terminal.params.clone(),
-                    sparse_challenge_config: choice.terminal.sparse_challenge_config,
-                    response_shape: choice.terminal.response_shape.clone(),
-                },
+            return Ok(akita_types::TerminalFoldDescriptor {
+                witness: &choice.terminal.params,
+                sparse_challenge_config: &choice.terminal.sparse_challenge_config,
+                response_shape: &choice.terminal.response_shape,
                 input_witness_len: choice.terminal.input_witness_len,
             }
             .canonical_descriptor_bytes());
         }
-        let mut folds = choice.folds.to_vec();
-        let carrier_prefix_len = folds.len().min(2);
-        let carrier_payload_modes = folds
-            .iter()
-            .take(carrier_prefix_len)
-            .map(|fold| fold.params.payload_mode)
-            .collect::<Vec<_>>();
-        for fold in folds.iter_mut().take(carrier_prefix_len) {
-            Arc::make_mut(&mut fold.params).payload_mode =
-                akita_types::CommitmentPayloadMode::Compressed;
-        }
-        let mut bytes = materialize_candidate_schedule(
-            choice.total_bytes,
-            choice.setup_field_elements,
-            choice.first_direct_setup_field_len.map(NonZeroUsize::get),
-            folds,
-            choice.terminal.as_ref().clone(),
-        )?
-        .schedule
-        .canonical_descriptor_bytes();
-        let mut prefix = Vec::with_capacity(carrier_prefix_len + 1);
-        prefix.push(carrier_prefix_len as u8);
-        prefix.extend(carrier_payload_modes.into_iter().map(|mode| mode.tag()));
-        prefix.append(&mut bytes);
-        Ok(prefix)
+        let carrier_prefix_len = choice.folds.len().min(2);
+        let mut bytes = Vec::new();
+        bytes.push(carrier_prefix_len as u8);
+        bytes.extend(
+            choice
+                .folds
+                .iter()
+                .take(carrier_prefix_len)
+                .map(|fold| fold.params.payload_mode.tag()),
+        );
+        let descriptor_steps = choice.folds.iter().enumerate().map(|(index, fold)| {
+            akita_types::FoldScheduleDescriptorStep {
+                params: &fold.params,
+                payload_mode: if index < carrier_prefix_len {
+                    akita_types::CommitmentPayloadMode::Compressed
+                } else {
+                    fold.params.payload_mode
+                },
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            }
+        });
+        let terminal = akita_types::TerminalFoldDescriptor {
+            witness: &choice.terminal.params,
+            sparse_challenge_config: &choice.terminal.sparse_challenge_config,
+            response_shape: &choice.terminal.response_shape,
+            input_witness_len: choice.terminal.input_witness_len,
+        };
+        akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
+            &mut bytes,
+            descriptor_steps,
+            terminal,
+        )?;
+        Ok(bytes)
     })();
     if let (Some(diagnostics), Some(started)) = (diagnostics, started) {
         diagnostics.record_descriptor(started.elapsed());

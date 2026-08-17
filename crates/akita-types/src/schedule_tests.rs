@@ -37,6 +37,8 @@ use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
+#[path = "schedule_tests/descriptor.rs"]
+mod descriptor;
 #[path = "schedule_tests/execution_admission.rs"]
 mod execution_admission;
 
