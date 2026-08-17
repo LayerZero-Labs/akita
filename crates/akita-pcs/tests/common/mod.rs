@@ -285,15 +285,19 @@ where
         + RootOpeningSource<F, 128>
         + RootPolyShape<F, 128>
         + RootOpeningSource<F, 256>
-        + RootPolyShape<F, 256>,
+        + RootPolyShape<F, 256>
+        + RootOpeningSource<F, 512>
+        + RootPolyShape<F, 512>,
     CpuBackend: OpeningFoldKernel<<P as RootOpeningSource<F, 64>>::OpeningView<'a>, F, 64>
         + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
-        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 512>>::OpeningView<'a>, F, 512>,
 {
     match layout.inner_commit_matrix_params().ring_dimension() {
         64 => opening_from_poly::<64, _>(poly, point, layout),
         128 => opening_from_poly::<128, _>(poly, point, layout),
         256 => opening_from_poly::<256, _>(poly, point, layout),
+        512 => opening_from_poly::<512, _>(poly, point, layout),
         dimension => panic!("unsupported test opening ring dimension D={dimension}"),
     }
 }

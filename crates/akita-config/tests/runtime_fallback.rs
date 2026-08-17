@@ -416,7 +416,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
             .commitment
             .role_dims(),
         CommitmentRingDims {
-            inner: 256,
+            inner: 512,
             outer: 64,
             opening: 64,
         }

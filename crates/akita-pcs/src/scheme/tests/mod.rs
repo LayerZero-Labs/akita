@@ -26,7 +26,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::Dense;
 type F = fp128::Field;
-const D: usize = 256;
+const D: usize = 512;
 type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
