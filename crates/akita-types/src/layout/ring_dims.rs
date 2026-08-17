@@ -18,7 +18,7 @@ pub const SUPPORTED_CHALLENGE_RING_DIMS: &[usize] =
 ///
 /// Compression maps and NTT kernels have separate, field-profile-specific
 /// dispatch domains. Their smaller dimensions must not enter role admission.
-pub const SUPPORTED_COMMITMENT_RING_DIMS: [usize; 5] = [64, 128, 256, 512, 1024];
+pub const SUPPORTED_COMMITMENT_RING_DIMS: [usize; 6] = [64, 128, 256, 512, 1024, 2048];
 
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
 pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;

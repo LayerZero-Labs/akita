@@ -283,6 +283,6 @@ macro_rules! runtime_capabilities {
 }
 
 runtime_capabilities! {
-    root_and_suffix: [64, 128, 256, 512, 1024],
+    root_and_suffix: [64, 128, 256, 512, 1024, 2048],
     ring_switch_only: [16, 32]
 }

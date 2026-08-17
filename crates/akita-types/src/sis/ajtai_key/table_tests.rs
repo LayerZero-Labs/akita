@@ -102,15 +102,15 @@ fn coeff_linf_bucket_ladder_matches_main_ceiling() {
 }
 
 #[test]
-fn d512_coverage_is_inner_only_for_every_field_tier() {
-    for profile in [
-        SisModulusProfileId::Q32Offset99,
-        SisModulusProfileId::Q64Offset59,
-        SisModulusProfileId::Q128OffsetA7F7,
+fn tier_max_dimension_coverage_is_inner_only() {
+    for (profile, dimension) in [
+        (SisModulusProfileId::Q32Offset99, 2048),
+        (SisModulusProfileId::Q64Offset59, 1024),
+        (SisModulusProfileId::Q128OffsetA7F7, 512),
     ] {
-        assert!(sis_role_cell(SisMatrixRole::Inner, profile, 512, 2).is_some());
+        assert!(sis_role_cell(SisMatrixRole::Inner, profile, dimension, 2).is_some());
         for role in [SisMatrixRole::Outer, SisMatrixRole::Open] {
-            assert!(sis_role_cell(role, profile, 512, 3).is_none());
+            assert!(sis_role_cell(role, profile, dimension, 3).is_none());
         }
     }
 }
@@ -161,7 +161,7 @@ fn min_secure_rank_matches_linear_first_match_for_every_generated_row() {
     ];
     for profile in profiles {
         for role in roles {
-            for dimension in [32, 64, 128, 256, 512, 1024] {
+            for dimension in [32, 64, 128, 256, 512, 1024, 2048] {
                 for &bound in COEFF_LINF_BUCKETS {
                     let Some(cell) = sis_role_cell(role, profile, dimension, bound) else {
                         continue;

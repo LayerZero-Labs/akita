@@ -37,9 +37,9 @@ fn ring_fold_matches_dense_multiplication_reference() {
 
 #[test]
 fn dense_constructor_reuses_owned_evaluation_buffer() {
-    let evals = (0..1024).map(F::from_u64).collect::<Vec<_>>();
+    let evals = (0..2048).map(F::from_u64).collect::<Vec<_>>();
     let allocation = evals.as_ptr();
-    let poly = DensePoly::<F>::from_field_evals(10, evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(11, evals).unwrap();
     assert_eq!(poly.field_coeffs().as_ptr(), allocation);
 }
 

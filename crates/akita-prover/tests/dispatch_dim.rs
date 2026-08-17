@@ -47,25 +47,22 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {
 fn accepts_real_fp64_adaptive_schedule() {
     let schedule = schedule::<fp64::Dense>(20);
     validate_schedule_ring_dims(&schedule).expect("adaptive fp64 schedule");
-    assert_schedule_geometry(&schedule, &[64, 128, 256, 512]);
+    assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024]);
+    assert_eq!(schedule.root.params.final_group.commitment.d_a(), 1024);
 }
 
 #[test]
 fn accepts_real_fp32_adaptive_schedule() {
-    let schedule = schedule::<fp32::OneHot>(16);
+    let schedule = schedule::<fp32::Dense>(20);
     validate_schedule_ring_dims(&schedule).expect("adaptive fp32 schedule");
-    assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024]);
+    assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024, 2048]);
+    assert_eq!(schedule.root.params.final_group.commitment.d_a(), 2048);
 }
 
 #[test]
 fn accepts_real_fp128_adaptive_schedule() {
     let schedule = schedule::<fp128::Dense>(16);
     validate_schedule_ring_dims(&schedule).expect("adaptive schedule");
-    assert!(
-        schedule
-            .recursive_folds
-            .iter()
-            .any(|fold| fold.params.witness.d_a()
-                != schedule.root.params.final_group.commitment.d_a())
-    );
+    assert_schedule_geometry(&schedule, &[64, 128, 256, 512]);
+    assert_eq!(schedule.root.params.final_group.commitment.d_a(), 512);
 }

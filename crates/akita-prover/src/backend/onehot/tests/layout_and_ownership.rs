@@ -232,7 +232,7 @@ fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
 fn onehot_poly_materializes_multiple_runtime_layouts() {
     type F = Prime24Offset3;
     let poly = OneHotPoly::<F>::new(
-        64,
+        128,
         vec![
             Some(0usize),
             Some(7),
@@ -254,7 +254,7 @@ fn onehot_poly_materializes_multiple_runtime_layouts() {
     )
     .unwrap();
 
-    for ring_d in [64, 128, 256, 512, 1024] {
+    for ring_d in [64, 128, 256, 512, 1024, 2048] {
         let count = poly.num_live_blocks_for(ring_d, 2).unwrap();
         let blocks = poly.materialize_block_range(ring_d, 2, 0..count).unwrap();
         assert_eq!(blocks.num_live_blocks(), count);

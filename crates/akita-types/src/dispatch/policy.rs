@@ -380,14 +380,14 @@ macro_rules! __protocol_dispatch_policy {
                 compression: [8, 16]
             }
             Fp64: {
-                inner: [64, 128, 256, 512]
+                inner: [64, 128, 256, 512, 1024]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
                 ntt: [32, 64, 128, 256, 512, 1024]
                 compression: [16, 32]
             }
             Fp32: {
-                inner: [64, 128, 256, 512, 1024]
+                inner: [64, 128, 256, 512, 1024, 2048]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
                 ntt: [64, 128, 256, 512, 1024, 2048]
