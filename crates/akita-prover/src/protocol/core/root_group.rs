@@ -97,7 +97,7 @@ where
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
         ring_dimension: usize,
-        row_coefficients: &[E],
+        claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
     ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>;
@@ -336,7 +336,7 @@ where
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
         ring_dimension: usize,
-        row_coefficients: &[E],
+        claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
     ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
@@ -348,7 +348,7 @@ where
                 backend,
                 prepared,
                 self.polynomial_refs(),
-                row_coefficients,
+                claim_coefficients,
                 tail_point,
                 eta,
             )

@@ -83,9 +83,10 @@ mod tests {
         let extra_partial_bytes = 4 * crate::field_bytes(128);
         let extra_round_bytes =
             7 * crate::EXTENSION_OPENING_REDUCTION_DEGREE * crate::field_bytes(128);
+        let extra_terminal_claim_bytes = crate::field_bytes(128);
         assert_eq!(
             with_prefix - witness_only,
-            extra_partial_bytes + extra_round_bytes
+            extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes
         );
     }
 }

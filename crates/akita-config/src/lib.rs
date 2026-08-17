@@ -14,7 +14,9 @@ use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
-use akita_types::PolynomialGroupLayout;
+use akita_types::{
+    schedule_row_digest, FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout,
+};
 use akita_types::{
     AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, OpeningClaimsLayout,
     SetupMatrixCapacity, SisModulusProfileId,
@@ -767,6 +769,87 @@ mod fp128_policy_tests {
                 .into_schedule();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
+    }
+
+    fn mutated_row_admission_error<Cfg: CommitmentConfig>(
+        row: &akita_schedules::ResolvedScheduleRow,
+        mutate: impl FnOnce(&mut FoldSchedule),
+    ) -> AkitaError {
+        let profiles = row.profiles().clone();
+        let mut schedule = row.schedule().clone();
+        mutate(&mut schedule);
+        let selection = OpeningScheduleSelection {
+            row_digest: schedule_row_digest(&profiles, &schedule).expect("mutated row digest"),
+        };
+        akita_schedules::ResolvedScheduleRow::try_new(
+            selection,
+            profiles,
+            schedule,
+            &policy_of::<Cfg>(),
+        )
+        .expect_err("noncanonical transition must fail at row admission")
+    }
+
+    #[test]
+    fn row_admission_rederives_root_and_terminal_transitions() {
+        let opening_batch = OpeningClaimsLayout::new(14, 1).expect("opening layout");
+        let row =
+            fp128::OneHot::resolve_catalog_row_for_opening(&opening_batch).expect("generated row");
+
+        let root_input_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+            schedule.root.input_witness_len /= 2;
+        });
+        assert!(!root_input_error.to_string().is_empty());
+        let transition_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+            let alignment = schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .d_a()
+                .max(schedule.terminal.params.witness.d_a());
+            schedule.root.output_witness_len -= alignment;
+            if let Some(next) = schedule.recursive_folds.first_mut() {
+                next.input_witness_len -= alignment;
+            } else {
+                schedule.terminal.input_witness_len -= alignment;
+            }
+        });
+        assert!(
+            transition_error.to_string().contains("canonical"),
+            "unexpected transition error: {transition_error}"
+        );
+    }
+
+    #[cfg(feature = "schedules-fp128-onehot-recursive")]
+    #[test]
+    fn row_admission_rederives_recursive_transitions() {
+        let row = (14..=50)
+            .find_map(|num_vars| {
+                let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
+                let row = fp128::OneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                (!row.schedule().recursive_folds.is_empty()).then_some(row)
+            })
+            .expect("recursive generated row");
+        let error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
+            let alignment = schedule.recursive_folds[0].params.witness.d_a().max(
+                if schedule.recursive_folds.len() > 1 {
+                    schedule.recursive_folds[1].params.witness.d_a()
+                } else {
+                    schedule.terminal.params.witness.d_a()
+                },
+            );
+            schedule.recursive_folds[0].output_witness_len -= alignment;
+            if schedule.recursive_folds.len() > 1 {
+                schedule.recursive_folds[1].input_witness_len -= alignment;
+            } else {
+                schedule.terminal.input_witness_len -= alignment;
+            }
+        });
+        assert!(
+            error.to_string().contains("canonical"),
+            "unexpected recursive transition error: {error}"
+        );
     }
 }
 

@@ -74,12 +74,12 @@ fn akita_verify(input: &[u8]) -> u32 {
         akita_trusted_benchmark_artifact
     ))]
     let decoded_result =
-        AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_trusted_host_artifact_bytes(input);
+        AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_trusted_host_artifact_bytes::<Cfg>(input);
     #[cfg(not(any(
         feature = "trusted-benchmark-artifact",
         akita_trusted_benchmark_artifact
     )))]
-    let decoded_result = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes(input);
+    let decoded_result = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(input);
 
     let decoded = match decoded_result {
         Ok(decoded) => decoded,

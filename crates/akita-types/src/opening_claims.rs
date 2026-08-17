@@ -2,12 +2,13 @@
 
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
+#[cfg(test)]
 use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::{CommittedGroup, OpeningScheduleSelection};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
+use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
@@ -601,10 +602,15 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-/// Bind claimed evaluations and derive their public-row batching coefficients.
-pub fn derive_public_row_coefficients<F, L, T>(
+/// Sample row-batching coefficients in the caller-selected transcript domain.
+///
+/// Claimed values must already have been absorbed. Keeping message binding
+/// separate makes the phase boundary explicit. The caller chooses whether this
+/// is an early protocol-local compression or the later application batch and
+/// must use the corresponding transcript phase.
+pub fn sample_row_coefficients<F, L, T>(
     layout: &OpeningClaimsLayout,
-    openings: &[L],
+    challenge_label: &'static [u8],
     transcript: &mut T,
 ) -> Result<Vec<L>, AkitaError>
 where
@@ -613,18 +619,11 @@ where
     T: Transcript<F>,
 {
     layout.check()?;
-    if openings.len() != layout.num_total_polynomials() {
-        return Err(AkitaError::InvalidSize {
-            expected: layout.num_total_polynomials(),
-            actual: openings.len(),
-        });
-    }
-    append_claim_values_to_transcript::<F, L, T>(openings, transcript);
     if layout.num_total_polynomials() == 1 {
         return Ok(vec![L::one()]);
     }
     Ok((0..layout.num_total_polynomials())
-        .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_EVAL_BATCH))
+        .map(|_| sample_ext_challenge::<F, L, T>(transcript, challenge_label))
         .collect())
 }
 
@@ -778,9 +777,10 @@ mod tests {
         let extra_partial_bytes = 2 * 4 * crate::field_bytes(128);
         let extra_round_bytes =
             2 * crate::EXTENSION_OPENING_REDUCTION_DEGREE * crate::field_bytes(128);
+        let extra_terminal_claim_bytes = 2 * crate::field_bytes(128);
         assert_eq!(
             aggregate_bytes - final_only_bytes,
-            extra_partial_bytes + extra_round_bytes
+            extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes
         );
     }
 
@@ -797,9 +797,13 @@ mod tests {
 
         let target = |values: &[F]| {
             let mut transcript = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
-            let coefficients =
-                derive_public_row_coefficients::<F, F, _>(&layout, values, &mut transcript)
-                    .expect("derive coefficients");
+            append_claim_values_to_transcript::<F, F, _>(values, &mut transcript);
+            let coefficients = sample_row_coefficients::<F, F, _>(
+                &layout,
+                akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+                &mut transcript,
+            )
+            .expect("derive coefficients");
             layout
                 .batched_eval_target(&coefficients, values)
                 .expect("batched target")

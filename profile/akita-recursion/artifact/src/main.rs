@@ -77,12 +77,11 @@ fn opening_from_poly<'a, I>(
 ) -> Result<F, String>
 where
     I: OneHotIndex,
-    CpuBackend:
-        OpeningFoldKernel<
-            <OneHotPoly<F, I> as RootOpeningSource<F, SOURCE_VIEW_D>>::OpeningView<'a>,
-            F,
-            SOURCE_VIEW_D,
-        >,
+    CpuBackend: OpeningFoldKernel<
+        <OneHotPoly<F, I> as RootOpeningSource<F, SOURCE_VIEW_D>>::OpeningView<'a>,
+        F,
+        SOURCE_VIEW_D,
+    >,
 {
     let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
@@ -399,7 +398,7 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("encode jolt inputs blob failed: {err}"))?;
     // Round-trip before publishing so a buggy encoding fails on the host
     // instead of leaving a trusted benchmark artifact on disk.
-    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes(&blob)
+    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(&blob)
         .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);

@@ -21,6 +21,117 @@ fn prefix_requirements_join_by_maximum_in_one_dimension() {
 }
 
 #[test]
+fn verifier_cache_key_binds_exact_plan_requirement() {
+    let strong = VerifierNttCacheKey {
+        ring_d: 64,
+        width: 8,
+        rhs_abs_bound: 1 << 15,
+    };
+    let weak = VerifierNttCacheKey {
+        ring_d: 64,
+        width: 16,
+        rhs_abs_bound: 3,
+    };
+    assert_ne!(strong, weak);
+    assert_eq!(strong, strong);
+}
+
+#[test]
+fn verifier_cache_preserves_strong_entry_across_weaker_growth() {
+    const D: usize = 64;
+    let ring_count = 32;
+    let matrix = (0..ring_count)
+        .map(|ring| {
+            CyclotomicRing::<Prime128Offset275, D>::from_coefficients(std::array::from_fn(
+                |coefficient| Prime128Offset275::from_u64((ring * D + coefficient + 1) as u64),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let expanded = crate::AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        crate::AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: ring_count * D,
+            setup_seed: [0u8; 32].into(),
+        },
+        crate::FlatMatrix::from_ring_slice(&matrix),
+    );
+    let cache = VerifierNttCache::default();
+    let strong_mode = NttCacheMode::ExactNegacyclic {
+        width: 8,
+        rhs_abs_bound: 1 << 15,
+    };
+    let strong_tail = usize::from(
+        ntt_cache_requires_i16_tail::<Prime128Offset275, D>(8, 1 << 15)
+            .expect("strong exactness requirement"),
+    ) * 8;
+    let strong = cache
+        .prepare::<Prime128Offset275, D>(
+            &expanded,
+            NttCacheKey {
+                ring_d: D,
+                num_ring_elements: 8,
+                domain: NttTransformDomain::Negacyclic,
+            },
+            strong_tail,
+            strong_mode,
+        )
+        .expect("strong small prefix");
+
+    let weak_tail = usize::from(
+        ntt_cache_requires_i16_tail::<Prime128Offset275, D>(16, 1)
+            .expect("weak exactness requirement"),
+    ) * 16;
+    cache
+        .prepare::<Prime128Offset275, D>(
+            &expanded,
+            NttCacheKey {
+                ring_d: D,
+                num_ring_elements: ring_count,
+                domain: NttTransformDomain::Negacyclic,
+            },
+            weak_tail,
+            NttCacheMode::ExactNegacyclic {
+                width: 16,
+                rhs_abs_bound: 1,
+            },
+        )
+        .expect("weak large prefix");
+
+    let strong_again = cache
+        .prepare::<Prime128Offset275, D>(
+            &expanded,
+            NttCacheKey {
+                ring_d: D,
+                num_ring_elements: 8,
+                domain: NttTransformDomain::Negacyclic,
+            },
+            strong_tail,
+            strong_mode,
+        )
+        .expect("strong entry remains available");
+    assert!(Arc::ptr_eq(&strong, &strong_again));
+    assert_eq!(cache.slots.lock().expect("cache slots").len(), 2);
+
+    let rhs = vec![[1i16; D]; 8];
+    let cached_output = strong_again
+        .mat_vec_i16::<Prime128Offset275>(3, 1, &rhs)
+        .expect("cached strong plan computes");
+    let uncached = prepare_ntt_cache(
+        expanded
+            .shared_matrix()
+            .ring_view::<D>(1, 8)
+            .expect("uncached matrix view"),
+        strong_mode,
+    )
+    .expect("uncached strong plan");
+    let uncached_output = uncached
+        .mat_vec_i16::<Prime128Offset275>(3, 1, &rhs)
+        .expect("uncached strong plan computes");
+    assert_eq!(cached_output, uncached_output);
+}
+
+#[test]
 fn prepare_materializes_exactly_the_requested_layout() {
     const D: usize = 64;
     let flat = flat_zeros::<Prime32Offset99, D>(10);

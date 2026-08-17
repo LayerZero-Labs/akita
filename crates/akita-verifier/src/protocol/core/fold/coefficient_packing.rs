@@ -1,11 +1,11 @@
 //! Coefficient-packing fold verifier prefix.
 
-use super::{FoldPrefix, PreparedFoldOpeningPoint};
+use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    derive_public_row_coefficients, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
+    append_claim_values_to_transcript, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
     OpeningClaims, OpeningClaimsLayout, PreparedSubringCoefficientPackingPoint,
     SubringCoefficientPackingGeometry,
 };
@@ -43,18 +43,16 @@ fn prepare_group<E: FieldCore>(
 
 /// Prepare a root packing prefix directly from the authenticated public claims.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_coefficient_packing_root_prefix<F, E, T>(
+pub(in crate::protocol::core) fn verify_coefficient_packing_root_prefix<F, E>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
-    transcript: &mut T,
-) -> Result<FoldPrefix<F, E>, AkitaError>
+) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
 {
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
@@ -73,15 +71,11 @@ where
             )?,
         ));
     }
-    let row_coefficients =
-        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
-    let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    Ok(FoldPrefix {
+    Ok(FoldClaimMaterial {
         prepared_points,
-        trace_eval_target,
-        trace_claim_coefficients: row_coefficients.clone(),
-        row_coefficients,
-        scalar_openings: openings.to_vec(),
+        openings: openings.to_vec(),
+        reduction_final_claims: None,
+        reduction_factors: None,
     })
 }
 
@@ -93,7 +87,7 @@ pub(in crate::protocol::core) fn verify_coefficient_packing_suffix_prefix<F, E, 
     basis: BasisMode,
     lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<FoldPrefix<F, E>, AkitaError>
+) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -114,14 +108,11 @@ where
         point_refs.push(point);
     }
     super::single_field::absorb_protocol_opening_points::<F, E, T>(&point_refs, transcript);
-    let row_coefficients =
-        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?;
-    let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    Ok(FoldPrefix {
+    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+    Ok(FoldClaimMaterial {
         prepared_points,
-        trace_eval_target,
-        trace_claim_coefficients: row_coefficients.clone(),
-        row_coefficients,
-        scalar_openings: openings.to_vec(),
+        openings: openings.to_vec(),
+        reduction_final_claims: None,
+        reduction_factors: None,
     })
 }

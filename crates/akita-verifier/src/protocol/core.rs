@@ -23,24 +23,25 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
-    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY, CHALLENGE_SUMCHECK_BATCH,
+    ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
+    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_OPENING_PAYLOAD, ABSORB_RANGE_IMAGE_EVALUATION,
+    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER,
+    CHALLENGE_COMPRESSION_BINARY, CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
-    assemble_compressed_relation_rhs, assemble_relation_rhs, derive_public_row_coefficients,
+    append_claim_values_to_transcript, assemble_compressed_relation_rhs, assemble_relation_rhs,
     ensure_trace_stage2_supported, prepare_opening_point, proof::relation::relation_row_weight,
     raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
-    ring_subfield_packed_extension_opening_point, tensor_equality_factor_eval_at_point,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams,
-    EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof, FoldSchedule,
-    FpExtEncoding, InnerCommitSecurityRoute, OpeningClaims, OpeningClaimsLayout,
-    PhysicalResponsePlan, PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams,
-    RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance, RingVec,
-    SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    ring_subfield_packed_extension_opening_point, sample_row_coefficients,
+    tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
+    FoldLevelProof, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute, OpeningClaims,
+    OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims, PreparedOpeningPoint,
+    RecursiveFoldParams, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
+    RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
     TerminalResponse, TerminalWitnessTranscriptParts,
 };
 use akita_types::{
@@ -61,11 +62,11 @@ pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    absorb_protocol_opening_points, prepare_single_field_suffix_groups,
-    prepare_single_field_terminal_suffix, verify_coefficient_packing_root_prefix,
-    verify_coefficient_packing_suffix_prefix, verify_extension_claim_suffix_prefix,
-    verify_extension_claim_terminal_suffix, verify_fold, FoldPrefix, PreparedFoldPayload,
-    PreparedFoldReplay, PreparedNextWitness,
+    absorb_protocol_opening_points, bind_opening_payload_and_finalize_claims,
+    prepare_single_field_suffix_groups, prepare_single_field_terminal_suffix,
+    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix,
+    verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix, verify_fold,
+    FoldClaimMaterial, PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

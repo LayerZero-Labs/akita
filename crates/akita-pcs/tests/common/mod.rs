@@ -18,10 +18,10 @@ use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
-    dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
-    LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    canonical_base_field_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
+    AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
+    GroupBatchStatement, LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -262,22 +262,11 @@ where
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
 }
 
-pub(super) fn opening_from_poly<'a, const D: usize, P>(
-    poly: &'a P,
-    point: &[F],
-    layout: &(impl LevelParamsLike + ?Sized),
-) -> F
-where
-    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
-    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
-{
-    opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
-}
-
 pub(super) fn opening_from_poly_for_layout<'a, P>(
     poly: &'a P,
     point: &[F],
     layout: &(impl LevelParamsLike + ?Sized),
+    basis_mode: BasisMode,
 ) -> F
 where
     P: RootOpeningSource<F, 64>
@@ -294,10 +283,10 @@ where
         + OpeningFoldKernel<<P as RootOpeningSource<F, 512>>::OpeningView<'a>, F, 512>,
 {
     match layout.inner_commit_matrix_params().ring_dimension() {
-        64 => opening_from_poly::<64, _>(poly, point, layout),
-        128 => opening_from_poly::<128, _>(poly, point, layout),
-        256 => opening_from_poly::<256, _>(poly, point, layout),
-        512 => opening_from_poly::<512, _>(poly, point, layout),
+        64 => opening_from_poly_with_basis::<64, _>(poly, point, layout, basis_mode),
+        128 => opening_from_poly_with_basis::<128, _>(poly, point, layout, basis_mode),
+        256 => opening_from_poly_with_basis::<256, _>(poly, point, layout, basis_mode),
+        512 => opening_from_poly_with_basis::<512, _>(poly, point, layout, basis_mode),
         dimension => panic!("unsupported test opening ring dimension D={dimension}"),
     }
 }
@@ -659,6 +648,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         );
 
         let shape = proof.shape();
+        assert_eq!(
+            shape,
+            canonical_base_field_proof_shape(&schedule).expect("canonical schedule proof shape"),
+            "a produced proof must have the verifier's canonical schedule-derived shape"
+        );
         let mut bytes = Vec::new();
         proof
             .serialize_compressed(&mut bytes)
@@ -831,8 +825,39 @@ pub(super) fn first_label_index_after(
         .map(|offset| start + offset)
 }
 
+/// Assert that every public claim-batching squeeze belongs to a fold whose
+/// complete opening payload was already absorbed.
 #[cfg(feature = "logging-transcript")]
-fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
+pub(super) fn assert_claim_batching_follows_opening_payload(
+    events: &[akita_transcript::TranscriptEvent],
+) -> usize {
+    let mut payload_bound = false;
+    let mut batching_squeezes = 0usize;
+    for event in events {
+        let Some(label) = event_label(event) else {
+            continue;
+        };
+        if label == akita_transcript::labels::ABSORB_OPENING_PAYLOAD {
+            payload_bound = true;
+        } else if is_label_or_extension_limb(label, akita_transcript::labels::CHALLENGE_EVAL_BATCH)
+        {
+            assert!(
+                payload_bound,
+                "public claim-batching challenge preceded its fold opening payload"
+            );
+            batching_squeezes += 1;
+        } else if is_label_or_extension_limb(
+            label,
+            akita_transcript::labels::CHALLENGE_SPARSE_CHALLENGE,
+        ) {
+            payload_bound = false;
+        }
+    }
+    batching_squeezes
+}
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
     candidate == base || akita_transcript::is_ext_limb_label(candidate, base)
 }
 

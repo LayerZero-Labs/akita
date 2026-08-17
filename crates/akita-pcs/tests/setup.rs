@@ -123,7 +123,7 @@ where
     let poly = DensePoly::<F>::from_field_evals(poly_nv, &evals).expect("dense poly");
 
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-    let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout);
+    let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout, BasisMode::Lagrange);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -398,7 +398,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let pt = random_point(poly_nv, 0xbabe_0000 + poly_nv as u64);
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
+        .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout, BasisMode::Lagrange))
         .collect();
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();

@@ -80,7 +80,7 @@ impl<F: FieldCore, E: FieldCore> PreparedOpeningPoint<F, E> {
         &self,
     ) -> Result<&CyclotomicRing<F, D>, AkitaError> {
         self.ensure_ring_dim::<D>()?;
-        Ok(self.packed_inner_point.as_single_ring_trusted::<D>())
+        self.packed_inner_point.as_single_ring::<D>()
     }
 
     /// Owned copy of the ψ-packed inner ring after [`Self::ensure_ring_dim`].

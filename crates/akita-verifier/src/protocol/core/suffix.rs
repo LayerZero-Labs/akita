@@ -366,7 +366,10 @@ where
         AkitaError::InvalidInput(format!("terminal ring relation failed: {error:?}"))
     })?;
     let (target, scale) = match final_relation {
-        Some((claim, factors)) => (claim, *factors.first().ok_or(AkitaError::InvalidProof)?),
+        Some((claims, factors)) => (
+            *claims.first().ok_or(AkitaError::InvalidProof)?,
+            *factors.first().ok_or(AkitaError::InvalidProof)?,
+        ),
         None => (current_state.opening, E::one()),
     };
     super::terminal_direct::verify_terminal_trace(
@@ -458,7 +461,7 @@ where
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
-    let prefix = if matches!(
+    let claim_state = if matches!(
         lp.opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
@@ -483,22 +486,18 @@ where
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;
         absorb_protocol_opening_points(&group_points, transcript);
-        let row_coefficients =
-            derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
-        let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
-        FoldPrefix {
+        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+        FoldClaimMaterial {
             prepared_points: prepared_points
                 .into_iter()
                 .map(super::fold::PreparedFoldOpeningPoint::EvaluationTrace)
                 .collect(),
-            trace_eval_target,
-            trace_claim_coefficients: row_coefficients.clone(),
-            row_coefficients,
-            scalar_openings: openings.clone(),
+            openings: openings.clone(),
+            reduction_final_claims: None,
+            reduction_factors: None,
         }
     } else {
-        let row_coefficients =
-            derive_public_row_coefficients::<F, E, T>(&opening_batch, &openings, transcript)?;
+        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
         let group_points = (0..opening_batch.num_groups())
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;
@@ -506,7 +505,6 @@ where
             proof.extension_opening_reduction,
             &group_points,
             &openings,
-            row_coefficients,
             &opening_batch,
             current_state.basis,
             lp,
@@ -543,6 +541,13 @@ where
             )
         }
     };
+    let prefix = bind_opening_payload_and_finalize_claims(
+        lp,
+        &opening_batch,
+        &opening_payload,
+        claim_state,
+        transcript,
+    )?;
     let current_commitment = match &current_state.witness {
         SuffixWitnessState::Commitment(commitment) => *commitment,
         SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),

@@ -180,9 +180,11 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
     }
 
     /// Borrow folded ring rows after [`Self::ensure_ring_dim`].
-    pub fn z_folded_rings_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
-        debug_assert_eq!(self.ring_dim, D);
-        self.z_folded_rings.as_ring_slice_trusted::<D>()
+    pub fn z_folded_rings_trusted<const D: usize>(
+        &self,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.z_folded_rings.as_ring_slice::<D>()
     }
 
     /// Borrow the centered coefficients as row-major flat storage (D-free).
@@ -306,7 +308,7 @@ impl<F: FieldCore> CommitInnerWitness<F> {
             .checked_add(rows_per_block)
             .ok_or_else(|| AkitaError::InvalidSetup("inner row end overflow".into()))?;
         self.inner_rows
-            .as_ring_slice_trusted::<D>()
+            .as_ring_slice::<D>()?
             .get(start..end)
             .ok_or_else(|| AkitaError::InvalidInput("inner row block is out of range".into()))
     }

@@ -294,9 +294,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
     pub fn e_folded_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         self.ensure_role_dim::<D>(RingRole::Inner)?;
         match &self.folded_opening {
-            GroupFoldedOpening::EvaluationTrace(e_folded) => {
-                Ok(e_folded.as_ring_slice_trusted::<D>())
-            }
+            GroupFoldedOpening::EvaluationTrace(e_folded) => e_folded.as_ring_slice::<D>(),
             GroupFoldedOpening::SubringCoefficientPacking { .. } => Err(AkitaError::InvalidSetup(
                 "coefficient-packing folded opening is not an A-ring vector".into(),
             )),

@@ -51,7 +51,7 @@ where
         .opening_layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let tensor = stack.tensor();
-    let (protocol_points, row_coefficients, reduction) = if run_eor {
+    let (protocol_points, reduction) = if run_eor {
         let ExtensionOpeningSource::Logical(groups) = eor_source;
         let eor_groups: Vec<&P> = groups.iter().collect();
         if eor_groups.len() != opening_batch.num_groups() {
@@ -88,15 +88,11 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
-        (
-            proved.protocol_points,
-            Some(proved.row_coefficients),
-            Some(proved.reduction),
-        )
+        (proved.protocol_points, Some(proved.reduction))
     } else {
         let protocol_points =
             prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
-        (protocol_points, None, None)
+        (protocol_points, None)
     };
 
     finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
@@ -104,7 +100,6 @@ where
         block_claims,
         protocol_points: &protocol_points,
         reduction,
-        row_coefficients,
         trace_opening_batch: &opening_batch,
         level_params,
         basis,

@@ -466,15 +466,15 @@ impl RingRelationProver {
     #[allow(private_bounds)]
     #[tracing::instrument(skip_all, name = "RingRelationProver::new")]
     #[inline(never)]
-    pub(crate) fn new<'a, F, PointF, T, P, OB, RB>(
+    pub(crate) fn new<'a, F, PointF, T, P, OB, RB, BindClaims, BoundClaims>(
         opening_ctx: &OperationCtx<'_, F, OB>,
         ring_switch_ctx: &OperationCtx<'_, F, RB>,
         prepared_group_openings: Vec<PreparedGroupOpening<F, PointF>>,
         block_claims: ProverOpeningData<'a, PointF, P, F>,
         lp: CommittedGroupParams,
         transcript: &mut T,
-        row_coefficient_rings: RingVec<F>,
-    ) -> Result<PreparedRingRelation<F, PointF>, AkitaError>
+        bind_claims_after_payload: BindClaims,
+    ) -> Result<(PreparedRingRelation<F, PointF>, BoundClaims), AkitaError>
     where
         F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + HasWide + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
@@ -486,6 +486,7 @@ impl RingRelationProver {
         P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
         OB: DigitRowsComputeBackend<F>,
         RB: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
+        BindClaims: FnOnce(&mut T) -> Result<(RingVec<F>, BoundClaims), AkitaError>,
     {
         let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
         validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
@@ -588,21 +589,6 @@ impl RingRelationProver {
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        // Row-coefficient rings are A-role data (fold coefficients).
-        if !row_coefficient_rings.can_decode_vec(dims.d_a())
-            || row_coefficient_rings.coeff_len() / dims.d_a() != num_claims
-        {
-            return Err(AkitaError::InvalidInput(
-                "batched prover row coefficient length does not match claim count".to_string(),
-            ));
-        }
-        let gamma = row_coefficient_rings
-            .coeffs()
-            .iter()
-            .copied()
-            .step_by(dims.d_a())
-            .collect::<Vec<_>>();
-
         // Extracted level numbers for the D-role and fused-y operations below;
         // the kernels inside the dispatch arms must not read schedule types.
         let d_log_basis = lp.shared_d_digit_log_basis();
@@ -817,6 +803,25 @@ impl RingRelationProver {
         };
         drop(opening_rows_span);
 
+        // Native public claim batching is intentionally delayed until every
+        // opening digit has been bound through the complete D/H payload above.
+        // Extension EOR supplies its already-bound coefficients because its
+        // shared reduced point and final relation depend on that earlier batch.
+        let (row_coefficient_rings, bound_claims) = bind_claims_after_payload(transcript)?;
+        if !row_coefficient_rings.can_decode_vec(dims.d_a())
+            || row_coefficient_rings.coeff_len() / dims.d_a() != num_claims
+        {
+            return Err(AkitaError::InvalidInput(
+                "batched prover row coefficient length does not match claim count".to_string(),
+            ));
+        }
+        let gamma = row_coefficient_rings
+            .coeffs()
+            .iter()
+            .copied()
+            .step_by(dims.d_a())
+            .collect::<Vec<_>>();
+
         // Distributed-prover chunked layout: the grind emits one folded response
         // per block window (`z_i`), and the global response is their sum
         // (`Σ_i z_i = z`, exact coefficient-wise i32 accumulation).
@@ -970,11 +975,14 @@ impl RingRelationProver {
             &instance,
         )?;
         drop(witness_span);
-        Ok(PreparedRingRelation {
-            instance,
-            witness,
-            groups: prepared_relation_groups,
-        })
+        Ok((
+            PreparedRingRelation {
+                instance,
+                witness,
+                groups: prepared_relation_groups,
+            },
+            bound_claims,
+        ))
     }
 }
 

@@ -70,10 +70,10 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
 
 /// Header-stripped byte size of an extension-opening reduction proof.
 ///
-/// The reduction proof serializes `partials` challenge-field elements followed
-/// by a fixed degree-two sumcheck over `opening_vars - log2(extension_width)`
-/// rounds. `extension_width = 1` means the claim field is already the base
-/// field and contributes zero bytes.
+/// The reduction proof serializes `partials` challenge-field elements, one
+/// fixed degree-two sumcheck over all opening claims, and one terminal claim
+/// handle per opening. `extension_width = 1` means the claim field is already
+/// the base field and contributes zero bytes.
 ///
 /// # Errors
 ///
@@ -101,13 +101,20 @@ pub fn extension_opening_reduction_proof_bytes(
     }
     let elem_bytes = field_bytes(challenge_field_bits);
     let rounds = opening_vars - split_bits;
+    if !partials.is_multiple_of(extension_width) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "extension opening partial count {partials} is not divisible by width {extension_width}"
+        )));
+    }
+    let num_claims = partials / extension_width;
     Ok(partials
         .saturating_mul(elem_bytes)
         .saturating_add(sumcheck_bytes(
             rounds,
             EXTENSION_OPENING_REDUCTION_DEGREE,
             elem_bytes,
-        )))
+        ))
+        .saturating_add(num_claims.saturating_mul(elem_bytes)))
 }
 
 /// Log2 of the next power-of-two Boolean cube width for recursive opening.
@@ -320,11 +327,24 @@ mod tests {
     }
 
     #[test]
-    fn eor_partial_bytes_scale_with_claim_count() {
+    fn eor_bytes_scale_with_claim_count() {
         let one_claim = level_bytes(4, 1).expect("one claim");
         let two_claims = level_bytes(4, 2).expect("two claims");
-        let partial_bytes = 4 * field_bytes(128);
-        assert_eq!(two_claims - one_claim, partial_bytes);
+        let per_claim_bytes = 5 * field_bytes(128);
+        assert_eq!(two_claims - one_claim, per_claim_bytes);
+    }
+
+    #[test]
+    fn recursive_batched_eor_prices_one_sumcheck_and_each_terminal_claim() {
+        let bytes =
+            extension_opening_reduction_level_bytes(128, 4, PolynomialGroupLayout::new(12, 2))
+                .expect("two-claim recursive EOR");
+
+        let elem_bytes = field_bytes(128);
+        let partial_bytes = 4 * 2 * elem_bytes;
+        let sumcheck_bytes = (12 - 2) * EXTENSION_OPENING_REDUCTION_DEGREE * elem_bytes;
+        let terminal_claim_bytes = 2 * elem_bytes;
+        assert_eq!(bytes, partial_bytes + sumcheck_bytes + terminal_claim_bytes);
     }
 
     #[test]

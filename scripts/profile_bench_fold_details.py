@@ -12,6 +12,7 @@ else:
 PROOF_LEVEL_BYTE_FIELDS = (
     "extension_opening_partials_bytes",
     "extension_opening_sumcheck_bytes",
+    "extension_opening_final_claims_bytes",
     "fold_grind_nonce_bytes",
     "opening_payload_bytes",
     "stage1_sumcheck_bytes",
@@ -463,6 +464,7 @@ def proof_cost_summary(
             (
                 ("extension_opening_partials_bytes", "partials"),
                 ("extension_opening_sumcheck_bytes", "sumcheck"),
+                ("extension_opening_final_claims_bytes", "final claims"),
                 ("opening_payload_bytes", "p_H"),
             ),
         ),
