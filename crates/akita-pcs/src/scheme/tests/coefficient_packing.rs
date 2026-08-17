@@ -166,8 +166,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .map(|index| PackingField::from_i64((index % 7) as i64 - 3))
                 .collect::<Vec<_>>();
             let polynomial =
-                akita_prover::DensePoly::from_field_evals(num_vars, root.d_a(), &evaluations)
-                    .unwrap();
+                akita_prover::DensePoly::from_field_evals(num_vars, &evaluations).unwrap();
             let polynomial =
                 akita_prover::MultilinearPolynomial::<PackingField, usize>::dense(polynomial);
 

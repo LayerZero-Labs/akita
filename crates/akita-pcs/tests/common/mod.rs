@@ -43,14 +43,14 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // fall through to the offline DP planner on table miss via the default
 // `resolve_catalog_row_for_key` fallback.
 pub(super) type OneHotCfg = fp128::OneHot;
-pub(super) const ONEHOT_D: usize = OneHotCfg::D;
+pub(super) const ONEHOT_D: usize = 256;
 // `fp128::OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
 // ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
 // per ring element.
 pub(super) const ONEHOT_K: usize = 256;
 
 pub(super) type DenseCfg = fp128::Dense;
-pub(super) const DENSE_D: usize = DenseCfg::D;
+pub(super) const DENSE_D: usize = 256;
 
 static INIT_RAYON: Once = Once::new();
 
@@ -355,12 +355,12 @@ pub(super) fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, u8> 
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(ONEHOT_K, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
     let evals = dense_field_evals(nv, seed);
-    DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly")
+    DensePoly::<F>::from_field_evals(nv, &evals).expect("dense poly")
 }
 
 fn splitmix64_next(state: &mut u64) -> u64 {
@@ -775,18 +775,13 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     });
 }
 
-pub(super) fn make_onehot_poly_with_d_and_k(
-    nv: usize,
-    d: usize,
-    k: usize,
-    seed: u64,
-) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly_with_k(nv: usize, k: usize, seed: u64) -> OneHotPoly<F, u8> {
     let total_chunks = (1usize << nv) / k;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..k) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(k, d, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(k, indices).expect("onehot poly")
 }
 
 #[cfg(feature = "logging-transcript")]

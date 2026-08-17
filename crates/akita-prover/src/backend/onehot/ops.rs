@@ -65,10 +65,6 @@ where
     F: FieldCore,
     I: OneHotIndex,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.total_ring_elems
-    }
-
     fn num_vars(&self) -> usize {
         self.num_vars
     }

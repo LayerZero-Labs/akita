@@ -24,19 +24,10 @@ fn heterogeneous_group_types() {
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
 
-        // Derive the OneHot pre-commit ring_d from the row without prior
-        // groups, so the polynomial matches what `commit` selects below.
-        let pre_d = OneHotCfg::profile_without_precommitted_groups(
-            akita_types::PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
-        )
-        .expect("onehot pre profile without precommitted groups")
-        .inner_commit_matrix
-        .ring_dimension();
         let onehot_k_pre = 256usize;
         let pre_chunks = (1usize << ONEHOT_PRE_NV) / onehot_k_pre;
         let onehot_pre = akita_prover::OneHotPoly::<F, u8>::new(
             onehot_k_pre,
-            pre_d,
             (0..pre_chunks)
                 .map(|i| (i % 3 == 0).then_some((i % onehot_k_pre) as u8))
                 .collect(),
@@ -49,12 +40,10 @@ fn heterogeneous_group_types() {
         let dense_evals_b = (0..(1usize << DENSE_PRE_NV))
             .map(|i| F::from_u64((i % 509) as u64))
             .collect::<Vec<_>>();
-        let dense_a =
-            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_a)
-                .expect("dense a");
-        let dense_b =
-            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_b)
-                .expect("dense b");
+        let dense_a = akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, &dense_evals_a)
+            .expect("dense a");
+        let dense_b = akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, &dense_evals_b)
+            .expect("dense b");
 
         let final_onehot = make_onehot_poly(FINAL_NV, 0x1701_0000);
 
@@ -240,7 +229,7 @@ fn heterogeneous_compute_backends() {
         type Scheme = AkitaCommitmentScheme<Cfg>;
 
         let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
-        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals).unwrap();
+        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
 
         let setup = Scheme::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");

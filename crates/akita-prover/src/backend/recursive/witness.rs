@@ -557,19 +557,10 @@ where
 /// mandate, `num_vars` here is derived from the witness's own logical length, never
 /// from a const `D`.
 ///
-/// `num_ring_elems` is not on the suffix `to_opening_shape` path (only
-/// `num_vars` is consumed there); the D-keyed ring-element count is recovered
-/// inside kernels via the D-typed `RootPolyShape`/`SuffixWitnessView`. The
-/// D-free value reported here is the flat coefficient count, consistent with
-/// `num_vars`.
 impl<F> RootPolyMeta<F> for RecursiveWitnessFlat
 where
     F: FieldCore,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.live_coeff_len.max(1)
-    }
-
     fn num_vars(&self) -> usize {
         let coeff_count = self.live_coeff_len.next_power_of_two().max(1);
         coeff_count.trailing_zeros() as usize

@@ -9,6 +9,7 @@ use akita_planner::generated_families::{
 };
 use akita_planner::{
     publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
+    RingDimensionScheduleMode,
 };
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
@@ -83,7 +84,12 @@ fn family_by_name(name: &str) -> Option<&'static GeneratedFamily> {
 }
 
 fn explicit_family_is_d64(name: &str) -> bool {
-    family_by_name(name).is_some_and(|family| (family.policy)().uniform_ring_dimension == 64)
+    family_by_name(name).is_some_and(|family| {
+        matches!(
+            (family.policy)().ring_dimension_schedule_mode,
+            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 }
+        )
+    })
 }
 
 fn parse_usize(raw: &str, context: &str) -> Result<usize, String> {

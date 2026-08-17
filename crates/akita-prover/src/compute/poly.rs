@@ -16,7 +16,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 /// D-free shape metadata every root polynomial exposes.
 ///
 /// This is the **PCS/batch-facing** capability bound: it names a polynomial's
-/// variable count and ring-element count *without* a const ring dimension `D`,
+/// variable count *without* a const ring dimension `D`,
 /// so D-free entry points (e.g. [`crate::ProverOpeningData`]) can require just
 /// `RootPolyMeta` while the const-D kernel-entry traits ([`RootPolyShape`] and
 /// the commit/opening/tensor/direct-witness family) carry `D`.
@@ -29,9 +29,6 @@ pub trait RootPolyMeta<F>: Clone + Send + Sync
 where
     F: FieldCore,
 {
-    /// Total number of ring elements in the polynomial.
-    fn num_ring_elems(&self) -> usize;
-
     /// Total number of variables (representation-derived, D-independent).
     fn num_vars(&self) -> usize;
 
@@ -433,10 +430,6 @@ where
     F: FieldCore,
     P: RootPolyMeta<F>,
 {
-    fn num_ring_elems(&self) -> usize {
-        RootPolyMeta::num_ring_elems(*self)
-    }
-
     fn num_vars(&self) -> usize {
         RootPolyMeta::num_vars(*self)
     }
@@ -462,10 +455,6 @@ mod tests {
     struct CanonicalOpeningOnlySource;
 
     impl RootPolyMeta<F> for CanonicalOpeningOnlySource {
-        fn num_ring_elems(&self) -> usize {
-            1
-        }
-
         fn num_vars(&self) -> usize {
             0
         }

@@ -21,7 +21,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     type Field = Cfg::Field;
     type ExtField = Cfg::ExtField;
 
-    const D: usize = Cfg::D;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Cfg::RING_DIMENSION_SCHEDULE_MODE;
     fn decomposition() -> DecompositionParams {

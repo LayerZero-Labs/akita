@@ -274,12 +274,9 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
 /// Test-only commitment config that combines an envelope config with a final
 /// group config.
 ///
-/// The precommitted groups use `Envelope::D` while the final group and
-/// recursive suffix use `Final::D`.
-///
-/// `Self::D` remains the uniform planner default. Exact grouped runtime keys
-/// select schedules under `Final`, retaining each preceding group's frozen
-/// native descriptor. Public setup storage remains flat and dimension-free.
+/// Exact grouped runtime keys select schedules under `Final`, retaining each
+/// preceding group's frozen native descriptor. Public setup storage remains
+/// flat and dimension-free.
 #[derive(Debug)]
 pub(crate) struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
 
@@ -719,7 +716,6 @@ where
     type Field = Base::Field;
     type ExtField = Base::ExtField;
 
-    const D: usize = Base::D;
     const EXT_DEGREE: usize = Base::EXT_DEGREE;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Base::RING_DIMENSION_SCHEDULE_MODE;
@@ -746,10 +742,6 @@ where
                 AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())
             })?,
         })
-    }
-
-    fn setup_prefix_inner_ring_dimension() -> usize {
-        Base::setup_prefix_inner_ring_dimension()
     }
 
     fn opening_basis_range() -> (u32, u32) {
@@ -801,7 +793,6 @@ where
     type Field = Base::Field;
     type ExtField = Base::ExtField;
 
-    const D: usize = Base::D;
     const EXT_DEGREE: usize = Base::EXT_DEGREE;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Base::RING_DIMENSION_SCHEDULE_MODE;
@@ -826,10 +817,6 @@ where
             max_num_vars,
             max_num_batched_polys,
         )
-    }
-
-    fn setup_prefix_inner_ring_dimension() -> usize {
-        Base::setup_prefix_inner_ring_dimension()
     }
 
     fn opening_basis_range() -> (u32, u32) {
@@ -902,7 +889,6 @@ where
     type Field = Envelope::Field;
     type ExtField = Envelope::ExtField;
 
-    const D: usize = Envelope::D;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Envelope::RING_DIMENSION_SCHEDULE_MODE;
 

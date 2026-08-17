@@ -49,7 +49,12 @@ Source laws are separate planner-only values. For example, the one-hot policy
 owns its exact chunk size while runtime schedule keys retain only public group
 geometry.
 
-The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
+The `ring_challenge_config` closure supplies the sparse challenge configuration for an A-role dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
+
+`PlannerPolicy::ring_dimension_schedule_mode` is the only dimension-domain
+authority. Uniform policies carry one A, B, and D value in that mode. Adaptive
+policies carry separate bounded domains. The selected schedule records the
+exact dimensions used at each level.
 
 ## Resolution Flow
 

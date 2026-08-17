@@ -21,9 +21,10 @@ const-generic at kernel and backend leaf boundaries, but the protocol shape is
 field vectors plus schedule-owned dimensions, not `CyclotomicRing<F, D>` at the
 API boundary.
 
-> **Scoped revision (stacked follow-up to PR #334):** The schedule-ownership
-> decision remains authoritative. The phase-1 setup generation dimension and
-> full-envelope NTT preparation described later in this document are superseded by
+> **Scoped revision:** The schedule-ownership decision remains authoritative.
+> The phase-1 setup generation dimension, the later config compatibility
+> dimension, and full-envelope NTT preparation described later in this document
+> are superseded by
 > [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 > Public setup is now specified as a dimension-free field stream and NTT state
 > as exact backend-derived prefixes.
@@ -234,13 +235,11 @@ replaces is DELETED — "a D-free way exists" is the #227 failure restated.
 
 Setup:
 
-- `AkitaProverSetup<F>` owns an expanded setup with `gen_ring_dim` and
-  shape metadata.
-- Setup validation checks that the selected schedule can be viewed against the
-  generated setup envelope.
-- The first full cutover may require all active schedule dimensions to divide
-  the setup generation dimension. Arbitrary unrelated dimensions are out of
-  scope.
+- `AkitaProverSetup<F>` stores a flat field stream with no ring dimension.
+- Policy validation checks every admitted A, B, and D domain through its field
+  role dispatch.
+- Execution validates each resolved schedule dimension before setup warming or
+  transcript mutation.
 
 Mixed-D:
 

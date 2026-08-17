@@ -136,13 +136,23 @@ pub(crate) fn initial_dimension_ceiling(
         }
         crate::RingDimensionScheduleMode::AdaptiveDimension {
             potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
             ..
-        } => Ok(CommitmentRingDims::uniform(
-            potential_a_dimensions
+        } => Ok(CommitmentRingDims {
+            inner: potential_a_dimensions
                 .last()
                 .copied()
                 .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
-        )),
+            outer: potential_b_dimensions
+                .last()
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("adaptive B domain is empty".into()))?,
+            opening: potential_d_dimensions
+                .last()
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("adaptive D domain is empty".into()))?,
+        }),
     }
 }
 

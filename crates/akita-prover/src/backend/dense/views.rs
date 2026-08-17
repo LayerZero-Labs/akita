@@ -28,10 +28,6 @@ impl<F> RootPolyMeta<F> for DensePoly<F>
 where
     F: FieldCore,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.meta_ring_elems()
-    }
-
     fn num_vars(&self) -> usize {
         self.num_vars
     }

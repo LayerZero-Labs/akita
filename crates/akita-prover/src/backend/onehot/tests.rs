@@ -14,7 +14,7 @@ where
     F: FieldCore + CanonicalField,
     I: OneHotIndex,
 {
-    let mut coeffs = vec![CyclotomicRing::<F, D>::zero(); poly.total_ring_elems];
+    let mut coeffs = vec![CyclotomicRing::<F, D>::zero(); (1usize << poly.num_vars).div_ceil(D)];
     for (chunk_idx, hot_idx) in poly.indices.iter().copied().enumerate() {
         let Some(raw) = hot_idx else {
             continue;
@@ -318,8 +318,8 @@ fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
     indices1[64] = Some(19usize);
     indices1[100] = Some(21usize);
     let polys = [
-        OneHotPoly::<F>::new(num_positions_per_block, D, indices0).unwrap(),
-        OneHotPoly::<F>::new(num_positions_per_block, D, indices1).unwrap(),
+        OneHotPoly::<F>::new(num_positions_per_block, indices0).unwrap(),
+        OneHotPoly::<F>::new(num_positions_per_block, indices1).unwrap(),
     ];
     let challenges = vec![
         SparseChallenge {
@@ -368,7 +368,7 @@ fn single_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
     const D: usize = 64;
 
     let poly =
-        OneHotPoly::<F>::new(64, D, vec![Some(1usize), None, Some(9usize), Some(17usize)]).unwrap();
+        OneHotPoly::<F>::new(64, vec![Some(1usize), None, Some(9usize), Some(17usize)]).unwrap();
     let num_positions_per_block = 2usize;
     let position_weights = vec![F::from_u64(3), F::from_u64(5)];
     let live_block_weights = vec![F::from_u64(7), F::from_u64(11)];
@@ -395,7 +395,7 @@ fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
     const D: usize = 8;
 
     let poly =
-        OneHotPoly::<F>::new(16, D, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
+        OneHotPoly::<F>::new(16, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
     let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let num_positions_per_block = 4usize;
     let position_weights = vec![
@@ -417,7 +417,7 @@ fn onehot_ring_fold_matches_dense_for_partial_final_slice() {
     const D: usize = 8;
 
     let poly =
-        OneHotPoly::<F>::new(16, D, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
+        OneHotPoly::<F>::new(16, vec![Some(1usize), None, Some(13usize), Some(7usize)]).unwrap();
     let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let num_positions_per_block = 16usize;
     let position_weights = (0..num_positions_per_block)
@@ -437,7 +437,6 @@ fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
 
     let poly = OneHotPoly::<F>::new(
         32,
-        D,
         vec![
             Some(1usize),
             None,
@@ -477,7 +476,6 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
 
     let poly = OneHotPoly::<F>::new(
         4,
-        D,
         vec![
             Some(0usize),
             Some(3usize),

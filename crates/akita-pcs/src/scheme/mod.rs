@@ -20,18 +20,16 @@ use akita_transcript::Transcript;
 use akita_types::AkitaBatchedProof;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    dispatch_for_field, validate_ring_subfield_role, BasisMode, FoldSchedule, FpExtEncoding,
-    GroupBatchStatement, OpeningClaimsLayout, SetupMatrixCapacity,
+    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
+    SetupMatrixCapacity,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
-/// Root ring degree is derived from `Cfg`'s schedule policy at setup time
-/// (`policy_of::<Cfg>().uniform_ring_dimension`, equal to `Cfg::D` for
-/// uniform-D presets).
-/// Per-level suffix folds dispatch on each step's schedule `ring_dimension`.
+/// Every concrete ring degree is derived from the selected schedule. Setup is
+/// flat and does not carry a nominal ring dimension.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
@@ -65,18 +63,9 @@ where
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
-        dispatch_for_field!(
-            ProtocolDispatchSlot::UniformPolicy,
-            Cfg::Field,
-            ring_d,
-            |D| {
-                validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-                akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
-                    max_num_vars,
-                    max_num_polys_per_commitment_group,
-                )
-            }
+        akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+            max_num_vars,
+            max_num_polys_per_commitment_group,
         )
     }
 
@@ -115,18 +104,6 @@ where
         setup.to_verifier_setup(capacity)
     }
 
-    /// Validate the field tower against the config schedule policy ring dimension.
-    fn validate_cfg_ring_policy() -> Result<usize, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
-        dispatch_for_field!(
-            ProtocolDispatchSlot::UniformPolicy,
-            Cfg::Field,
-            ring_d,
-            |D| validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
-        )?;
-        Ok(ring_d)
-    }
-
     /// Commit one polynomial group in its complete parameter context.
     ///
     /// # Errors
@@ -147,7 +124,7 @@ where
         P: RuntimeCommitSource<Cfg::Field>,
         B: RuntimeCommitBackendFor<Cfg::Field, P>,
     {
-        Self::validate_cfg_ring_policy()?;
+        akita_config::validate_config_policy::<Cfg>()?;
         akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, context)
     }
 
@@ -193,7 +170,7 @@ where
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     {
         let t_prove_total = Instant::now();
-        Self::validate_cfg_ring_policy()?;
+        akita_config::validate_config_policy::<Cfg>()?;
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
             &setup.expanded,
             &setup.prefix_slots,
@@ -225,7 +202,7 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        Self::validate_cfg_ring_policy()?;
+        akita_config::validate_config_policy::<Cfg>()?;
         batched_verify_inner::<Cfg, T>(proof, setup, transcript, statement, basis)
     }
 

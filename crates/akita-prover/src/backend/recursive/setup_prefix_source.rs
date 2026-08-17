@@ -61,13 +61,6 @@ pub struct RecursiveFoldBatchView<'a, F: FieldCore, const D: usize> {
 }
 
 impl<F: FieldCore> RootPolyMeta<F> for RecursiveFoldSource<F> {
-    fn num_ring_elems(&self) -> usize {
-        match self {
-            Self::SetupPrefix { slot, .. } => slot.id.n_prefix().unwrap_or(1),
-            Self::Witness(witness) => RootPolyMeta::<F>::num_ring_elems(witness.as_ref()),
-        }
-    }
-
     fn num_vars(&self) -> usize {
         match self {
             Self::SetupPrefix { slot, .. } => {

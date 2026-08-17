@@ -134,8 +134,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
     pub sis_l2_table_digest: akita_types::SisL2TableDigest,
-    pub uniform_ring_dimension: usize,
-    pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,

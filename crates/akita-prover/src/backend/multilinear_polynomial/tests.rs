@@ -14,13 +14,12 @@ fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
-    DensePoly::from_field_evals(num_vars, D, &evals).unwrap()
+    DensePoly::from_field_evals(num_vars, &evals).unwrap()
 }
 
 fn sample_onehot<const D: usize>() -> OneHotPoly<Prime24Offset3> {
     OneHotPoly::<Prime24Offset3>::new(
         8,
-        D,
         vec![
             Some(0usize),
             Some(7),
@@ -38,7 +37,7 @@ fn sample_onehot<const D: usize>() -> OneHotPoly<Prime24Offset3> {
 #[test]
 fn multilinear_polynomial_forwards_onehot_chunk_size_from_inner() {
     const D: usize = 16;
-    let onehot = OneHotPoly::<Prime24Offset3>::new(256, D, vec![Some(1), None]).unwrap();
+    let onehot = OneHotPoly::<Prime24Offset3>::new(256, vec![Some(1), None]).unwrap();
     let dense = sample_dense::<D>();
     assert_eq!(
         RootPolyShape::<Prime24Offset3, D>::onehot_chunk_size(&MultilinearPolynomial::<
@@ -121,7 +120,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
     let evals = (0..(1usize << num_vars))
         .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
-    let dense = DensePoly::from_field_evals(num_vars, D, &evals).unwrap();
+    let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
     let wrapped = [
         MultilinearPolynomial::dense(dense),
         MultilinearPolynomial::onehot(onehot),

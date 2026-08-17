@@ -29,12 +29,17 @@ fn policy_for_domain(
     mut policy: PlannerPolicy,
     domain: &RingDimensionSearchDomain,
 ) -> PlannerPolicy {
-    let is_uniform =
-        domain.candidates() == [CommitmentRingDims::uniform(policy.uniform_ring_dimension)];
-    policy.ring_dimension_schedule_mode = if is_uniform {
-        crate::RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: policy.uniform_ring_dimension,
-        }
+    let uniform_dimension = domain.candidates().first().and_then(|first| {
+        domain
+            .candidates()
+            .iter()
+            .all(|candidate| {
+                candidate == first && first.inner == first.outer && first.outer == first.opening
+            })
+            .then_some(first.d_a())
+    });
+    policy.ring_dimension_schedule_mode = if let Some(ring_dimension) = uniform_dimension {
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension }
     } else {
         let mut a = domain
             .candidates()
@@ -96,16 +101,12 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     )
     .unwrap();
     let selected_score = (
-        selected
-            .estimate
-            .estimated_num_setup_field_elements
-            .div_ceil(policy.uniform_ring_dimension),
+        selected.estimate.estimated_num_setup_field_elements,
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
     );
 
     let uniform = RingDimensionSearchDomain::uniform(dimensions[0].d_a()).unwrap();
     let mut uniform_policy = policy_of::<OneHot>();
-    uniform_policy.uniform_ring_dimension = dimensions[0].d_a();
     uniform_policy.ring_dimension_schedule_mode =
         crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
     uniform_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
@@ -120,10 +121,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     assert!(
         selected_score
             <= (
-                candidate
-                    .estimate
-                    .estimated_num_setup_field_elements
-                    .div_ceil(uniform_policy.uniform_ring_dimension),
+                candidate.estimate.estimated_num_setup_field_elements,
                 candidate.estimate.estimated_proof_payload_bytes().unwrap(),
             )
     );
@@ -160,7 +158,6 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
     // fp32 has extension degree four, so production s >= 64 requires d_A >= 256.
     let dimensions = RingDimensionSearchDomain::uniform(256).unwrap();
     let mut policy = policy_of::<OneHot>();
-    policy.uniform_ring_dimension = 256;
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
@@ -226,7 +223,6 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
 
     let dimensions = RingDimensionSearchDomain::uniform(128).unwrap();
     let mut policy = policy_of::<OneHot>();
-    policy.uniform_ring_dimension = 128;
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
@@ -331,6 +327,32 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         )));
 }
 
+#[test]
+fn adaptive_initial_ceiling_is_componentwise() {
+    use akita_config::{policy_of, proof_optimized::fp128::Dense};
+
+    const A: &[usize] = &[64, 256, 1024];
+    const B: &[usize] = &[64, 128, 256];
+    const D: &[usize] = &[64, 128];
+    let mut policy = policy_of::<Dense>();
+    policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: 2,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: A,
+        potential_b_dimensions: B,
+        potential_d_dimensions: D,
+    };
+
+    assert_eq!(
+        initial_dimension_ceiling(&policy).unwrap(),
+        CommitmentRingDims {
+            inner: 1024,
+            outer: 256,
+            opening: 128,
+        }
+    );
+}
+
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn adaptive_dimension_search_is_canonical() {
@@ -411,8 +433,7 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let domain = RingDimensionSearchDomain::uniform(64).unwrap();
-    let mut base_policy = policy_of::<OneHot>();
-    base_policy.uniform_ring_dimension = 64;
+    let base_policy = policy_of::<OneHot>();
     let policy = policy_for_domain(base_policy, &domain);
     let key = onehot_group(16, 1);
     let selected = find_schedule(
@@ -594,8 +615,7 @@ fn adaptive_search_parallel_generation_is_descriptor_deterministic() {
 fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    let mut base_policy = policy_of::<OneHot>();
-    base_policy.uniform_ring_dimension = 512;
+    let base_policy = policy_of::<OneHot>();
     let d64 = CommitmentRingDims::uniform(64);
     let unsupported_uniform_d512 = CommitmentRingDims::uniform(512);
     let domain =
@@ -802,7 +822,7 @@ fn adaptive_search_validates_key_and_policy_at_entry() {
     let base_policy = policy_of::<OneHot>();
     let domain = RingDimensionSearchDomain::new([
         CommitmentRingDims::uniform(64),
-        CommitmentRingDims::uniform(base_policy.uniform_ring_dimension),
+        CommitmentRingDims::uniform(256),
     ])
     .unwrap();
     let policy = policy_for_domain(base_policy, &domain);
@@ -844,8 +864,7 @@ fn adaptive_root_domain_is_independent_of_uniform_config_dimension() {
         outer: 64,
         opening: 64,
     };
-    let mut base_policy = policy_of::<OneHot>();
-    base_policy.uniform_ring_dimension = 64;
+    let base_policy = policy_of::<OneHot>();
     let candidates = dimension_candidates(&base_policy, 0, ceiling)
         .expect("D256 A search must not be capped by uniform D64");
     assert!(candidates.contains(&ceiling));
@@ -898,7 +917,6 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     // Production W4R2 is adaptive now. Keep this regression on its original
     // fixed-D64 domain, where two equal-payload schedules differ in setup size.
     let mut base_policy = policy_of::<OneHotMultiChunkW4R2>();
-    base_policy.uniform_ring_dimension = 64;
     base_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let policy = policy_for_domain(base_policy, &domain);
     let selected = find_schedule(

@@ -37,8 +37,6 @@ pub enum ProtocolRingDispatchTierId {
 pub enum ProtocolDispatchSlot {
     /// A/B/D matrix role (`RingRole`).
     Role(RingRole),
-    /// Configured uniform-policy algebra ring dimension.
-    UniformPolicy,
     /// CRT/NTT cache warm and build.
     Ntt,
     /// Compression-only F/H matrices under the modulus-profile ladder.
@@ -242,20 +240,6 @@ mod tests {
             |D| Ok(D)
         )
         .is_err());
-    }
-
-    #[test]
-    fn fp64_uniform_policy_dispatch_matches_declared_d512_cap() {
-        assert_eq!(
-            dispatch_for_field!(
-                ProtocolDispatchSlot::UniformPolicy,
-                Prime64Offset59,
-                512usize,
-                |D| Ok(D)
-            )
-            .expect("declared fp64 uniform-policy dimension must dispatch"),
-            512
-        );
     }
 
     #[test]

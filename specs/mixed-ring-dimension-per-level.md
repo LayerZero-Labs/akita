@@ -117,8 +117,8 @@ uniform-D64 suffix.
    successor but committed as an input of that successor. Prefix derivation
    therefore receives the consuming candidate's exact A and B dimensions.
    Prefix slot metadata, natural support/full-prefix length, SIS rows, and challenge config
-   all agree with those dimensions. This removes the old assumption that every
-   recursive prefix uses `Cfg::D`.
+   all agree with those dimensions. No config-wide ring dimension participates
+   in prefix sizing or setup dispatch.
 5. **Preserve enough information in the suffix frontier.** Two successor
    schedules with the same payload byte counts can still have different
    committed geometry. The parent-visible frontier key therefore uses the full
@@ -337,7 +337,6 @@ verifier-reachable dynamic programming.
 
 | Policy input | Current meaning |
 |---|---|
-| `uniform_ring_dimension` | Uniform-only A/B/D candidate; ignored by adaptive search |
 | `ring_dimension_schedule_mode` | Uniform candidate or catalog-bound adaptive A/B/D domains plus a monotone uniform-tuple suffix domain |
 | `decomposition`, `basis_range` | Digit policy; root basis is pinned to the configured minimum, later bases are searched and non-decreasing |
 | SIS profile, policy, table digest | Exact role-aware minimum-rank lookup identity |
@@ -797,16 +796,17 @@ is recomputed over every admitted A dimension.
 
 ### Historical setup/config cutover (superseded)
 
-The original mixed-D proposal treated `CommitmentConfig::D` and a scalar
-`PlannerPolicy::ring_dimension` as a setup-generation dimension, a uniform
-planner candidate, and a backend policy at once. That model was removed by
+The original mixed-D proposal treated one global config field and one scalar
+planner field as a setup-generation dimension, a uniform planner candidate,
+and a backend policy at once. That model was removed by
 the flat setup cutover in
 [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 
-Current code keeps `CommitmentConfig::D` only as the uniform candidate for
-presets that choose one, exposes `PlannerPolicy::uniform_ring_dimension`, and
-measures setup capacity directly in base-field elements. The public matrix has
-no generation dimension, and cache/catalog identity does not include one.
+The completed cutover removed both duplicate config-wide dimension fields.
+Uniform presets put their one value in `ring_dimension_schedule_mode`.
+Adaptive presets bind their complete A, B, and D domains there. Setup capacity
+is measured directly in base-field elements. The public matrix has no
+generation dimension.
 The historical design below is retained only to explain why the separation
 was required; it is not an active implementation contract.
 

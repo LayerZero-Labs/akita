@@ -7,7 +7,7 @@ fn assert_onehot_decompose_fold_matches_dense<const D: usize>(
     type F = Prime24Offset3;
     const POSITIONS_PER_BLOCK: usize = 8;
 
-    let poly = OneHotPoly::<F>::new(onehot_k, D, indices).unwrap();
+    let poly = OneHotPoly::<F>::new(onehot_k, indices).unwrap();
     let dense = materialize_onehot_as_dense::<F, D, _>(&poly);
     let num_blocks = poly.num_live_blocks_for(D, POSITIONS_PER_BLOCK).unwrap();
     let challenges = (0..num_blocks)
@@ -51,7 +51,6 @@ fn batched_direct_indices_match_dense_aggregation() {
     let polys = [
         OneHotPoly::<F>::new(
             16,
-            D,
             (0..128)
                 .map(|chunk| (chunk % 7 != 0).then_some((chunk * 11 + 3) % 16))
                 .collect(),
@@ -59,7 +58,6 @@ fn batched_direct_indices_match_dense_aggregation() {
         .unwrap(),
         OneHotPoly::<F>::new(
             256,
-            D,
             (0..8)
                 .map(|chunk| (chunk % 3 != 1).then_some((chunk * 43 + 17) % 256))
                 .collect(),

@@ -356,15 +356,15 @@ resolve_generated_catalog_row_for_key(
 ```
 
 The adapter rejects unsupported base configurations before planning a
-multi-group key. Under the current implementation, recursive offloading still
-requires the configured setup-offload ring dimension. Distributed support is
-capability-specific; the shipped W8R2 family is governed by
+multi-group key. Recursive offloading uses the exact setup-prefix A and B
+dimensions chosen for the consuming fold. Distributed support is
+capability-specific. The shipped W8R2 family is governed by
 [`distributed-setup-offloading.md`](distributed-setup-offloading.md).
 
-For example, an unsupported ring dimension is rejected by:
+For example, an unsupported setup-prefix dimension is rejected by:
 
 ```text
-Cfg::D != SETUP_OFFLOAD_D_SETUP
+d_setup is not admitted by the consuming fold's A-role dispatch
 ```
 
 No adapter field specifies an offload count. The planner derives that count by

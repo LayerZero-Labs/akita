@@ -253,7 +253,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         for (group_idx, pre_point) in pre_points.iter().enumerate() {
             let polys = vec![make_profile_onehot_poly::<FF>(
                 pre_num_vars,
-                pre_descriptor.inner_commit_matrix.ring_dimension(),
                 0x0bee_fcaf_2100_0000 + group_idx as u64,
             )];
             let openings = polys
@@ -277,12 +276,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             pre_openings.push(openings);
         }
 
-        let main_params = schedule.root.params.final_group.commitment.clone();
         let final_polys = (0..final_num_polys)
             .map(|poly_idx| {
                 make_profile_onehot_poly::<FF>(
                     final_num_vars,
-                    main_params.d_a(),
                     0x0bee_fcaf_2800_0000 + poly_idx as u64,
                 )
             })

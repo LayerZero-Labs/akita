@@ -16,7 +16,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 
 /// Single-group recursive roundtrip: one two-polynomial final group at `nv=32`, no
@@ -153,7 +153,7 @@ where
     for &nv in nv_values {
         let seed = 0x7e57_0000_u64 ^ nv as u64;
         let evals = dense_field_evals(nv, seed);
-        let poly = DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly");
+        let poly = DensePoly::<F>::from_field_evals(nv, &evals).expect("dense poly");
         let pt = random_point(nv, seed ^ 0xcafe_0000);
         // Independent oracle: raw evaluations folded against the point.
         let expected_opening = dense_opening_lagrange(&evals, &pt);
@@ -217,17 +217,8 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     for &nv in nv_values {
-        let opening_batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-        let layout = Cfg::resolve_catalog_row_for_opening(&opening_batch)
-            .expect("layout")
-            .into_schedule()
-            .root
-            .params
-            .final_group
-            .commitment;
-        let d = layout.d_a();
         let seed = 0x0bee_0000_u64 ^ nv as u64;
-        let poly = make_onehot_poly_with_d_and_k(nv, d, k, seed);
+        let poly = make_onehot_poly_with_k(nv, k, seed);
         let pt = random_point(nv, seed ^ 0xcafe_0000);
         // Independent oracle: sum of Lagrange weights at the hot indices.
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
@@ -308,7 +299,7 @@ where
         let pre_seed = 0xd0d0_0000_u64 ^ PRE_NV as u64;
         let pre_evals = dense_field_evals(PRE_NV, pre_seed);
         let pre_poly =
-            DensePoly::<F>::from_field_evals(PRE_NV, DENSE_D, &pre_evals).expect("pre dense poly");
+            DensePoly::<F>::from_field_evals(PRE_NV, &pre_evals).expect("pre dense poly");
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
             hint: pre_hint,
@@ -322,8 +313,8 @@ where
 
         let final_seed = 0xd1d1_0000_u64 ^ final_nv as u64;
         let final_evals = dense_field_evals(final_nv, final_seed);
-        let final_poly = DensePoly::<F>::from_field_evals(final_nv, DENSE_D, &final_evals)
-            .expect("final dense poly");
+        let final_poly =
+            DensePoly::<F>::from_field_evals(final_nv, &final_evals).expect("final dense poly");
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {
@@ -437,14 +428,6 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     for &final_nv in final_nvs {
-        // An independent precommit commits with its own row without prior
-        // groups, so take the pre-group ring dimension from exactly the row
-        // `commit` will select below.
-        let pre_d = Cfg::profile_without_precommitted_groups(PolynomialGroupLayout::new(PRE_NV, 1))
-            .expect("pre profile without precommitted groups")
-            .inner_commit_matrix
-            .ring_dimension();
-
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
@@ -456,8 +439,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         let verifier_setup =
             AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
-        let pre_poly =
-            make_onehot_poly_with_d_and_k(PRE_NV, pre_d, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
+        let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
             hint: pre_hint,
@@ -469,18 +451,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         )
         .expect("precommit");
 
-        let schedule_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(final_nv, 1),
-            precommitteds: vec![pre_commitment.profile],
-        };
-        let schedule = Cfg::resolve_catalog_row_for_key(&schedule_key)
-            .expect("schedule")
-            .into_schedule();
-        let final_group_params = multi_group_root_params(&schedule);
-        let final_d = final_group_params.d_a();
-
-        let final_poly =
-            make_onehot_poly_with_d_and_k(final_nv, final_d, k, 0x0bee_f001_u64 ^ final_nv as u64);
+        let final_poly = make_onehot_poly_with_k(final_nv, k, 0x0bee_f001_u64 ^ final_nv as u64);
         let precommitteds = PrecommittedGroupProfiles::from_profiles(vec![pre_commitment.profile])
             .expect("nonempty precommitted groups");
         let akita_prover::CommitOutput {

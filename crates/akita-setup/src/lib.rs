@@ -80,6 +80,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + Valid + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
+    akita_config::validate_config_policy::<Cfg>()?;
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -589,6 +590,50 @@ mod tests {
     type Cfg = fp128::Dense;
     type TestF = fp128::Field;
 
+    #[derive(Clone)]
+    struct WrongModulusProfileConfig;
+
+    impl CommitmentConfig for WrongModulusProfileConfig {
+        type Field = TestF;
+        type ExtField = <Cfg as CommitmentConfig>::ExtField;
+
+        const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
+            Cfg::RING_DIMENSION_SCHEDULE_MODE;
+
+        fn decomposition() -> akita_types::DecompositionParams {
+            Cfg::decomposition()
+        }
+
+        fn ring_challenge_config(
+            d: usize,
+        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+            Cfg::ring_challenge_config(d)
+        }
+
+        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            akita_types::SisModulusProfileId::Q64Offset59
+        }
+
+        fn setup_matrix_capacity(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
+            panic!("invalid config reached setup capacity materialization")
+        }
+
+        fn opening_basis_range() -> (u32, u32) {
+            Cfg::opening_basis_range()
+        }
+
+        fn inner_basis_range() -> (u32, u32) {
+            Cfg::inner_basis_range()
+        }
+
+        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+            Cfg::root_honest_fold_policy()
+        }
+    }
+
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, Cfg>(14, 3).unwrap();
@@ -622,6 +667,13 @@ mod tests {
         // required root and suffix folds.
         new_prover_setup::<fp128::Field, fp128::Dense>(14, 1)
             .expect("fp128 dense preset should accept the default field");
+    }
+
+    #[test]
+    fn setup_rejects_a_mismatched_field_profile_before_materialization() {
+        let error = new_prover_setup::<TestF, WrongModulusProfileConfig>(14, 1)
+            .expect_err("field modulus and SIS profile must agree");
+        assert!(error.to_string().contains("does not match field modulus"));
     }
 
     #[cfg(feature = "disk-persistence")]

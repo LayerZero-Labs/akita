@@ -107,13 +107,6 @@ where
     F: FieldCore,
     I: OneHotIndex,
 {
-    fn num_ring_elems(&self) -> usize {
-        match self {
-            Self::Dense(poly) => RootPolyMeta::num_ring_elems(poly),
-            Self::OneHot(poly) => RootPolyMeta::num_ring_elems(poly),
-        }
-    }
-
     fn num_vars(&self) -> usize {
         match self {
             Self::Dense(poly) => RootPolyMeta::num_vars(poly),

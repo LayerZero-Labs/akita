@@ -110,6 +110,14 @@ dead_patterns=(
   'root_tensor_projection_enabled_for_width\b'
   'ProveBackendFor\b'
   'ProjectBackendFor\b'
+  'CommitmentConfig::D\b'
+  'uniform_ring_dimension\b'
+  'setup_prefix_inner_ring_dimension\b'
+  'ProtocolDispatchSlot::UniformPolicy\b'
+  'validate_ring_subfield_role\b'
+  'RootPolyMeta::num_ring_elems\b'
+  'meta_ring_elems\b'
+  'total_ring_elems\b'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"

@@ -506,48 +506,6 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
     }
 }
 
-/// Validate that an extension field can be represented by the ring-subfield
-/// dispatcher for ring dimension `D`.
-///
-/// This is the early scheme/config boundary check for field roles that will
-/// later be consumed by [`embed_ring_subfield_vector`] and
-/// [`dispatch_trace_inner_product_check`]. Today the supported monomorphized
-/// extension degrees are `1, 2, 4, 8`; each accepted degree must also satisfy
-/// [`SubfieldParams::new`] for the active ring dimension.
-///
-/// # Errors
-///
-/// Returns an invalid-setup error if the extension degree is unsupported or if
-/// the ring-subfield subgroup parameters reject `(D, [E:F])`.
-pub fn validate_ring_subfield_role<F, E, const D: usize>(
-    role: &'static str,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FpExtEncoding<F>,
-{
-    let error = || {
-        AkitaError::InvalidSetup(format!(
-            "{role} extension degree {} is not supported for ring dimension {D}",
-            E::EXT_DEGREE
-        ))
-    };
-    macro_rules! arm {
-        ($k:expr) => {{
-            SubfieldParams::<D, $k>::new().map_err(|_| error())?;
-            Ok(())
-        }};
-    }
-
-    match E::EXT_DEGREE {
-        1 => arm!(1),
-        2 => arm!(2),
-        4 => arm!(4),
-        8 => arm!(8),
-        _ => Err(error()),
-    }
-}
-
 /// Recover one ring-subfield inner product from two ψ-packed rings.
 ///
 /// This is the value-level counterpart of [`check_trace_inner_product`]. It is

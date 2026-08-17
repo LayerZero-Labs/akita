@@ -27,7 +27,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Cfg = fp64::Dense;
 type F = <Cfg as CommitmentConfig>::Field;
-const D: usize = Cfg::D;
 // The folded-only protocol requires at least two folds. `nv=8` was a
 // root-direct fixture; `nv=14` is the first supported adaptive fp64 singleton.
 const CONTRACT_NUM_VARS: usize = 14;
@@ -48,7 +47,7 @@ impl ContractRootPoly {
     fn from_field_evals(num_vars: usize, evals: &[F]) -> Result<Self, AkitaError> {
         Ok(Self {
             num_vars,
-            dense: DensePoly::<F>::from_field_evals(num_vars, D, evals)?,
+            dense: DensePoly::<F>::from_field_evals(num_vars, evals)?,
         })
     }
 }
@@ -70,10 +69,6 @@ impl<const DD: usize> RootPolyShape<F, DD> for ContractRootPoly {
 }
 
 impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
-    fn num_ring_elems(&self) -> usize {
-        akita_prover::RootPolyMeta::num_ring_elems(&self.dense)
-    }
-
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -188,8 +183,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract =
         ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
-    let dense =
-        DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
+    let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .map(|row| row.schedule().root.params.final_group.commitment.clone())

@@ -161,8 +161,6 @@ mod tests {
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 1,
-            uniform_ring_dimension: RING_DIMENSION,
-            setup_prefix_inner_ring_dimension: RING_DIMENSION,
             ring_dimension_schedule_mode: crate::RingDimensionScheduleMode::UniformDimension {
                 ring_dimension: RING_DIMENSION,
             },
@@ -216,8 +214,6 @@ mod tests {
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 1,
-            uniform_ring_dimension: RING_DIMENSION,
-            setup_prefix_inner_ring_dimension: RING_DIMENSION,
             ring_dimension_schedule_mode: crate::RingDimensionScheduleMode::UniformDimension {
                 ring_dimension: RING_DIMENSION,
             },

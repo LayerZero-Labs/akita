@@ -195,12 +195,6 @@ pub struct PlannerPolicy {
     /// `None` leaves the deterministic public stream uncapped by protocol policy.
     pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
-    /// Ring dimension used when the planner is restricted to a uniform domain.
-    pub uniform_ring_dimension: usize,
-    /// Default/ceiling A-matrix dimension for setup-prefix catalog identity.
-    /// Adaptive schedules derive each actual prefix A dimension from its
-    /// consuming fold.
-    pub setup_prefix_inner_ring_dimension: usize,
     /// Uniform or bounded-adaptive ring-dimension schedule policy.
     pub ring_dimension_schedule_mode: RingDimensionScheduleMode,
     pub decomposition: DecompositionParams,
@@ -300,11 +294,6 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
             "explicit setup field budget must be positive".to_string(),
         ));
     }
-    if !policy.setup_prefix_inner_ring_dimension.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "schedule setup-prefix inner ring dimension must be a nonzero power of two".to_string(),
-        ));
-    }
     if policy.min_offloaded_witness_contraction == 0 {
         return Err(AkitaError::InvalidSetup(
             "minimum offloaded witness contraction must be positive".to_string(),
@@ -340,12 +329,6 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
 fn validate_ring_dimension_schedule_mode(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     match policy.ring_dimension_schedule_mode {
         RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            if ring_dimension != policy.uniform_ring_dimension {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "uniform schedule D{ring_dimension} must equal configured D{}",
-                    policy.uniform_ring_dimension
-                )));
-            }
             for role in [RingRole::Inner, RingRole::Outer, RingRole::Opening] {
                 validate_scheduled_dimension(policy, role, ring_dimension)?;
             }
@@ -843,10 +826,6 @@ mod tests {
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
-            // This remains the uniform preset candidate. It is deliberately
-            // smaller than D512 to prove that it is not an adaptive carrier.
-            uniform_ring_dimension: 64,
-            setup_prefix_inner_ring_dimension: 64,
             ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension {
                 num_search_levels: 2,
                 suffix_dimensions: &[64],
@@ -873,11 +852,9 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_dimensions_do_not_require_a_global_carrier() {
-        let mut policy = adaptive_policy();
-        policy.uniform_ring_dimension = 3;
-        validate_policy(&policy)
-            .expect("individually supported D512 A must not depend on the uniform-only field");
+    fn adaptive_dimensions_are_validated_from_their_role_domains() {
+        validate_policy(&adaptive_policy())
+            .expect("individually supported D512 A must validate from the adaptive domain");
     }
 
     #[test]

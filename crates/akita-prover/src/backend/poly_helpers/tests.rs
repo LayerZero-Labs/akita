@@ -168,7 +168,6 @@ fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
 
     let onehot = OneHotPoly::<F>::new(
         D,
-        D,
         vec![
             Some(0),
             Some(31),

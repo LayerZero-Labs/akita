@@ -11,11 +11,7 @@ use rand::{Rng, SeedableRng};
 
 const ONEHOT_K: usize = 256;
 
-pub(super) fn make_profile_onehot_poly<FF>(
-    num_vars: usize,
-    ring_dimension: usize,
-    seed: u64,
-) -> OneHotPoly<FF, u8>
+pub(super) fn make_profile_onehot_poly<FF>(num_vars: usize, seed: u64) -> OneHotPoly<FF, u8>
 where
     FF: CanonicalField + FromPrimitiveInt,
 {
@@ -28,7 +24,7 @@ where
     let indices = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    OneHotPoly::<FF, u8>::new(onehot_k, ring_dimension, indices).expect("profile onehot poly")
+    OneHotPoly::<FF, u8>::new(onehot_k, indices).expect("profile onehot poly")
 }
 
 pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {

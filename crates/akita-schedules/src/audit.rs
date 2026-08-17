@@ -574,8 +574,6 @@ mod tests {
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
-            uniform_ring_dimension: 64,
-            setup_prefix_inner_ring_dimension: 64,
             ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension {
                 ring_dimension: 64,
             },

@@ -17,7 +17,7 @@ fn assert_retained_sweeps_match<const D: usize>(seed: u64) {
             let indices = (0..num_chunks)
                 .map(|_| (rng.gen::<u8>() % 4 != 0).then(|| rng.gen::<u8>()))
                 .collect();
-            OneHotPoly::new(K, D, indices).unwrap()
+            OneHotPoly::new(K, indices).unwrap()
         })
         .collect();
 
@@ -73,7 +73,6 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
 
     let poly = OneHotPoly::<F, u8>::new(
         K,
-        D,
         (0usize..256)
             .map(|chunk| (!chunk.is_multiple_of(5)).then_some((chunk % K) as u8))
             .collect(),
@@ -237,7 +236,7 @@ fn benchmark_sweep_case<const D: usize>(
                         .then_some((chunk * 17 + poly * 29) % onehot_k)
                 })
                 .collect();
-            OneHotPoly::<F>::new(onehot_k, D, indices).unwrap()
+            OneHotPoly::<F>::new(onehot_k, indices).unwrap()
         })
         .collect::<Vec<_>>();
     let sources = polys

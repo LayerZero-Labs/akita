@@ -19,9 +19,6 @@ pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     pub(crate) onehot_k: usize,
     /// Per-chunk hot-position indices. `None` denotes an all-zero chunk.
     pub(crate) indices: Vec<Option<I>>,
-    /// Ring-element count at the CONSTRUCTION dimension; metadata, not
-    /// authority — kernels validate at their own dimension.
-    pub(crate) total_ring_elems: usize,
     pub(crate) _marker: PhantomData<F>,
 }
 
@@ -30,11 +27,6 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     ///
     /// `indices[c]` is the hot position in chunk `c` (`None` for all-zero chunks).
     ///
-    /// `ring_d` is the caller's configured ring dimension. It is recorded as
-    /// construction metadata (the [`crate::compute::RootPolyMeta`] ring-element
-    /// count) only; the storage itself is D-free and kernels select their view
-    /// dimension at entry.
-    ///
     /// The commit-layout split (how blocks are tiled within the polynomial)
     /// is no longer baked in at construction. Each op receives `num_positions_per_block`
     /// from the caller and the per-block representation is materialized on
@@ -42,27 +34,13 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     ///
     /// # Errors
     ///
-    /// Returns an error if dimensions are inconsistent, any index is out of
-    /// range, or `onehot_k` and `ring_d` are not nicely matched.
-    pub fn new(
-        onehot_k: usize,
-        ring_d: usize,
-        indices: Vec<Option<I>>,
-    ) -> Result<Self, AkitaError> {
+    /// Returns an error if dimensions are inconsistent or any index is out of
+    /// range.
+    pub fn new(onehot_k: usize, indices: Vec<Option<I>>) -> Result<Self, AkitaError> {
         if onehot_k == 0 {
             return Err(AkitaError::InvalidInput(
                 "onehot_k must be nonzero".to_string(),
             ));
-        }
-        if ring_d == 0 {
-            return Err(AkitaError::InvalidInput(
-                "ring_d must be nonzero".to_string(),
-            ));
-        }
-        if !(onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(onehot_k)) {
-            return Err(AkitaError::InvalidInput(format!(
-                "onehot_k={onehot_k} and D={ring_d} must be nicely matched (one divides the other)"
-            )));
         }
         let total_field_elems = indices.len().checked_mul(onehot_k).ok_or_else(|| {
             AkitaError::InvalidInput("onehot total field element count overflow".to_string())
@@ -72,12 +50,6 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 "onehot total field elements {total_field_elems} is not a power of two"
             )));
         }
-        if !total_field_elems.is_multiple_of(ring_d) {
-            return Err(AkitaError::InvalidInput(format!(
-                "total field elements {total_field_elems} is not divisible by D={ring_d}"
-            )));
-        }
-        let total_ring_elems = total_field_elems / ring_d;
         for (chunk_idx, opt) in indices.iter().copied().enumerate() {
             if let Some(raw) = opt {
                 let idx = raw.as_usize();
@@ -92,7 +64,6 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             num_vars: total_field_elems.trailing_zeros() as usize,
             onehot_k,
             indices,
-            total_ring_elems,
             _marker: PhantomData,
         })
     }

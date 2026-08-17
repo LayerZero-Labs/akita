@@ -14,8 +14,7 @@ fn fp32_l2_onehot_poly(
     let indices = (0..total_field / onehot_k)
         .map(|chunk| Some(((chunk * 29 + seed * 41 + 7) % onehot_k) as u8))
         .collect();
-    akita_prover::OneHotPoly::new(onehot_k, params.d_a(), indices)
-        .expect("fp32 L2 one-hot polynomial")
+    akita_prover::OneHotPoly::new(onehot_k, indices).expect("fp32 L2 one-hot polynomial")
 }
 
 fn encode_test_golomb_rice(values: &[i64], rice_low_bits: u32) -> Vec<u8> {

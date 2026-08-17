@@ -392,7 +392,7 @@ Extend the existing bridge — never hand-write multi-chunk literals on
 ```rust
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     PlannerPolicy {
-        ring_dimension: Cfg::D,
+        ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         // ... existing fields ...
         witness_chunk: Cfg::chunked_witness_cfg(),  // NEW
     }

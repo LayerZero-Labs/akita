@@ -506,7 +506,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
     let evals = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64(index as u64 + 1))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense polynomial");
+    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
 
     let production_geometry =
         validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
@@ -622,7 +622,7 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     let evaluations = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64((index * 17 + 9) as u64))
         .collect::<Vec<_>>();
-    let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evaluations).unwrap();
+    let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, &evaluations).unwrap();
     let slice_geometry =
         validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
     let raw = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(

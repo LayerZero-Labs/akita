@@ -645,7 +645,6 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
 
     let mut policy = policy_of::<Dense>();
     let dimensions = CommitmentRingDims::uniform(256);
-    policy.uniform_ring_dimension = 256;
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };

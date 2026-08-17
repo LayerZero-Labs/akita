@@ -436,10 +436,6 @@ mod tests {
     }
 
     impl RootPolyMeta<F> for MockPoly {
-        fn num_ring_elems(&self) -> usize {
-            0
-        }
-
         fn num_vars(&self) -> usize {
             self.num_vars
         }

@@ -337,7 +337,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let dense = DensePoly::from_ring_coeffs(rings);
-        let onehot = OneHotPoly::<F>::new(256, D, hot.map(Some).to_vec()).unwrap();
+        let onehot = OneHotPoly::<F>::new(256, hot.map(Some).to_vec()).unwrap();
         let dense_refs = [&dense];
         let onehot_refs = [&onehot];
         let dense_batch =
@@ -371,7 +371,6 @@ mod tests {
         .expect("recursive-style live prefix point");
         let dense = DensePoly::from_ring_coeffs::<D>(vec![CyclotomicRing::zero(); 8]);
         let onehot = OneHotPoly::<F>::new(
-            D,
             D,
             vec![
                 Some(0),
@@ -436,7 +435,7 @@ mod tests {
                 })
                 .collect(),
         );
-        let onehot = OneHotPoly::<F>::new(LARGE_D, LARGE_D, hot.map(Some).to_vec()).unwrap();
+        let onehot = OneHotPoly::<F>::new(LARGE_D, hot.map(Some).to_vec()).unwrap();
         let dense_refs = [&dense];
         let onehot_refs = [&onehot];
         let dense_batch =
@@ -479,7 +478,7 @@ mod tests {
         ];
         let onehot = hot_by_claim
             .iter()
-            .map(|indices| OneHotPoly::<F>::new(ONEHOT_K, D, indices.to_vec()).unwrap())
+            .map(|indices| OneHotPoly::<F>::new(ONEHOT_K, indices.to_vec()).unwrap())
             .collect::<Vec<_>>();
         let dense = hot_by_claim
             .iter()
@@ -578,7 +577,7 @@ mod tests {
             &public_point,
         )
         .unwrap();
-        let lower_arity = DensePoly::from_field_evals(5, RING_D, vec![Base::one(); 32]).unwrap();
+        let lower_arity = DensePoly::from_field_evals(5, vec![Base::one(); 32]).unwrap();
         let refs = [&lower_arity];
         let batch =
             <DensePoly<Base> as RootOpeningSource<Base, RING_D>>::opening_batch(&refs).unwrap();
