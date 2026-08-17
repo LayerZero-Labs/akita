@@ -237,6 +237,37 @@ fn consider_mixed_child_suffixes<'a>(
     Ok(())
 }
 
+fn root_candidate_lower_bound(
+    policy: &PlannerPolicy,
+    params: &CommittedGroupParams,
+    input_witness_len: usize,
+    output_witness_len: usize,
+) -> Result<MixedScore, AkitaError> {
+    let (proof_bytes, stage3_bytes) =
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            policy,
+            params,
+            None,
+            input_witness_len,
+            output_witness_len,
+        )?;
+    if stage3_bytes != 0 {
+        return Err(AkitaError::InvalidSetup(
+            "direct root lower bound unexpectedly includes Stage-3 bytes".into(),
+        ));
+    }
+    Ok(MixedScore {
+        setup_field_elements: level_setup_field_elements(params)?,
+        proof_bytes,
+    })
+}
+
+fn root_lower_bound_is_strictly_worse(lower_bound: MixedScore, incumbent: MixedScore) -> bool {
+    lower_bound.setup_field_elements > incumbent.setup_field_elements
+        || (lower_bound.setup_field_elements == incumbent.setup_field_elements
+            && lower_bound.proof_bytes > incumbent.proof_bytes)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn price_terminal_candidate(
     ctx: &SuffixCtx<'_>,
@@ -865,7 +896,46 @@ pub(crate) fn derive_selected_suffix_schedule(
             continue;
         }
 
+        let guide_complete_root = root_level_key.is_some()
+            && policy.selection_policy
+                == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload;
+        let mut candidates = candidates;
+        if guide_complete_root {
+            let mut guided = candidates
+                .into_iter()
+                .map(|candidate| {
+                    let lower_bound = root_candidate_lower_bound(
+                        policy,
+                        &candidate.0,
+                        current_witness_len,
+                        candidate.1,
+                    )?;
+                    Ok((lower_bound, candidate))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            guided.sort_by_key(|(lower_bound, (_, next_witness_len, _, _))| {
+                (*lower_bound, *next_witness_len)
+            });
+            candidates = guided.into_iter().map(|(_, candidate)| candidate).collect();
+        }
+
         for (candidate_params, next_witness_len, _, next_source_moment) in candidates {
+            if guide_complete_root {
+                let lower_bound = root_candidate_lower_bound(
+                    policy,
+                    &candidate_params,
+                    current_witness_len,
+                    next_witness_len,
+                )?;
+                if mixed_frontier.best_score().is_some_and(|incumbent| {
+                    root_lower_bound_is_strictly_worse(lower_bound, incumbent)
+                }) {
+                    if let Some(diagnostics) = diagnostics {
+                        diagnostics.record_root_incumbent_prune();
+                    }
+                    continue;
+                }
+            }
             if let Some(natural_prefix_len) = incoming_setup_prefix {
                 let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
                 if !offloaded_witness_contracts(

@@ -32,6 +32,7 @@ pub(crate) struct PlannerDiagnosticsSnapshot {
     pub(crate) peak_state_frontier_candidates: usize,
     pub(crate) setup_prefix_cache_hits: usize,
     pub(crate) setup_prefix_cache_misses: usize,
+    pub(crate) root_incumbent_prunes: usize,
     selected: Option<SelectedScheduleDiagnostics>,
 }
 
@@ -45,7 +46,7 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
         };
         write!(
             formatter,
-            "dp={:.2?} final_materialize={:.2?} suffix_calls={} completed_states={} memo_hits={}/{} ({memo_hit_percent:.1}%) candidates_generated={} candidates_after_local_prune={} frontier_candidates_retained={} peak_state_frontier={} descriptors_built={} descriptor_time={:.2?} setup_prefix_cache_hits={}/{}",
+            "dp={:.2?} final_materialize={:.2?} suffix_calls={} completed_states={} memo_hits={}/{} ({memo_hit_percent:.1}%) candidates_generated={} candidates_after_local_prune={} root_incumbent_prunes={} frontier_candidates_retained={} peak_state_frontier={} descriptors_built={} descriptor_time={:.2?} setup_prefix_cache_hits={}/{}",
             self.suffix_dp_time,
             self.final_materialization_time,
             self.suffix_calls,
@@ -54,6 +55,7 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
             memo_total,
             self.generated_candidates,
             self.retained_candidates,
+            self.root_incumbent_prunes,
             self.retained_frontier_candidates,
             self.peak_state_frontier_candidates,
             self.descriptor_builds,
@@ -105,6 +107,7 @@ pub(crate) struct PlannerDiagnostics {
     peak_state_frontier_candidates: Cell<usize>,
     setup_prefix_cache_hits: Cell<usize>,
     setup_prefix_cache_misses: Cell<usize>,
+    root_incumbent_prunes: Cell<usize>,
     selected: RefCell<Option<SelectedScheduleDiagnostics>>,
 }
 
@@ -170,6 +173,11 @@ impl PlannerDiagnostics {
         self.setup_prefix_cache_misses.set(misses);
     }
 
+    pub(crate) fn record_root_incumbent_prune(&self) {
+        self.root_incumbent_prunes
+            .set(self.root_incumbent_prunes.get().saturating_add(1));
+    }
+
     pub(crate) fn record_selected(
         &self,
         objective: SelectionPolicyId,
@@ -203,6 +211,7 @@ impl PlannerDiagnostics {
             peak_state_frontier_candidates: self.peak_state_frontier_candidates.get(),
             setup_prefix_cache_hits: self.setup_prefix_cache_hits.get(),
             setup_prefix_cache_misses: self.setup_prefix_cache_misses.get(),
+            root_incumbent_prunes: self.root_incumbent_prunes.get(),
             selected: self.selected.borrow().clone(),
         }
     }
@@ -260,6 +269,7 @@ mod tests {
             diagnostics.record_memo_result(true);
             diagnostics.record_candidates(12, 4);
             diagnostics.record_completed_state(3);
+            diagnostics.record_root_incumbent_prune();
         });
         let snapshot = snapshot.expect("enabled capture must return diagnostics");
         assert_eq!(snapshot.suffix_calls, 1);
@@ -268,6 +278,7 @@ mod tests {
         assert_eq!(snapshot.retained_candidates, 4);
         assert_eq!(snapshot.retained_frontier_candidates, 3);
         assert_eq!(snapshot.peak_state_frontier_candidates, 3);
+        assert_eq!(snapshot.root_incumbent_prunes, 1);
         assert!(active().is_none());
     }
 }

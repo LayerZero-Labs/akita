@@ -1,4 +1,6 @@
-use super::{dominates_mixed_score, offloaded_witness_contracts};
+use super::{
+    dominates_mixed_score, offloaded_witness_contracts, root_lower_bound_is_strictly_worse,
+};
 use crate::schedule_params::MixedScore;
 
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
@@ -205,6 +207,36 @@ fn mixed_frontier_keeps_equal_payload_alternatives_for_descriptor_ties() {
         parent_setup.max(lower_setup.setup_field_elements),
         parent_setup.max(higher_setup.setup_field_elements)
     );
+}
+
+#[test]
+fn root_incumbent_bound_prunes_only_strict_objective_losses() {
+    let incumbent = MixedScore {
+        setup_field_elements: 10,
+        proof_bytes: 20,
+    };
+    assert!(root_lower_bound_is_strictly_worse(
+        MixedScore {
+            setup_field_elements: 11,
+            proof_bytes: 0,
+        },
+        incumbent,
+    ));
+    assert!(root_lower_bound_is_strictly_worse(
+        MixedScore {
+            setup_field_elements: 10,
+            proof_bytes: 21,
+        },
+        incumbent,
+    ));
+    assert!(!root_lower_bound_is_strictly_worse(incumbent, incumbent));
+    assert!(!root_lower_bound_is_strictly_worse(
+        MixedScore {
+            setup_field_elements: 9,
+            proof_bytes: usize::MAX,
+        },
+        incumbent,
+    ));
 }
 
 #[test]
