@@ -17,6 +17,16 @@ use akita_transcript::Transcript;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+/// Minimum estimated live work in a round (total hypercube points still held
+/// by active instances) before the per-instance fan-out pays for rayon's
+/// per-round dispatch. Measured on an Apple M3 Max (14 rayon threads) with
+/// product-of-multilinears instances: a 24-instance batch of 2^8-point tables
+/// regresses ~1.7x under unconditional fan-out, while rounds carrying 2^13 or
+/// more live points break even or win; Aerie's fused selector batch enters at
+/// ~23 instances x 2^19 points and gains ~1.9x.
+#[cfg(feature = "parallel")]
+const PARALLEL_MIN_ROUND_WORK: u64 = 1 << 13;
+
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
     for _ in 0..k {
@@ -145,12 +155,37 @@ where
         // With many instances (the fused selector batch carries dozens), the
         // per-instance round computations dominate late rounds whose domains
         // are too small for intra-instance parallelism; fan the instances out.
+        // Skip the fan-out when the round's live work is too small to amortize
+        // rayon's dispatch: an active instance at round `round` still holds
+        // 2^(n - (round - offset)) hypercube points, and that table size is
+        // what its round univariate and fold each traverse.
         #[cfg(feature = "parallel")]
-        let univariate_polys: Vec<UniPoly<E>> = instances
-            .par_iter_mut()
-            .zip(individual_claims.par_iter())
-            .map(compute_univariate)
-            .collect();
+        let fan_out = instances.len() > 1 && {
+            let mut live_points: u64 = 0;
+            for inst in instances.iter() {
+                let n = inst.num_rounds();
+                let offset = max_num_rounds - n;
+                if round >= offset && round < offset + n {
+                    let remaining = n - (round - offset);
+                    live_points = live_points.saturating_add(1u64 << remaining.min(63));
+                }
+            }
+            live_points >= PARALLEL_MIN_ROUND_WORK
+        };
+        #[cfg(feature = "parallel")]
+        let univariate_polys: Vec<UniPoly<E>> = if fan_out {
+            instances
+                .par_iter_mut()
+                .zip(individual_claims.par_iter())
+                .map(compute_univariate)
+                .collect()
+        } else {
+            instances
+                .iter_mut()
+                .zip(individual_claims.iter())
+                .map(compute_univariate)
+                .collect()
+        };
         #[cfg(not(feature = "parallel"))]
         let univariate_polys: Vec<UniPoly<E>> = instances
             .iter_mut()
@@ -195,7 +230,11 @@ where
             }
         };
         #[cfg(feature = "parallel")]
-        instances.par_iter_mut().for_each(ingest);
+        if fan_out {
+            instances.par_iter_mut().for_each(ingest);
+        } else {
+            instances.iter_mut().for_each(ingest);
+        }
         #[cfg(not(feature = "parallel"))]
         instances.iter_mut().for_each(ingest);
 
@@ -543,8 +582,16 @@ mod tests {
         }
     }
 
-    /// Mixed round counts so several instances hit the front-loaded padding path.
-    const DETERMINISM_SHAPES: [(usize, u64); 4] = [(3, 11), (2, 22), (3, 33), (1, 44)];
+    /// Mixed round counts so several instances hit the front-loaded padding
+    /// path. Every round of this batch stays far below
+    /// `PARALLEL_MIN_ROUND_WORK`, so under `--features parallel` the driver
+    /// takes the serial small-work branch.
+    const SMALL_DETERMINISM_SHAPES: [(usize, u64); 4] = [(3, 11), (2, 22), (3, 33), (1, 44)];
+    /// Early rounds of this batch carry 2^14 + 2^13 + 2^14 + 2^12 live points,
+    /// above `PARALLEL_MIN_ROUND_WORK`, so under `--features parallel` the
+    /// driver fans out over rayon; late rounds fall back below the cutoff,
+    /// exercising the mid-proof switch.
+    const LARGE_DETERMINISM_SHAPES: [(usize, u64); 4] = [(14, 5), (13, 6), (14, 7), (12, 8)];
     const DETERMINISM_DOMAIN: &[u8] = b"test/batched-sumcheck-determinism";
     const DETERMINISM_CHALLENGE: &[u8] = b"sumcheck-round";
 
@@ -555,13 +602,12 @@ mod tests {
     /// naive reference recomputation below is written serially in instance
     /// order; any driver-side reordering or nondeterminism fails the
     /// round-by-round equality.
-    #[test]
-    fn batched_prove_matches_serial_reference_under_either_feature() {
-        let mut provers: Vec<ProductInstance> = DETERMINISM_SHAPES
+    fn run_determinism_check(shapes: &[(usize, u64)]) {
+        let mut provers: Vec<ProductInstance> = shapes
             .iter()
             .map(|&(rounds, seed)| ProductInstance::new(rounds, seed))
             .collect();
-        let max_num_rounds = DETERMINISM_SHAPES.iter().map(|&(r, _)| r).max().unwrap();
+        let max_num_rounds = shapes.iter().map(|&(r, _)| r).max().unwrap();
 
         let mut transcript = AkitaTranscript::<F>::new(DETERMINISM_DOMAIN);
         let instances: Vec<&mut (dyn SumcheckInstanceProver<F> + Send)> = provers
@@ -577,7 +623,7 @@ mod tests {
 
         // Verifier replay: same transcript inputs, so it must re-derive the
         // prover's challenges, and the final oracle check must pass.
-        let verifiers_owned: Vec<ProductInstance> = DETERMINISM_SHAPES
+        let verifiers_owned: Vec<ProductInstance> = shapes
             .iter()
             .map(|&(rounds, seed)| ProductInstance::new(rounds, seed))
             .collect();
@@ -607,7 +653,7 @@ mod tests {
         // Naive serial reference: recompute every round's batched compressed
         // polynomial from fresh tables, strictly in instance order, and
         // compare against the transcript-visible proof round by round.
-        let mut tables: Vec<ProductInstance> = DETERMINISM_SHAPES
+        let mut tables: Vec<ProductInstance> = shapes
             .iter()
             .map(|&(rounds, seed)| ProductInstance::new(rounds, seed))
             .collect();
@@ -673,5 +719,15 @@ mod tests {
             .map(|(claim, coeff)| *claim * *coeff)
             .fold(F::zero(), |acc, v| acc + v);
         assert_eq!(reference_output_claim, round_result.output_claim);
+    }
+
+    #[test]
+    fn batched_prove_matches_serial_reference_below_parallel_cutoff() {
+        run_determinism_check(&SMALL_DETERMINISM_SHAPES);
+    }
+
+    #[test]
+    fn batched_prove_matches_serial_reference_above_parallel_cutoff() {
+        run_determinism_check(&LARGE_DETERMINISM_SHAPES);
     }
 }
