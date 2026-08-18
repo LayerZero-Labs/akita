@@ -376,7 +376,7 @@ where
     F: FieldCore,
     P: RootPolyMeta<F>,
 {
-    let Some(required_chunk_size) = contract.class.required_onehot_chunk_size() else {
+    let Some(required_chunk_size) = contract.class().required_onehot_chunk_size() else {
         return Ok(());
     };
     for poly in polys {
@@ -484,7 +484,7 @@ where
                  [-{negative_abs}, {positive}] but a source declared at \
                  log_commit_bound = {} and committed as {} balanced base-2^{} digits accepts \
                  only [-{}, {}]",
-                contract.decomposition.log_commit_bound,
+                contract.decomposition().log_commit_bound,
                 plan.num_digits_inner,
                 plan.log_basis_inner,
                 render_reach(negative_reach),
@@ -742,12 +742,12 @@ where
             (params, scheduled_row.profiles().final_group)
         };
 
-    // One canonical producer contract for this config, read once and shared by
-    // both admission checks. The class check runs here, on the caller's logical
-    // sources, because root tensor projection below rewrites a one-hot source
-    // into a projected form that no longer reports its representation.
-    let contract =
-        CommittedSourceContract::of(Cfg::root_honest_fold_policy(), Cfg::decomposition());
+    // The config's canonical producer contract, read once and shared by both
+    // admission checks. It is validated at construction, so neither check has to
+    // defend against an unrepresentable declaration. The class check runs here, on
+    // the caller's logical sources, because root tensor projection below rewrites
+    // a one-hot source into a projected form that no longer reports it.
+    let contract = Cfg::committed_source_contract()?;
     ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
 
     let slice_geometry =

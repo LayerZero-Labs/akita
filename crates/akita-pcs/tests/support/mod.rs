@@ -186,6 +186,10 @@ where
         Envelope::inner_basis_range()
     }
 
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        Envelope::committed_source_class()
+    }
+
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
         Envelope::root_honest_fold_policy()
     }

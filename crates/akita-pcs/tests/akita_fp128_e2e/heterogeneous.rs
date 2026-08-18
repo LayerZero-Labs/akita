@@ -524,10 +524,8 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
         // The magnitudes really were admissible, so the rejection is the class
         // check doing work rather than the interval check catching it anyway.
-        let contract = akita_types::sis::CommittedSourceContract::of(
-            OneHotCfg::root_honest_fold_policy(),
-            OneHotCfg::decomposition(),
-        );
+        let contract = OneHotCfg::committed_source_contract()
+            .expect("the one-hot preset declares a valid producer contract");
         let (negative, positive) =
             contract.accepted_bounds(profile.log_basis_inner, profile.num_digits_inner);
         assert!(
@@ -558,10 +556,8 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 /// from the config rather than restated, so these tests cannot drift from it.
 #[cfg(feature = "schedules-fp128-dense-bounded")]
 fn bounded_contract() -> akita_types::sis::CommittedSourceContract {
-    akita_types::sis::CommittedSourceContract::of(
-        fp128::DenseBounded::root_honest_fold_policy(),
-        fp128::DenseBounded::decomposition(),
-    )
+    fp128::DenseBounded::committed_source_contract()
+        .expect("the bounded preset declares a valid producer contract")
 }
 
 // The declared bound must contain every `u64`, and must say so in the type's own
@@ -574,7 +570,7 @@ fn bounded_dense_declares_a_bound_that_contains_every_u64() {
     // `log_commit_bound` is a *signed* bit width: `k` is `[-2^(k-1), 2^(k-1) - 1]`.
     // Covering `u64::MAX = 2^64 - 1` therefore takes 65, not 64.
     assert_eq!(BoundedDenseCfg::LOG_COMMIT_BOUND, 65);
-    const { assert!(BoundedDenseCfg::ACCEPTS_UNSIGNED_64_BIT) };
+    const { assert!(BoundedDenseCfg::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128) };
     assert_eq!(
         BoundedDenseCfg::MAX_CENTERED_MAGNITUDE,
         u128::from(u64::MAX),
@@ -588,13 +584,14 @@ fn bounded_dense_declares_a_bound_that_contains_every_u64() {
 
     // And a 64-bit *signed* declaration would not have covered it — the
     // off-by-one this guards against.
-    let (_, signed_64_positive) = akita_types::sis::CommittedSourceContract::of(
-        BoundedDenseCfg::root_honest_fold_policy(),
+    let (_, signed_64_positive) = akita_types::sis::CommittedSourceContract::try_new(
+        BoundedDenseCfg::committed_source_class(),
         akita_types::DecompositionParams {
             log_commit_bound: 64,
             ..BoundedDenseCfg::decomposition()
         },
     )
+    .expect("a signed 64-bit declaration is representable, just too narrow")
     .declared_bounds();
     assert!(
         signed_64_positive.expect("interior bound") < u128::from(u64::MAX),

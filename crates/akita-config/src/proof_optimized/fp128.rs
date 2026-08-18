@@ -68,9 +68,8 @@ pub struct DenseMultiChunk;
 /// would cover only `[-2^63, 2^63 - 1]` and miss half of a uniform `u64`
 /// distribution.
 ///
-/// [`Self::ACCEPTS_UNSIGNED_64_BIT`] and [`Self::MAX_CENTERED_MAGNITUDE`] state
-/// the same fact without the signed-bit-width indirection; prefer them when
-/// asserting your data fits.
+/// [`Self::MAX_CENTERED_MAGNITUDE`] states the same fact without the
+/// signed-bit-width indirection; prefer it when asserting your data fits.
 ///
 /// # What you must guarantee
 ///
@@ -94,19 +93,17 @@ impl DenseBounded {
     /// Exactly `u64::MAX`, so `u64`-valued coefficients sit on the endpoint and
     /// anything above is rejected at `commit`.
     pub const MAX_CENTERED_MAGNITUDE: u128 = (1u128 << (Self::LOG_COMMIT_BOUND - 1)) - 1;
-
-    /// Whether every `u64` value is inside the declared bound. Always true; kept
-    /// as a statement of this preset's purpose that callers can assert against.
-    pub const ACCEPTS_UNSIGNED_64_BIT: bool = Self::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128;
 }
 
 // The preset's whole reason to exist, enforced at compile time rather than left
 // to a test: the declared bound must contain every `u64`. `LOG_COMMIT_BOUND` is a
 // *signed* bit width, so a value of 64 would silently cover only `[-2^63, 2^63-1]`
-// and miss half of a uniform `u64` distribution. This makes that regression a
-// build failure in the crate that owns the number.
+// and miss half of a uniform `u64` distribution. Asserted directly on the
+// magnitude, so there is no derived boolean to drift from it — and because the
+// macro is configured from `LOG_COMMIT_BOUND` itself, this covers the value that
+// actually builds the preset.
 const _: () = assert!(
-    DenseBounded::ACCEPTS_UNSIGNED_64_BIT,
+    DenseBounded::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128,
     "fp128::DenseBounded must declare a bound containing every u64"
 );
 
@@ -135,10 +132,10 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
     256,
     128,
-    // Signed bit width: 65 == `[-2^64, 2^64 - 1]`, the smallest declaration that
-    // contains every `u64`. Kept in sync with `DenseBounded::LOG_COMMIT_BOUND`
-    // by `bound_is_the_only_declared_difference_from_full_width_dense`.
-    65,
+    // One declaration, not two: the macro takes an expression, so the preset is
+    // configured from the same constant callers read. A signed bit width of 65 is
+    // `[-2^64, 2^64 - 1]`, the smallest declaration containing every `u64`.
+    DenseBounded::LOG_COMMIT_BOUND,
     source = balanced_digits,
     schedules = (
         "schedules-fp128-dense-bounded",

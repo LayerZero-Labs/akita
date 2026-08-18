@@ -26,6 +26,7 @@
 use super::decomposition_digits::checked_balanced_digit_representable_bounds;
 use super::honest_fold_policy::HonestFoldPolicySpec;
 use crate::DecompositionParams;
+use akita_field::AkitaError;
 
 /// What a committed source must **be**, independent of how wide its
 /// coefficients are.
@@ -78,28 +79,71 @@ impl CommittedSourceClass {
 
 /// The complete producer contract: what the source must be, and how wide its
 /// centered coefficients may be.
+///
+/// Construction is validated and the fields are private, so every accessor below
+/// operates on a decomposition that already passed
+/// [`DecompositionParams::validate`]. A type named "contract" must not admit the
+/// invalid states its own methods assume away: `declared_bounds` computes
+/// `log_commit_bound - 1`, which on a zero bound would panic in debug and wrap in
+/// release — silently reporting an invalid declaration as *unconstrained*, the
+/// most permissive answer possible.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommittedSourceContract {
-    /// Declared source class.
-    pub class: CommittedSourceClass,
-    /// Declared decomposition, whose `log_commit_bound` is the source bound.
-    pub decomposition: DecompositionParams,
+    class: CommittedSourceClass,
+    decomposition: DecompositionParams,
 }
 
 impl CommittedSourceContract {
-    /// Build the contract a config declares.
-    #[must_use]
-    pub const fn new(class: CommittedSourceClass, decomposition: DecompositionParams) -> Self {
-        Self {
+    /// Build the contract a config declares, rejecting one it cannot honour.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the decomposition fails
+    /// [`DecompositionParams::validate`], or when a unit one-hot class carries a
+    /// chunk size that is not a nonzero power of two.
+    pub fn try_new(
+        class: CommittedSourceClass,
+        decomposition: DecompositionParams,
+    ) -> Result<Self, AkitaError> {
+        decomposition.validate()?;
+        if let CommittedSourceClass::UnitOneHot { source_chunk_size } = class {
+            if source_chunk_size == 0 || !source_chunk_size.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "unit one-hot source chunk size {source_chunk_size} must be a nonzero power of two"
+                )));
+            }
+        }
+        Ok(Self {
             class,
             decomposition,
-        }
+        })
     }
 
     /// Build the contract from a config's honest-fold policy and decomposition.
+    ///
+    /// The class is the runtime projection of the offline policy; see
+    /// [`CommittedSourceClass::of`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::try_new`].
+    pub fn of(
+        spec: HonestFoldPolicySpec,
+        decomposition: DecompositionParams,
+    ) -> Result<Self, AkitaError> {
+        Self::try_new(CommittedSourceClass::of(spec), decomposition)
+    }
+
+    /// Declared source class.
     #[must_use]
-    pub const fn of(spec: HonestFoldPolicySpec, decomposition: DecompositionParams) -> Self {
-        Self::new(CommittedSourceClass::of(spec), decomposition)
+    pub const fn class(self) -> CommittedSourceClass {
+        self.class
+    }
+
+    /// Declared decomposition, whose `log_commit_bound` is the source bound.
+    #[must_use]
+    pub const fn decomposition(self) -> DecompositionParams {
+        self.decomposition
     }
 
     /// Centered interval the **declared bound alone** admits, as
@@ -127,7 +171,9 @@ impl CommittedSourceContract {
         {
             return (None, None);
         }
-        // `k` signed bits is one sign bit plus `k - 1` magnitude bits.
+        // `k` signed bits is one sign bit plus `k - 1` magnitude bits. `k >= 1`
+        // holds because construction ran `DecompositionParams::validate`.
+        debug_assert!(self.decomposition.log_commit_bound >= 1);
         let negative_abs = 1u128.checked_shl(self.decomposition.log_commit_bound - 1);
         (negative_abs, negative_abs.map(|reach| reach - 1))
     }
@@ -197,10 +243,11 @@ mod tests {
     }
 
     fn balanced(log_commit_bound: u32) -> CommittedSourceContract {
-        CommittedSourceContract::new(
+        CommittedSourceContract::try_new(
             CommittedSourceClass::BalancedSignedDigit,
             decomposition(log_commit_bound, Some(128)),
         )
+        .expect("valid balanced-digit contract")
     }
 
     fn one_hot(log_commit_bound: u32) -> CommittedSourceContract {
@@ -212,6 +259,7 @@ mod tests {
             )),
             decomposition(log_commit_bound, Some(128)),
         )
+        .expect("valid one-hot contract")
     }
 
     /// The class comes from the declaring policy, not from the numeric bound.
@@ -265,10 +313,11 @@ mod tests {
         // Full-field endpoint: every field element is in range by construction.
         assert_eq!(balanced(128).declared_bounds(), (None, None));
         assert_eq!(
-            CommittedSourceContract::new(
+            CommittedSourceContract::try_new(
                 CommittedSourceClass::BalancedSignedDigit,
                 decomposition(128, None)
             )
+            .expect("full-field contract without an explicit open bound")
             .declared_bounds(),
             (None, None)
         );
@@ -321,6 +370,64 @@ mod tests {
         assert!(one_hot_positive.is_some_and(|reach| reach >= 1));
     }
 
+    /// A contract cannot be built from a decomposition its own methods assume
+    /// away.
+    ///
+    /// `declared_bounds` computes `log_commit_bound - 1`. On a zero bound that
+    /// panics in debug and wraps in release, where `checked_shl(u32::MAX)` returns
+    /// `None` and the invalid declaration reads as *unconstrained* — the most
+    /// permissive answer possible, and a behavior difference between build
+    /// profiles. Construction rejects it instead, so no profile can reach that
+    /// state.
+    #[test]
+    fn construction_rejects_a_decomposition_its_methods_assume_away() {
+        let invalid = [
+            // Zero bound: the subtraction `declared_bounds` performs.
+            decomposition(0, Some(128)),
+            // Bound above the declared field width.
+            decomposition(129, Some(128)),
+            // A source bound wider than the field it lives in.
+            decomposition(128, Some(64)),
+        ];
+        for params in invalid {
+            assert!(
+                matches!(
+                    CommittedSourceContract::try_new(
+                        CommittedSourceClass::BalancedSignedDigit,
+                        params
+                    ),
+                    Err(AkitaError::InvalidSetup(_))
+                ),
+                "must reject {params:?}"
+            );
+        }
+        // A degenerate basis is rejected by the same validator.
+        assert!(CommittedSourceContract::try_new(
+            CommittedSourceClass::BalancedSignedDigit,
+            DecompositionParams {
+                log_basis: 0,
+                log_commit_bound: 64,
+                log_open_bound: Some(128),
+            },
+        )
+        .is_err());
+
+        // Class-specific data is validated too: a one-hot chunk size has to be a
+        // nonzero power of two for the per-chunk sparsity model to mean anything.
+        for chunk in [0usize, 3, 100] {
+            assert!(
+                CommittedSourceContract::try_new(
+                    CommittedSourceClass::UnitOneHot {
+                        source_chunk_size: chunk
+                    },
+                    decomposition(1, Some(128)),
+                )
+                .is_err(),
+                "must reject one-hot chunk size {chunk}"
+            );
+        }
+    }
+
     /// The gap the intersection closes, in the numbers that motivated it.
     #[test]
     fn representable_envelope_overshoots_the_declaration_it_was_sized_from() {
@@ -329,9 +436,9 @@ mod tests {
             let num_digits_inner = num_digits_inner_for_bound(
                 DecompositionParams {
                     log_basis: log_basis_inner,
-                    ..contract.decomposition
+                    ..contract.decomposition()
                 },
-                contract.decomposition.log_commit_bound,
+                contract.decomposition().log_commit_bound,
             );
             let (_, representable) =
                 checked_balanced_digit_representable_bounds(log_basis_inner, num_digits_inner);

@@ -410,22 +410,42 @@ macro_rules! impl_proof_optimized_preset {
     // independent declarations. Inferring it made `log_commit_bound == 1` read
     // like the source of truth for the class, which it is not: the bound sizes
     // the A-role digit depth, while the class picks the sizing rule.
-    (@honest_fold_policy unit_one_hot, $field:ty, $ext_field:ty, $field_bits:expr) => {
-        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-            akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                akita_types::sis::UnitOneHotFoldPolicy::new(
-                    $field_bits,
-                    <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
-                    STANDARD_ONEHOT_CHUNK_SIZE,
-                ),
-            )
+    // The class is the canonical declaration; the offline `HonestFoldPolicySpec`
+    // below is derived from it plus this config's field geometry. Ownership runs
+    // one way only, so no runtime path reads an offline planning type to learn
+    // what a source must be.
+    (@committed_source_class unit_one_hot) => {
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            akita_types::sis::CommittedSourceClass::UnitOneHot {
+                source_chunk_size: STANDARD_ONEHOT_CHUNK_SIZE,
+            }
         }
     };
-    (@honest_fold_policy balanced_digits, $field:ty, $ext_field:ty, $field_bits:expr) => {
+    (@committed_source_class balanced_digits) => {
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            akita_types::sis::CommittedSourceClass::BalancedSignedDigit
+        }
+    };
+    (@honest_fold_policy $source:ident, $field:ty, $ext_field:ty, $field_bits:expr) => {
+        impl_proof_optimized_preset!(@committed_source_class $source);
+
         fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-            akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                akita_types::sis::BalancedSignedDigitFoldPolicy::universal($field_bits),
-            )
+            match Self::committed_source_class() {
+                akita_types::sis::CommittedSourceClass::UnitOneHot { source_chunk_size } => {
+                    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+                        akita_types::sis::UnitOneHotFoldPolicy::new(
+                            $field_bits,
+                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
+                            source_chunk_size,
+                        ),
+                    )
+                }
+                akita_types::sis::CommittedSourceClass::BalancedSignedDigit => {
+                    akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal($field_bits),
+                    )
+                }
+            }
         }
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident) => {

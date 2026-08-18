@@ -40,15 +40,15 @@ use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, ALL_GENERATED_FAMILIES,
+    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, PrecommittedProducer,
+    ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
-    sis::HonestFoldPolicySpec, AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule,
-    PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
 };
 use std::sync::OnceLock;
 
-type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>);
+type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<PrecommittedProducer>);
 
 struct PreparedGroupBatchRequests {
     preplans: GenerationPreplans,

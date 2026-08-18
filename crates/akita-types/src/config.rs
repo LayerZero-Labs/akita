@@ -19,18 +19,30 @@ pub struct DecompositionParams {
     /// signed value in `(-q/2, q/2]`. A value of `k` means the signed magnitude
     /// fits in `k` bits, i.e. lies in `[-2^(k-1), 2^(k-1) - 1]`.
     ///
-    /// This is the **declared source bound**, and it is the general parameter of
-    /// the committed-source class: `1` is the unit one-hot endpoint,
-    /// [`Self::field_bits`] is the full-field endpoint, and every value in
-    /// between is a bounded source. It is the only place the bound enters the
-    /// protocol — the A-role digit depth follows from it via
-    /// [`crate::sis::num_digits_inner_for_bound`], which in turn fixes the A
-    /// input width, the SIS rank it demands, and the next-level witness length.
+    /// This is the **declared source bound**: how *wide* a committed coefficient
+    /// may be. It is independent of the committed-source *class*
+    /// ([`crate::sis::CommittedSourceClass`]), which says what *shape* the source
+    /// has. Neither may be inferred from the other — in particular
+    /// `log_commit_bound == 1` is **not** a test for "is this one-hot": a
+    /// balanced-digit source may declare any bound from 1 to the field width, and
+    /// a unit one-hot source is one because its class says so.
     ///
-    /// A commitment sized from this bound is binding and complete **only** for
-    /// polynomials whose centered coefficients lie inside the range the selected
-    /// digit depth represents. Producers must reject out-of-range coefficients
-    /// rather than committing a truncated value.
+    /// The bound has two consumers:
+    ///
+    /// 1. **The A-role digit depth**, via [`crate::sis::num_digits_inner_for_bound`],
+    ///    which fixes the A input width, the SIS rank it demands, and the
+    ///    next-level witness length.
+    /// 2. **The bounded source-moment model** in the planner, which charges a
+    ///    bounded source's final digit plane only the range the bound leaves.
+    ///    This is why the bound has to be *enforced* at commit rather than merely
+    ///    documented: a coefficient past it inflates the level-1 witness beyond
+    ///    the L2 response caps frozen into the recursion suffix.
+    ///
+    /// A commitment is binding and complete only for sources inside
+    /// [`crate::sis::CommittedSourceContract::accepted_bounds`] — this bound
+    /// intersected with what the selected digit depth can represent — *and* of the
+    /// declared class. Producers must reject anything else rather than committing
+    /// a value the schedule was not priced for.
     pub log_commit_bound: u32,
 
     /// Bit-width of the largest coefficient that the opening decomposition

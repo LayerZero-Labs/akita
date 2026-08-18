@@ -375,7 +375,7 @@ fn slice_fixture_num_digits_inner() -> usize {
 /// declaration and the unit one-hot class — are covered by the `fp128` e2e tests,
 /// which own real catalogs.
 fn slice_fixture_contract() -> akita_types::sis::CommittedSourceContract {
-    akita_types::sis::CommittedSourceContract::new(
+    akita_types::sis::CommittedSourceContract::try_new(
         akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
         akita_types::DecompositionParams {
             log_basis: 2,
@@ -383,6 +383,7 @@ fn slice_fixture_contract() -> akita_types::sis::CommittedSourceContract {
             log_open_bound: Some(32),
         },
     )
+    .expect("full-field slice fixture contract")
 }
 
 fn commitment_params_for_slice_count(

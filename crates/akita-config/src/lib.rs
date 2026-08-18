@@ -68,6 +68,9 @@ macro_rules! impl_multi_chunk_companion {
             fn inner_basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::inner_basis_range()
             }
+            fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+                <$base as $crate::CommitmentConfig>::committed_source_class()
+            }
             fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
                 <$base as $crate::CommitmentConfig>::root_honest_fold_policy()
             }
@@ -265,8 +268,42 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::opening_basis_range()
     }
 
+    /// Declared committed-source class: what shape a source this config commits
+    /// must have.
+    ///
+    /// This is the **canonical** declaration. It is independent of
+    /// [`akita_types::DecompositionParams::log_commit_bound`], which declares how
+    /// *wide* a coefficient may be; neither may be inferred from the other. The
+    /// runtime commit path admits sources against this, and
+    /// [`Self::root_honest_fold_policy`] is the offline projection of it.
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass;
+
     /// Group-owned honest sizing rule used only during offline planning.
+    ///
+    /// A projection of [`Self::committed_source_class`] onto this config's field
+    /// geometry — never the other way round, so no runtime path has to read an
+    /// offline planning type to learn the source class.
     fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec;
+
+    /// This config's complete producer contract: declared class plus declared
+    /// bound, validated.
+    ///
+    /// The one value runtime admission reads. Both halves come from the
+    /// declarations above, so a config cannot present a class to one consumer and
+    /// a different one to another.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the declared decomposition or
+    /// class is not representable; see
+    /// [`akita_types::sis::CommittedSourceContract::try_new`].
+    fn committed_source_contract() -> Result<akita_types::sis::CommittedSourceContract, AkitaError>
+    {
+        akita_types::sis::CommittedSourceContract::try_new(
+            Self::committed_source_class(),
+            Self::decomposition(),
+        )
+    }
 
     /// Multi-chunk witness layout parameters for schedule planning and (future)
     /// prover orchestration.
@@ -461,6 +498,10 @@ mod tests {
 
         fn opening_basis_range() -> (u32, u32) {
             (3, 3)
+        }
+
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            akita_types::sis::CommittedSourceClass::BalancedSignedDigit
         }
 
         fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
