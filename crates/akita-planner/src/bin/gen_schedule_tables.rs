@@ -3,12 +3,12 @@
 use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
     emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
-    PrecommittedProducer, ALL_GENERATED_FAMILIES,
+    GroupedGenerationRequest, PrecommittedProducer, ALL_GENERATED_FAMILIES,
 };
 use akita_planner::{
     publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
 };
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_types::PolynomialGroupLayout;
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -233,10 +233,11 @@ fn validate_materialized_catalog(
             spec.module_name
         ));
     }
-    for (key, expected) in entries {
+    for entry in entries {
+        let key = entry.key();
         let actual = (family.resolve_catalog_row_for_key)(key.clone())
             .map_err(|error| format!("{}: resolve {key:?}: {error}", spec.module_name))?;
-        if actual != *expected {
+        if actual != *entry.schedule() {
             return Err(format!(
                 "{}: compiled catalog row {key:?} disagrees with the planner",
                 spec.module_name
@@ -362,11 +363,11 @@ fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: Polynomi
 }
 
 fn push_unique_group_batch_key(
-    keys: &mut Vec<(AkitaScheduleLookupKey, Vec<PrecommittedProducer>)>,
-    candidate: (AkitaScheduleLookupKey, Vec<PrecommittedProducer>),
+    requests: &mut Vec<GroupedGenerationRequest>,
+    candidate: GroupedGenerationRequest,
 ) {
-    if !keys.contains(&candidate) {
-        keys.push(candidate);
+    if !requests.contains(&candidate) {
+        requests.push(candidate);
     }
 }
 
@@ -432,7 +433,7 @@ fn emit_spec_with_overrides(
         .as_ref()
         .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
     spec.keys.clear();
-    spec.group_batch_keys.clear();
+    spec.grouped_requests.clear();
     let final_layouts = final_group.layouts();
 
     if explicit_rows.precommitted_groups.is_empty() {
@@ -455,22 +456,10 @@ fn emit_spec_with_overrides(
     );
 
     for producers in precommitted_combinations {
-        // The descriptor order in the lookup key is the producer order, so the
-        // two cannot drift: both come from the same record list.
-        let precommitteds = producers
-            .iter()
-            .map(|producer| producer.descriptor)
-            .collect::<Vec<_>>();
         for final_layout in &final_layouts {
             push_unique_group_batch_key(
-                &mut spec.group_batch_keys,
-                (
-                    AkitaScheduleLookupKey {
-                        final_group: *final_layout,
-                        precommitteds: precommitteds.clone(),
-                    },
-                    producers.clone(),
-                ),
+                &mut spec.grouped_requests,
+                GroupedGenerationRequest::new(*final_layout, producers.clone()),
             );
         }
     }
@@ -584,7 +573,7 @@ mod tests {
         .expect("explicit emit spec");
 
         assert_eq!(spec.keys, vec![PolynomialGroupLayout::new(14, 1)]);
-        assert!(spec.group_batch_keys.is_empty());
+        assert!(spec.grouped_requests.is_empty());
         assert_eq!(spec.generator_command, "generator command");
     }
 

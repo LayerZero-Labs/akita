@@ -71,9 +71,6 @@ macro_rules! impl_multi_chunk_companion {
             fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
                 <$base as $crate::CommitmentConfig>::committed_source_class()
             }
-            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-                <$base as $crate::CommitmentConfig>::root_honest_fold_policy()
-            }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
             }
@@ -143,7 +140,10 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
 
 /// Root group's source-specific policy for offline schedule generation.
 pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
-    Cfg::root_honest_fold_policy()
+    Cfg::committed_source_class().honest_fold_policy(
+        <Cfg::Field as CanonicalField>::modulus_bits(),
+        Cfg::EXT_DEGREE,
+    )
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -275,15 +275,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// [`akita_types::DecompositionParams::log_commit_bound`], which declares how
     /// *wide* a coefficient may be; neither may be inferred from the other. The
     /// runtime commit path admits sources against this, and
-    /// [`Self::root_honest_fold_policy`] is the offline projection of it.
+    /// [`honest_fold_policy_of`] is the offline projection of it.
     fn committed_source_class() -> akita_types::sis::CommittedSourceClass;
-
-    /// Group-owned honest sizing rule used only during offline planning.
-    ///
-    /// A projection of [`Self::committed_source_class`] onto this config's field
-    /// geometry — never the other way round, so no runtime path has to read an
-    /// offline planning type to learn the source class.
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec;
 
     /// This config's complete producer contract: declared class plus declared
     /// bound, validated.
@@ -503,12 +496,6 @@ mod tests {
         fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
             akita_types::sis::CommittedSourceClass::BalancedSignedDigit
         }
-
-        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-            akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                akita_types::sis::BalancedSignedDigitFoldPolicy::universal(32),
-            )
-        }
     }
 
     #[test]
@@ -648,7 +635,7 @@ mod fp128_policy_tests {
         num_vars_values: &[usize],
     ) {
         for &num_vars in num_vars_values {
-            let group = match Cfg::root_honest_fold_policy() {
+            let group = match crate::honest_fold_policy_of::<Cfg>() {
                 akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
                     PolynomialGroupLayout::singleton(num_vars)
                 }

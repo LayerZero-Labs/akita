@@ -190,10 +190,6 @@ where
         Envelope::committed_source_class()
     }
 
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-        Envelope::root_honest_fold_policy()
-    }
-
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
         Envelope::schedule_catalog()
     }
@@ -215,10 +211,10 @@ where
             )
         };
         let precommitted_honest_fold_policies =
-            vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
+            vec![akita_config::honest_fold_policy_of::<Envelope>(); key.precommitteds.len()];
         let schedule = akita_planner::find_schedule(
             key,
-            Envelope::root_honest_fold_policy(),
+            akita_config::honest_fold_policy_of::<Envelope>(),
             &precommitted_honest_fold_policies,
             &policy,
             ring_challenge_config,

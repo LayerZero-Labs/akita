@@ -89,21 +89,20 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
         fp128::DenseBounded::inner_basis_range(),
         fp128::Dense::inner_basis_range()
     );
-    // Both are the balanced signed-digit source class: the bound sizes the digit
-    // depth, it does not select a different honest-fold sizing rule. The class is
-    // what `commit` admits against, and it is read from the declared policy --
-    // never inferred from the bound, which is why these two can vary
-    // independently.
+    // Both are the balanced signed-digit source class. The bound sizes the digit
+    // depth. It does not select a different honest-fold sizing rule. `commit`
+    // reads the declared class, and offline planning derives its policy from that
+    // class.
     assert!(matches!(
-        fp128::DenseBounded::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<fp128::DenseBounded>(),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_)
     ));
     assert_eq!(
-        akita_types::sis::CommittedSourceClass::of(fp128::DenseBounded::root_honest_fold_policy()),
+        fp128::DenseBounded::committed_source_class(),
         akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
     );
     assert_eq!(
-        akita_types::sis::CommittedSourceClass::of(fp128::OneHot::root_honest_fold_policy()),
+        fp128::OneHot::committed_source_class(),
         akita_types::sis::CommittedSourceClass::UnitOneHot {
             source_chunk_size: akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
         },

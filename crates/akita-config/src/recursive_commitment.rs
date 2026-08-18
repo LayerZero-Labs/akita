@@ -58,10 +58,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::committed_source_class()
     }
 
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-        Cfg::root_honest_fold_policy()
-    }
-
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
         Cfg::chunked_witness_cfg()
     }

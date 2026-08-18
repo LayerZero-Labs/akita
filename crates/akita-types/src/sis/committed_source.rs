@@ -24,7 +24,9 @@
 //! producer boundary rather than discovered later as a proof failure.
 
 use super::decomposition_digits::checked_balanced_digit_representable_bounds;
-use super::honest_fold_policy::HonestFoldPolicySpec;
+use super::honest_fold_policy::{
+    BalancedSignedDigitFoldPolicy, HonestFoldPolicySpec, UnitOneHotFoldPolicy,
+};
 use crate::DecompositionParams;
 use akita_field::AkitaError;
 
@@ -50,14 +52,23 @@ pub enum CommittedSourceClass {
 }
 
 impl CommittedSourceClass {
-    /// Read the class off the honest-fold policy that declares it.
+    /// Project this source class onto its offline honest-fold sizing policy.
+    ///
+    /// The class remains the declaration. Field width and extension degree are
+    /// geometry needed only by the sizing policy.
     #[must_use]
-    pub const fn of(spec: HonestFoldPolicySpec) -> Self {
-        match spec {
-            HonestFoldPolicySpec::UnitOneHot(policy) => Self::UnitOneHot {
-                source_chunk_size: policy.source_chunk_size(),
-            },
-            HonestFoldPolicySpec::BalancedSignedDigit(_) => Self::BalancedSignedDigit,
+    pub const fn honest_fold_policy(
+        self,
+        field_bits: u32,
+        extension_degree: usize,
+    ) -> HonestFoldPolicySpec {
+        match self {
+            Self::UnitOneHot { source_chunk_size } => HonestFoldPolicySpec::UnitOneHot(
+                UnitOneHotFoldPolicy::new(field_bits, extension_degree, source_chunk_size),
+            ),
+            Self::BalancedSignedDigit => HonestFoldPolicySpec::BalancedSignedDigit(
+                BalancedSignedDigitFoldPolicy::universal(field_bits),
+            ),
         }
     }
 
@@ -117,21 +128,6 @@ impl CommittedSourceContract {
             class,
             decomposition,
         })
-    }
-
-    /// Build the contract from a config's honest-fold policy and decomposition.
-    ///
-    /// The class is the runtime projection of the offline policy; see
-    /// [`CommittedSourceClass::of`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::try_new`].
-    pub fn of(
-        spec: HonestFoldPolicySpec,
-        decomposition: DecompositionParams,
-    ) -> Result<Self, AkitaError> {
-        Self::try_new(CommittedSourceClass::of(spec), decomposition)
     }
 
     /// Declared source class.
@@ -251,37 +247,34 @@ mod tests {
     }
 
     fn one_hot(log_commit_bound: u32) -> CommittedSourceContract {
-        CommittedSourceContract::of(
-            HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(
-                128,
-                1,
-                DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
-            )),
+        CommittedSourceContract::try_new(
+            CommittedSourceClass::UnitOneHot {
+                source_chunk_size: DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
+            },
             decomposition(log_commit_bound, Some(128)),
         )
         .expect("valid one-hot contract")
     }
 
-    /// The class comes from the declaring policy, not from the numeric bound.
+    /// The policy comes from the declared class, not from the numeric bound.
     ///
     /// This is the property the bounded-source work exists to preserve: a preset
     /// declares class and bound independently, so neither may be inferred from
     /// the other.
     #[test]
-    fn the_class_is_read_from_the_policy_not_the_bound() {
+    fn the_policy_is_derived_from_the_class_not_the_bound() {
         assert_eq!(
-            CommittedSourceClass::of(HonestFoldPolicySpec::BalancedSignedDigit(
-                BalancedSignedDigitFoldPolicy::universal(128)
-            )),
-            CommittedSourceClass::BalancedSignedDigit
+            CommittedSourceClass::BalancedSignedDigit.honest_fold_policy(128, 1),
+            HonestFoldPolicySpec::BalancedSignedDigit(BalancedSignedDigitFoldPolicy::universal(
+                128
+            ))
         );
         assert_eq!(
-            CommittedSourceClass::of(HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(
-                128, 1, 256
-            ))),
             CommittedSourceClass::UnitOneHot {
                 source_chunk_size: 256
             }
+            .honest_fold_policy(128, 1),
+            HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(128, 1, 256))
         );
 
         // A balanced-digit source declared at bound 1 stays balanced-digit, and a

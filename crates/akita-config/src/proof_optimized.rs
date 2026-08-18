@@ -410,10 +410,8 @@ macro_rules! impl_proof_optimized_preset {
     // independent declarations. Inferring it made `log_commit_bound == 1` read
     // like the source of truth for the class, which it is not: the bound sizes
     // the A-role digit depth, while the class picks the sizing rule.
-    // The class is the canonical declaration; the offline `HonestFoldPolicySpec`
-    // below is derived from it plus this config's field geometry. Ownership runs
-    // one way only, so no runtime path reads an offline planning type to learn
-    // what a source must be.
+    // The class is the canonical declaration. `honest_fold_policy_of` derives
+    // the offline sizing policy from it plus the config's field geometry.
     (@committed_source_class unit_one_hot) => {
         fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
             akita_types::sis::CommittedSourceClass::UnitOneHot {
@@ -428,25 +426,6 @@ macro_rules! impl_proof_optimized_preset {
     };
     (@honest_fold_policy $source:ident, $field:ty, $ext_field:ty, $field_bits:expr) => {
         impl_proof_optimized_preset!(@committed_source_class $source);
-
-        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-            match Self::committed_source_class() {
-                akita_types::sis::CommittedSourceClass::UnitOneHot { source_chunk_size } => {
-                    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::new(
-                            $field_bits,
-                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
-                            source_chunk_size,
-                        ),
-                    )
-                }
-                akita_types::sis::CommittedSourceClass::BalancedSignedDigit => {
-                    akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal($field_bits),
-                    )
-                }
-            }
-        }
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident) => {
         impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $source, none, default);

@@ -40,7 +40,7 @@ use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, PrecommittedProducer,
+    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, GroupedGenerationRequest,
     ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
@@ -48,11 +48,9 @@ use akita_types::{
 };
 use std::sync::OnceLock;
 
-type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<PrecommittedProducer>);
-
 struct PreparedGroupBatchRequests {
     preplans: GenerationPreplans,
-    by_family: Vec<Vec<GroupBatchCandidate>>,
+    by_family: Vec<Vec<GroupedGenerationRequest>>,
 }
 
 fn prepared_group_batch_requests() -> &'static PreparedGroupBatchRequests {
@@ -61,7 +59,7 @@ fn prepared_group_batch_requests() -> &'static PreparedGroupBatchRequests {
         let preplans = GenerationPreplans::default();
         let workers = offline_planning_worker_count(ALL_GENERATED_FAMILIES.len());
         let by_family = bounded_parallel_filter_map(ALL_GENERATED_FAMILIES, workers, |family| {
-            (family.group_batch_keys)(&preplans)
+            (family.grouped_requests)(&preplans)
                 .map(Some)
                 .map_err(|error| {
                     format!(
@@ -378,7 +376,7 @@ fn generated_catalogs_cover_emitted_keys() {
     }
 }
 
-fn assert_group_batch_table_hits(family: &GeneratedFamily, requests: &[GroupBatchCandidate]) {
+fn assert_grouped_table_hits(family: &GeneratedFamily, requests: &[GroupedGenerationRequest]) {
     if requests.is_empty() {
         return;
     }
@@ -390,9 +388,9 @@ fn assert_group_batch_table_hits(family: &GeneratedFamily, requests: &[GroupBatc
     });
     let missing = requests
         .iter()
-        .filter(|(key, _)| table_entry(catalog, key).is_none())
+        .filter(|request| table_entry(catalog, &request.key()).is_none())
         .take(3)
-        .map(|(key, _)| format!("{key:?}"))
+        .map(|request| format!("{:?}", request.key()))
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
@@ -406,17 +404,18 @@ fn assert_group_batch_table_hits(family: &GeneratedFamily, requests: &[GroupBatc
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
-    request: &GroupBatchCandidate,
+    request: &GroupedGenerationRequest,
 ) -> Result<FoldSchedule, AkitaError> {
-    let entry = table_entry(catalog, &request.0).ok_or_else(|| {
+    let key = request.key();
+    let entry = table_entry(catalog, &key).ok_or_else(|| {
         AkitaError::UnsupportedSchedule(format!(
             "generated family {} is missing grouped key {:?}",
-            family.module_name, request.0
+            family.module_name, key
         ))
     })?;
     schedule_from_entry(
         entry,
-        &request.0,
+        &key,
         &(family.policy)(),
         family.ring_challenge_config,
     )
@@ -425,9 +424,9 @@ fn resolve_family_group_batch_schedule(
 #[cfg(not(feature = "all-schedules"))]
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
-    request: &GroupBatchCandidate,
+    request: &GroupedGenerationRequest,
 ) -> Result<FoldSchedule, AkitaError> {
-    (family.resolve_catalog_row_for_key)(request.0.clone())
+    (family.resolve_catalog_row_for_key)(request.key())
 }
 
 #[cfg(feature = "all-schedules")]
@@ -632,29 +631,29 @@ fn check_scalar_keys(
 fn compare_group_batch_key(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
-    request: &GroupBatchCandidate,
+    request: &GroupedGenerationRequest,
 ) -> Option<Mismatch> {
+    let key = request.key();
     let table_backed = resolve_family_group_batch_schedule(family, catalog, request)
         .unwrap_or_else(|e| {
             panic!(
                 "table-backed multi-group schedule failed for family {} key={:?}: {e}",
-                family.module_name, request.0
+                family.module_name, key
             )
         });
-    let regenerated = (family.regen_group_batch)(request.0.clone(), request.1.clone())
-        .unwrap_or_else(|e| {
-            panic!(
-                "multi-group DP regen failed for family {} key={:?}: {e}",
-                family.module_name, request.0
-            )
-        });
+    let regenerated = (family.regen_group_batch)(request.clone()).unwrap_or_else(|e| {
+        panic!(
+            "multi-group DP regen failed for family {} key={:?}: {e}",
+            family.module_name, key
+        )
+    });
 
     if schedules_equal(&table_backed, &regenerated) {
         return None;
     }
     Some(Mismatch {
         family: family.module_name,
-        key: format!("group-batch {:?}", request.0),
+        key: format!("group-batch {key:?}"),
         table_backed: render_schedule(&table_backed),
         regenerated: render_schedule(&regenerated),
     })
@@ -663,38 +662,38 @@ fn compare_group_batch_key(
 #[cfg(not(feature = "all-schedules"))]
 fn compare_group_batch_key(
     family: &GeneratedFamily,
-    request: &GroupBatchCandidate,
+    request: &GroupedGenerationRequest,
 ) -> Option<Mismatch> {
+    let key = request.key();
     let table_backed = resolve_family_group_batch_schedule(family, request).unwrap_or_else(|e| {
         panic!(
             "table-backed multi-group schedule failed for family {} key={:?}: {e}",
-            family.module_name, request.0
+            family.module_name, key
         )
     });
-    let regenerated = (family.regen_group_batch)(request.0.clone(), request.1.clone())
-        .unwrap_or_else(|e| {
-            panic!(
-                "multi-group DP regen failed for family {} key={:?}: {e}",
-                family.module_name, request.0
-            )
-        });
+    let regenerated = (family.regen_group_batch)(request.clone()).unwrap_or_else(|e| {
+        panic!(
+            "multi-group DP regen failed for family {} key={:?}: {e}",
+            family.module_name, key
+        )
+    });
 
     if schedules_equal(&table_backed, &regenerated) {
         return None;
     }
     Some(Mismatch {
         family: family.module_name,
-        key: format!("group-batch {:?}", request.0),
+        key: format!("group-batch {key:?}"),
         table_backed: render_schedule(&table_backed),
         regenerated: render_schedule(&regenerated),
     })
 }
 
 #[cfg(feature = "all-schedules")]
-fn check_group_batch_keys(
+fn check_grouped_requests(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
-    requests: &[GroupBatchCandidate],
+    requests: &[GroupedGenerationRequest],
     into: &mut Vec<Mismatch>,
 ) {
     if requests.is_empty() {
@@ -736,9 +735,9 @@ fn check_group_batch_keys(
 }
 
 #[cfg(not(feature = "all-schedules"))]
-fn check_group_batch_keys(
+fn check_grouped_requests(
     family: &GeneratedFamily,
-    requests: &[GroupBatchCandidate],
+    requests: &[GroupedGenerationRequest],
     into: &mut Vec<Mismatch>,
 ) {
     if requests.is_empty() {
@@ -780,7 +779,7 @@ fn check_group_batch_keys(
 fn check_family(
     family: &GeneratedFamily,
     preplans: &GenerationPreplans,
-    group_batch_keys: &[GroupBatchCandidate],
+    grouped_requests: &[GroupedGenerationRequest],
     into: &mut Vec<Mismatch>,
 ) {
     if (family.schedule_catalog)().is_none() {
@@ -794,14 +793,14 @@ fn check_family(
     {
         let catalog = prepare_family_catalog(family, &keys);
         check_scalar_keys(family, preplans, &keys, catalog, into);
-        assert_group_batch_table_hits(family, group_batch_keys);
-        check_group_batch_keys(family, catalog, group_batch_keys, into);
+        assert_grouped_table_hits(family, grouped_requests);
+        check_grouped_requests(family, catalog, grouped_requests, into);
     }
     #[cfg(not(feature = "all-schedules"))]
     {
-        assert_group_batch_table_hits(family, group_batch_keys);
+        assert_grouped_table_hits(family, grouped_requests);
         check_scalar_keys(family, preplans, &keys, into);
-        check_group_batch_keys(family, group_batch_keys, into);
+        check_grouped_requests(family, grouped_requests, into);
     }
 }
 
@@ -817,11 +816,11 @@ fn regen_hint() -> &'static str {
 fn generated_schedule_tables_match_key_planner() {
     let mut mismatches = Vec::new();
     let prepared = prepared_group_batch_requests();
-    for (family, group_batch_keys) in ALL_GENERATED_FAMILIES.iter().zip(&prepared.by_family) {
+    for (family, grouped_requests) in ALL_GENERATED_FAMILIES.iter().zip(&prepared.by_family) {
         check_family(
             family,
             &prepared.preplans,
-            group_batch_keys,
+            grouped_requests,
             &mut mismatches,
         );
     }

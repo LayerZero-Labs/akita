@@ -152,14 +152,15 @@ identity. See [Bounded committed sources](#bounded-committed-sources).
 ## Bounded committed sources
 
 `DecompositionParams::log_commit_bound` is the declared bit width of the largest
-centered coefficient a commitment must represent. It is the general parameter of
-the committed-source class, not a per-preset constant with two legal values:
+centered coefficient a commitment must represent. The bound and source class are
+independent declarations. The class selects the source representation and honest
+fold policy. The bound selects the digit depth and bounded source pricing.
 
-| `log_commit_bound` | Source | Example preset |
+| Source class | Legal bound | Example preset |
 |---|---|---|
-| `1` | unit one-hot | `fp128::OneHot` |
-| `1 < B < field_bits` | bounded | `fp128::DenseBounded` (`B = 65`, see `DenseBounded::LOG_COMMIT_BOUND`) |
-| `field_bits` | full field | `fp128::Dense` |
+| `UnitOneHot` | Any valid `B` | `fp128::OneHot` uses `B = 1` |
+| `BalancedSignedDigit` | `1 <= B < field_bits` | `fp128::DenseBounded` uses `B = 65` |
+| `BalancedSignedDigit` | `B = field_bits` | `fp128::Dense` uses `B = 128` |
 
 ### The bound is a *signed* bit width
 
@@ -174,7 +175,7 @@ only `[-2^63, 2^63 - 1]` and miss half of a uniform `u64` distribution. That is
 why `fp128::DenseBounded` declares 65. `DenseBounded::MAX_CENTERED_MAGNITUDE`
 states the same fact without the signed-bit-width indirection.
 
-The two endpoints of the table above do **not** follow this reading:
+Two cases need separate treatment:
 
 * **Full field** (`B == field_bits`) means "any field element", not
   `[-2^(field_bits-1), 2^(field_bits-1) - 1]`. `num_digits_for_bound` routes it
@@ -182,12 +183,14 @@ The two endpoints of the table above do **not** follow this reading:
   no sign correction, because `decompose_centering_threshold` shifts the
   threshold below `q/2` when `δ · log_basis == field_bits` so the longer negative
   reach covers what the shorter positive reach cannot.
-* **Unit one-hot** (`B == 1`) is a depth selector, not an interval. Its source is
-  structurally `{0, 1}`; the signed reading `[-1, 0]` would exclude a hot
-  position.
+* **Unit one-hot** is structural, regardless of `B`. Its source is `{0, 1}` with
+  one hot position per declared chunk. The numeric bound still selects the digit
+  depth, but it does not define the admitted interval for this class. The shipped
+  `fp128::OneHot` preset uses `B = 1`.
 
-So the signed convention describes exactly the interior, which is also the only
-region where the declaration is enforced as an acceptance interval.
+The signed convention defines the admitted interval for a balanced signed digit
+source below the full field endpoint. This includes a balanced signed digit
+source with `B = 1`. It does not turn that source into unit one-hot.
 
 ### Where the bound enters
 
@@ -213,9 +216,10 @@ which a dense source does not have.
 
 ### What a bounded commitment binds
 
-A commitment sized from `B` is binding and complete only for polynomials inside
-`akita_types::sis::accepted_committed_source_bounds`, the **intersection** of two
-independent constraints:
+A commitment sized from `B` is binding and complete only for polynomials accepted
+by `CommittedSourceContract`. For a balanced signed digit source, its
+`accepted_bounds` method returns the **intersection** of two independent
+constraints:
 
 1. **Representability** — the coefficient must be recoverable from
    `num_digits_inner` balanced digits
@@ -268,8 +272,9 @@ precommitted_groups: &[
 ],
 ```
 
-The class comes from the honest fold policy the row was planned against, not from
-guessing at the digit depth.
+The class comes from the producer contract carried by the grouped generation
+request. The planner derives the honest fold policy from that class. Neither is
+guessed from the digit depth.
 
 Note what each form does and does not claim. A unit one-hot source is
 structurally constrained and its chunk size is part of its class, so the comment
@@ -319,9 +324,11 @@ to a bounded catalog.
 
 - `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`,
   `validate`, `has_bounded_committed_source`).
+- `crates/akita-types/src/sis/committed_source.rs`
+  (`CommittedSourceClass`, `CommittedSourceContract::declared_bounds`,
+  `CommittedSourceContract::accepted_bounds`).
 - `crates/akita-types/src/sis/decomposition_digits.rs`
-  (`accepted_committed_source_bounds`, `declared_committed_source_bounds`,
-  `balanced_digit_representable_bounds`,
+  (`balanced_digit_representable_bounds`,
   `checked_balanced_digit_representable_bounds`, `num_digits_inner_for_bound`).
 - `crates/akita-config/src/proof_optimized/fp128.rs` (`DenseBounded`).
 - `crates/akita-prover/src/api/commitment.rs` (the producer-side guard) and

@@ -111,7 +111,7 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
         akita_schedules::SelectiveL2ResponseModelId::Disabled;
     let no_l2_bytes = akita_planner::find_schedule(
         &key,
-        fp128::OneHot::root_honest_fold_policy(),
+        crate::honest_fold_policy_of::<fp128::OneHot>(),
         &[],
         &no_l2_policy,
         fp128::OneHot::ring_challenge_config,
@@ -155,7 +155,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
     linf_policy.selective_l2_response_model = akita_schedules::SelectiveL2ResponseModelId::Disabled;
     let linf_schedule = akita_planner::find_schedule(
         &key,
-        fp64::OneHot::root_honest_fold_policy(),
+        crate::honest_fold_policy_of::<fp64::OneHot>(),
         &[],
         &linf_policy,
         fp64::OneHot::ring_challenge_config,
