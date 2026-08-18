@@ -375,6 +375,9 @@ pub(super) fn prepare_compact_factors<E: FieldCore>(
     let mut quotient_families = Vec::new();
     let mut direct_opening_families = Vec::new();
     for unit in inputs.witness_layout.units_for_group(inputs.group_index)? {
+        if unit.num_live_blocks() == 0 {
+            continue;
+        }
         let semantic_count = inputs
             .num_claims
             .checked_mul(unit.num_live_blocks())

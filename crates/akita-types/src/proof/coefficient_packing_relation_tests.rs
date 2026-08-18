@@ -466,6 +466,28 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
 }
 
 #[test]
+fn compact_factors_skip_empty_distributed_witness_units() {
+    let fixture = fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
+        SisModulusProfileId::Q128OffsetA7F7,
+        256,
+        64,
+        64,
+        2,
+        1,
+        9,
+        2,
+        8,
+    );
+    assert!(fixture
+        .relation_plan
+        .witness_layout()
+        .units_for_group(0)
+        .unwrap()
+        .any(|unit| unit.num_live_blocks() == 0));
+    assert_compact_factors_match_dense(&fixture);
+}
+
+#[test]
 fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
     type Extension = Prime128OffsetA7F7;
 

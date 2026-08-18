@@ -858,7 +858,7 @@ fn main() -> Result<(), String> {
         },
     )?;
     if check_catalog {
-        if args.catalog_baseline.is_none() {
+        if should_emit_catalog_drift_report(args.catalog_baseline.is_some(), changed_catalog_rows) {
             if let Some(path) = &args.catalog_report {
                 fs::write(path, &catalog_drift_report)
                     .map_err(|error| format!("write {}: {error}", path.display()))?;
@@ -941,6 +941,13 @@ fn main() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+const fn should_emit_catalog_drift_report(
+    has_catalog_baseline: bool,
+    changed_catalog_rows: usize,
+) -> bool {
+    !has_catalog_baseline || changed_catalog_rows != 0
 }
 
 #[cfg(test)]

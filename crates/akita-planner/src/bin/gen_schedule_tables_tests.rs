@@ -2,6 +2,14 @@ use super::*;
 use std::path::Path;
 
 #[test]
+fn same_revision_drift_is_reported_before_baseline_comparison() {
+    assert!(should_emit_catalog_drift_report(false, 0));
+    assert!(should_emit_catalog_drift_report(false, 3));
+    assert!(!should_emit_catalog_drift_report(true, 0));
+    assert!(should_emit_catalog_drift_report(true, 3));
+}
+
+#[test]
 fn positional_family_filters_are_checked_and_ordered() {
     let one = parse_args_from(vec!["generated".into(), "fp32_dense".into()]).expect("known family");
     assert_eq!(

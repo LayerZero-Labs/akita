@@ -1149,13 +1149,19 @@ fn checked_range_index(
 }
 
 fn checked_owned_block(unit: &WitnessUnitLayout, global_block: usize) -> Result<usize, AkitaError> {
+    let ownership_error = || {
+        AkitaError::InvalidInput(format!(
+            "witness fold block {global_block} is not owned by group {} chunk {} range {:?}",
+            unit.group_index,
+            unit.chunk_index,
+            unit.global_block_range()
+        ))
+    };
     let local = global_block
         .checked_sub(unit.global_block_start)
-        .ok_or_else(|| AkitaError::InvalidInput("witness fold is not owned by unit".into()))?;
+        .ok_or_else(&ownership_error)?;
     if local >= unit.num_live_blocks {
-        return Err(AkitaError::InvalidInput(
-            "witness fold is not owned by unit".into(),
-        ));
+        return Err(ownership_error());
     }
     Ok(local)
 }
