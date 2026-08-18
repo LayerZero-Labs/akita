@@ -35,6 +35,16 @@ The remaining unchecked acceptance items below stay open until their points are
 fixed and reviewed. The record has been restored to active status for that
 work.
 
+### Reader guide
+
+This document is the formal design record. It defines the coefficient layout,
+relations, planner rules, and acceptance criteria. For a step by step
+explanation, start with the Book chapter
+[Root fold and ring switching](../book/src/how/proving/root-fold-ring-switch.md#subring-coefficient-packing).
+That chapter shows the coefficient grid, explains why the challenge acts on
+only one axis, and works through the production fp32 geometry
+`d_A = 1024`, `k = 4`, `s = 128`, and `h = 2`.
+
 ## Decision
 
 Akita will support the **subring coefficient packing** opening method for base
@@ -100,6 +110,14 @@ the extension field. This viewpoint has three useful consequences:
    coordinates than a full A ring element.
 3. The current commitment type, A relation, B commitment, setup matrices, and
    most NTT caches can remain over the A ring.
+
+The mechanism is an axis split. Write each A coefficient index as
+`a + k h j`. The partial evaluation contracts `a` and keeps `j`. The fold
+challenge is restricted to the `j` axis by sampling it in
+`K[Y]/(Y^s+1)` and embedding `Y` as `X^(k h)`. Challenge multiplication
+therefore commutes with the partial evaluation. A general A ring challenge
+would mix both axes, so the shorter partial would not contain enough
+information to reproduce the folded source.
 
 The change is not unconditionally cheaper. A smaller challenge subring requires
 a different sparse challenge family. Meeting the same entropy target can

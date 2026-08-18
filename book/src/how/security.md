@@ -129,6 +129,11 @@ the adversary's total query budget. See
 
 ## Subring coefficient packing
 
+For the coefficient layout, the three ring domains, and the exact reason the
+partial evaluation is shorter, first read
+[Subring coefficient packing](./proving/root-fold-ring-switch.md#subring-coefficient-packing).
+This section focuses on transcript binding and soundness.
+
 Before sampling a packing challenge, the prover binds every coordinate of the
 partial opening through the D payload or its compressed H payload. The
 transcript also binds the method, challenge subring dimension, challenge

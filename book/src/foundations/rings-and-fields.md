@@ -48,21 +48,31 @@ reduction later resolves.
 
 ## Challenge subrings and coefficient packing
 
-For extension degree `k`, Akita can open coefficients through
+For extension degree `k`, coefficient packing uses three rings:
 
 ```text
-C = E[Y]/(Y^s+1)
+R = K[X]/(X^d_A+1),
+S = K[Y]/(Y^s+1),
+C = E[Y]/(Y^s+1).
 ```
 
-while keeping commitments in `R = K[X]/(X^d_A+1)`. The dimensions satisfy
-`d_A = k h s`. The challenge subring embeds into the A ring by
-`Y -> X^(k h)`. A packed value has `k` coordinate planes of length `s`. Its
-physical width is therefore `k s`, but its polynomial modulus still has
-dimension `s`.
+The A ring `R` holds committed data. The challenge subring `S` holds sparse
+fold challenges. The extension opening ring `C` holds partial evaluations.
+The dimensions satisfy `d_A = k h s`.
+
+The challenge subring embeds into the A ring by `Y -> X^(k h)`. This embedding
+acts only on one A coefficient axis. The partial evaluation contracts the
+other axis and keeps `s` coefficients in `E`. A packed partial therefore has
+`k` base field coordinate planes of length `s`. Its physical width is `k s`,
+but its polynomial modulus still has dimension `s`.
 
 The schedule selects `s`. It does not change the extension degree or the
 committed field. The implementation uses one canonical extension basis and one
 canonical coefficient order.
+
+See [Root fold and ring switching](../how/proving/root-fold-ring-switch.md#subring-coefficient-packing)
+for the coefficient grid, the commutation rule that makes packing valid, and a
+worked fp32 example.
 
 **Implementation map**
 

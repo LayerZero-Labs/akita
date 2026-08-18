@@ -24,7 +24,9 @@ fold witness.
 
 For base-field polynomials evaluated at extension-field points, the schedule
 uses evaluation trace with EOR or subring coefficient packing. See
-[Fold path and field geometry](./fold-path.md).
+[Fold path and field geometry](./fold-path.md). The coefficient packing
+walkthrough is in
+[Root fold and ring switching](./root-fold-ring-switch.md#subring-coefficient-packing).
 
 ## The evaluation problem
 

@@ -290,6 +290,13 @@ $$
 
 Here $\mathbf D$ commits to the digit-decomposed partial evaluations.
 
+Equations (5) to (7) show the evaluation trace shape, where each partial is a
+full ring element. At packing levels, Akita first splits the ring coefficient
+index and contracts its low part. The resulting partial has `k s` base field
+coordinates instead of `d_A`. See
+[Subring coefficient packing](./root-fold-ring-switch.md#subring-coefficient-packing)
+for that layout and the relation that connects it to the folded source.
+
 The subscript in $\mathbf v_D$ distinguishes this ring-vector commitment from
 the scalar opening target $v$ and its method-selected field relation. Equation
 (7) binds the newly derived opening digits; it does not by itself prove the
