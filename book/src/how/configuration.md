@@ -206,6 +206,25 @@ a shallower `num_digits_inner` without decoding `CATALOG_IDENTITY`. The banner i
 emitted only for the interior of the range: a full-field family decomposes over
 the whole width, and a unit one-hot family already says so in its name.
 
+A **precommitted** group is a different case. Its frozen
+`CommittedGroupProfile` records geometry and matrices but neither the source class
+nor the bound its producer declared — only the consequence, `num_digits_inner`
+digits at `log_basis_inner`, which is what actually pins the interval the group is
+binding for. Nothing downstream needs the label, because a grouped row is keyed on
+exact descriptor equality and the wrong producer simply fails to resolve. So that a
+reader can still tell the classes apart, each precommitted descriptor in a
+generated row is preceded by a comment naming its source class and accepted reach:
+
+```rust
+precommitted_groups: &[
+    // balanced signed digit: 13 x base-2^5 digits, span 65 bits, accepts about +/-2^64
+    GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { .. }, .. },
+],
+```
+
+The class comes from the honest fold policy the row was planned against, not from
+guessing at the digit depth.
+
 The bound is per config, and a precommitted group freezes its own
 `inner_commit_matrix` — so one grouped root can open groups with different
 bounds. The `bounded_dense_precommit_with_onehot_final_group` end-to-end test

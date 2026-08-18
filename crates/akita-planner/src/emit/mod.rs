@@ -417,10 +417,54 @@ fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     }
 }
 
+/// One-line description of a frozen precommitted group's committed source.
+///
+/// A [`CommittedGroupProfile`] records geometry and matrices, never the source
+/// class or the bound its producer declared — those are offline planning inputs
+/// and deliberately absent from runtime schedule identity. What survives is the
+/// *consequence*: `num_digits_inner` digits at `log_basis_inner`, which pins the
+/// exact coefficient interval the group is binding for.
+///
+/// Nothing downstream needs the label — a grouped row is keyed on exact
+/// descriptor equality, so the wrong producer simply fails to resolve. It exists
+/// so a reader of a grouped row can tell a one-hot precommit from a bounded or
+/// full-width dense one without recomputing the interval by hand. `policy` comes
+/// from the emit spec's per-key honest fold policies, so the class is the exact
+/// one the row was planned against rather than a guess from the digit depth.
+fn precommitted_source_note(
+    log_basis: u32,
+    digits: usize,
+    policy: Option<&HonestFoldPolicySpec>,
+) -> String {
+    let class = match policy {
+        Some(HonestFoldPolicySpec::UnitOneHot(_)) => "unit one-hot",
+        Some(HonestFoldPolicySpec::BalancedSignedDigit(_)) => "balanced signed digit",
+        None => "source class unrecorded",
+    };
+    // Total digit span. Exact integer arithmetic on the exponent, so it stays
+    // meaningful for the >128-bit spans a full-width row reaches.
+    let span_bits = (digits as u128).saturating_mul(u128::from(log_basis));
+    // Small spans print their exact interval; wide ones print the magnitude as a
+    // power of two. Never print the saturating reaches from
+    // `balanced_digit_representable_bounds` — beyond `u128` those understate the
+    // true value and would read as a real bound here.
+    let reach = if span_bits <= 16 {
+        let (negative, positive) =
+            akita_types::sis::balanced_digit_representable_bounds(log_basis, digits);
+        format!("accepts [-{negative}, {positive}]")
+    } else {
+        format!("accepts about +/-2^{}", span_bits.saturating_sub(1))
+    };
+    format!(
+        "                // {class}: {digits} x base-2^{log_basis} digits, span {span_bits} bits, {reach}\n"
+    )
+}
+
 fn emit_schedule_entry(
     out: &mut String,
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
+    precommitted_policies: &[HonestFoldPolicySpec],
 ) -> Result<(), String> {
     let entry = generated_entry(key, schedule)?;
     writeln!(out, "    GeneratedFoldScheduleEntry {{").map_err(|e| e.to_string())?;
@@ -443,7 +487,12 @@ fn emit_schedule_entry(
         writeln!(out, "            precommitted_groups: &[],").map_err(|e| e.to_string())?;
     } else {
         writeln!(out, "            precommitted_groups: &[").map_err(|e| e.to_string())?;
-        for group in entry.root.precommitted_groups {
+        for (index, group) in entry.root.precommitted_groups.iter().enumerate() {
+            out.push_str(&precommitted_source_note(
+                group.descriptor.log_basis_inner,
+                group.descriptor.num_digits_inner,
+                precommitted_policies.get(index),
+            ));
             writeln!(
                 out,
                 "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {} }},",
@@ -839,7 +888,15 @@ pub(super) fn emit_family_module_from_entries(
     .map_err(|e| e.to_string())?;
 
     for (key, schedule) in materialized {
-        emit_schedule_entry(&mut out, &key, &schedule)?;
+        // Honest fold policies are recorded per grouped key in the spec; a scalar
+        // row has no precommitted groups and needs none.
+        let precommitted_policies = spec
+            .group_batch_keys
+            .iter()
+            .find(|(batch_key, _)| batch_key == &key)
+            .map(|(_, policies)| policies.as_slice())
+            .unwrap_or(&[]);
+        emit_schedule_entry(&mut out, &key, &schedule, precommitted_policies)?;
         memory_entries.push(generated_entry(&key, &schedule)?);
     }
     debug_assert!(akita_schedules::catalog_entries_sorted_for_lookup(
@@ -893,6 +950,56 @@ mod bounded_source_banner_tests {
                 !emit_bounded_source_banner(params(bound, Some(128))).is_empty(),
                 "bound {bound} is interior and must be announced"
             );
+        }
+    }
+
+    /// The precommitted note labels the source class and never leaks a
+    /// saturating reach.
+    ///
+    /// `balanced_digit_representable_bounds` saturates once the true reach passes
+    /// `u128::MAX`, which a full-width 26-digit descriptor does. Printing that
+    /// value would read as a real bound in a generated artifact, so wide spans
+    /// print a power-of-two magnitude derived from the exponent instead.
+    #[test]
+    fn precommitted_note_labels_the_class_without_saturating_reaches() {
+        use akita_types::sis::{
+            BalancedSignedDigitFoldPolicy, HonestFoldPolicySpec, UnitOneHotFoldPolicy,
+        };
+
+        let one_hot = HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(128, 1, 256));
+        let balanced = HonestFoldPolicySpec::BalancedSignedDigit(
+            BalancedSignedDigitFoldPolicy::universal(128),
+        );
+
+        let saturated = akita_types::sis::balanced_digit_representable_bounds(5, 26).0;
+        assert_eq!(saturated, u128::MAX, "26 base-2^5 digits must saturate");
+
+        // A 3-bit span is readable, so it prints the exact interval.
+        let note = super::precommitted_source_note(3, 1, Some(&one_hot));
+        assert!(note.contains("unit one-hot"), "{note}");
+        assert!(note.contains("accepts [-4, 3]"), "{note}");
+
+        let bounded = super::precommitted_source_note(5, 13, Some(&balanced));
+        assert!(bounded.contains("balanced signed digit"), "{bounded}");
+        assert!(bounded.contains("span 65 bits"), "{bounded}");
+        assert!(bounded.contains("+/-2^64"), "{bounded}");
+
+        let full = super::precommitted_source_note(5, 26, Some(&balanced));
+        assert!(full.contains("span 130 bits"), "{full}");
+        assert!(full.contains("+/-2^129"), "{full}");
+        assert!(
+            !full.contains(&saturated.to_string()),
+            "a saturating reach must never reach the generated file: {full}"
+        );
+
+        // An unlabelled descriptor says so rather than guessing a class.
+        assert!(super::precommitted_source_note(5, 13, None).contains("source class unrecorded"));
+
+        // Every note stays a single comment line.
+        for note in [note, bounded, full] {
+            assert_eq!(note.lines().count(), 1, "{note}");
+            assert!(note.trim_start().starts_with("//"), "{note}");
+            assert!(note.ends_with('\n'), "{note}");
         }
     }
 
