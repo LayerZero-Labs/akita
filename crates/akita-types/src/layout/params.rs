@@ -61,7 +61,7 @@ mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 pub use precommitted::{
-    opening_d_segment_width, GroupOpeningPlan, LevelParamsLike, OpeningMethod,
+    opening_d_segment_width, GroupOpeningPlan, LevelParamsLike, OpeningFamily, OpeningMethod,
     PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
 };
 

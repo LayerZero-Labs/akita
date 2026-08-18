@@ -154,19 +154,23 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
 
     let policy = policy_of::<OneHot>();
     let challenge = OneHot::ring_challenge_config(64).expect("D64 challenge");
-    let candidates = derive_candidate_level_params(
-        None,
-        &policy,
-        akita_types::CommitmentPayloadMode::Compressed,
-        PlannerOpeningCandidate::evaluation_trace(challenge),
-        CommitmentRingDims::uniform(64),
-        948_672,
-        crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
-        4,
-        4,
-        3,
-        None,
-        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+    let candidates = derive_fold_candidates(
+        RecursiveCandidateRequest {
+            policy: &policy,
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            opening: PlannerOpeningCandidate::evaluation_trace(challenge),
+            dimensions: CommitmentRingDims::uniform(64),
+            current_witness_len: 948_672,
+            source: crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+            log_basis_inner: 4,
+            log_basis_open: 4,
+            fold_level: 3,
+            source_moment: Some(
+                crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
+            ),
+        },
+        RecursiveSetupPrefix::None,
+        FoldCandidatePolicy::Best,
     )
     .expect("modeled late-fold candidates");
     let linf = candidates
@@ -217,19 +221,22 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     let opening =
         PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 64)
             .expect("packing geometry");
-    let candidates = derive_candidate_level_params(
-        None,
-        &policy,
-        akita_types::CommitmentPayloadMode::Compressed,
+    let request = RecursiveCandidateRequest {
+        policy: &policy,
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         opening,
         dimensions,
-        948_672,
-        crate::InnerBasisSource::BalancedDigits { log_basis: 3 },
-        3,
-        3,
-        1,
-        None,
-        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+        current_witness_len: 948_672,
+        source: crate::InnerBasisSource::BalancedDigits { log_basis: 3 },
+        log_basis_inner: 3,
+        log_basis_open: 3,
+        fold_level: 1,
+        source_moment: Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+    };
+    let candidates = derive_fold_candidates(
+        request,
+        RecursiveSetupPrefix::None,
+        FoldCandidatePolicy::Best,
     )
     .expect("packing candidates");
     assert!(!candidates.is_empty());
@@ -275,19 +282,13 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         );
     }
     let mut prefix_cache = SetupPrefixSearchCache::default();
-    let with_prefix = derive_candidate_level_params(
-        Some(&mut prefix_cache),
-        &policy,
-        akita_types::CommitmentPayloadMode::Compressed,
-        opening,
-        dimensions,
-        948_672,
-        crate::InnerBasisSource::BalancedDigits { log_basis: 3 },
-        3,
-        3,
-        1,
-        Some(1 << 14),
-        Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+    let with_prefix = derive_fold_candidates(
+        request,
+        RecursiveSetupPrefix::Search {
+            cache: &mut prefix_cache,
+            natural_len: 1 << 14,
+        },
+        FoldCandidatePolicy::Best,
     )
     .expect("packing candidates with setup prefix");
     assert!(!with_prefix.is_empty());
@@ -383,51 +384,30 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
         )
         .expect("production packing geometry");
         let derive = |without_bounds| {
-            let arguments = (
-                None,
-                &policy,
-                akita_types::CommitmentPayloadMode::Compressed,
+            let request = RecursiveCandidateRequest {
+                policy: &policy,
+                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
                 opening,
                 dimensions,
-                948_672,
-                crate::InnerBasisSource::BalancedDigits { log_basis },
-                log_basis,
-                log_basis,
-                1,
-                None,
-                Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
-            );
-            if without_bounds {
-                derive_candidate_level_params_split_frontier_without_bounds(
-                    arguments.0,
-                    arguments.1,
-                    arguments.2,
-                    arguments.3,
-                    arguments.4,
-                    arguments.5,
-                    arguments.6,
-                    arguments.7,
-                    arguments.8,
-                    arguments.9,
-                    arguments.10,
-                    arguments.11,
-                )
+                current_witness_len: 948_672,
+                source: crate::InnerBasisSource::BalancedDigits { log_basis },
+                log_basis_inner: log_basis,
+                log_basis_open: log_basis,
+                fold_level: 1,
+                source_moment: Some(
+                    crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
+                ),
+            };
+            let split_bounds = if without_bounds {
+                SplitBoundPolicy::DisabledForOracle
             } else {
-                derive_candidate_level_params_split_frontier(
-                    arguments.0,
-                    arguments.1,
-                    arguments.2,
-                    arguments.3,
-                    arguments.4,
-                    arguments.5,
-                    arguments.6,
-                    arguments.7,
-                    arguments.8,
-                    arguments.9,
-                    arguments.10,
-                    arguments.11,
-                )
-            }
+                SplitBoundPolicy::Enabled
+            };
+            derive_fold_candidates(
+                request,
+                RecursiveSetupPrefix::None,
+                FoldCandidatePolicy::Frontier(split_bounds),
+            )
         };
         let canonical = |candidates: Vec<(CommittedGroupParams, usize)>| {
             candidates
@@ -633,6 +613,19 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         opening.method(),
         OpeningMethod::SubringCoefficientPacking { .. }
     )));
+
+    let incompatible_products =
+        crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+            &policy,
+            CommitmentRingDims {
+                inner: 512,
+                outer: 128,
+                opening: 512,
+            },
+            &product_key,
+        )
+        .expect("incompatible shared opening dimension is an empty candidate domain");
+    assert!(incompatible_products.is_empty());
 }
 
 #[cfg(feature = "catalog-gen")]

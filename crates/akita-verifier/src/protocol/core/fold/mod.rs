@@ -7,7 +7,8 @@ mod single_field;
 use super::*;
 use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_types::{
-    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, RingRelationGroupOpening,
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningFamily,
+    RingRelationGroupOpening,
 };
 
 pub(in crate::protocol::core) use coefficient_packing::{
@@ -32,19 +33,10 @@ pub(in crate::protocol::core) struct FoldPrefix<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) scalar_openings: Vec<E>,
 }
 
-pub(in crate::protocol::core) enum PreparedFoldOpeningPoint<F: FieldCore, E: FieldCore> {
-    EvaluationTrace(PreparedOpeningPoint<F, E>),
-    SubringCoefficientPacking(akita_types::PreparedSubringCoefficientPackingPoint<E>),
-}
-
-impl<F: FieldCore, E: FieldCore> PreparedFoldOpeningPoint<F, E> {
-    fn evaluation_trace(&self) -> Result<&PreparedOpeningPoint<F, E>, AkitaError> {
-        match self {
-            Self::EvaluationTrace(point) => Ok(point),
-            Self::SubringCoefficientPacking(_) => Err(AkitaError::InvalidProof),
-        }
-    }
-}
+pub(in crate::protocol::core) type PreparedFoldOpeningPoint<F, E> = OpeningFamily<
+    PreparedOpeningPoint<F, E>,
+    akita_types::PreparedSubringCoefficientPackingPoint<E>,
+>;
 
 /// Fold material fixed before the shared opening payload is absorbed.
 pub(in crate::protocol::core) struct FoldClaimMaterial<F: FieldCore, E: FieldCore> {
@@ -506,20 +498,17 @@ where
             .zip(&prefix.prepared_points)
             .map(|(challenges, prepared)| match (challenges, prepared) {
                 (
-                    VerifierGroupFoldChallenges::EvaluationTrace(challenges),
+                    OpeningFamily::EvaluationTrace(challenges),
                     PreparedFoldOpeningPoint::EvaluationTrace(point),
                 ) => Ok(RingRelationGroupOpening::evaluation_trace(
                     challenges,
                     point.ring_multiplier_point.clone(),
                 )),
                 (
-                    VerifierGroupFoldChallenges::SubringCoefficientPacking {
-                        geometry,
-                        challenges,
-                    },
+                    OpeningFamily::SubringCoefficientPacking(challenges),
                     PreparedFoldOpeningPoint::SubringCoefficientPacking(point),
-                ) if point.geometry() == geometry => {
-                    RingRelationGroupOpening::subring_coefficient_packing(geometry, challenges)
+                ) if point.geometry() == challenges.geometry() => {
+                    Ok(RingRelationGroupOpening::coefficient_packing(challenges))
                 }
                 _ => Err(AkitaError::InvalidProof),
             })
@@ -715,7 +704,10 @@ where
         let evaluation_trace_points = prefix
             .prepared_points
             .iter()
-            .map(|point| point.evaluation_trace().cloned())
+            .map(|point| match point {
+                OpeningFamily::EvaluationTrace(point) => Ok(point.clone()),
+                OpeningFamily::SubringCoefficientPacking(_) => Err(AkitaError::InvalidProof),
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let evaluation_trace = prepare_evaluation_trace::<F, E>(&EvaluationTraceInputs {
             digit_witness_domain: trace_domain,

@@ -24,7 +24,7 @@ pub use opening_point::{
 };
 pub use params::{
     opening_d_segment_width, shared_d_digit_log_basis, CommittedGroupParams, GroupOpeningPlan,
-    InnerCommitMatrixParams, LevelParamsLike, OpenCommitMatrixParams, OpeningMethod,
+    InnerCommitMatrixParams, LevelParamsLike, OpenCommitMatrixParams, OpeningFamily, OpeningMethod,
     OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
     SisModulusProfileId,
 };

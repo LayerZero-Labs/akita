@@ -46,9 +46,6 @@ macro_rules! impl_multi_chunk_companion {
             ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
             }
-            fn selection_policy() -> akita_schedules::SelectionPolicyId {
-                <$base as $crate::CommitmentConfig>::selection_policy()
-            }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
             }
@@ -297,17 +294,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Catalog-bound schedule selection objective.
     ///
-    /// Uniform/direct presets minimize proof payload. Recursive setup presets
-    /// minimize the first remaining direct setup footprint before payload.
-    /// Mixed-dimension catalogs may opt into the physical setup-field objective
-    /// explicitly; the policy is part of catalog identity and never inferred
-    /// from a ring dimension.
+    /// Uniform/direct presets minimize proof payload. Adaptive-dimension and
+    /// recursive setup presets minimize the first remaining direct setup
+    /// footprint before payload. The policy is part of catalog identity.
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        if Self::recursive_setup_planning() {
-            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
-        } else {
-            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
-        }
+        akita_schedules::SelectionPolicyId::for_policy(
+            Self::recursive_setup_planning(),
+            Self::RING_DIMENSION_SCHEDULE_MODE,
+        )
     }
 
     /// Optional generated schedule catalog for this preset.
@@ -683,7 +677,7 @@ mod fp128_policy_tests {
     }
 
     /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus each catalog maximum.
-    const CI_DENSE_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44];
+    const CI_DENSE_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30];
     const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]

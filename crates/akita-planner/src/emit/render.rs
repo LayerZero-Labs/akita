@@ -1,6 +1,7 @@
 //! Generated-file rendering and module wiring orchestration.
 
 use super::*;
+use std::time::Instant;
 
 fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
     let mut declarations = String::new();

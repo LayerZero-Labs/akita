@@ -1,13 +1,13 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::{
     CommittedGroupParams, InnerCommitMatrixParams, InnerCommitSecurityRoute, LevelParamsLike,
     OpeningMethod, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::AkitaError;
 
+mod descriptor;
 mod profiles;
 mod sizing;
 
@@ -581,162 +581,6 @@ impl FoldSchedule {
     pub fn initial_witness_len(&self) -> usize {
         self.root.input_witness_len
     }
-
-    /// Canonical byte encoding used to order semantically distinct schedules.
-    ///
-    /// This is an ordering descriptor, not a wire encoding or transcript
-    /// commitment. It includes every schedule field that can affect proving or
-    /// verification.
-    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
-    /// Encode checked fold parts with the exact canonical schedule field order.
-    ///
-    /// This ordering helper intentionally performs no schedule validation. The
-    /// planner uses it for candidates that were already checked by construction;
-    /// the selected schedule still goes through full materialization and
-    /// structural validation.
-    pub fn append_descriptor_bytes_from_steps<'a>(
-        bytes: &mut Vec<u8>,
-        mut folds: impl ExactSizeIterator<Item = FoldScheduleDescriptorStep<'a>>,
-        terminal: TerminalFoldDescriptor<'_>,
-    ) -> Result<(), AkitaError> {
-        let root = folds.next().ok_or_else(|| {
-            AkitaError::UnsupportedSchedule(
-                "a fold schedule descriptor requires a root fold".to_string(),
-            )
-        })?;
-        bytes.push(1);
-        append_root_fold_descriptor_bytes(
-            bytes,
-            root.params,
-            root.payload_mode,
-            root.params
-                .precommitted_groups
-                .iter()
-                .map(|group| (&group.layout, group)),
-            &root.params.open_commit_matrix,
-            &root.params.fold_challenge_config,
-            WitnessPartitionDescriptor::CandidateChunks(root.params.witness_chunk.num_chunks),
-            root.input_witness_len,
-            root.output_witness_len,
-        );
-        push_usize(bytes, folds.len());
-        for fold in folds {
-            append_recursive_fold_descriptor_bytes(
-                bytes,
-                fold.params,
-                fold.payload_mode,
-                &fold.params.open_commit_matrix,
-                &fold.params.fold_challenge_config,
-                fold.params.setup_prefix.as_ref(),
-                WitnessPartitionDescriptor::CandidateChunks(fold.params.witness_chunk.num_chunks),
-                fold.input_witness_len,
-                fold.output_witness_len,
-            );
-        }
-        terminal.append_descriptor_bytes(bytes);
-        Ok(())
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(1);
-        append_root_fold_descriptor_bytes(
-            bytes,
-            &self.root.params.final_group.commitment,
-            self.root.params.final_group.commitment.payload_mode,
-            self.root
-                .params
-                .precommitted_groups
-                .iter()
-                .map(|group| (&group.descriptor, &group.commitment)),
-            &self.root.params.open_commit_matrix,
-            &self.root.params.sparse_challenge_config,
-            WitnessPartitionDescriptor::Scheduled(&self.root.params.witness_partition),
-            self.root.input_witness_len,
-            self.root.output_witness_len,
-        );
-        push_usize(bytes, self.recursive_folds.len());
-        for fold in &self.recursive_folds {
-            append_recursive_fold_descriptor_bytes(
-                bytes,
-                &fold.params.witness,
-                fold.params.witness.payload_mode,
-                &fold.params.open_commit_matrix,
-                &fold.params.sparse_challenge_config,
-                fold.params.incoming_setup_prefix.as_ref(),
-                WitnessPartitionDescriptor::Scheduled(&fold.params.witness_partition),
-                fold.input_witness_len,
-                fold.output_witness_len,
-            );
-        }
-        self.terminal.append_descriptor_bytes(bytes);
-    }
-}
-
-enum WitnessPartitionDescriptor<'a> {
-    Scheduled(&'a WitnessPartition),
-    CandidateChunks(usize),
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_root_fold_descriptor_bytes<'a>(
-    bytes: &mut Vec<u8>,
-    commitment: &CommittedGroupParams,
-    payload_mode: crate::CommitmentPayloadMode,
-    precommitted_groups: impl ExactSizeIterator<
-        Item = (
-            &'a CommittedGroupProfile,
-            &'a crate::PrecommittedLevelParams,
-        ),
-    >,
-    open_commit_matrix: &crate::OpenCommitMatrixParams,
-    sparse_challenge_config: &akita_challenges::SparseChallengeConfig,
-    witness_partition: WitnessPartitionDescriptor<'_>,
-    input_witness_len: usize,
-    output_witness_len: usize,
-) {
-    commitment.append_descriptor_bytes_with_payload_mode(bytes, payload_mode);
-    push_usize(bytes, precommitted_groups.len());
-    for (descriptor, commitment) in precommitted_groups {
-        descriptor.append_descriptor_bytes(bytes);
-        commitment.append_descriptor_bytes(bytes);
-    }
-    open_commit_matrix.append_descriptor_bytes(bytes);
-    append_schedule_sparse_challenge_descriptor_bytes(bytes, sparse_challenge_config);
-    append_witness_partition_descriptor(bytes, witness_partition);
-    push_usize(bytes, input_witness_len);
-    push_usize(bytes, output_witness_len);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_recursive_fold_descriptor_bytes(
-    bytes: &mut Vec<u8>,
-    witness: &CommittedGroupParams,
-    payload_mode: crate::CommitmentPayloadMode,
-    open_commit_matrix: &crate::OpenCommitMatrixParams,
-    sparse_challenge_config: &akita_challenges::SparseChallengeConfig,
-    incoming_setup_prefix: Option<&crate::ScheduledSetupPrefix>,
-    witness_partition: WitnessPartitionDescriptor<'_>,
-    input_witness_len: usize,
-    output_witness_len: usize,
-) {
-    witness.append_descriptor_bytes_with_payload_mode(bytes, payload_mode);
-    open_commit_matrix.append_descriptor_bytes(bytes);
-    append_schedule_sparse_challenge_descriptor_bytes(bytes, sparse_challenge_config);
-    match incoming_setup_prefix {
-        None => bytes.push(0),
-        Some(prefix) => {
-            bytes.push(1);
-            prefix.append_descriptor_bytes(bytes);
-        }
-    }
-    append_witness_partition_descriptor(bytes, witness_partition);
-    push_usize(bytes, input_witness_len);
-    push_usize(bytes, output_witness_len);
 }
 
 struct OpeningExecutionGroup<'a> {
@@ -848,42 +692,6 @@ fn validate_level_opening_execution(
     Ok(())
 }
 
-impl TerminalFoldStep {
-    /// Canonical ordering descriptor for a terminal suffix.
-    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
-    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        TerminalFoldDescriptor {
-            witness: &self.params.witness,
-            sparse_challenge_config: &self.params.sparse_challenge_config,
-            response_shape: &self.params.response_shape,
-            input_witness_len: self.input_witness_len,
-        }
-        .append_descriptor_bytes(bytes);
-    }
-}
-
-impl TerminalFoldDescriptor<'_> {
-    /// Canonical ordering descriptor for a borrowed terminal suffix.
-    pub fn canonical_descriptor_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
-    fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
-        bytes.push(3);
-        self.witness.append_descriptor_bytes(bytes);
-        append_schedule_sparse_challenge_descriptor_bytes(bytes, self.sparse_challenge_config);
-        self.response_shape.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.input_witness_len);
-    }
-}
-
 fn validate_stage2_successor_capacity(
     predecessor_name: &str,
     predecessor: &CommittedGroupParams,
@@ -937,32 +745,6 @@ fn validate_stage2_successor_capacity(
     Ok(())
 }
 
-fn append_witness_partition_descriptor_bytes(bytes: &mut Vec<u8>, partition: &WitnessPartition) {
-    match partition {
-        WitnessPartition::Single => bytes.push(0),
-        WitnessPartition::Distributed { num_chunks } => {
-            bytes.push(1);
-            push_usize(bytes, *num_chunks);
-        }
-    }
-}
-
-fn append_witness_partition_descriptor(
-    bytes: &mut Vec<u8>,
-    partition: WitnessPartitionDescriptor<'_>,
-) {
-    match partition {
-        WitnessPartitionDescriptor::Scheduled(partition) => {
-            append_witness_partition_descriptor_bytes(bytes, partition);
-        }
-        WitnessPartitionDescriptor::CandidateChunks(1) => bytes.push(0),
-        WitnessPartitionDescriptor::CandidateChunks(num_chunks) => {
-            bytes.push(1);
-            push_usize(bytes, num_chunks);
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
     pub estimated_root_direct_payload_bytes: usize,
@@ -973,8 +755,8 @@ pub struct FoldScheduleEstimate {
     pub estimated_terminal_response_payload_bytes: usize,
     /// Maximum flat setup-matrix capacity required by the schedule.
     pub estimated_num_setup_field_elements: usize,
-    /// Natural (unpadded) setup length at the first direct edge, when the
-    /// recursive setup planner is active.
+    /// Natural (unpadded) setup length at the first direct edge for setup-first
+    /// schedule selection.
     pub first_direct_setup_field_len: Option<usize>,
     /// Number of recursive successors that consume an offloaded setup prefix.
     pub selected_offload_edges: usize,

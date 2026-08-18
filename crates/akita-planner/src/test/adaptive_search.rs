@@ -6,6 +6,28 @@ fn onehot_group(num_vars: usize, num_polynomials: usize) -> PolynomialGroupLayou
     PolynomialGroupLayout::new(num_vars, num_polynomials)
 }
 
+fn estimated_first_direct_setup_capacity(planned: &PlannedFoldSchedule) -> usize {
+    akita_types::padded_setup_prefix_len(
+        planned
+            .estimate
+            .first_direct_setup_field_len
+            .expect("setup-first plan must report its first direct setup length"),
+    )
+}
+
+fn materialized_first_direct_setup_capacity(
+    planned: &PlannedFoldSchedule,
+    key: PolynomialGroupLayout,
+) -> usize {
+    akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(
+        &planned.schedule,
+        &akita_types::AkitaScheduleLookupKey::single(key)
+            .opening_layout()
+            .expect("opening layout"),
+    )
+    .expect("materialized first direct setup capacity")
+}
+
 #[cfg(test)]
 fn find_schedule(
     key: PolynomialGroupLayout,
@@ -101,8 +123,9 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     )
     .unwrap();
     let selected_score = (
-        selected.estimate.estimated_num_setup_field_elements,
+        estimated_first_direct_setup_capacity(&selected),
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        selected.estimate.estimated_num_setup_field_elements,
     );
 
     let uniform = RingDimensionSearchDomain::uniform(dimensions[0].d_a()).unwrap();
@@ -121,8 +144,9 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     assert!(
         selected_score
             <= (
-                candidate.estimate.estimated_num_setup_field_elements,
+                materialized_first_direct_setup_capacity(&candidate, key),
                 candidate.estimate.estimated_proof_payload_bytes().unwrap(),
+                candidate.estimate.estimated_num_setup_field_elements,
             )
     );
 
@@ -143,11 +167,11 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         previous = current;
     }
     let terminal_d_a = schedule.terminal.params.witness.d_a();
-    assert!(domain
-        .candidates()
+    let terminal_level = schedule.recursive_folds.len().saturating_add(1);
+    assert!(dimension_candidates(&policy, terminal_level, previous)
+        .unwrap()
         .iter()
-        .any(|candidate| candidate.d_a() == terminal_d_a));
-    assert!(terminal_d_a <= previous.d_a());
+        .any(|dimensions| dimensions.d_a() == terminal_d_a));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -182,6 +206,11 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
         unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
     );
+    assert_eq!(
+        selected.estimate.first_direct_setup_field_len,
+        unpruned.estimate.first_direct_setup_field_len,
+    );
+    assert_eq!(selected.estimate.first_direct_setup_field_len, None);
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
         unpruned.estimate.estimated_num_setup_field_elements,
@@ -305,6 +334,14 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
             .opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
+    assert_eq!(
+        selected.estimate.first_direct_setup_field_len,
+        unpruned.estimate.first_direct_setup_field_len,
+    );
+    assert_eq!(
+        estimated_first_direct_setup_capacity(&selected),
+        estimated_first_direct_setup_capacity(&unpruned),
+    );
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
         unpruned.estimate.estimated_num_setup_field_elements,
@@ -507,13 +544,13 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
     let expected_root_dimensions = [
         CommitmentRingDims {
             inner: 128,
-            outer: 128,
+            outer: 64,
             opening: 64,
         },
         CommitmentRingDims {
             inner: 128,
             outer: 64,
-            opening: 128,
+            opening: 64,
         },
     ];
 
@@ -554,6 +591,16 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
             "hand-priced role optimum changed"
         );
 
+        assert_eq!(
+            selected.estimate.first_direct_setup_field_len,
+            unpruned.estimate.first_direct_setup_field_len,
+            "domain {domain_index} first direct natural setup length"
+        );
+        assert_eq!(
+            estimated_first_direct_setup_capacity(&selected),
+            estimated_first_direct_setup_capacity(&unpruned),
+            "domain {domain_index} first direct padded setup capacity"
+        );
         assert_eq!(
             selected.estimate.estimated_num_setup_field_elements,
             unpruned.estimate.estimated_num_setup_field_elements,
@@ -634,7 +681,7 @@ fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
+fn adaptive_nv36_minimizes_first_direct_setup_before_proof_bytes() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
@@ -706,23 +753,23 @@ fn adaptive_nv36_minimizes_setup_before_proof_bytes() {
             assert_eq!(opening_method, akita_types::OpeningMethod::EvaluationTrace);
         }
     }
-    assert!(
-        selected.estimate.estimated_num_setup_field_elements
-            <= rank_one_capped.estimate.estimated_num_setup_field_elements,
-        "the expanded domain must not lose on the setup-first objective"
+    let selected_score = (
+        estimated_first_direct_setup_capacity(&selected),
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        selected.estimate.estimated_num_setup_field_elements,
     );
-    if selected.estimate.estimated_num_setup_field_elements
-        == rank_one_capped.estimate.estimated_num_setup_field_elements
-    {
-        assert!(
-            selected.estimate.estimated_proof_payload_bytes().unwrap()
-                <= rank_one_capped
-                    .estimate
-                    .estimated_proof_payload_bytes()
-                    .unwrap(),
-            "an exact setup tie must not lose on proof payload"
-        );
-    }
+    let rank_one_capped_score = (
+        estimated_first_direct_setup_capacity(&rank_one_capped),
+        rank_one_capped
+            .estimate
+            .estimated_proof_payload_bytes()
+            .unwrap(),
+        rank_one_capped.estimate.estimated_num_setup_field_elements,
+    );
+    assert!(
+        selected_score <= rank_one_capped_score,
+        "the expanded domain must not lose on the first-direct setup objective"
+    );
 }
 
 #[cfg(feature = "catalog-gen")]

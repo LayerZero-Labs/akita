@@ -450,6 +450,164 @@ mod tests {
     }
 
     #[test]
+    fn grouped_body_sizing_matches_materialized_units_for_both_opening_methods() {
+        let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
+        for opening_method in [
+            OpeningMethod::EvaluationTrace,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            },
+        ] {
+            for payload_mode in [
+                crate::CommitmentPayloadMode::Raw,
+                crate::CommitmentPayloadMode::Compressed,
+            ] {
+                let mut params = coefficient_packing_params(payload_mode);
+                params.opening_method = opening_method;
+                if matches!(opening_method, OpeningMethod::EvaluationTrace) {
+                    params.fold_challenge_config =
+                        akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
+                            .expect("A-ring challenge");
+                }
+                let relation_geometry =
+                    RelationWitnessGeometry::for_level(&params, &opening_batch, 2)
+                        .expect("relation geometry");
+                for num_chunks in [1, 2, 4] {
+                    let layout = WitnessLayout::new(
+                        &params,
+                        &opening_batch,
+                        &relation_geometry,
+                        num_chunks,
+                        2,
+                    )
+                    .expect("materialized witness layout");
+                    let materialized_body = layout
+                        .units()
+                        .iter()
+                        .map(|unit| {
+                            unit.z_range().len() + unit.e_range().len() + unit.t_range().len()
+                        })
+                        .sum::<usize>();
+                    assert_eq!(
+                        crate::grouped_witness_body_coefficients(
+                            &params,
+                            params.role_dims(),
+                            2,
+                            opening_batch.num_total_polynomials(),
+                            num_chunks,
+                        )
+                        .expect("grouped witness body"),
+                        materialized_body,
+                    );
+                }
+            }
+        }
+
+        let params = coefficient_packing_params(crate::CommitmentPayloadMode::Raw);
+        assert!(crate::grouped_witness_body_coefficients(
+            &params,
+            params.role_dims(),
+            2,
+            usize::MAX,
+            1,
+        )
+        .is_err());
+        assert!(
+            crate::grouped_witness_body_coefficients(&params, params.role_dims(), 2, 1, 0,)
+                .is_err()
+        );
+
+        for mutate in [
+            |params: &mut CommittedGroupParams| params.num_positions_per_block = 0,
+            |params: &mut CommittedGroupParams| params.num_digits_inner = 0,
+            |params: &mut CommittedGroupParams| params.num_digits_outer = 0,
+            |params: &mut CommittedGroupParams| params.num_digits_open = 0,
+            |params: &mut CommittedGroupParams| params.num_digits_fold = 0,
+        ] {
+            let mut malformed = params.clone();
+            mutate(&mut malformed);
+            assert!(crate::grouped_witness_body_coefficients(
+                &malformed,
+                malformed.role_dims(),
+                2,
+                1,
+                1,
+            )
+            .is_err());
+        }
+
+        let mut zero_a_rows = params.clone();
+        let inner = zero_a_rows.inner_commit_matrix;
+        zero_a_rows.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner.sis_table_key().expect("inner SIS key").table_digest,
+            inner.sis_modulus_profile(),
+            0,
+            inner.input_width(),
+            inner.coeff_linf_bound().expect("inner L-infinity bound"),
+            inner.ring_dimension(),
+        );
+        assert!(crate::grouped_witness_body_coefficients(
+            &zero_a_rows,
+            zero_a_rows.role_dims(),
+            2,
+            1,
+            1,
+        )
+        .is_err());
+
+        let mut wrong_source = params;
+        wrong_source.source_encoding = crate::CommittedSourceEncoding::TensorSubfieldProjection {
+            extension_degree: 2,
+        };
+        assert!(crate::grouped_witness_body_coefficients(
+            &wrong_source,
+            wrong_source.role_dims(),
+            2,
+            1,
+            1,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn grouped_body_sizing_matches_independent_formula_for_every_extension_degree() {
+        let claims = 3usize;
+        let chunks = 4usize;
+        for extension_degree in [1, 2, 4] {
+            let mut params = coefficient_packing_params(crate::CommitmentPayloadMode::Raw);
+            params.opening_method = OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            };
+            let dimensions = params.role_dims();
+            let opening_width = extension_degree * 64;
+            let expected_z = chunks
+                * params.num_positions_per_block
+                * params.num_digits_inner
+                * params.num_digits_fold
+                * dimensions.d_a();
+            let expected_e =
+                claims * params.num_live_blocks * params.num_digits_open * opening_width;
+            let expected_t = claims
+                * params.num_live_blocks
+                * params.inner_commit_matrix.output_rank()
+                * params.num_digits_outer
+                * dimensions.d_a();
+            assert_eq!(
+                crate::grouped_witness_body_coefficients(
+                    &params,
+                    dimensions,
+                    extension_degree,
+                    claims,
+                    chunks,
+                )
+                .expect("grouped packing body"),
+                expected_z + expected_e + expected_t,
+            );
+        }
+    }
+
+    #[test]
     fn relation_geometry_distinguishes_equal_width_opening_methods() {
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("opening batch");
         let mut packing = CommittedGroupParams::params_only(

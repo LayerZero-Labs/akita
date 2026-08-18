@@ -256,7 +256,6 @@ pub struct RelationRangeImageProver<E: FieldCore> {
 }
 
 mod additional_terms;
-#[allow(dead_code)] // Internal capability; public packing admission remains closed.
 mod coefficient_packing_terms;
 mod coefficient_prefix;
 mod coefficient_round_fold;
@@ -268,10 +267,11 @@ mod lifecycle;
 mod round_flow;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
-pub(crate) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
+pub(in crate::protocol) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
+pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverLinearTerms};
+#[cfg(test)]
 pub(crate) use evaluation_trace::{
-    build_evaluation_trace_weights, PreparedProverLinearTerms, StructuredLinearSegment,
-    StructuredLinearTerm, StructuredLinearWeights,
+    StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {

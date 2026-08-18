@@ -192,9 +192,19 @@ jobs:
           # Exact packing searches retain large suffix frontiers. Keep the
           # standard hosted runner below the measured two-row memory peak.
           AKITA_SCHEDULE_GEN_JOBS: 1
-        run: scripts/generate-schedule-tables.sh --check-catalog --row-progress
-      - name: Committed schedule tables match the generator
-        run: git diff --exit-code -- crates/akita-schedules/src/generated
+        run: |
+          scripts/generate-schedule-tables.sh \
+            --check-catalog \
+            --row-progress \
+            --catalog-snapshot specs/evidence/subring-coefficient-packing/head.tsv \
+            --catalog-baseline specs/evidence/subring-coefficient-packing/base.tsv \
+            --catalog-report specs/evidence/subring-coefficient-packing/comparison.tsv
+      - name: Committed schedule tables and evidence match the generator
+        run: |
+          git diff --exit-code -- \
+            crates/akita-schedules/src/generated \
+            specs/evidence/subring-coefficient-packing/head.tsv \
+            specs/evidence/subring-coefficient-packing/comparison.tsv
       - name: Recursive setup-prefix slots
         run: |
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests

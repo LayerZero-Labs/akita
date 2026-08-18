@@ -105,10 +105,12 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     };
     let geometry = SubringCoefficientPackingGeometry::try_new(2, 256, 64).unwrap();
     let openings = vec![
-        RingRelationGroupOpening::subring_coefficient_packing(geometry, make_challenges(1))
-            .unwrap(),
-        RingRelationGroupOpening::subring_coefficient_packing(geometry, make_challenges(2))
-            .unwrap(),
+        RingRelationGroupOpening::coefficient_packing(
+            CoefficientPackingChallenges::new(geometry, make_challenges(1)).unwrap(),
+        ),
+        RingRelationGroupOpening::coefficient_packing(
+            CoefficientPackingChallenges::new(geometry, make_challenges(2)).unwrap(),
+        ),
     ];
     let total_claims = opening_batch.num_total_polynomials();
     let gamma = (0..total_claims)

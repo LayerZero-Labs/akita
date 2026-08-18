@@ -3,10 +3,10 @@
 use akita_field::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    FoldScheduleEstimate, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RingRole, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
+    RecursiveFoldParams, RecursiveFoldStep, RingRole, RootFinalGroupParams, RootFoldParams,
+    RootFoldStep, RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
     DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
@@ -67,8 +67,6 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick proof bytes, then physical setup fields, then canonical descriptor.
     MinEstimatedProofPayload,
-    /// Pick physical setup fields, then proof bytes, then canonical descriptor.
-    MinSetupMatrixFieldElementsThenProofPayload,
     /// Pick first direct setup, proof bytes, total setup, then descriptor.
     MinFirstDirectSetupThenPayload,
 }
@@ -79,13 +77,13 @@ impl SelectionPolicyId {
         recursive_setup_planning: bool,
         ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ) -> Self {
-        if recursive_setup_planning {
+        if recursive_setup_planning
+            || matches!(
+                ring_dimension_schedule_mode,
+                RingDimensionScheduleMode::AdaptiveDimension { .. }
+            )
+        {
             Self::MinFirstDirectSetupThenPayload
-        } else if matches!(
-            ring_dimension_schedule_mode,
-            RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ) {
-            Self::MinSetupMatrixFieldElementsThenProofPayload
         } else {
             Self::MinEstimatedProofPayload
         }
@@ -96,7 +94,8 @@ impl SelectionPolicyId {
         match self {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayload => 2,
-            Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
+            // Tag 3 belonged to the retired setup-envelope-first policy and
+            // must never be reused.
         }
     }
 
@@ -104,9 +103,6 @@ impl SelectionPolicyId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
-            Self::MinSetupMatrixFieldElementsThenProofPayload => {
-                "MinSetupMatrixFieldElementsThenProofPayload"
-            }
             Self::MinFirstDirectSetupThenPayload => "MinFirstDirectSetupThenPayload",
         }
     }
@@ -286,7 +282,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     );
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
-            "schedule selection policy disagrees with recursive setup capability".to_string(),
+            "schedule selection policy disagrees with the schedule mode".to_string(),
         ));
     }
     if policy.setup_field_budget == Some(0) {
@@ -619,7 +615,9 @@ pub fn expanded_schedule_proof_payload_bytes(
 pub fn materialize_candidate_schedule(
     cached_total: usize,
     cached_num_setup_field_elements: usize,
-    first_direct_setup_field_len: Option<usize>,
+    cached_first_direct_setup_field_len: Option<usize>,
+    selection_policy: SelectionPolicyId,
+    root_layout: &OpeningClaimsLayout,
     mut folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -646,7 +644,7 @@ pub fn materialize_candidate_schedule(
             .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
         estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
         estimated_num_setup_field_elements: cached_num_setup_field_elements,
-        first_direct_setup_field_len,
+        first_direct_setup_field_len: None,
         selected_offload_edges: 0,
     };
     let recomputed = estimate.estimated_proof_payload_bytes()?;
@@ -704,7 +702,24 @@ pub fn materialize_candidate_schedule(
             input_witness_len: terminal_response.input_witness_len,
         },
     };
-    schedule.validate_structure()?;
+    let first_direct_setup_field_len = match selection_policy {
+        SelectionPolicyId::MinEstimatedProofPayload => None,
+        SelectionPolicyId::MinFirstDirectSetupThenPayload => Some(
+            first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
+        ),
+    };
+    if let Some(cached) = cached_first_direct_setup_field_len {
+        if first_direct_setup_field_len != Some(cached) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "cached first direct setup length {cached} disagrees with materialized length {}",
+                first_direct_setup_field_len
+                    .map_or_else(|| "none".to_string(), |value| value.to_string())
+            )));
+        }
+    }
+    if first_direct_setup_field_len.is_none() {
+        schedule.validate_structure()?;
+    }
     let recomputed_num_setup_field_elements =
         akita_types::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
     if recomputed_num_setup_field_elements != cached_num_setup_field_elements {
@@ -717,7 +732,65 @@ pub fn materialize_candidate_schedule(
         .iter()
         .filter(|fold| fold.params.incoming_setup_prefix.is_some())
         .count();
+    estimate.first_direct_setup_field_len = first_direct_setup_field_len;
     Ok(PlannedFoldSchedule { schedule, estimate })
+}
+
+/// Natural active setup length at the first direct edge in a materialized schedule.
+pub fn first_direct_setup_field_len_for_schedule(
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+) -> Result<usize, AkitaError> {
+    schedule.validate_structure()?;
+
+    for (successor_index, successor) in schedule.recursive_folds.iter().enumerate() {
+        if successor.params.incoming_setup_prefix.is_some() {
+            continue;
+        }
+        return if successor_index == 0 {
+            akita_types::active_setup_field_len(
+                &schedule.root.params.final_group.commitment,
+                root_layout,
+            )
+        } else {
+            active_setup_field_len_for_recursive_producer(
+                &schedule.recursive_folds[successor_index - 1],
+            )
+        };
+    }
+
+    schedule.recursive_folds.last().map_or_else(
+        || {
+            akita_types::active_setup_field_len(
+                &schedule.root.params.final_group.commitment,
+                root_layout,
+            )
+        },
+        active_setup_field_len_for_recursive_producer,
+    )
+}
+
+/// Padded active setup capacity at the first direct edge.
+pub fn first_direct_setup_capacity_for_schedule(
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+) -> Result<usize, AkitaError> {
+    Ok(akita_types::padded_setup_prefix_len(
+        first_direct_setup_field_len_for_schedule(schedule, root_layout)?,
+    ))
+}
+
+fn active_setup_field_len_for_recursive_producer(
+    producer: &RecursiveFoldStep,
+) -> Result<usize, AkitaError> {
+    let incoming_prefix_len = producer
+        .params
+        .incoming_setup_prefix
+        .as_ref()
+        .map(|prefix| prefix.natural_len);
+    let layout =
+        akita_types::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
+    akita_types::active_setup_field_len(&producer.params.witness, &layout)
 }
 
 fn witness_partition(num_chunks: usize) -> WitnessPartition {
@@ -726,40 +799,6 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
     } else {
         WitnessPartition::Distributed { num_chunks }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Count ring elements in one grouped witness segment with checked arithmetic.
-pub fn grouped_segment_rings(
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_chunks: usize,
-    num_positions_per_block: usize,
-    n_a: usize,
-    num_digits_inner: usize,
-    num_digits_outer: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("group e-hat witness overflow".to_string()))?;
-    let t_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("group t-hat witness overflow".to_string()))?;
-    let z_hat = num_positions_per_block
-        .checked_mul(num_digits_inner)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .and_then(|n| n.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("group z-hat witness overflow".to_string()))?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
 }
 
 /// Derive the canonical next-witness field length for a scalar planner level.
@@ -822,7 +861,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,

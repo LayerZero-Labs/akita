@@ -270,13 +270,10 @@ pub(crate) fn root_level_candidates_for_basis(
 
     let mut candidates = Vec::new();
     let shared_opening_ring_dimension = dimensions.d_d();
-    if precommitted_groups.iter().any(|group| {
-        !group
-            .0
-            .inner_commit_matrix
-            .ring_dimension()
-            .is_multiple_of(shared_opening_ring_dimension)
-    }) {
+    if !crate::schedule_params::precommitted_groups_support_opening_dimension(
+        key.precommitteds.iter(),
+        shared_opening_ring_dimension,
+    ) {
         return Ok(Vec::new());
     }
     let Some((candidate_precommitted_groups, candidate_precommitted_d_width)) =
@@ -496,19 +493,6 @@ fn root_final_group_level_params_candidate(
     Ok(Some(params))
 }
 
-fn validate_direct_adaptive_dimension_schedule_request(
-    policy: &PlannerPolicy,
-) -> Result<(), AkitaError> {
-    if policy.selection_policy
-        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    {
-        return Err(AkitaError::InvalidSetup(
-            "adaptive search requires MinSetupMatrixFieldElementsThenProofPayload".into(),
-        ));
-    }
-    Ok(())
-}
-
 /// Build the fold schedule selected by a full schedule lookup key.
 pub fn find_schedule(
     key: &AkitaScheduleLookupKey,
@@ -521,13 +505,6 @@ pub fn find_schedule(
     let diagnostics = diagnostics.as_deref();
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
-    if matches!(
-        policy.ring_dimension_schedule_mode,
-        crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
-    ) && !policy.recursive_setup_planning
-    {
-        validate_direct_adaptive_dimension_schedule_request(policy)?;
-    }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let scalar_policy;
     let active_policy = if key.precommitteds.is_empty() && !policy.recursive_setup_planning {
@@ -539,7 +516,9 @@ pub fn find_schedule(
     } else {
         policy
     };
-    let setup_field_budget = if active_policy.recursive_setup_planning {
+    let setup_field_budget = if active_policy.selection_policy
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+    {
         active_policy.setup_field_budget
     } else {
         None
@@ -592,13 +571,6 @@ pub fn find_schedule(
         crate::SelectionPolicyId::MinEstimatedProofPayload => {
             select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-            select_complete_candidate(
-                active_policy,
-                suffix.mixed_frontier.candidates(),
-                diagnostics,
-            )?
-        }
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
@@ -622,12 +594,14 @@ pub fn find_schedule(
             key.final_group.num_vars()
         )));
     };
-    let first_direct_setup_field_len = if active_policy.recursive_setup_planning {
+    let first_direct_setup_field_len = if active_policy.selection_policy
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+    {
         Some(
             best.first_direct_setup_field_len
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(
-                        "recursive setup schedule is missing its first direct setup size".into(),
+                        "setup-first schedule is missing its first direct setup size".into(),
                     )
                 })?
                 .get(),
@@ -650,10 +624,13 @@ pub fn find_schedule(
         );
     }
     let materialization_started = diagnostics.map(|_| Instant::now());
+    let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
         best.total_bytes,
         best.setup_field_elements,
         first_direct_setup_field_len,
+        active_policy.selection_policy,
+        &root_layout,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),
     );

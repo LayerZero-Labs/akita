@@ -1,5 +1,16 @@
 //! Generate schedule tables using the offline DP planner.
 
+mod catalog_policy_report;
+mod catalog_snapshot;
+mod generation_output_path;
+
+use catalog_policy_report::catalog_policy_signature;
+#[cfg(all(test, feature = "catalog-check"))]
+use catalog_policy_report::source_encoding_signature;
+#[cfg(test)]
+use generation_output_path::resolved_output_path;
+use generation_output_path::validate_explicit_output_isolation;
+
 use akita_planner::emit::{
     bounded_parallel_filter_map, offline_planning_worker_count, MaterializationDiagnostics,
 };
@@ -17,7 +28,7 @@ use akita_types::{
 };
 use std::env;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Default)]
@@ -31,6 +42,8 @@ struct ParsedArgs {
     wiring_only: bool,
     check_catalog: bool,
     catalog_report: Option<PathBuf>,
+    catalog_snapshot: Option<PathBuf>,
+    catalog_baseline: Option<PathBuf>,
     row_progress: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
@@ -56,7 +69,8 @@ fn generator_command() -> &'static str {
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
      --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
-     [--catalog-report <path>] [--row-progress] \
+     [--catalog-report <path>] [--catalog-snapshot <path>] \
+     [--catalog-baseline <snapshot>] [--row-progress] \
      [family_module_name ...]\n\
      positional family names select only those generated families; omit them \
      to generate every family \
@@ -143,6 +157,8 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     let mut wiring_only = false;
     let mut check_catalog = false;
     let mut catalog_report = None;
+    let mut catalog_snapshot = None;
+    let mut catalog_baseline = None;
     let mut row_progress = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
@@ -169,6 +185,26 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
                     return Err("--catalog-report may be supplied only once".to_string());
                 }
                 catalog_report = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--catalog-snapshot" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--catalog-snapshot requires a path".to_string())?;
+                if catalog_snapshot.is_some() {
+                    return Err("--catalog-snapshot may be supplied only once".to_string());
+                }
+                catalog_snapshot = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--catalog-baseline" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--catalog-baseline requires a path".to_string())?;
+                if catalog_baseline.is_some() {
+                    return Err("--catalog-baseline may be supplied only once".to_string());
+                }
+                catalog_baseline = Some(PathBuf::from(value));
                 i += 2;
             }
             "--final-group" => {
@@ -242,20 +278,27 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if wiring_only && family_filter.is_some() {
         return Err("--wiring-only does not accept family filters or explicit rows".to_string());
     }
-    if check_catalog && (wiring_only || explicit_rows.final_group.is_some()) {
-        return Err("--check-catalog requires ordinary generated rows".to_string());
+    let catalog_rows_requested =
+        check_catalog || catalog_snapshot.is_some() || catalog_baseline.is_some();
+    if catalog_rows_requested && (wiring_only || explicit_rows.final_group.is_some()) {
+        return Err("catalog checks and snapshots require ordinary generated rows".to_string());
     }
     if check_catalog && !cfg!(feature = "catalog-check") {
         return Err("--check-catalog requires the `catalog-check` feature".to_string());
     }
-    if catalog_report.is_some() && !check_catalog {
-        return Err("--catalog-report requires --check-catalog".to_string());
+    if catalog_report.is_some() && !check_catalog && catalog_baseline.is_none() {
+        return Err("--catalog-report requires --check-catalog or --catalog-baseline".to_string());
+    }
+    if catalog_baseline.is_some() && family_filter.is_some() {
+        return Err("--catalog-baseline requires the complete generated family set".to_string());
     }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
         check_catalog,
         catalog_report,
+        catalog_snapshot,
+        catalog_baseline,
         row_progress,
         family_filter,
         explicit_rows,
@@ -291,210 +334,17 @@ struct CatalogComparison {
     changed_rows: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct CatalogRowMetrics {
     setup_fields: usize,
+    first_direct_setup_capacity: Option<usize>,
     proof_bytes: usize,
     fold_levels: usize,
     row_digest: String,
     policy_signature: String,
 }
 
-const CATALOG_REPORT_HEADER: &str = "family\tstatus\tkey\told_setup_fields\tnew_setup_fields\told_proof_bytes\tnew_proof_bytes\told_levels\tnew_levels\told_row_digest\tnew_row_digest\told_policy\tnew_policy\n";
-
-fn source_encoding_signature(value: akita_types::CommittedSourceEncoding) -> String {
-    match value {
-        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable => "canonical".into(),
-        akita_types::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
-            format!("tensor-k{extension_degree}")
-        }
-    }
-}
-
-fn security_route_signature(value: akita_types::InnerCommitSecurityRoute) -> &'static str {
-    match value {
-        akita_types::InnerCommitSecurityRoute::Linf(_) => "Linf",
-        akita_types::InnerCommitSecurityRoute::L2 { .. } => "L2",
-    }
-}
-
-fn opening_policy_signature(
-    opening_method: akita_types::OpeningMethod,
-    source_encoding: akita_types::CommittedSourceEncoding,
-    extension_degree: usize,
-    d_a: usize,
-    security_route: akita_types::InnerCommitSecurityRoute,
-) -> Result<String, String> {
-    let opening = match opening_method {
-        akita_types::OpeningMethod::EvaluationTrace => "ET,s=-,h=-,w=-".to_string(),
-        akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } => {
-            let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
-                extension_degree,
-                d_a,
-                challenge_subring_dimension,
-            )
-            .map_err(|error| format!("derive catalog packing geometry: {error}"))?;
-            format!(
-                "PACK,s={},h={},w={}",
-                geometry.challenge_subring_dimension(),
-                geometry.packing_factor(),
-                geometry.partial_base_field_width(),
-            )
-        }
-    };
-    Ok(format!(
-        "{opening},src={},dA={d_a},sec={}",
-        source_encoding_signature(source_encoding),
-        security_route_signature(security_route),
-    ))
-}
-
-fn catalog_policy_signature(spec: &EmitSpec, schedule: &FoldSchedule) -> Result<String, String> {
-    use std::fmt::Write as _;
-
-    let mut signature = String::new();
-    let nonterminal = std::iter::once((
-        0usize,
-        &schedule.root.params.final_group.commitment,
-        schedule.root.input_witness_len,
-        schedule.root.output_witness_len,
-    ))
-    .chain(
-        schedule
-            .recursive_folds
-            .iter()
-            .enumerate()
-            .map(|(index, fold)| {
-                (
-                    index + 1,
-                    &fold.params.witness,
-                    fold.input_witness_len,
-                    fold.output_witness_len,
-                )
-            }),
-    );
-    for (level, params, input_witness_len, output_witness_len) in nonterminal {
-        let eor = if matches!(
-            params.opening_method,
-            akita_types::OpeningMethod::EvaluationTrace
-        ) {
-            let final_group = akita_types::PolynomialGroupLayout::singleton(
-                akita_types::padded_boolean_opening_vars(input_witness_len)
-                    .map_err(|error| format!("derive opening arity: {error}"))?,
-            );
-            let opening_shape = params
-                .opening_layout_for_final_group(final_group)
-                .and_then(|layout| layout.aggregate_polynomial_group_layout())
-                .map_err(|error| format!("derive level opening shape: {error}"))?;
-            akita_types::extension_opening_reduction_level_bytes(
-                spec.policy
-                    .challenge_field_bits()
-                    .map_err(|error| format!("derive challenge width: {error}"))?,
-                spec.policy.claim_ext_degree,
-                opening_shape,
-            )
-            .map_err(|error| format!("derive level EOR bytes: {error}"))?
-        } else {
-            0
-        };
-        if level != 0 {
-            signature.push('/');
-        }
-        write!(
-            signature,
-            "L{level}[chunks={}@{},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
-            params.witness_chunk.num_chunks,
-            params.witness_chunk.num_activated_levels,
-            opening_policy_signature(
-                params.opening_method,
-                params.source_encoding,
-                spec.policy.claim_ext_degree,
-                params.d_a(),
-                params.inner_commit_matrix.security_route(),
-            )?,
-        )
-        .map_err(|error| format!("write catalog policy signature: {error}"))?;
-        if level == 0 {
-            for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
-                write!(
-                    signature,
-                    ";pre{index}={}",
-                    opening_policy_signature(
-                        group.commitment.opening.opening_method,
-                        akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
-                        spec.policy.claim_ext_degree,
-                        group.commitment.layout.inner_commit_matrix.ring_dimension(),
-                        group.commitment.layout.inner_commit_matrix.security_route(),
-                    )?,
-                )
-                .map_err(|error| format!("write catalog policy signature: {error}"))?;
-            }
-        } else if let Some(prefix) = schedule.recursive_folds[level - 1]
-            .params
-            .incoming_setup_prefix
-            .as_ref()
-        {
-            write!(
-                signature,
-                ";prefix={}",
-                opening_policy_signature(
-                    prefix.commitment_params.opening.opening_method,
-                    akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
-                    spec.policy.claim_ext_degree,
-                    prefix
-                        .commitment_params
-                        .layout
-                        .inner_commit_matrix
-                        .ring_dimension(),
-                    prefix
-                        .commitment_params
-                        .layout
-                        .inner_commit_matrix
-                        .security_route(),
-                )?,
-            )
-            .map_err(|error| format!("write catalog policy signature: {error}"))?;
-        }
-        signature.push(']');
-    }
-    let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
-        spec.policy
-            .challenge_field_bits()
-            .map_err(|error| format!("derive challenge width: {error}"))?,
-        spec.policy.claim_ext_degree,
-        akita_types::PolynomialGroupLayout::singleton(
-            akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
-                .map_err(|error| format!("derive terminal opening arity: {error}"))?,
-        ),
-    )
-    .map_err(|error| format!("derive terminal EOR bytes: {error}"))?;
-    let terminal_source = akita_types::CommittedSourceEncoding::for_producer(
-        akita_types::OpeningMethod::EvaluationTrace,
-        spec.policy.claim_ext_degree,
-        schedule.terminal.params.witness.d_a(),
-        akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
-            .map_err(|error| format!("derive terminal source arity: {error}"))?,
-        false,
-    );
-    write!(
-        signature,
-        "/T[method=ET,src={},eor={terminal_eor},input={},dA={},sec={}]",
-        source_encoding_signature(terminal_source),
-        schedule.terminal.input_witness_len,
-        schedule.terminal.params.witness.d_a(),
-        security_route_signature(
-            schedule
-                .terminal
-                .params
-                .witness
-                .inner_commit_matrix
-                .security_route(),
-        ),
-    )
-    .map_err(|error| format!("write catalog policy signature: {error}"))?;
-    Ok(signature)
-}
+const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tkey\tcompiled_setup_fields\tregenerated_setup_fields\tcompiled_proof_bytes\tregenerated_proof_bytes\tcompiled_levels\tregenerated_levels\tcompiled_row_digest\tregenerated_row_digest\tcompiled_policy\tregenerated_policy\n";
 
 fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
     let final_group = CommittedGroupProfile::try_from_params(
@@ -526,8 +376,19 @@ fn catalog_row_metrics(
     let setup_fields = akita_types::setup_matrix_capacity_for_schedule(schedule)
         .map_err(|error| format!("estimate setup capacity: {error}"))?
         .num_field_elements;
+    let first_direct_setup_capacity = (spec.policy.selection_policy
+        == akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload)
+        .then(|| {
+            akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(
+                schedule,
+                &key.opening_layout()?,
+            )
+        })
+        .transpose()
+        .map_err(|error| format!("estimate first direct setup capacity: {error}"))?;
     Ok(CatalogRowMetrics {
         setup_fields,
+        first_direct_setup_capacity,
         proof_bytes,
         fold_levels: schedule.num_fold_levels(),
         row_digest: row_digest_hex(key, schedule)?,
@@ -536,19 +397,63 @@ fn catalog_row_metrics(
 }
 
 fn compact_catalog_key(key: &AkitaScheduleLookupKey) -> String {
-    let digest = akita_types::instance_descriptor::digest_descriptor_bytes(
-        &key.canonical_descriptor_bytes(),
-    );
-    let id = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let id = catalog_lookup_key_digest(key);
     format!(
         "nv={};polys={};precommits={};key={id}",
         key.final_group.num_vars(),
         key.final_group.num_polynomials(),
         key.precommitteds.len(),
     )
+}
+
+fn catalog_logical_key(key: &AkitaScheduleLookupKey) -> String {
+    use std::fmt::Write as _;
+
+    let mut logical = format!(
+        "final={}:{};precommitted=",
+        key.final_group.num_vars(),
+        key.final_group.num_polynomials(),
+    );
+    for (index, precommitted) in key.precommitteds.iter().enumerate() {
+        if index != 0 {
+            logical.push(',');
+        }
+        write!(
+            logical,
+            "{}:{}",
+            precommitted.group.num_vars(),
+            precommitted.group.num_polynomials(),
+        )
+        .expect("writing to String cannot fail");
+    }
+    logical
+}
+
+fn catalog_lookup_key_digest(key: &AkitaScheduleLookupKey) -> String {
+    akita_types::instance_descriptor::digest_descriptor_bytes(&key.canonical_descriptor_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn catalog_snapshot_row(
+    spec: &EmitSpec,
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+) -> Result<catalog_snapshot::CatalogSnapshotRow, String> {
+    let metrics = catalog_row_metrics(spec, key, schedule)?;
+    Ok(catalog_snapshot::CatalogSnapshotRow {
+        schema: catalog_snapshot::SnapshotSchema::Current,
+        family: spec.module_name.to_string(),
+        logical_key: catalog_logical_key(key),
+        lookup_key_digest: catalog_lookup_key_digest(key),
+        setup_fields: metrics.setup_fields,
+        first_direct_setup_capacity: metrics.first_direct_setup_capacity,
+        proof_bytes: metrics.proof_bytes,
+        fold_levels: metrics.fold_levels,
+        row_digest: metrics.row_digest,
+        policy: metrics.policy_signature,
+    })
 }
 
 fn optional_metric(
@@ -662,70 +567,14 @@ fn compare_materialized_catalog(
     })
 }
 
-fn resolved_output_path(path: &Path) -> Result<PathBuf, String> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        env::current_dir()
-            .map_err(|error| format!("read current directory: {error}"))?
-            .join(path)
-    };
-    let mut resolved = PathBuf::new();
-    let mut missing = Vec::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let removed = if missing.is_empty() {
-                    resolved.pop()
-                } else {
-                    missing.pop();
-                    true
-                };
-                if !removed {
-                    return Err(format!(
-                        "output path escapes the filesystem root: {}",
-                        path.display()
-                    ));
-                }
-            }
-            Component::Normal(name) if missing.is_empty() => {
-                let candidate = resolved.join(name);
-                if candidate.exists() {
-                    resolved = fs::canonicalize(&candidate)
-                        .map_err(|error| format!("resolve {}: {error}", candidate.display()))?;
-                } else {
-                    missing.push(name.to_os_string());
-                }
-            }
-            Component::Normal(name) => missing.push(name.to_os_string()),
-            Component::Prefix(_) | Component::RootDir => resolved.push(component.as_os_str()),
-        }
-    }
-    for component in missing {
-        resolved.push(component);
-    }
-    Ok(resolved)
-}
-
-fn validate_explicit_output_isolation(
-    base_dir: &Path,
-    explicit_rows: &ExplicitRows,
-) -> Result<(), String> {
-    if explicit_rows.final_group.is_none() {
-        return Ok(());
-    }
-    let checked_in_generated_dir = resolved_output_path(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-schedules/src/generated"),
-    )?;
-    let requested_dir = resolved_output_path(base_dir)?;
-    if requested_dir.starts_with(&checked_in_generated_dir) {
-        return Err(format!(
-            "explicit schedule sweeps must use an isolated output directory outside {}",
-            checked_in_generated_dir.display()
-        ));
-    }
-    Ok(())
+fn materialized_snapshot_rows(
+    spec: &EmitSpec,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
+    entries
+        .iter()
+        .map(|(key, schedule)| catalog_snapshot_row(spec, key, schedule))
+        .collect()
 }
 
 impl ExplicitRows {
@@ -978,12 +827,15 @@ fn main() -> Result<(), String> {
         None
     };
     let check_catalog = args.check_catalog;
-    let mut catalog_report = if check_catalog {
-        CATALOG_REPORT_HEADER.to_string()
+    let collect_catalog_snapshot =
+        args.catalog_snapshot.is_some() || args.catalog_baseline.is_some();
+    let mut catalog_drift_report = if check_catalog {
+        CATALOG_DRIFT_REPORT_HEADER.to_string()
     } else {
         String::new()
     };
     let mut changed_catalog_rows = 0usize;
+    let mut current_catalog_rows = Vec::new();
     let outputs = render_generated_outputs_with_validation(
         &specs,
         &sorted_unique_specs(&wiring_specs),
@@ -994,27 +846,62 @@ fn main() -> Result<(), String> {
         |spec, entries| {
             if check_catalog {
                 let comparison = validate_materialized_catalog(spec, entries)?;
-                catalog_report.push_str(&comparison.report);
+                catalog_drift_report.push_str(&comparison.report);
                 changed_catalog_rows = changed_catalog_rows
                     .checked_add(comparison.changed_rows)
                     .ok_or_else(|| "catalog comparison row count overflow".to_string())?;
+            }
+            if collect_catalog_snapshot {
+                current_catalog_rows.extend(materialized_snapshot_rows(spec, entries)?);
             }
             Ok(())
         },
     )?;
     if check_catalog {
-        if let Some(path) = &args.catalog_report {
-            fs::write(path, &catalog_report)
-                .map_err(|error| format!("write {}: {error}", path.display()))?;
-            eprintln!("wrote catalog comparison {}", path.display());
-        } else {
-            eprint!("{catalog_report}");
+        if args.catalog_baseline.is_none() {
+            if let Some(path) = &args.catalog_report {
+                fs::write(path, &catalog_drift_report)
+                    .map_err(|error| format!("write {}: {error}", path.display()))?;
+                eprintln!("wrote catalog drift comparison {}", path.display());
+            } else {
+                eprint!("{catalog_drift_report}");
+            }
         }
         if changed_catalog_rows != 0 {
             return Err(format!(
                 "compiled catalog differs from the planner in {changed_catalog_rows} rows"
             ));
         }
+    }
+    if let Some(path) = &args.catalog_snapshot {
+        let snapshot = catalog_snapshot::write_snapshot(current_catalog_rows.clone())?;
+        fs::write(path, snapshot).map_err(|error| format!("write {}: {error}", path.display()))?;
+        eprintln!("wrote catalog snapshot {}", path.display());
+    }
+    if let Some(path) = &args.catalog_baseline {
+        let baseline = fs::read_to_string(path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let comparison = catalog_snapshot::compare_snapshots(
+            catalog_snapshot::parse_snapshot(&baseline)?,
+            current_catalog_rows,
+        )?;
+        if let Some(report_path) = &args.catalog_report {
+            fs::write(report_path, &comparison.report)
+                .map_err(|error| format!("write {}: {error}", report_path.display()))?;
+            eprintln!(
+                "wrote catalog revision comparison {}",
+                report_path.display()
+            );
+        } else {
+            eprint!("{}", comparison.report);
+        }
+        eprintln!(
+            "catalog revision comparison: {} added, {} removed, {} changed, {} equal",
+            comparison.added_rows,
+            comparison.removed_rows,
+            comparison.changed_rows,
+            comparison.equal_rows,
+        );
     }
     let publish_started = args.row_progress.then(Instant::now);
     if args.row_progress {
@@ -1057,381 +944,5 @@ fn main() -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn positional_family_filters_are_checked_and_ordered() {
-        let one =
-            parse_args_from(vec!["generated".into(), "fp32_dense".into()]).expect("known family");
-        assert_eq!(
-            one.family_filter.as_deref(),
-            Some(&["fp32_dense".into()][..])
-        );
-        assert_eq!(
-            selected_families(one.family_filter.as_deref())
-                .iter()
-                .map(|family| family.module_name)
-                .collect::<Vec<_>>(),
-            vec!["fp32_dense"],
-        );
-
-        let multiple = parse_args_from(vec![
-            "generated".into(),
-            "fp64_dense".into(),
-            "fp32_dense".into(),
-        ])
-        .expect("known families");
-        let selected = selected_families(multiple.family_filter.as_deref())
-            .iter()
-            .map(|family| family.module_name)
-            .collect::<Vec<_>>();
-        assert_eq!(selected, vec!["fp64_dense", "fp32_dense"]);
-
-        let all = parse_args_from(vec!["generated".into()]).expect("all families");
-        assert!(all.family_filter.is_none());
-        assert_eq!(selected_families(None).len(), ALL_GENERATED_FAMILIES.len());
-
-        let progress = parse_args_from(vec![
-            "generated".into(),
-            "--row-progress".into(),
-            "fp32_dense".into(),
-        ])
-        .expect("row progress");
-        assert!(progress.row_progress);
-
-        let report = parse_args_from(vec![
-            "generated".into(),
-            "--check-catalog".into(),
-            "--catalog-report".into(),
-            "report.tsv".into(),
-        ]);
-        if cfg!(feature = "catalog-check") {
-            assert_eq!(
-                report.expect("catalog report").catalog_report,
-                Some(PathBuf::from("report.tsv"))
-            );
-        } else {
-            assert!(report
-                .err()
-                .expect("catalog check feature")
-                .contains("catalog-check"));
-        }
-        assert!(parse_args_from(vec![
-            "generated".into(),
-            "--catalog-report".into(),
-            "report.tsv".into(),
-        ])
-        .err()
-        .expect("report requires comparison")
-        .contains("requires --check-catalog"));
-
-        let unknown = parse_args_from(vec!["generated".into(), "not_a_family".into()])
-            .err()
-            .expect("unknown family must reject");
-        assert!(unknown.contains("unknown schedule family"));
-    }
-
-    #[test]
-    fn explicit_scalar_sweep_replaces_default_catalog_work() {
-        let family = family_by_name("fp128_onehot").expect("known family");
-        let explicit_rows = ExplicitRows {
-            final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
-            precommitted_groups: Vec::new(),
-        };
-
-        let spec = emit_spec_with_overrides(
-            family,
-            &GenerationPreplans::default(),
-            PathBuf::from("generated"),
-            &explicit_rows,
-            "generator command",
-        )
-        .expect("explicit emit spec");
-
-        assert_eq!(spec.keys, vec![PolynomialGroupLayout::new(14, 1)]);
-        assert!(spec.group_batch_keys.is_empty());
-        assert_eq!(spec.generator_command, "generator command");
-    }
-
-    #[test]
-    fn explicit_group_rejects_source_metadata() {
-        assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
-    }
-
-    #[cfg(feature = "catalog-check")]
-    #[test]
-    fn catalog_comparison_reports_complete_key_union() {
-        let family = family_by_name("fp32_dense").expect("known family");
-        let table = (family.schedule_catalog)().expect("compiled fp32 dense table");
-        let spec = wiring_emit_spec(family, PathBuf::from("generated"));
-        let entries = table
-            .entries
-            .iter()
-            .copied()
-            .map(|entry| {
-                let key = entry.to_runtime_lookup_key();
-                let schedule = akita_schedules::schedule_from_entry(
-                    &entry,
-                    &key,
-                    &spec.policy,
-                    spec.ring_challenge_config,
-                )
-                .expect("expand compiled row");
-                assert_eq!(
-                    akita_schedules::expanded_schedule_proof_payload_bytes(
-                        &key,
-                        &schedule,
-                        &spec.policy,
-                    )
-                    .expect("expanded proof payload"),
-                    akita_schedules::estimate_proof_bytes(
-                        &entry,
-                        &key,
-                        &spec.policy,
-                        spec.ring_challenge_config,
-                    )
-                    .expect("generated proof payload"),
-                );
-                (key, schedule)
-            })
-            .collect::<Vec<_>>();
-
-        let equal = compare_materialized_catalog(&spec, table, &entries).expect("equal report");
-        assert_eq!(equal.changed_rows, 0);
-        assert_eq!(equal.report.matches("\tequal\t").count(), entries.len());
-        assert!(CATALOG_REPORT_HEADER.ends_with("old_policy\tnew_policy\n"));
-        assert!(equal
-            .report
-            .lines()
-            .all(|line| line.split('\t').count() == 13));
-
-        let removed = compare_materialized_catalog(&spec, table, &entries[..entries.len() - 1])
-            .expect("removed report");
-        assert_eq!(removed.changed_rows, 1);
-        assert!(removed.report.contains("\tremoved\t"));
-
-        let empty_table = akita_schedules::GeneratedScheduleTable {
-            entries: &[],
-            identity: table.identity,
-        };
-        let added =
-            compare_materialized_catalog(&spec, empty_table, &entries[..1]).expect("added report");
-        assert_eq!(added.changed_rows, 1);
-        assert!(added.report.contains("\tadded\t"));
-
-        let mut changed_entries = entries.clone();
-        changed_entries[0].1.root.input_witness_len += 1;
-        let changed =
-            compare_materialized_catalog(&spec, table, &changed_entries).expect("changed report");
-        assert_eq!(changed.changed_rows, 1);
-        assert!(changed.report.contains("\tchanged\t"));
-    }
-
-    #[cfg(feature = "catalog-check")]
-    #[test]
-    fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
-        use akita_types::OpeningMethod;
-
-        let family =
-            family_by_name("fp128_onehot_recursive_multi_chunk_w8r2").expect("known W8R2 family");
-        let table = (family.schedule_catalog)().expect("compiled W8R2 table");
-        assert_eq!(table.entries.len(), 1);
-        let entry = table.entries[0];
-        let key = entry.to_runtime_lookup_key();
-        let spec = wiring_emit_spec(family, PathBuf::from("generated"));
-        let expand = || {
-            akita_schedules::schedule_from_entry(
-                &entry,
-                &key,
-                &spec.policy,
-                spec.ring_challenge_config,
-            )
-            .expect("expand W8R2 row")
-        };
-        let schedule = expand();
-        assert_eq!(schedule, expand(), "generated replay must be deterministic");
-        schedule.validate_structure().expect("valid W8R2 schedule");
-
-        assert_eq!(
-            schedule.root.params.final_group.commitment.opening_method,
-            OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension: 64,
-            },
-        );
-        assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
-        assert!(schedule
-            .root
-            .params
-            .precommitted_groups
-            .iter()
-            .all(|group| {
-                group.commitment.opening.opening_method
-                    == OpeningMethod::SubringCoefficientPacking {
-                        challenge_subring_dimension: 128,
-                    }
-            }));
-
-        let first_recursive = schedule
-            .recursive_folds
-            .first()
-            .expect("W8R2 row has a recursive packing fold");
-        assert_eq!(
-            first_recursive.params.witness.opening_method,
-            OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension: 64,
-            },
-        );
-        assert_eq!(
-            first_recursive
-                .params
-                .incoming_setup_prefix
-                .as_ref()
-                .expect("first recursive fold consumes the setup prefix")
-                .commitment_params
-                .opening
-                .opening_method,
-            OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension: 64,
-            },
-        );
-        assert!(schedule.recursive_folds[1..].iter().all(|fold| fold
-            .params
-            .witness
-            .opening_method
-            == OpeningMethod::EvaluationTrace));
-
-        let policy_signature =
-            catalog_policy_signature(&spec, &schedule).expect("W8R2 policy signature");
-        assert!(policy_signature.contains("L0[chunks=8@2,eor=0,in="));
-        assert!(
-            policy_signature.contains("witness=PACK,s=64,h=4,w=64,src=canonical,dA=256,sec=Linf")
-        );
-        assert!(
-            policy_signature.contains("pre0=PACK,s=128,h=2,w=128,src=canonical,dA=256,sec=Linf")
-        );
-        assert!(policy_signature.contains("L1[chunks=8@2,eor=0,in="));
-        assert!(policy_signature.contains("prefix=PACK,s=64"));
-        assert!(policy_signature.contains("L2[chunks=1@0,eor=0,in="));
-        assert!(policy_signature.contains("witness=ET,s=-,h=-,w=-"));
-        assert!(policy_signature.contains("/T[method=ET,src=canonical,eor=0,input="));
-        assert!(!policy_signature.contains(['\t', '\n']));
-
-        let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
-            spec.policy
-                .challenge_field_bits()
-                .expect("challenge field bits"),
-            spec.policy.claim_ext_degree,
-            akita_types::PolynomialGroupLayout::singleton(
-                akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
-                    .expect("terminal opening vars"),
-            ),
-        )
-        .expect("terminal EOR price");
-        assert_eq!(
-            terminal_eor, 0,
-            "the fp128 base-field terminal follows the ET/EOR pricing path, whose width-one reduction is empty",
-        );
-        assert_eq!(
-            akita_schedules::expanded_schedule_proof_payload_bytes(&key, &schedule, &spec.policy,)
-                .expect("expanded proof payload"),
-            akita_schedules::estimate_proof_bytes(
-                &entry,
-                &key,
-                &spec.policy,
-                spec.ring_challenge_config,
-            )
-            .expect("generated proof payload"),
-        );
-
-        assert_eq!(
-            source_encoding_signature(
-                akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
-                    extension_degree: 2,
-                }
-            ),
-            "tensor-k2",
-        );
-        assert_ne!(
-            source_encoding_signature(
-                akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
-                    extension_degree: 2,
-                }
-            ),
-            source_encoding_signature(
-                akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
-                    extension_degree: 4,
-                }
-            ),
-        );
-
-        let mut activation_changed = schedule.clone();
-        activation_changed
-            .root
-            .params
-            .final_group
-            .commitment
-            .witness_chunk
-            .num_activated_levels = 1;
-        assert_ne!(
-            policy_signature,
-            catalog_policy_signature(&spec, &activation_changed)
-                .expect("activation policy signature"),
-        );
-
-        let mut input_changed = schedule.clone();
-        input_changed.root.input_witness_len += 1;
-        assert_ne!(
-            policy_signature,
-            catalog_policy_signature(&spec, &input_changed).expect("input-length policy signature"),
-        );
-    }
-
-    #[test]
-    fn explicit_sweeps_reject_the_checked_in_generated_tree() {
-        let explicit_rows = ExplicitRows {
-            final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
-            precommitted_groups: Vec::new(),
-        };
-        let checked_in_generated_dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-schedules/src/generated");
-
-        let error = validate_explicit_output_isolation(
-            &checked_in_generated_dir.join("diagnostic"),
-            &explicit_rows,
-        )
-        .expect_err("checked-in generated tree must be protected");
-        assert!(error.contains("isolated output directory"));
-
-        let isolated = env::temp_dir().join(format!(
-            "akita-explicit-schedule-test-{}",
-            std::process::id()
-        ));
-        validate_explicit_output_isolation(&isolated, &explicit_rows)
-            .expect("isolated explicit output");
-        validate_explicit_output_isolation(&checked_in_generated_dir, &ExplicitRows::default())
-            .expect("ordinary full regeneration may target the checked-in catalog");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn output_resolution_applies_parent_after_resolving_symlink() {
-        use std::os::unix::fs::symlink;
-
-        let root = env::temp_dir().join(format!(
-            "akita-schedule-path-test-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let target = root.join("real/deep");
-        fs::create_dir_all(&target).expect("create symlink target");
-        symlink(&target, root.join("link")).expect("create test symlink");
-
-        let resolved = resolved_output_path(&root.join("link/../isolated"))
-            .expect("resolve output through symlink");
-        let canonical_root = fs::canonicalize(&root).expect("canonical test root");
-        assert_eq!(resolved, canonical_root.join("real/isolated"));
-
-        fs::remove_dir_all(&root).expect("remove test directory");
-    }
-}
+#[path = "gen_schedule_tables_tests.rs"]
+mod tests;

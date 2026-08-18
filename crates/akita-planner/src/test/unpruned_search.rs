@@ -96,60 +96,45 @@ fn enumerate_suffixes(
                 .transpose()?;
             let derive_candidates =
                 |opening, payload_mode| -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
-                    if level < akita_schedules::ADAPTIVE_SEARCH_LEVELS {
-                        derive_candidate_level_params_split_frontier_without_bounds(
-                            None,
-                            policy,
-                            payload_mode,
-                            opening,
-                            candidate_dimensions,
-                            input_witness_len,
-                            crate::InnerBasisSource::BalancedDigits {
-                                log_basis: current_log_basis,
-                            },
-                            current_log_basis,
-                            log_basis,
-                            level,
-                            None,
-                            source_moment,
-                        )
+                    let exhaustive = level < akita_schedules::ADAPTIVE_SEARCH_LEVELS;
+                    let request = RecursiveCandidateRequest {
+                        policy,
+                        payload_mode,
+                        opening,
+                        dimensions: candidate_dimensions,
+                        current_witness_len: input_witness_len,
+                        source: crate::InnerBasisSource::BalancedDigits {
+                            log_basis: current_log_basis,
+                        },
+                        log_basis_inner: current_log_basis,
+                        log_basis_open: log_basis,
+                        fold_level: level,
+                        source_moment: if exhaustive { source_moment } else { None },
+                    };
+                    let fold_policy = if exhaustive {
+                        FoldCandidatePolicy::Frontier(SplitBoundPolicy::DisabledForOracle)
                     } else {
-                        Ok(derive_linf_candidate_level_params(
-                            None,
-                            policy,
-                            payload_mode,
-                            opening,
-                            candidate_dimensions,
-                            input_witness_len,
-                            crate::InnerBasisSource::BalancedDigits {
-                                log_basis: current_log_basis,
-                            },
-                            current_log_basis,
-                            log_basis,
-                            level,
-                            None,
-                        )?
-                        .into_iter()
-                        .collect())
-                    }
+                        FoldCandidatePolicy::Best
+                    };
+                    derive_fold_candidates(request, RecursiveSetupPrefix::None, fold_policy)
                 };
 
             if let Some((trace_opening, terminal_eor_bytes)) = trace_work {
                 for &payload_mode in payload_phase.candidate_modes(level, false) {
-                    for params in derive_terminal_candidate_params(
+                    for params in derive_terminal_candidates(RecursiveCandidateRequest {
                         policy,
                         payload_mode,
-                        trace_opening,
-                        candidate_dimensions,
-                        input_witness_len,
-                        crate::InnerBasisSource::BalancedDigits {
+                        opening: trace_opening,
+                        dimensions: candidate_dimensions,
+                        current_witness_len: input_witness_len,
+                        source: crate::InnerBasisSource::BalancedDigits {
                             log_basis: current_log_basis,
                         },
-                        current_log_basis,
-                        log_basis,
-                        level,
+                        log_basis_inner: current_log_basis,
+                        log_basis_open: log_basis,
+                        fold_level: level,
                         source_moment,
-                    )? {
+                    })? {
                         if let Some((mut terminal, terminal_bytes)) =
                             suffix_dp::try_terminal_direct_suffix_cost(
                                 policy,
@@ -384,6 +369,15 @@ pub(super) fn find_schedule(
                         )?
                         .iter()
                         {
+                            let opening_layout = schedule_key.opening_layout()?;
+                            let first_direct_setup_field_len = NonZeroUsize::new(
+                                active_setup_field_len(&root_params, &opening_layout)?,
+                            )
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "unpruned root setup field length must be nonzero".into(),
+                                )
+                            })?;
                             let child_is_terminal = suffix.folds.is_empty();
                             let root_bytes = level_proof_bytes(
                                 field_bits,
@@ -405,7 +399,7 @@ pub(super) fn find_schedule(
                                 estimated_stage3_payload_bytes: 0,
                             });
                             complete.push(ScheduleCandidate {
-                                first_direct_setup_field_len: None,
+                                first_direct_setup_field_len: Some(first_direct_setup_field_len),
                                 total_bytes: root_bytes
                                     .checked_add(suffix.total_bytes)
                                     .ok_or_else(|| {
@@ -433,10 +427,18 @@ pub(super) fn find_schedule(
             "unpruned traversal found no complete schedule".into(),
         ));
     };
+    let cached_first_direct_setup_field_len =
+        if policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload {
+            selected.first_direct_setup_field_len.map(NonZeroUsize::get)
+        } else {
+            None
+        };
     materialize_candidate_schedule(
         selected.total_bytes,
         selected.setup_field_elements,
-        None,
+        cached_first_direct_setup_field_len,
+        policy.selection_policy,
+        &schedule_key.opening_layout()?,
         selected.folds.to_vec(),
         selected.terminal.as_ref().clone(),
     )

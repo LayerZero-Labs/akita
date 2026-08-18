@@ -22,13 +22,17 @@ use akita_types::dispatch_for_field;
 use akita_types::RingMultiplierOpeningPoint;
 use akita_types::{assemble_compressed_relation_rhs, assemble_relation_rhs, RingVec};
 use akita_types::{gadget_row_scalars, DigitBlocks};
-use akita_types::{CommittedGroupParams, RingRelationGroupOpening, RingRelationInstance};
+use akita_types::{
+    CommittedGroupParams, OpeningFamily, RingRelationGroupOpening, RingRelationInstance,
+};
 
 use super::coefficient_packing::{
     concatenate_group_d_inputs, fold_coefficient_packing_group,
     materialize_coefficient_packing_d_input,
 };
-use super::core::PreparedGroupOpening;
+use super::core::{
+    PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
+};
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::backend::RingSwitchRelationView;
@@ -42,27 +46,27 @@ pub(crate) use compression_witness::{
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 
-enum GroupOpeningMaterial<F: FieldCore> {
-    EvaluationTrace {
-        e_hat: DigitBlocks,
-        e_folded: RingVec<F>,
-        ring_multiplier_point: RingMultiplierOpeningPoint<F>,
-    },
-    SubringCoefficientPacking {
-        e_hat: DigitBlocks,
-        partials_by_claim: Vec<crate::compute::SubringCoefficientPackingPartials<F>>,
-    },
+struct EvaluationTraceOpeningMaterial<F: FieldCore> {
+    e_folded: RingVec<F>,
+    ring_multiplier_point: RingMultiplierOpeningPoint<F>,
 }
 
-enum PreparedRelationGroupKind<F: FieldCore, E: FieldCore> {
-    EvaluationTrace(akita_types::PreparedOpeningPoint<F, E>),
-    SubringCoefficientPacking(akita_types::PreparedSubringCoefficientPackingPoint<E>),
+struct CoefficientPackingOpeningMaterial<F: FieldCore> {
+    partials_by_claim: Vec<crate::compute::SubringCoefficientPackingPartials<F>>,
+}
+
+struct GroupOpeningMaterial<F: FieldCore> {
+    e_hat: DigitBlocks,
+    kind: OpeningFamily<EvaluationTraceOpeningMaterial<F>, CoefficientPackingOpeningMaterial<F>>,
 }
 
 /// Method-typed Stage 2 authority retained from the exact source preparation
 /// that also produced this group's relation witness.
 pub(crate) struct PreparedRelationGroup<F: FieldCore, E: FieldCore> {
-    kind: PreparedRelationGroupKind<F, E>,
+    kind: OpeningFamily<
+        akita_types::PreparedOpeningPoint<F, E>,
+        akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    >,
     scalar_openings: Vec<E>,
 }
 
@@ -79,7 +83,7 @@ impl<F: FieldCore, E: FieldCore> PreparedRelationGroup<F, E> {
         scalar_openings: Vec<E>,
     ) -> Self {
         Self {
-            kind: PreparedRelationGroupKind::SubringCoefficientPacking(point),
+            kind: OpeningFamily::SubringCoefficientPacking(point),
             scalar_openings,
         }
     }
@@ -88,8 +92,8 @@ impl<F: FieldCore, E: FieldCore> PreparedRelationGroup<F, E> {
         &self,
     ) -> Option<&akita_types::PreparedOpeningPoint<F, E>> {
         match &self.kind {
-            PreparedRelationGroupKind::EvaluationTrace(point) => Some(point),
-            PreparedRelationGroupKind::SubringCoefficientPacking(_) => None,
+            OpeningFamily::EvaluationTrace(point) => Some(point),
+            OpeningFamily::SubringCoefficientPacking(_) => None,
         }
     }
 
@@ -97,8 +101,8 @@ impl<F: FieldCore, E: FieldCore> PreparedRelationGroup<F, E> {
         &self,
     ) -> Option<&akita_types::PreparedSubringCoefficientPackingPoint<E>> {
         match &self.kind {
-            PreparedRelationGroupKind::EvaluationTrace(_) => None,
-            PreparedRelationGroupKind::SubringCoefficientPacking(point) => Some(point),
+            OpeningFamily::EvaluationTrace(_) => None,
+            OpeningFamily::SubringCoefficientPacking(point) => Some(point),
         }
     }
 
@@ -147,13 +151,13 @@ where
         ) {
             (
                 akita_types::OpeningMethod::EvaluationTrace,
-                PreparedRelationGroupKind::EvaluationTrace(point),
+                OpeningFamily::EvaluationTrace(point),
                 None,
             ) if relation.group_ring_multiplier_point(group_index)?
                 == &point.ring_multiplier_point => {}
             (
                 akita_types::OpeningMethod::SubringCoefficientPacking { .. },
-                PreparedRelationGroupKind::SubringCoefficientPacking(point),
+                OpeningFamily::SubringCoefficientPacking(point),
                 Some(relation_geometry),
             ) if relation_geometry == point.geometry()
                 && point.source_num_vars() == layout.num_vars()
@@ -173,11 +177,7 @@ where
 
 impl<F: FieldCore> GroupOpeningMaterial<F> {
     fn e_hat(&self) -> &DigitBlocks {
-        match self {
-            Self::EvaluationTrace { e_hat, .. } | Self::SubringCoefficientPacking { e_hat, .. } => {
-                e_hat
-            }
-        }
+        &self.e_hat
     }
 }
 
@@ -317,23 +317,6 @@ where
         BatchDecomposeFoldOutcome::Unsupported => Err(AkitaError::InvalidSetup(
             "sparse batched fold is unsupported for this polynomial backend".to_string(),
         )),
-    }
-}
-
-/// Convert scalar or multi-group multiplier-point carriers into the multi-group internal form.
-pub trait IntoRingMultiplierOpeningPointVec<F: FieldCore> {
-    fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>>;
-}
-
-impl<F: FieldCore> IntoRingMultiplierOpeningPointVec<F> for RingMultiplierOpeningPoint<F> {
-    fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>> {
-        vec![self]
-    }
-}
-
-impl<F: FieldCore> IntoRingMultiplierOpeningPointVec<F> for Vec<RingMultiplierOpeningPoint<F>> {
-    fn into_vec(self) -> Vec<RingMultiplierOpeningPoint<F>> {
-        self
     }
 }
 
@@ -558,21 +541,23 @@ impl RingRelationProver {
         let commitment_rows = RingVec::from_coeffs(commitment_row_coeffs);
         for (group_index, prepared) in prepared_group_openings.iter().enumerate() {
             let group_lp = lp.group_params_geometry(&opening_batch, group_index)?;
-            match prepared {
-                PreparedGroupOpening::EvaluationTrace { point, .. } => {
+            match &prepared.kind {
+                OpeningFamily::EvaluationTrace(material) => {
                     if group_lp.opening_method() != akita_types::OpeningMethod::EvaluationTrace
-                        || point.ring_multiplier_point.position_len()
+                        || material.point.ring_multiplier_point.position_len()
                             != group_lp.num_positions_per_block()
-                        || point.ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
+                        || material.point.ring_multiplier_point.fold_len()
+                            != group_lp.num_live_blocks()
                     {
                         return Err(AkitaError::InvalidInput(
                             "batched prover EvaluationTrace point layout mismatch".to_string(),
                         ));
                     }
                 }
-                PreparedGroupOpening::SubringCoefficientPacking { point, .. } => {
-                    if point.num_positions_per_block() != group_lp.num_positions_per_block()
-                        || point.num_live_blocks() != group_lp.num_live_blocks()
+                OpeningFamily::SubringCoefficientPacking(material) => {
+                    if material.point.num_positions_per_block()
+                        != group_lp.num_positions_per_block()
+                        || material.point.num_live_blocks() != group_lp.num_live_blocks()
                         || relation_geometry.group_opening_method(group_index)?
                             != group_lp.opening_method()
                     {
@@ -617,18 +602,22 @@ impl RingRelationProver {
         let mut prepared_relation_groups = Vec::with_capacity(num_groups);
         let mut offset = 0usize;
         for (group_index, prepared) in prepared_group_openings.into_iter().enumerate() {
+            let PreparedGroupOpening {
+                kind,
+                scalar_openings,
+            } = prepared;
             let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
             let end = offset.checked_add(k_g).ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group e-folded offset overflow".to_string())
             })?;
             let group_lp = lp.group_params_geometry(&opening_batch, group_index)?;
             let group_dims = lp.group_role_dims_geometry(&opening_batch, group_index)?;
-            let opening = match prepared {
-                PreparedGroupOpening::EvaluationTrace {
-                    point,
-                    folded_by_claim,
-                    scalar_openings,
-                } => {
+            let opening = match kind {
+                OpeningFamily::EvaluationTrace(material) => {
+                    let PreparedEvaluationTraceGroup {
+                        point,
+                        folded_by_claim,
+                    } = material;
                     if folded_by_claim.len() != k_g {
                         return Err(AkitaError::InvalidProof);
                     }
@@ -659,20 +648,22 @@ impl RingRelationProver {
                         }
                     )?;
                     prepared_relation_groups.push(PreparedRelationGroup {
-                        kind: PreparedRelationGroupKind::EvaluationTrace(point.clone()),
+                        kind: OpeningFamily::EvaluationTrace(point.clone()),
                         scalar_openings,
                     });
-                    GroupOpeningMaterial::EvaluationTrace {
+                    GroupOpeningMaterial {
                         e_hat,
-                        e_folded,
-                        ring_multiplier_point: point.ring_multiplier_point,
+                        kind: OpeningFamily::EvaluationTrace(EvaluationTraceOpeningMaterial {
+                            e_folded,
+                            ring_multiplier_point: point.ring_multiplier_point,
+                        }),
                     }
                 }
-                PreparedGroupOpening::SubringCoefficientPacking {
-                    point,
-                    partials_by_claim,
-                    scalar_openings,
-                } => {
+                OpeningFamily::SubringCoefficientPacking(material) => {
+                    let PreparedCoefficientPackingGroup {
+                        point,
+                        partials_by_claim,
+                    } = material;
                     let e_hat = dispatch_for_field!(
                         ProtocolDispatchSlot::Role(RingRole::Opening),
                         F,
@@ -686,12 +677,14 @@ impl RingRelationProver {
                         )
                     )?;
                     prepared_relation_groups.push(PreparedRelationGroup {
-                        kind: PreparedRelationGroupKind::SubringCoefficientPacking(point),
+                        kind: OpeningFamily::SubringCoefficientPacking(point),
                         scalar_openings,
                     });
-                    GroupOpeningMaterial::SubringCoefficientPacking {
+                    GroupOpeningMaterial {
                         e_hat,
-                        partials_by_claim,
+                        kind: OpeningFamily::SubringCoefficientPacking(
+                            CoefficientPackingOpeningMaterial { partials_by_claim },
+                        ),
                     }
                 }
             };
@@ -870,38 +863,37 @@ impl RingRelationProver {
                     "prover hint shape does not match its commitment group".into(),
                 ));
             }
-            match opening {
-                GroupOpeningMaterial::EvaluationTrace {
-                    e_hat,
-                    e_folded,
-                    ring_multiplier_point,
-                } => {
-                    let challenges = output.challenges.into_evaluation_trace()?;
+            let GroupOpeningMaterial { e_hat, kind } = opening;
+            match (kind, output.challenges.into_family()) {
+                (
+                    OpeningFamily::EvaluationTrace(material),
+                    OpeningFamily::EvaluationTrace(challenges),
+                ) => {
                     relation_group_openings.push(RingRelationGroupOpening::evaluation_trace(
                         challenges,
-                        ring_multiplier_point,
+                        material.ring_multiplier_point,
                     ));
                     group_witnesses.push(RingRelationGroupWitness::from_parts(
                         output.witness,
                         output.coefficients,
                         e_hat,
-                        e_folded,
+                        material.e_folded,
                         hint,
                         group_dims,
                     ));
                 }
-                GroupOpeningMaterial::SubringCoefficientPacking {
-                    e_hat,
-                    partials_by_claim,
-                } => {
-                    let (geometry, challenges) = output.challenges.into_coefficient_packing()?;
-                    let product =
-                        fold_coefficient_packing_group(geometry, &partials_by_claim, &challenges)?;
-                    relation_group_openings.push(
-                        RingRelationGroupOpening::subring_coefficient_packing(
-                            geometry, challenges,
-                        )?,
-                    );
+                (
+                    OpeningFamily::SubringCoefficientPacking(material),
+                    OpeningFamily::SubringCoefficientPacking(challenges),
+                ) => {
+                    let geometry = challenges.geometry();
+                    let product = fold_coefficient_packing_group(
+                        geometry,
+                        &material.partials_by_claim,
+                        challenges.canonical(),
+                    )?;
+                    relation_group_openings
+                        .push(RingRelationGroupOpening::coefficient_packing(challenges));
                     group_witnesses.push(RingRelationGroupWitness::from_coefficient_packing_parts(
                         output.witness,
                         output.coefficients,
@@ -909,7 +901,12 @@ impl RingRelationProver {
                         product,
                         hint,
                         group_dims,
-                    )?);
+                    ));
+                }
+                _ => {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared opening material and fold challenges disagree".into(),
+                    ));
                 }
             }
         }
@@ -987,196 +984,5 @@ impl RingRelationProver {
 }
 
 #[cfg(test)]
-mod prepared_group_tests {
-    use super::*;
-    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-    use akita_field::{Ext2, ExtField, Prime64Offset59};
-    use akita_types::{
-        relation_rhs_coeff_len, BasisMode, CommitmentPayloadMode, OpenCommitMatrixParams,
-        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
-        RelationWitnessGeometry, SisModulusProfileId, SubringCoefficientPackingGeometry,
-    };
-
-    type F = Prime64Offset59;
-    type E = Ext2<F>;
-
-    fn fixture() -> (
-        CommittedGroupParams,
-        OpeningClaimsLayout,
-        RingRelationInstance<F>,
-        PreparedSubringCoefficientPackingPoint<E>,
-    ) {
-        let s = 64;
-        let d_a = 256;
-        let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
-        let mut params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q64Offset59,
-            d_a,
-            2,
-            2,
-            2,
-            2,
-            config,
-        )
-        .with_decomp(4, 6, 2, 2, 2)
-        .unwrap();
-        params.payload_mode = CommitmentPayloadMode::Raw;
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: s,
-        };
-        let opening = params.open_commit_matrix;
-        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-            opening.security_policy(),
-            opening.sis_table_key().table_digest,
-            opening.sis_modulus_profile(),
-            opening.output_rank(),
-            opening.input_width(),
-            opening.coeff_linf_bound(),
-            128,
-        );
-        let opening_batch = OpeningClaimsLayout::new(11, 2).unwrap();
-        let relation_geometry = RelationWitnessGeometry::for_level(
-            &params,
-            &opening_batch,
-            <E as ExtField<F>>::EXT_DEGREE,
-        )
-        .unwrap();
-        let geometry = SubringCoefficientPackingGeometry::try_new(2, d_a, s).unwrap();
-        let public_point = (0..11)
-            .map(|index| E::from_u64(2 + index as u64))
-            .collect::<Vec<_>>();
-        let prepared_point = PreparedSubringCoefficientPackingPoint::new(
-            geometry,
-            BasisMode::Lagrange,
-            6,
-            4,
-            11,
-            &public_point,
-        )
-        .unwrap();
-        let challenges = Challenges::from_sparse(
-            (0..4)
-                .map(|challenge| SparseChallenge {
-                    positions: (0..config.weight())
-                        .map(|term| ((term + challenge) % s) as u32)
-                        .collect(),
-                    coeffs: (0..config.count_pm1)
-                        .map(|term| if term.is_multiple_of(2) { 1 } else { -1 })
-                        .chain((0..config.count_pm2).map(|_| 2))
-                        .collect(),
-                })
-                .collect(),
-            2,
-            2,
-        )
-        .unwrap();
-        let relation = RingRelationInstance::new(
-            vec![
-                RingRelationGroupOpening::subring_coefficient_packing(geometry, challenges)
-                    .unwrap(),
-            ],
-            <E as ExtField<F>>::EXT_DEGREE,
-            opening_batch.clone(),
-            vec![F::from_u64(3), F::from_u64(5)],
-            RingVec::from_coeffs_with_ring_dim(
-                [F::from_u64(3), F::from_u64(5)]
-                    .into_iter()
-                    .flat_map(|coefficient| {
-                        let mut ring = vec![F::zero(); d_a];
-                        ring[0] = coefficient;
-                        ring
-                    })
-                    .collect(),
-                d_a,
-            )
-            .unwrap(),
-            RingVec::from_coeffs(vec![
-                F::zero();
-                relation_rhs_coeff_len(relation_geometry.rhs_layout())
-                    .unwrap()
-            ]),
-            RingVec::from_coeffs(Vec::new()),
-            params.role_dims(),
-        )
-        .unwrap();
-        (params, opening_batch, relation, prepared_point)
-    }
-
-    #[test]
-    fn prepared_relation_group_rejects_stale_shape_and_claims() {
-        let (params, opening_batch, relation, point) = fixture();
-        let valid = vec![PreparedRelationGroup {
-            kind: PreparedRelationGroupKind::SubringCoefficientPacking(point),
-            scalar_openings: vec![E::from_u64(7), E::from_u64(11)],
-        }];
-        validate_prepared_relation_groups(&valid, &params, &opening_batch, &relation).unwrap();
-
-        let public_point = (0..11)
-            .map(|index| E::from_u64(23 + index as u64))
-            .collect::<Vec<_>>();
-        for stale_point in [
-            PreparedSubringCoefficientPackingPoint::new(
-                valid[0].coefficient_packing_point().unwrap().geometry(),
-                BasisMode::Lagrange,
-                7,
-                4,
-                11,
-                &public_point,
-            )
-            .unwrap(),
-            PreparedSubringCoefficientPackingPoint::new(
-                valid[0].coefficient_packing_point().unwrap().geometry(),
-                BasisMode::Lagrange,
-                6,
-                8,
-                11,
-                &public_point,
-            )
-            .unwrap(),
-        ] {
-            let stale = vec![PreparedRelationGroup {
-                kind: PreparedRelationGroupKind::SubringCoefficientPacking(stale_point),
-                scalar_openings: vec![E::from_u64(7), E::from_u64(11)],
-            }];
-            assert!(
-                validate_prepared_relation_groups(&stale, &params, &opening_batch, &relation,)
-                    .is_err()
-            );
-        }
-
-        let wrong_geometry = SubringCoefficientPackingGeometry::try_new(2, 128, 64).unwrap();
-        let point = (0..11)
-            .map(|index| E::from_u64(13 + index as u64))
-            .collect::<Vec<_>>();
-        let wrong_point = PreparedSubringCoefficientPackingPoint::new(
-            wrong_geometry,
-            BasisMode::Lagrange,
-            16,
-            4,
-            11,
-            &point,
-        )
-        .unwrap();
-        let stale = vec![PreparedRelationGroup {
-            kind: PreparedRelationGroupKind::SubringCoefficientPacking(wrong_point),
-            scalar_openings: vec![E::from_u64(7), E::from_u64(11)],
-        }];
-        assert!(
-            validate_prepared_relation_groups(&stale, &params, &opening_batch, &relation).is_err()
-        );
-
-        let missing_claim = vec![PreparedRelationGroup {
-            kind: PreparedRelationGroupKind::SubringCoefficientPacking(
-                valid[0].coefficient_packing_point().unwrap().clone(),
-            ),
-            scalar_openings: vec![E::from_u64(7)],
-        }];
-        assert!(validate_prepared_relation_groups(
-            &missing_claim,
-            &params,
-            &opening_batch,
-            &relation,
-        )
-        .is_err());
-    }
-}
+#[path = "ring_relation_tests.rs"]
+mod prepared_group_tests;

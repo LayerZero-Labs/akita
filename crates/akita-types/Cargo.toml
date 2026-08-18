@@ -31,6 +31,7 @@ tracing = "0.1"
 
 [features]
 default = ["transcript-blake2b"]
+test-support = []
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-sumcheck/transcript-blake2b",

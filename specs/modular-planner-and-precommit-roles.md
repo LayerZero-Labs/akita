@@ -259,7 +259,8 @@ measurement justifies another order.
 This objective is a canonical local policy, not a theorem that it globally
 minimizes the final proof. If large precommitted groups later require a
 setup-first policy, that is a separate design change with a real compatibility
-identifier; it is not added speculatively here.
+identifier; it is not added speculatively here. This recipe-level choice is
+separate from the schedule-level `MinFirstDirectSetupThenPayload` objective.
 
 ### Catalog and commitment binding
 
@@ -487,18 +488,15 @@ these strict complete schedule orders:
 direct:
     (proof bytes, total setup fields, canonical descriptor)
 
-mixed dimension:
-    (total setup fields, proof bytes, canonical descriptor)
-
-recursive setup:
+adaptive dimension and recursive setup:
     (first direct setup fields, proof bytes, total setup fields,
      canonical descriptor)
 ```
 
-Direct suffix frontiers retain `(proof bytes, total setup fields)`. Recursive
-setup suffix frontiers retain `(first direct setup fields, proof bytes, total
-setup fields)`. The descriptor is a final deterministic tie-break and is not a
-frontier coordinate.
+Uniform direct suffix frontiers retain `(proof bytes, total setup fields)`.
+Adaptive direct and recursive setup suffix frontiers share one frontier over
+`(first direct setup fields, proof bytes, total setup fields)`. The descriptor
+is a final deterministic tie-break and is not a frontier coordinate.
 
 The current policies do not use proof byte slack or fold count. Those choices
 are intentionally deferred until one shared frontier engine can measure them
@@ -678,7 +676,8 @@ The following choices remain open and must not be encoded accidentally:
 2. Should the first recipe tie-break prefer setup footprint or a simpler
    geometry after equal \(WZ+E+T\)?
 3. Should a future large-precommit workload introduce a setup-first recipe
-   policy? No such policy is part of this specification.
+   policy distinct from schedule-level `MinFirstDirectSetupThenPayload`? No
+   such recipe policy is part of this specification.
 4. Is a repository-wide maximum machine count of eight desirable as a runtime
    resource bound? Empty-range compatibility does not depend on that answer.
 

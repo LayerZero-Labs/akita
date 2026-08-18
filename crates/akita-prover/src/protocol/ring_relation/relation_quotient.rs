@@ -6,10 +6,11 @@ use crate::compute::{
     RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::ring_relation::{CompressionSourceId, CompressionWitnessMaterialization};
-use crate::protocol::ring_relation_witness::GroupFoldedOpening;
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
-use akita_types::{CommittedGroupParams, RelationRowGeometry, RingRelationGroupOpening, RingVec};
+use akita_types::{
+    CommittedGroupParams, OpeningFamily, RelationRowGeometry, RingRelationGroupOpening, RingVec,
+};
 
 #[inline]
 fn accumulate_small_signed<F: FieldCore + FromPrimitiveInt>(dst: &mut F, value: F, coeff: i64) {
@@ -271,7 +272,7 @@ where
     let a_quotients = relation_rows.a_quotients;
 
     let consistency_quotient = match &group.folded_opening {
-        GroupFoldedOpening::EvaluationTrace(e_folded)
+        OpeningFamily::EvaluationTrace(e_folded)
             if group_opening.coefficient_packing_geometry().is_none() =>
         {
             let ring_multiplier_point = group_opening.evaluation_trace_multiplier_point()?;
@@ -293,17 +294,16 @@ where
             consistency_quotient -= consistency_z_quotient;
             RelationQuotientOutput::row_from_ring(consistency_quotient)?
         }
-        GroupFoldedOpening::SubringCoefficientPacking {
-            geometry,
-            quotient_high_half_coordinates,
-            ..
-        } if Some(*geometry) == group_opening.coefficient_packing_geometry() => {
+        OpeningFamily::SubringCoefficientPacking(product)
+            if Some(product.geometry()) == group_opening.coefficient_packing_geometry() =>
+        {
+            let geometry = product.geometry();
             RelationQuotientOutput::from_physical_coordinates(
                 RelationRowGeometry::new(
                     geometry.challenge_subring_dimension(),
                     geometry.extension_degree(),
                 )?,
-                quotient_high_half_coordinates.clone(),
+                product.quotient_high_half_base_field_coordinates().to_vec(),
             )?
         }
         _ => {
@@ -465,19 +465,15 @@ where
             .checked_mul(group_dims.d_a())
             .ok_or(AkitaError::InvalidProof)?;
         let folded_opening_is_valid = match &group.folded_opening {
-            GroupFoldedOpening::EvaluationTrace(e_folded)
+            OpeningFamily::EvaluationTrace(e_folded)
                 if group_opening.coefficient_packing_geometry().is_none() =>
             {
                 e_folded.coeff_len() == expected_e_coeffs
             }
-            GroupFoldedOpening::SubringCoefficientPacking {
-                geometry,
-                reduced_coordinates,
-                quotient_high_half_coordinates,
-            } => {
-                Some(*geometry) == group_opening.coefficient_packing_geometry()
-                    && reduced_coordinates.len() == opening_width
-                    && quotient_high_half_coordinates.len() == opening_width
+            OpeningFamily::SubringCoefficientPacking(product) => {
+                Some(product.geometry()) == group_opening.coefficient_packing_geometry()
+                    && product.reduced_base_field_coordinates().len() == opening_width
+                    && product.quotient_high_half_base_field_coordinates().len() == opening_width
             }
             _ => false,
         };

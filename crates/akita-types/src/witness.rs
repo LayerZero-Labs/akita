@@ -20,6 +20,56 @@ mod scalar_len;
 
 pub use chunk_partition::dyadic_block_ranges;
 
+/// Exact physical coefficient count of the grouped `[Z | E | T]` witness body.
+///
+/// This excludes relation quotients, compression layers, and alignment. It is
+/// the shared sizing authority for runtime witness layout and planner
+/// contraction/scoring decisions.
+pub fn grouped_witness_body_coefficients(
+    params: &dyn LevelParamsLike,
+    role_dims: CommitmentRingDims,
+    extension_degree: usize,
+    num_claims: usize,
+    num_chunks: usize,
+) -> Result<usize, AkitaError> {
+    role_dims.validate_role_projection()?;
+    if params.inner_commit_matrix_params().ring_dimension() != role_dims.d_a() {
+        return Err(AkitaError::InvalidSetup(
+            "grouped witness body role dimensions disagree with its parameters".into(),
+        ));
+    }
+    if num_claims == 0
+        || params.num_live_blocks() == 0
+        || params.num_positions_per_block() == 0
+        || params.num_digits_open() == 0
+        || params.num_digits_inner() == 0
+        || params.num_digits_outer() == 0
+        || params.num_digits_fold() == 0
+        || params.a_rows_len() == 0
+    {
+        return Err(AkitaError::InvalidSetup(
+            "witness group has malformed dimensions".into(),
+        ));
+    }
+    let opening_geometry = crate::proof::relation::opening_row_geometry(params, extension_degree)?;
+    let mut total = 0usize;
+    for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
+        let (z_len, e_len, t_len) = witness_unit_lengths(
+            params,
+            role_dims,
+            opening_geometry,
+            num_claims,
+            block_range.len(),
+        )?;
+        total = total
+            .checked_add(z_len)
+            .and_then(|len| len.checked_add(e_len))
+            .and_then(|len| len.checked_add(t_len))
+            .ok_or_else(|| AkitaError::InvalidSetup("grouped witness body overflow".into()))?;
+    }
+    Ok(total)
+}
+
 /// One physical `[z_hat | e_hat | t_hat]` group-and-chunk unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessUnitLayout {

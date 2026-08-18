@@ -20,11 +20,7 @@ pub(crate) enum CompleteObjectiveBound {
         proof_bytes: usize,
         setup_field_elements: usize,
     },
-    MixedDimension {
-        setup_field_elements: usize,
-        proof_bytes: usize,
-    },
-    RecursiveSetup {
+    SetupFirst {
         first_direct_setup_capacity: usize,
         proof_bytes: usize,
         setup_field_elements: usize,
@@ -43,13 +39,7 @@ impl CompleteObjectiveBound {
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-                Self::MixedDimension {
-                    setup_field_elements,
-                    proof_bytes,
-                }
-            }
-            SelectionPolicyId::MinFirstDirectSetupThenPayload => Self::RecursiveSetup {
+            SelectionPolicyId::MinFirstDirectSetupThenPayload => Self::SetupFirst {
                 first_direct_setup_capacity,
                 proof_bytes,
                 setup_field_elements,
@@ -75,14 +65,7 @@ impl CompleteObjectiveBound {
                 (proof_bytes, setup_field_elements)
                     > (incumbent.proof_bytes, incumbent.setup_field_elements)
             }
-            Self::MixedDimension {
-                setup_field_elements,
-                proof_bytes,
-            } => {
-                (setup_field_elements, proof_bytes)
-                    > (incumbent.setup_field_elements, incumbent.proof_bytes)
-            }
-            Self::RecursiveSetup {
+            Self::SetupFirst {
                 first_direct_setup_capacity,
                 proof_bytes,
                 setup_field_elements,
@@ -109,7 +92,7 @@ impl CompleteObjectiveBound {
         incumbent: CandidateMetrics,
     ) -> bool {
         match self {
-            Self::RecursiveSetup {
+            Self::SetupFirst {
                 first_direct_setup_capacity,
                 proof_bytes,
                 ..
@@ -120,7 +103,21 @@ impl CompleteObjectiveBound {
                         incumbent.proof_bytes,
                     )
             }
-            Self::Direct { .. } | Self::MixedDimension { .. } => false,
+            Self::Direct { .. } => false,
+        }
+    }
+
+    /// Compare only the proof coordinate that an offloaded parent reads from
+    /// the child's payload projection. Strictness is required because equal
+    /// proof bounds can still be separated by parent-owned setup and the
+    /// canonical descriptor.
+    pub(crate) fn is_strictly_worse_for_recursive_payload(
+        self,
+        incumbent: CandidateMetrics,
+    ) -> bool {
+        match self {
+            Self::SetupFirst { proof_bytes, .. } => proof_bytes > incumbent.proof_bytes,
+            Self::Direct { .. } => false,
         }
     }
 }
@@ -136,7 +133,7 @@ pub(crate) fn complete_schedule_score(
         && candidate.first_direct_setup_field_len.is_none()
     {
         return Err(AkitaError::InvalidSetup(
-            "recursive setup candidate is missing its first direct setup size".into(),
+            "setup-first candidate is missing its first direct setup size".into(),
         ));
     }
     Ok(CompleteScheduleScore {

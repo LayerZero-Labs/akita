@@ -25,7 +25,7 @@ pub use layout_types::{
     RelationWitnessGeometry,
 };
 
-fn opening_row_geometry(
+pub(crate) fn opening_row_geometry(
     params: &dyn LevelParamsLike,
     extension_degree: usize,
 ) -> Result<RelationRowGeometry, AkitaError> {

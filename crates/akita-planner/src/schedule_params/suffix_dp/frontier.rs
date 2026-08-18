@@ -169,6 +169,10 @@ impl ObjectiveChoices {
         self.setup.iter()
     }
 
+    fn payload_projected_candidates(&self) -> impl Iterator<Item = &ProjectedCandidate> {
+        self.payload.iter()
+    }
+
     pub(super) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.payload.iter().map(|candidate| &candidate.schedule)
     }
@@ -204,17 +208,19 @@ impl ProjectedFrontier {
             fold_depth: 2,
             first_direct_setup_capacity,
         };
-        self.by_parent_cost
-            .get(parent_cost)
-            .into_iter()
-            .flat_map(ObjectiveChoices::setup_projected_candidates)
-            .any(|incumbent| {
-                incumbent
-                    .admission
-                    .admits_every_parent_of(candidate_admission)
-                    && lower_bound
-                        .is_strictly_worse_for_recursive_parent(incumbent.schedule.metrics())
-            })
+        let Some(choices) = self.by_parent_cost.get(parent_cost) else {
+            return false;
+        };
+        recursive_direct_bound_is_dominated(
+            candidate_admission,
+            lower_bound,
+            choices
+                .setup_projected_candidates()
+                .map(|candidate| (candidate.admission, candidate.schedule.metrics())),
+            choices
+                .payload_projected_candidates()
+                .map(|candidate| (candidate.admission, candidate.schedule.metrics())),
+        )
     }
 
     fn consider(
@@ -228,7 +234,8 @@ impl ProjectedFrontier {
         let admission = ParentAdmissionClass::for_candidate(&candidate);
         let metrics = candidate.metrics();
         let choices = self.by_parent_cost.get(&parent_cost);
-        let keep_setup = policy.recursive_setup_planning
+        let keep_setup = policy.selection_policy
+            == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
             && projection.includes_first_direct_setup()
             && !choices.is_some_and(|choices| {
                 choices.setup.iter().any(|existing| {
@@ -298,6 +305,23 @@ impl ProjectedFrontier {
             projection,
         )
     }
+}
+
+fn recursive_direct_bound_is_dominated(
+    candidate_admission: ParentAdmissionClass,
+    lower_bound: CompleteObjectiveBound,
+    setup_incumbents: impl IntoIterator<Item = (ParentAdmissionClass, super::super::CandidateMetrics)>,
+    payload_incumbents: impl IntoIterator<Item = (ParentAdmissionClass, super::super::CandidateMetrics)>,
+) -> bool {
+    let setup_dominated = setup_incumbents.into_iter().any(|(admission, metrics)| {
+        admission.admits_every_parent_of(candidate_admission)
+            && lower_bound.is_strictly_worse_for_recursive_parent(metrics)
+    });
+    setup_dominated
+        && payload_incumbents.into_iter().any(|(admission, metrics)| {
+            admission.admits_every_parent_of(candidate_admission)
+                && lower_bound.is_strictly_worse_for_recursive_payload(metrics)
+        })
 }
 
 fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
@@ -409,10 +433,10 @@ mod tests {
 
     use super::{
         payload_primary_strictly_dominates, payload_projection_dominates,
-        setup_primary_strictly_dominates, setup_projection_dominates, DescriptorOrderContext,
-        ParentAdmissionClass, ProjectionOrder,
+        recursive_direct_bound_is_dominated, setup_primary_strictly_dominates,
+        setup_projection_dominates, DescriptorOrderContext, ParentAdmissionClass, ProjectionOrder,
     };
-    use crate::schedule_params::SetupPrefixCapacity;
+    use crate::schedule_params::{CandidateMetrics, CompleteObjectiveBound, SetupPrefixCapacity};
 
     fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
         DescriptorOrderContext {
@@ -557,6 +581,46 @@ mod tests {
             admission(1, 8),
             (100, 64),
             compatible,
+        ));
+    }
+
+    fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
+        CandidateMetrics {
+            first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
+            proof_bytes,
+            setup_field_elements: 0,
+        }
+    }
+
+    #[test]
+    fn recursive_bound_requires_dominance_in_both_parent_projections() {
+        let candidate_admission = admission(2, 16);
+        let lower_bound = CompleteObjectiveBound::SetupFirst {
+            first_direct_setup_capacity: 16,
+            proof_bytes: 10,
+            setup_field_elements: 0,
+        };
+        let setup_winner = (admission(2, 8), metrics(8, 100));
+
+        assert!(!recursive_direct_bound_is_dominated(
+            candidate_admission,
+            lower_bound,
+            [setup_winner],
+            [setup_winner],
+        ));
+
+        assert!(recursive_direct_bound_is_dominated(
+            candidate_admission,
+            lower_bound,
+            [setup_winner],
+            [(admission(2, 8), metrics(8, 9))],
+        ));
+
+        assert!(!recursive_direct_bound_is_dominated(
+            candidate_admission,
+            lower_bound,
+            [setup_winner],
+            [(admission(2, 8), metrics(8, 10))],
         ));
     }
 }

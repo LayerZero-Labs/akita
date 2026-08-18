@@ -11,34 +11,24 @@ use crate::PreparedProverGroup;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
-    coefficient_packing_scalar_opening, LevelParamsLike, OpeningMethod,
+    coefficient_packing_scalar_opening, LevelParamsLike, OpeningFamily, OpeningMethod,
     PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
 
-pub(crate) enum PreparedGroupOpening<F: FieldCore, E: FieldCore> {
-    EvaluationTrace {
-        point: PreparedOpeningPoint<F, E>,
-        folded_by_claim: Vec<RingVec<F>>,
-        scalar_openings: Vec<E>,
-    },
-    SubringCoefficientPacking {
-        point: PreparedSubringCoefficientPackingPoint<E>,
-        partials_by_claim: Vec<SubringCoefficientPackingPartials<F>>,
-        scalar_openings: Vec<E>,
-    },
+pub(crate) struct PreparedEvaluationTraceGroup<F: FieldCore, E: FieldCore> {
+    pub(crate) point: PreparedOpeningPoint<F, E>,
+    pub(crate) folded_by_claim: Vec<RingVec<F>>,
 }
 
-impl<F: FieldCore, E: FieldCore> PreparedGroupOpening<F, E> {
-    pub(in crate::protocol) fn scalar_openings(&self) -> &[E] {
-        match self {
-            Self::EvaluationTrace {
-                scalar_openings, ..
-            }
-            | Self::SubringCoefficientPacking {
-                scalar_openings, ..
-            } => scalar_openings,
-        }
-    }
+pub(crate) struct PreparedCoefficientPackingGroup<F: FieldCore, E: FieldCore> {
+    pub(crate) point: PreparedSubringCoefficientPackingPoint<E>,
+    pub(crate) partials_by_claim: Vec<SubringCoefficientPackingPartials<F>>,
+}
+
+pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
+    pub(crate) kind:
+        OpeningFamily<PreparedEvaluationTraceGroup<F, E>, PreparedCoefficientPackingGroup<F, E>>,
+    pub(crate) scalar_openings: Vec<E>,
 }
 
 pub(crate) trait RootProverGroupMeta<F: FieldCore> {
@@ -228,9 +218,13 @@ where
                             )
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    return Ok(PreparedGroupOpening::SubringCoefficientPacking {
-                        point,
-                        partials_by_claim,
+                    return Ok(PreparedGroupOpening {
+                        kind: OpeningFamily::SubringCoefficientPacking(
+                            PreparedCoefficientPackingGroup {
+                                point,
+                                partials_by_claim,
+                            },
+                        ),
                         scalar_openings,
                     });
                 }
@@ -257,12 +251,14 @@ where
                         )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok::<_, AkitaError>(PreparedGroupOpening::EvaluationTrace {
-                    point,
-                    folded_by_claim: folded_by_claim
-                        .iter()
-                        .map(|rows| RingVec::from_ring_elems(rows).into_compact())
-                        .collect(),
+                Ok::<_, AkitaError>(PreparedGroupOpening {
+                    kind: OpeningFamily::EvaluationTrace(PreparedEvaluationTraceGroup {
+                        point,
+                        folded_by_claim: folded_by_claim
+                            .iter()
+                            .map(|rows| RingVec::from_ring_elems(rows).into_compact())
+                            .collect(),
+                    }),
                     scalar_openings,
                 })
             }

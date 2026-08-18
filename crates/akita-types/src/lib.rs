@@ -9,7 +9,7 @@ pub mod compression;
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
-pub mod subring_coefficient_packing;
+mod subring_coefficient_packing;
 pub use dispatch::{
     compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
     ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
@@ -85,9 +85,9 @@ pub use layout::{
     sumcheck_rounds, terminal_response_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
     witness_commitment_domain_len, BasisMode, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
-    GroupOpeningPlan, LevelParamsLike, OpeningMethod, PrecommittedGroupAdmissionPolicy,
-    PrecommittedLevelParams, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
-    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    GroupOpeningPlan, LevelParamsLike, OpeningFamily, OpeningMethod,
+    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, RingMatrixView, RingOpeningPoint,
+    RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
     SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
@@ -107,7 +107,7 @@ pub use proof::{
     decode_terminal_z_golomb_payload, derive_public_matrix_prefix, emit_witness_e_planes,
     emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
     folded_root_supports_opening_shape, generate_relation_rhs, padded_setup_prefix_len,
-    prepare_coefficient_packing_batch_semantics, prepare_coefficient_packing_group_semantics,
+    prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, prepare_opening_point,
     raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
     relation_claim_from_layout_extension, relation_claim_from_rows,
@@ -125,9 +125,7 @@ pub use proof::{
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaStage1Proof,
     AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup,
     CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
-    CoefficientPackingGroupSemanticInputs, CoefficientPackingGroupSemantics,
-    CoefficientPackingRelationEvent, CoefficientPackingRelationEvents,
-    CoefficientPackingStage2Segment, CoefficientPackingStage2Source, CoefficientPackingStage2Term,
+    CoefficientPackingChallenges, CoefficientPackingGroupSemantics, CoefficientPackingStage2Source,
     CoefficientPackingStage2Terms, CoefficientPackingVerifierBatchSemantics,
     CoefficientPackingVerifierGroupSemantics, Commitment, CommitmentVerifier, CommittedGroup,
     CompressionRelationAddressGeometry, CompressionRelationWeights, DigitBlockIter, DigitBlocks,
@@ -137,15 +135,15 @@ pub use proof::{
     PhysicalL2NormProof, PhysicalResponsePlan, PolynomialGroupClaims, PolynomialGroupLayout,
     PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation, RelationAddressGeometry,
     RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
-    RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationGroupOpening, RingRelationGroupOpeningView,
-    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
-    ScheduledSetupPrefix, SetupMatrixCapacity, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof,
-    SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts, TerminalResponseShape,
-    TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,
+    RelationWitnessGeometry, RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
+    RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
+    RingRelationSegmentLengths, RingVec, RingView, ScheduledSetupPrefix, SetupMatrixCapacity,
+    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
+    SetupSumcheckProof, SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape, TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
     MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
@@ -178,11 +176,12 @@ pub use sis::{
     SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use subring_coefficient_packing::coefficient_packing_partials;
 pub use subring_coefficient_packing::{
-    coefficient_packing_map, coefficient_packing_partials, coefficient_packing_scalar_opening,
-    embed_subring_challenge_in_a_ring, fold_coefficient_packing_partials,
-    multiply_a_ring_by_subring_challenge, CoefficientPackingFoldProduct,
-    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+    coefficient_packing_scalar_opening, fold_coefficient_packing_partials,
+    CoefficientPackingFoldProduct, PreparedSubringCoefficientPackingPoint,
+    SubringCoefficientPackingGeometry,
 };
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{
@@ -198,7 +197,7 @@ pub use trace_weight::{
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    dyadic_block_ranges, ChunkedWitnessCfg, CompressionWitnessLayerLayout, CompressionWitnessSpan,
-    MultiChunkProfileId, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
-    MAX_WITNESS_CHUNKS,
+    dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
+    CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,
+    WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
 };

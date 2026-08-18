@@ -598,8 +598,9 @@ separately in Step 3), with `mc = policy.witness_chunk`:
 3. Set the fold step's `witness_chunk` from the same count:
    `ChunkedWitnessCfg { num_chunks, num_activated_levels: mc.num_activated_levels }`
    when `num_chunks > 1`, else `ChunkedWitnessCfg::default()`.
-4. `derive_candidate_level_params` gains a `fold_level` argument so it can resolve
-   `num_chunks`; SIS key geometry is otherwise unchanged.
+4. Recursive fold-candidate requests carry `fold_level` so
+   `derive_fold_candidates` can resolve `num_chunks`; SIS key geometry is
+   otherwise unchanged.
 
 Because `chunks_at_level` depends only on `(policy, L)` and the policy is fixed
 per resolution, the existing memo key `(level, current_w_len,

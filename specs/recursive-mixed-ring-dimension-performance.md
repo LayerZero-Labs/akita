@@ -226,10 +226,10 @@ and its score must include the continuation derived from that exact payload.
 
 ### Model verifier work explicitly if verifier speed is an objective
 
-The general mixed-D design currently proposes:
+Adaptive direct and recursive planning use:
 
 ```text
-(physical setup field elements, proof bytes, deterministic tie-break)
+(first-direct padded capacity, proof bytes, total setup, descriptor)
 ```
 
 That policy can legitimately choose a verifier-slower schedule, because proof
@@ -258,14 +258,14 @@ The exact coefficients must be specified and versioned; wall-clock timings
 must not enter generated catalog selection.
 
 Until that model exists, planner output should expose verifier-work components
-for analysis but retain the approved setup/proof-byte ordering.
+for analysis but retain the approved first-direct/proof/total-setup ordering.
 
-### Retain Pareto alternatives
+### Retain parent-visible alternatives
 
-Setup footprint is a maximum across matrices and levels, not an additive
-local cost. The planner must retain alternatives that differ in:
+The planner retains separate first-direct and payload projections because an
+offloaded parent can mask child setup coordinates. The projections distinguish:
 
-- maximum physical setup footprint;
+- first-direct padded setup capacity and total physical setup;
 - exact proof bytes;
 - verifier-work components;
 - outgoing witness length;

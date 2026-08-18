@@ -10,9 +10,7 @@ use crate::protocol::evaluation_trace::{prepare_evaluation_trace, PreparedEvalua
 use crate::protocol::ring_switch::{
     ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
 };
-use crate::stages::stage1::{
-    derive_multi_group_stage1_challenges, AkitaStage1Verifier, VerifierGroupFoldChallenges,
-};
+use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheckVerifier};
 use akita_challenges::{FoldDraw, LiveFoldDraw};

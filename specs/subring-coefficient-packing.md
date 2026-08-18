@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao |
 | Created | 2026-08-10 |
-| Status | archived |
+| Status | active |
 | PR | [#394](https://github.com/LayerZero-Labs/akita/pull/394) |
 | Supersedes | The assumption that every extension-field opening first uses extension-opening reduction |
 | Superseded-by | |
@@ -14,6 +14,26 @@ The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** in this document are to be interpreted as described in
 [BCP 14](https://www.rfc-editor.org/info/bcp14) when, and only when, they appear
 in all capitals.
+
+## Review status
+
+The implementation is not ready to be treated as complete. The comprehensive
+review of PR #394 found one unresolved proof blocker and two concrete blockers
+that are now repaired.
+
+1. The implemented one-seed challenge vector does not provide the
+   coordinatewise forks assumed by the extraction argument. The proof needs a
+   theorem for full-vector forks, or the challenge derivation must change.
+2. Recursive-prefix guided pruning could discard the suffix needed by the
+   payload projection. It now requires compatible strict dominance in both
+   projections and covers the crossing and proof-tie cases directly.
+3. The old catalog checker compared the current compiled catalog with a current
+   regeneration. The generator now keeps that drift guard separate from stable
+   revision snapshots and a checked base-to-head logical-key-union report.
+
+The remaining unchecked acceptance items below stay open until their points are
+fixed and reviewed. The record has been restored to active status for that
+work.
 
 ## Decision
 
@@ -26,15 +46,13 @@ the A ring dimension are independent schedule choices, subject to the
 divisibility condition below.
 
 Generated schedules use `SubringCoefficientPacking` at absolute fold levels 0
-and 1 when those nonterminal folds exist and the planner finds a complete,
-statically feasible packing assignment. This rule applies to every field
-profile. If no complete packing assignment exists, including when a frozen
-tensor-encoded group is incompatible with coefficient packing, the planner may
-retain the existing `EvaluationTrace` method for the whole fold. It MUST NOT
-mix the two method families within one fold. For extension fields, EOR is not
-available at packing levels. For degree one fields, the same method may reduce
-the partial opening and D or H source even though there is no EOR payload to
-remove.
+and 1 when those nonterminal folds exist. This rule applies to every field
+profile. Every group at such a fold MUST have a complete, statically feasible
+packing assignment. Otherwise the schedule is unsupported. The planner MUST
+NOT fall back to `EvaluationTrace` at an early packing fold and MUST NOT mix the
+two method families within one fold. For extension fields, EOR is not available
+at packing levels. For degree one fields, the same method may reduce the partial
+opening and D or H source even though there is no EOR payload to remove.
 
 Subring coefficient packing folds at levels 0 and 1 MUST use the Linf A
 security route. This keeps PR 369's rule that physical L2 admission starts at
@@ -55,9 +73,9 @@ levels.
 The planner searches the challenge subring dimension `s` independently of the
 A ring dimension `d_A` at levels 0 and 1. Both values are candidate
 coordinates. They are not explicit optimization components. The planner
-retains the current catalog objective, which minimizes setup matrix field
-elements first and proof payload second, followed by its current canonical
-deterministic ordering.
+retains the current adaptive catalog objective, which minimizes first-direct
+padded setup capacity, proof payload, total setup, and the canonical descriptor
+in that order.
 
 This implementation includes the selective L2 fold sizing work merged in
 [PR #369](https://github.com/LayerZero-Labs/akita/pull/369). It also assumes the
@@ -1198,10 +1216,11 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-The planner keeps the selective L2 branch's catalog objective. It minimizes
-setup matrix field elements first and proof payload second. Exact ties use the
-branch's current canonical deterministic ordering. No new objective component
-for `s`, `d_A`, rank, or prover time is added.
+Adaptive direct and recursive catalogs use the shared
+`MinFirstDirectSetupThenPayload` objective. They minimize first-direct padded
+setup capacity, proof payload, total setup, and the canonical descriptor in
+that order. No objective component for `s`, `d_A`, rank, fold count, or prover
+time is added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1221,11 +1240,44 @@ following values.
 
 The report MUST show `opening_method`, `challenge_subring_dimension`,
 `a_ring_dimension`, `packing_factor`, `partial_base_field_width`,
-`packing_quotient_base_field_width`, the secure A route, setup field elements,
-proof bytes, and successor witness length. It must list every catalog
-regression against the selective L2 baseline. A minor row may regress when the
-target presets and the overall catalog improve. Per row nonregression is not an
-acceptance condition.
+`packing_quotient_base_field_width`, the secure A route, first-direct padded
+setup capacity, total setup field elements, proof bytes, and successor witness
+length. It must list every catalog regression against the selective L2
+baseline. A minor row may regress when the target presets and the overall
+catalog improve. Per row nonregression is not an acceptance condition.
+
+### Selective L2 base-to-head catalog evidence
+
+The checked revision report compares base
+`5a4f72bce3920ecb753751187cd2eaab3f915b8b` with this branch. The immutable
+[base snapshot](evidence/subring-coefficient-packing/base.tsv),
+[head snapshot](evidence/subring-coefficient-packing/head.tsv), and
+[complete comparison](evidence/subring-coefficient-packing/comparison.tsv)
+contain a 68-row base and a 67-row head across all 12 generated families. The
+logical-key union has zero additions and one intentional removal. The removed
+row is the unsupported fp128 dense `final=44:1` catalog stress point. All 67
+remaining rows change exact schedule identity, as expected for this breaking
+protocol and planner-policy cutover.
+
+Across the 67 supported logical keys, setup improves on 32 rows, is equal on
+five, and regresses on 30. Its sum falls from 7,022,341,504 to 3,496,910,272
+field elements, a 50.20% reduction. Proof payload improves on 44 rows, is equal
+on 15, and regresses on eight. Its sum falls from 4,965,430 to 4,681,064 bytes,
+a 5.73% reduction. Fifteen rows use fewer fold levels, 42 retain their count,
+and ten use more levels.
+
+This closes the missing-row, primary-objective, and comparison-report evidence
+gaps. The retained catalog improves in aggregate under both reported resource
+coordinates. The eight proof regressions remain explicit per-row review data;
+aggregate improvement does not hide them.
+
+The fp32 dense nv20 rows now use the same
+`MinFirstDirectSetupThenPayload` objective as recursive schedules. Their
+first-direct padded capacities are 131,072 and 262,144 fields. Their six-level
+schedules use 458,752 and 655,360 total setup fields and produce 64,896 and
+66,912 proof bytes. The checked decision and the rejected weighted-objective
+alternative are recorded in the
+[catalog evidence note](evidence/subring-coefficient-packing/README.md#resolved-fp32-nv20-planner-objective).
 
 ### B slicing interaction
 
@@ -1329,8 +1381,9 @@ The planner MUST keep the search bounded in the following ways.
 - Recompute exact ranks, setup, compression, proof bytes, and successors.
 - Regenerate every affected catalog on top of the selective L2 branch.
 - Add report columns for opening method, challenge subring dimension, packing
-  factor, security route, setup field elements, and proof bytes.
-- Preserve the current setup first and proof payload second objective without
+  factor, security route, first-direct padded capacity, total setup field
+  elements, and proof bytes.
+- Preserve the shared first-direct, proof-payload, total-setup objective without
   adding an `s` or `d_A` objective component.
 - Report every catalog regression. Do not reject the feature only because a
   minor row regresses.
@@ -1380,7 +1433,7 @@ The planner MUST keep the search bounded in the following ways.
 - [x] A nonzero extension coordinate numerator is detected by the packed
       `E[Y]` ring-switch oracle.
 - [x] The subring coefficient packing theorem adds no `1/|K|` coordinate projection term.
-- [x] Multi-fork extraction and total soundness-error accounting are documented
+- [ ] Multi-fork extraction and total soundness-error accounting are documented
       alongside the implementation.
 - [x] Malformed opening method, dimension, or coordinate counts return typed errors without
       panic or unbounded allocation.
@@ -1396,9 +1449,9 @@ The planner MUST keep the search bounded in the following ways.
       fold to terminal without inserting another fold.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
       level adaptive prefix and keeps the current uniform suffix.
-- [x] The catalog objective remains setup matrix field elements first and proof
-      payload second, followed by the current canonical deterministic ordering.
-      It has no explicit `s` or `d_A` objective component.
+- [x] Adaptive direct and recursive catalogs use first direct setup capacity,
+      proof payload, total setup, and the canonical descriptor in that order.
+      The objective has no explicit `s`, `d_A`, or fold-count component.
 - [x] `d_D` not dividing the selected native or hidden-digit width rejects
       before matrix/rank construction.
 - [x] Exact D/H and A/B/F ranks are recomputed from subring coefficient packing geometry and norms.
@@ -1409,8 +1462,10 @@ The planner MUST keep the search bounded in the following ways.
       selective L2 baseline.
 - [x] At least one fp32 and one fp64 production row demonstrate the expected
       L0/L1 EOR removal in actual serialized proof breakdowns.
-- [x] No generated catalog silently drops a previously supported row. Every
-      regression is listed, but minor per row regressions are allowed.
+- [x] The one removed fp128 dense nv44 stress row and every retained-row
+      regression are explicit in the checked base-to-head report.
+- [x] The checked head contains 67 rows across 12 families. The complete
+      comparison contains zero additions, one removal, and 67 changed rows.
 - [x] Subring packing setup prefix edges use Linf. Reports for later evaluation trace
       edges preserve PR 369's existing L2 admission result.
 
@@ -1491,30 +1546,31 @@ The implementation folded the stable protocol prose into:
   condition; and
 - `book/src/how/security.md` for the forking and polynomial-root arguments.
 
-Those chapters own the durable explanation. This design record is archived
-under the workflow in [`specs/PRUNING.md`](../../PRUNING.md).
+Those chapters contain the current durable explanation. This design record is
+active again under the workflow in [`specs/PRUNING.md`](PRUNING.md) until the
+open review blockers are resolved.
 
 ## References
 
 - [Lyubashevsky and Seiler, EUROCRYPT 2018](https://doi.org/10.1007/978-3-319-78381-9_8),
   Corollary 1.2 for partial splitting and short invertibility.
-- [B commitment slicing](../../commitment-slicing.md), PR 388 baseline and B planner
+- [B commitment slicing](commitment-slicing.md), PR 388 baseline and B planner
   interaction.
 - [Selective L2 fold sizing](https://github.com/LayerZero-Labs/akita/pull/369),
   planner objective, response sizing, and operator norm certificates.
-- [Extension-field opening batching](extension-field-opening-batching.md),
+- [Extension-field opening batching](archive/2026-Q3/extension-field-opening-batching.md),
   tensor EOR and the transformed-commitment soundness boundary.
-- [Root fold and ring switch](../../../book/src/how/proving/root-fold-ring-switch.md),
+- [Root fold and ring switch](../book/src/how/proving/root-fold-ring-switch.md),
   current production sparse families and role dimensions.
-- [EOR streamed prover](eor-streamed-prover.md), historical EOR prover path and
+- [EOR streamed prover](archive/2026-Q3/eor-streamed-prover.md), historical EOR prover path and
   performance context.
-- [`crates/akita-types/src/layout/proof_size.rs`](../../../crates/akita-types/src/layout/proof_size.rs),
+- [`crates/akita-types/src/layout/proof_size.rs`](../crates/akita-types/src/layout/proof_size.rs),
   canonical current EOR byte formula.
-- [`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`](../../../crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs),
+- [`crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`](../crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs),
   current high-half, consistency, and A quotient construction.
-- [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../../../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
+- [`crates/akita-prover/src/protocol/ring_switch/relation_weights.rs`](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
   current structured relation weights and challenge reuse.
-- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../../../crates/akita-verifier/src/protocol/ring_switch.rs),
+- [`crates/akita-verifier/src/protocol/ring_switch.rs`](../crates/akita-verifier/src/protocol/ring_switch.rs),
   current `c_alphas` preparation.
-- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../../../crates/akita-verifier/src/protocol/evaluation_trace.rs),
+- [`crates/akita-verifier/src/protocol/evaluation_trace.rs`](../crates/akita-verifier/src/protocol/evaluation_trace.rs),
   current trace-based scalar-opening contraction.

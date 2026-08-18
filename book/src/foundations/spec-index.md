@@ -13,16 +13,14 @@ The active design frontier (keep as live specs):
 `setup-offloading-planner`, `packed-sumcheck`,
 `planner-incidence-generalization`,
 `akita-field-refactor`, `akita-compute-backend-metal` (Metal tail),
-`large-digit-ntt-infrastructure`.
+`large-digit-ntt-infrastructure`, and
+[`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md).
 
 The approved SIS security-policy frontier is
 `sis-quantum128-scalar-n-table`: a scalar, role-driven table using one ADPS16
 quantum LGSA policy at a 128-bit target.
 
 Recent archived records include
-[`subring-coefficient-packing`](../../../specs/archive/2026-Q3/subring-coefficient-packing.md),
-whose opening geometry, transcript order, planner policy, and security contract
-now live in the ring-switch, configuration, profiling, and security chapters;
 [`commitment-compression-cutover`](../../../specs/archive/2026-Q3/commitment-compression-cutover.md),
 and
 [`relation-range-image-sumcheck`](../../../specs/archive/2026-Q3/relation-range-image-sumcheck.md).

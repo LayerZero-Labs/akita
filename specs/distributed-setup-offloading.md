@@ -148,7 +148,7 @@ Both features are per-level properties of `LevelParams`
 `setup_prefix: Option<SetupPrefixSlotId>` (offloading). They are threaded through
 the same planner, walker, prover, and verifier, and are mostly orthogonal:
 
-- **Planner DP** already prices the mix. `derive_candidate_level_params`
+- **Planner DP** already prices the mix. `derive_fold_candidates`
   (`crates/akita-planner/src/schedule_params/candidate.rs`) resolves
   `num_chunks = crate::policy::chunks_at_level(policy, fold_level)` and threads it through both
   the folded-witness sizing (`grouped_setup_prefix_next_witness_len`,

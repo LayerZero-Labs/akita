@@ -389,10 +389,9 @@ mod tests {
         )
         .unwrap();
         let relation = RingRelationInstance::new(
-            vec![
-                RingRelationGroupOpening::subring_coefficient_packing(geometry, challenges)
-                    .unwrap(),
-            ],
+            vec![RingRelationGroupOpening::coefficient_packing(
+                akita_types::CoefficientPackingChallenges::new(geometry, challenges).unwrap(),
+            )],
             2,
             opening_batch.clone(),
             vec![F::from_u64(3), F::from_u64(5)],
@@ -435,7 +434,7 @@ mod tests {
             },
         )
         .unwrap();
-        let expanded_oracle =
+        let (_, expanded_oracle) =
             prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
                 level_params: &params,
                 opening_batch: &opening_batch,
@@ -507,9 +506,9 @@ mod tests {
             verifier
                 .coefficient_packing_weight_at_point(&point)
                 .unwrap(),
-            expanded_oracle.groups()[0]
-                .relation_events()
-                .evaluate_at_point(&point)
+            batch.groups()[0]
+                .compact_factors()
+                .evaluate_relation_at_point(&point)
                 .unwrap()
                 + expanded_oracle.groups()[0]
                     .stage2_terms()

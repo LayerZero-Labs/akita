@@ -2,24 +2,22 @@ use super::*;
 
 /// Checked opening geometry considered by one planner candidate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PlannerOpeningCandidate {
-    method: akita_types::OpeningMethod,
-    challenge_config: SparseChallengeConfig,
-    packing_geometry: Option<akita_types::SubringCoefficientPackingGeometry>,
+pub(crate) enum PlannerOpeningCandidate {
+    EvaluationTrace {
+        challenge_config: SparseChallengeConfig,
+    },
+    SubringCoefficientPacking {
+        geometry: akita_types::SubringCoefficientPackingGeometry,
+    },
 }
 
 impl PlannerOpeningCandidate {
     /// Preserve the historical full-ring EvaluationTrace candidate.
     pub(crate) fn evaluation_trace(challenge_config: SparseChallengeConfig) -> Self {
-        Self {
-            method: akita_types::OpeningMethod::EvaluationTrace,
-            challenge_config,
-            packing_geometry: None,
-        }
+        Self::EvaluationTrace { challenge_config }
     }
 
     /// Enumerate the fixed production packing domain for one level/role tuple.
-    #[allow(dead_code)] // consumed by the suffix DP in the adoption slice
     pub(crate) fn coefficient_packing_domain(
         absolute_level: usize,
         extension_degree: usize,
@@ -39,7 +37,6 @@ impl PlannerOpeningCandidate {
     }
 
     /// Admit one coefficient-packing candidate before SIS lookup or sizing.
-    #[allow(dead_code)] // exercised before catalog adoption by candidate-builder tests
     pub(crate) fn coefficient_packing(
         absolute_level: usize,
         extension_degree: usize,
@@ -65,40 +62,42 @@ impl PlannerOpeningCandidate {
                 "coefficient-packing width must decompose into D-native subcolumns".into(),
             ));
         }
-        Ok(Self {
-            method: akita_types::OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension,
-            },
-            challenge_config: geometry.fold_challenge_config(),
-            packing_geometry: Some(geometry),
-        })
+        Ok(Self::SubringCoefficientPacking { geometry })
     }
 
     pub(crate) const fn method(self) -> akita_types::OpeningMethod {
-        self.method
+        match self {
+            Self::EvaluationTrace { .. } => akita_types::OpeningMethod::EvaluationTrace,
+            Self::SubringCoefficientPacking { geometry } => {
+                akita_types::OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension: geometry.challenge_subring_dimension(),
+                }
+            }
+        }
     }
 
     pub(crate) const fn challenge_config(self) -> SparseChallengeConfig {
-        self.challenge_config
+        match self {
+            Self::EvaluationTrace { challenge_config } => challenge_config,
+            Self::SubringCoefficientPacking { geometry } => geometry.fold_challenge_config(),
+        }
     }
 
     pub(crate) const fn challenge_dimension(self, ambient_dimension: usize) -> usize {
-        match self.method {
-            akita_types::OpeningMethod::EvaluationTrace => ambient_dimension,
-            akita_types::OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension,
-            } => challenge_subring_dimension,
+        match self {
+            Self::EvaluationTrace { .. } => ambient_dimension,
+            Self::SubringCoefficientPacking { geometry } => geometry.challenge_subring_dimension(),
         }
     }
 
     pub(crate) const fn is_coefficient_packing(self) -> bool {
-        self.packing_geometry.is_some()
+        matches!(self, Self::SubringCoefficientPacking { .. })
     }
 
     pub(crate) const fn physical_coefficient_width(self, ambient_dimension: usize) -> usize {
-        match self.packing_geometry {
-            Some(geometry) => geometry.partial_base_field_width(),
-            None => ambient_dimension,
+        match self {
+            Self::EvaluationTrace { .. } => ambient_dimension,
+            Self::SubringCoefficientPacking { geometry } => geometry.partial_base_field_width(),
         }
     }
 
@@ -108,11 +107,8 @@ impl PlannerOpeningCandidate {
         extension_degree: usize,
         dimensions: CommitmentRingDims,
     ) -> Result<(), AkitaError> {
-        let akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } = self.method
-        else {
-            self.challenge_config
+        let Self::SubringCoefficientPacking { geometry } = self else {
+            self.challenge_config()
                 .validate_for_ring_dim(dimensions.d_a())
                 .map_err(|reason| AkitaError::InvalidSetup(reason.to_string()))?;
             return Ok(());
@@ -121,7 +117,7 @@ impl PlannerOpeningCandidate {
             absolute_level,
             extension_degree,
             dimensions,
-            challenge_subring_dimension,
+            geometry.challenge_subring_dimension(),
         )?;
         if self != expected {
             return Err(AkitaError::InvalidSetup(

@@ -24,6 +24,18 @@ pub enum OpeningMethod {
     },
 }
 
+/// Runtime value carried by one of Akita's two opening methods.
+///
+/// The schedule chooses an [`OpeningMethod`]; this family preserves that same
+/// method distinction while each protocol stage supplies its own payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OpeningFamily<Trace, Packing> {
+    /// Value belonging to the full-A evaluation-trace method.
+    EvaluationTrace(Trace),
+    /// Value belonging to subring coefficient packing.
+    SubringCoefficientPacking(Packing),
+}
+
 impl OpeningMethod {
     pub(crate) fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
         match self {

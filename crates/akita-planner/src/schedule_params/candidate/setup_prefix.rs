@@ -158,48 +158,13 @@ impl SetupPrefixCandidateContext<'_> {
                 num_digits_fold: inner_candidate.num_digits_fold,
             },
         };
-        let legacy_ring_width = akita_schedules::planner_support::grouped_segment_rings(
+        let physical_width = akita_types::grouped_witness_body_coefficients(
+            &params,
+            self.dimensions,
+            self.policy.claim_ext_degree,
             1,
-            split.num_live_blocks,
             self.num_chunks,
-            split.num_positions_per_block,
-            params.layout.inner_commit_matrix.output_rank(),
-            split.num_digits_inner,
-            self.num_digits_outer,
-            self.num_digits_open,
-            params.opening.num_digits_fold,
         )?;
-        let physical_width = if self.opening.is_coefficient_packing() {
-            let d_a = self.dimensions.d_a();
-            let legacy_coefficients = legacy_ring_width.checked_mul(d_a).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup-prefix witness width overflow".into())
-            })?;
-            let legacy_e_coefficients = split
-                .num_live_blocks
-                .checked_mul(self.num_digits_open)
-                .and_then(|width| width.checked_mul(d_a))
-                .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix E width overflow".into()))?;
-            let packed_e_coefficients = split
-                .num_live_blocks
-                .checked_mul(self.num_digits_open)
-                .and_then(|width| {
-                    width.checked_mul(
-                        self.opening
-                            .physical_coefficient_width(self.dimensions.d_a()),
-                    )
-                })
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup-prefix packed E width overflow".into())
-                })?;
-            legacy_coefficients
-                .checked_sub(legacy_e_coefficients)
-                .and_then(|width| width.checked_add(packed_e_coefficients))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup-prefix packed witness width overflow".into())
-                })?
-        } else {
-            legacy_ring_width
-        };
         let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
         let setup_fields = akita_types::setup_prefix_slot_field_elements(
             &akita_types::scheduled_setup_prefix(self.n_prefix, params.clone()).slot_id(),

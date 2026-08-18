@@ -22,7 +22,7 @@ fn zero_vec<T: FieldCore>(len: usize) -> Result<Vec<T>, AkitaError> {
 /// dense and recursive representations; sparse representations may implement
 /// a direct scatter while comparing against this path in tests.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
-pub(crate) fn partials_from_indexed_source<F, E, const D: usize>(
+pub(super) fn partials_from_indexed_source<F, E, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
     source_num_vars: usize,
     source_len: usize,

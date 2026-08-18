@@ -13,9 +13,9 @@ use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInsta
 use akita_transcript::labels;
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    append_digit_range_child_claims, AkitaStage1Proof, CommittedGroupParams,
-    DigitRangeEqualityPoint, DigitRangePlan, InnerCommitSecurityRoute, OpeningClaimsLayout,
-    OpeningMethod, SubringCoefficientPackingGeometry,
+    append_digit_range_child_claims, AkitaStage1Proof, CoefficientPackingChallenges,
+    CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan, InnerCommitSecurityRoute,
+    OpeningClaimsLayout, OpeningFamily, OpeningMethod, SubringCoefficientPackingGeometry,
 };
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
@@ -40,14 +40,8 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
 /// # Errors
 ///
 /// Returns an error if the group layout is malformed or challenge sampling fails.
-#[allow(clippy::too_many_arguments)]
-pub(crate) enum VerifierGroupFoldChallenges {
-    EvaluationTrace(Challenges),
-    SubringCoefficientPacking {
-        geometry: SubringCoefficientPackingGeometry,
-        challenges: Challenges,
-    },
-}
+pub(crate) type VerifierGroupFoldChallenges =
+    OpeningFamily<Challenges, CoefficientPackingChallenges>;
 
 pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
     transcript: &mut T,
@@ -79,7 +73,7 @@ where
                     )
                 })
                 .flatten();
-                VerifierGroupFoldChallenges::EvaluationTrace(
+                OpeningFamily::EvaluationTrace(
                     LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
                         akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                         group_dims.d_a(),
@@ -127,10 +121,9 @@ where
                         grind_nonce,
                         None,
                     )?;
-                VerifierGroupFoldChallenges::SubringCoefficientPacking {
-                    geometry,
-                    challenges,
-                }
+                OpeningFamily::SubringCoefficientPacking(CoefficientPackingChallenges::new(
+                    geometry, challenges,
+                )?)
             }
         };
         group_challenges.push(drawn);

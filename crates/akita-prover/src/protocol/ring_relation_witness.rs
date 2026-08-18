@@ -5,44 +5,12 @@ use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    AkitaCommitmentHint, CoefficientPackingFoldProduct, CommitmentRingDims, DigitBlocks, RingRole,
-    RingVec, SubringCoefficientPackingGeometry,
+    AkitaCommitmentHint, CoefficientPackingFoldProduct, CommitmentRingDims, DigitBlocks,
+    OpeningFamily, RingRole, RingVec,
 };
 
 /// Method-typed folded opening retained for quotient construction.
-pub(crate) enum GroupFoldedOpening<F: FieldCore> {
-    EvaluationTrace(RingVec<F>),
-    #[allow(dead_code)] // Constructed by the next, still-gated Stage 2 cutover.
-    SubringCoefficientPacking {
-        geometry: SubringCoefficientPackingGeometry,
-        reduced_coordinates: Vec<F>,
-        quotient_high_half_coordinates: Vec<F>,
-    },
-}
-
-impl<F: FieldCore> GroupFoldedOpening<F> {
-    #[allow(dead_code)] // Constructed by the next, still-gated Stage 2 cutover.
-    pub(crate) fn coefficient_packing(
-        product: CoefficientPackingFoldProduct<F>,
-    ) -> Result<Self, AkitaError> {
-        let (geometry, reduced_coordinates, quotient_high_half_coordinates) =
-            product.into_geometry_and_base_field_coordinates();
-        let width = geometry.partial_base_field_width();
-        if reduced_coordinates.len() != width || quotient_high_half_coordinates.len() != width {
-            return Err(AkitaError::InvalidSize {
-                expected: width,
-                actual: reduced_coordinates
-                    .len()
-                    .max(quotient_high_half_coordinates.len()),
-            });
-        }
-        Ok(Self::SubringCoefficientPacking {
-            geometry,
-            reduced_coordinates,
-            quotient_high_half_coordinates,
-        })
-    }
-}
+pub(crate) type GroupFoldedOpening<F> = OpeningFamily<RingVec<F>, CoefficientPackingFoldProduct<F>>;
 
 /// One distributed fold window's centered coefficients and signed extrema.
 pub(crate) struct CenteredFoldChunk {
@@ -203,7 +171,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
             z_folded_rings,
             z_folded_coefficients,
             e_hat,
-            folded_opening: GroupFoldedOpening::EvaluationTrace(e_folded),
+            folded_opening: OpeningFamily::EvaluationTrace(e_folded),
             hint,
             role_dims,
         }
@@ -211,7 +179,6 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
 
     /// Construct one coefficient-packing group witness from checked physical coordinates.
     #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)] // Constructed by the next, still-gated Stage 2 cutover.
     pub(crate) fn from_coefficient_packing_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
         z_folded_coefficients: FoldChunkCoefficients,
@@ -219,15 +186,15 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
         product: CoefficientPackingFoldProduct<F>,
         hint: AkitaCommitmentHint<F>,
         role_dims: CommitmentRingDims,
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             z_folded_rings,
             z_folded_coefficients,
             e_hat,
-            folded_opening: GroupFoldedOpening::coefficient_packing(product)?,
+            folded_opening: OpeningFamily::SubringCoefficientPacking(product),
             hint,
             role_dims,
-        })
+        }
     }
 
     /// Per-role ring dimensions for this group witness.
@@ -246,7 +213,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
         match role {
             RingRole::Inner => {
                 self.z_folded_rings.ensure_ring_dim::<D>()?;
-                if let GroupFoldedOpening::EvaluationTrace(e_folded) = &self.folded_opening {
+                if let OpeningFamily::EvaluationTrace(e_folded) = &self.folded_opening {
                     if !e_folded.can_decode_vec(D) {
                         return Err(AkitaError::InvalidSize {
                             expected: D,
@@ -294,8 +261,8 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
     pub fn e_folded_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         self.ensure_role_dim::<D>(RingRole::Inner)?;
         match &self.folded_opening {
-            GroupFoldedOpening::EvaluationTrace(e_folded) => e_folded.as_ring_slice::<D>(),
-            GroupFoldedOpening::SubringCoefficientPacking { .. } => Err(AkitaError::InvalidSetup(
+            OpeningFamily::EvaluationTrace(e_folded) => e_folded.as_ring_slice::<D>(),
+            OpeningFamily::SubringCoefficientPacking(_) => Err(AkitaError::InvalidSetup(
                 "coefficient-packing folded opening is not an A-ring vector".into(),
             )),
         }

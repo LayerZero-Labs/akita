@@ -13,8 +13,7 @@ use akita_types::{
 };
 
 /// Fold one group's canonical partials with its single sampled subring challenge batch.
-#[allow(dead_code)] // Reached after the Stage 2 structured-weight cutover opens execution.
-pub(crate) fn fold_coefficient_packing_group<F: FieldCore + akita_field::FromPrimitiveInt>(
+pub(super) fn fold_coefficient_packing_group<F: FieldCore + akita_field::FromPrimitiveInt>(
     geometry: SubringCoefficientPackingGeometry,
     partials_by_claim: &[SubringCoefficientPackingPartials<F>],
     challenges: &Challenges,
@@ -54,7 +53,7 @@ pub(crate) fn fold_coefficient_packing_group<F: FieldCore + akita_field::FromPri
 }
 
 /// Concatenate group-local D inputs in canonical relation order.
-pub(crate) fn concatenate_group_d_inputs(
+pub(super) fn concatenate_group_d_inputs(
     opening_batch: &OpeningClaimsLayout,
     group_inputs: &[&DigitBlocks],
 ) -> Result<DigitBlocks, AkitaError> {
@@ -92,8 +91,7 @@ pub(crate) fn concatenate_group_d_inputs(
 /// Logical blocks are ordered `[claim][partial block]`. Within each block,
 /// coordinate planes are split into consecutive D-ring subcolumns and then
 /// gadget digit planes.
-#[allow(dead_code)] // Wired when the complete packing relation enters execution.
-pub(crate) fn materialize_coefficient_packing_d_input<
+pub(super) fn materialize_coefficient_packing_d_input<
     F: FieldCore + CanonicalField,
     const D_D: usize,
 >(

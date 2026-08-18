@@ -10,38 +10,9 @@ use super::*;
 ///   by first direct setup scan and then proof payload. The payload projection
 ///   is the smallest-payload schedule used after an earlier direct edge has
 ///   fixed the setup-size objective.
-/// - `mixed_frontier` — nondominated setup-envelope/proof candidates for the
-///   direct adaptive-dimension objective.
 pub(crate) struct SuffixResult {
     pub(super) payload_only: BTreeMap<ParentObservableKey, Vec<ScheduleCandidate>>,
     pub(super) setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices>,
-    /// Nondominated setup-envelope/proof candidates used by adaptive scalar
-    /// planning, bucketed by the exact geometry visible to their parent.
-    pub(crate) mixed_frontier: MixedFrontier,
-}
-
-pub(crate) struct MixedFrontier {
-    by_parent: BTreeMap<ParentObservableKey, Vec<ScheduleCandidate>>,
-}
-
-impl MixedFrontier {
-    pub(super) const fn new() -> Self {
-        Self {
-            by_parent: BTreeMap::new(),
-        }
-    }
-
-    pub(crate) fn candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
-        self.by_parent.values().flatten()
-    }
-
-    pub(super) fn buckets(&self) -> impl Iterator<Item = &[ScheduleCandidate]> {
-        self.by_parent.values().map(Vec::as_slice)
-    }
-
-    pub(super) fn candidate_count(&self) -> usize {
-        self.by_parent.values().map(Vec::len).sum()
-    }
 }
 
 impl SuffixResult {
@@ -58,40 +29,6 @@ impl SuffixResult {
             .values()
             .flat_map(frontier::ObjectiveChoices::setup_candidates)
     }
-}
-
-fn mixed_score(candidate: &ScheduleCandidate) -> MixedScore {
-    MixedScore {
-        setup_field_elements: candidate.setup_field_elements,
-        proof_bytes: candidate.total_bytes,
-    }
-}
-
-pub(super) fn dominates_mixed_score(left: MixedScore, right: MixedScore) -> bool {
-    left.setup_field_elements <= right.setup_field_elements
-        // A setup-only improvement cannot prune `right`: a parent can mask
-        // both setup footprints, leaving proof bytes and the descriptor to
-        // decide the complete schedule.
-        && left.proof_bytes < right.proof_bytes
-}
-
-pub(super) fn insert_mixed_frontier(
-    policy: &PlannerPolicy,
-    frontier: &mut MixedFrontier,
-    candidate: ScheduleCandidate,
-) -> Result<(), AkitaError> {
-    if policy.selection_policy
-        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        || !policy.admits_setup_field_elements(candidate.setup_field_elements)
-    {
-        return Ok(());
-    }
-    let candidate_key = ParentObservableKey::new(policy, candidate.first_fold_params())?;
-    let bucket = frontier.by_parent.entry(candidate_key).or_default();
-    crate::schedule_params::pareto::insert(bucket, candidate, |left, right| {
-        dominates_mixed_score(mixed_score(left), mixed_score(right))
-    });
-    Ok(())
 }
 
 /// Exact successor geometry visible to a parent fold.
@@ -192,7 +129,6 @@ pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
     Arc::new(SuffixResult {
         payload_only: BTreeMap::new(),
         setup_and_payload: BTreeMap::new(),
-        mixed_frontier: MixedFrontier::new(),
     })
 }
 

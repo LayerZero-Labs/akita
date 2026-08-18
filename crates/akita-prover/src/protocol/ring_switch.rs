@@ -62,8 +62,8 @@ pub struct RingSwitchOutput<E: FieldCore> {
 
 /// Transcript-complete ring-switch state and the exact relation authority
 /// compiled from its freshly sampled challenges.
-pub(crate) struct RingSwitchFinalization<F: FieldCore, E: FieldCore> {
+pub(crate) struct RingSwitchFinalization<E: FieldCore> {
     pub(crate) output: RingSwitchOutput<E>,
     pub(crate) relation_plan: RelationRangeImagePlan,
-    pub(crate) coefficient_packing_batch: Option<CoefficientPackingBatchSemantics<F, E>>,
+    pub(crate) coefficient_packing_batch: Option<CoefficientPackingBatchSemantics<E>>,
 }

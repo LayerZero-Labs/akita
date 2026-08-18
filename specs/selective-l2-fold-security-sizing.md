@@ -724,10 +724,9 @@ uniform field element, including the residual top plane. This is a
 computational pseudorandomness model, not an information-theoretic statement
 about every seed. The recursive source keeps its propagated `M` and `P`.
 
-The setup-prefix search prices the direct setup capacity first when the profile
-uses the recursive-setup objective. Proof bytes and total setup field elements
-remain later tie-breakers according to that profile's declared selection
-policy. Direct scalar profiles minimize estimated proof bytes first.
+Adaptive direct and recursive-setup profiles price first-direct padded setup
+capacity first. Proof bytes and total setup field elements remain later
+tie-breakers. Uniform direct profiles minimize estimated proof bytes first.
 
 ### Multi-group and multi-chunk states
 
@@ -968,10 +967,9 @@ the profile's declared objective, its comparison includes:
 * The terminal response and its encoding.
 * A canonical descriptor tie-break.
 
-Direct scalar profiles minimize proof bytes first. Mixed-dimension profiles
-minimize setup field elements before proof bytes. Recursive-setup profiles
-minimize the first direct setup capacity before proof bytes and total setup
-elements. These are product objectives, not security rules.
+Uniform direct profiles minimize proof bytes, then total setup. Adaptive direct
+and recursive-setup profiles minimize first-direct padded setup capacity, then
+proof bytes and total setup. These are product objectives, not security rules.
 
 The memo key includes `M`, `P`, ring dimensions, setup-prefix state, witness
 length, basis, level, and payload phase. Pareto pruning keeps candidates that a

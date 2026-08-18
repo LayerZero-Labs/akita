@@ -42,19 +42,13 @@ pub(crate) use akita_schedules::planner_support::{
 };
 pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
-    derive_ab_commitment_candidate, derive_candidate_level_params,
-    derive_candidate_level_params_split_frontier, derive_recursive_candidate_views,
-    derive_terminal_candidate_params, recursive_split_search_domain, AbCommitmentCandidateRequest,
-    PlannerOpeningCandidate, SetupPrefixSearchCache,
-};
-#[cfg(test)]
-pub(crate) use candidate::{
-    derive_candidate_level_params_split_frontier_without_bounds, derive_linf_candidate_level_params,
+    derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
+    derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
+    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveSetupPrefix,
+    SetupPrefixSearchCache, SplitBoundPolicy,
 };
 pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
-pub(crate) use setup_score::{
-    level_setup_field_elements, terminal_setup_field_elements, MixedScore,
-};
+pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 pub(crate) fn root_inner_basis_source(
@@ -67,6 +61,18 @@ pub(crate) fn root_inner_basis_source(
             InnerBasisSource::RawCoefficients { log_bound }
         }
     }
+}
+
+pub(crate) fn precommitted_groups_support_opening_dimension<'a>(
+    profiles: impl IntoIterator<Item = &'a CommittedGroupProfile>,
+    opening_ring_dimension: usize,
+) -> bool {
+    profiles.into_iter().all(|profile| {
+        profile
+            .inner_commit_matrix
+            .ring_dimension()
+            .is_multiple_of(opening_ring_dimension)
+    })
 }
 
 pub(crate) fn dimension_candidates(
@@ -430,15 +436,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     }
     let mut best: Option<((usize, usize), CommittedGroupParams)> = None;
     for params in candidates {
-        let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-                level_setup_field_elements(&params)?
-            }
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-                padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
-            }
-            crate::SelectionPolicyId::MinEstimatedProofPayload => unreachable!(),
-        };
+        let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
         let score = (setup_score, params.outer_slice_count.get());
         if best
             .as_ref()

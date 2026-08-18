@@ -1,13 +1,16 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
 use super::fold_two_round_quad;
-use std::{mem, ops::Range, sync::Arc};
+#[cfg(test)]
+use std::ops::Range;
+use std::{mem, sync::Arc};
 
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt, Invertible};
 use akita_types::{
     basis_weights_prefix, prepare_evaluation_trace_group_parameters, BasisMode,
-    EvaluationTraceInputs, FpExtEncoding,
+    CoefficientPackingStage2Source, CoefficientPackingStage2Terms, EvaluationTraceInputs,
+    FpExtEncoding,
 };
 
 /// One contiguous physical opening-digit run for a claim inside one witness chunk.
@@ -142,8 +145,8 @@ struct PreparedTraceSource<E: FieldCore> {
 }
 
 /// One contiguous source-to-witness contribution to a structured linear term.
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // Reached when packing execution is admitted.
 pub(crate) struct StructuredLinearSegment {
     pub(crate) physical_coefficient_start: usize,
     pub(crate) source_coefficient_start: usize,
@@ -151,8 +154,8 @@ pub(crate) struct StructuredLinearSegment {
 }
 
 /// One factored linear term supported on selected witness coefficient ranges.
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // Reached when packing execution is admitted.
 pub(crate) struct StructuredLinearTerm<E: FieldCore> {
     pub(crate) factor: E,
     pub(crate) source_index: usize,
@@ -160,8 +163,8 @@ pub(crate) struct StructuredLinearTerm<E: FieldCore> {
 }
 
 /// Method-neutral structured linear weights over one flat witness domain.
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // Reached when packing execution is admitted.
 pub(crate) struct StructuredLinearWeights<E: FieldCore> {
     pub(crate) sources: Vec<Arc<[E]>>,
     pub(crate) segments: Vec<StructuredLinearSegment>,
@@ -419,8 +422,108 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
         })
     }
 
+    /// Consume canonical coefficient-packing terms into the Stage 2 engine.
+    pub(crate) fn from_coefficient_packing(
+        weights: CoefficientPackingStage2Terms<E>,
+    ) -> Result<Self, AkitaError> {
+        let physical_field_len = weights.physical_field_len();
+        let coeff_count = weights.relation_coefficient_block_len();
+        let (source_values, segments, terms) = weights.into_linear_parts();
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || physical_field_len == 0
+            || !physical_field_len.is_multiple_of(coeff_count)
+            || terms.is_empty()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing linear geometry is malformed".into(),
+            ));
+        }
+        let sources = source_values
+            .into_iter()
+            .map(|values| {
+                if values.is_empty() || !values.len().is_multiple_of(coeff_count) {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing source geometry is malformed".into(),
+                    ));
+                }
+                Ok(PreparedTraceSource {
+                    lane_count: values.len() / coeff_count,
+                    values,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let live_lane_count = physical_field_len / coeff_count;
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for term in terms {
+            let source_index = match term.source() {
+                CoefficientPackingStage2Source::DirectOpening => 0,
+                CoefficientPackingStage2Source::PackingZ => 1,
+            };
+            let source = sources.get(source_index).ok_or(AkitaError::InvalidProof)?;
+            let term_segments = segments
+                .get(term.segments())
+                .ok_or(AkitaError::InvalidProof)?;
+            if term_segments.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient-packing term has no support".into(),
+                ));
+            }
+            for segment in term_segments {
+                let physical = segment.physical_coefficients();
+                let source_range = segment.source_coefficients();
+                if physical.len() != source_range.len()
+                    || physical.is_empty()
+                    || !physical.start.is_multiple_of(coeff_count)
+                    || !physical.len().is_multiple_of(coeff_count)
+                    || !source_range.start.is_multiple_of(coeff_count)
+                    || physical.end > physical_field_len
+                    || source_range.end > source.values.len()
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing segment is unaligned or out of bounds".into(),
+                    ));
+                }
+                let target_lane_start = physical.start / coeff_count;
+                let source_lane_start = source_range.start / coeff_count;
+                let lane_count = physical.len() / coeff_count;
+                for lane_offset in 0..lane_count {
+                    let target_lane =
+                        target_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "coefficient-packing target lane overflow".into(),
+                            )
+                        })?;
+                    let source_lane =
+                        source_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "coefficient-packing source lane overflow".into(),
+                            )
+                        })?;
+                    if source_lane >= source.lane_count {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    lane_terms
+                        .get_mut(target_lane)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .push(PreparedLaneTerm {
+                            factor: term.factor(),
+                            source_index,
+                            lane: source_lane,
+                        });
+                }
+            }
+        }
+        Ok(Self {
+            lane_terms,
+            sources,
+            live_lane_count,
+            coeff_count,
+        })
+    }
+
     /// Compile arbitrary checked source segments into the shared Stage 2 engine.
-    #[allow(dead_code)] // Reached when packing execution is admitted.
+    #[cfg(test)]
     pub(crate) fn from_structured_weights(
         weights: &StructuredLinearWeights<E>,
         coeff_count: usize,
@@ -533,7 +636,6 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
     }
 
     /// Add another checked structured term set over the same witness domain.
-    #[allow(dead_code)] // Reached when packing execution is admitted.
     pub(crate) fn merge(&mut self, other: Self) -> Result<(), AkitaError> {
         if self.live_lane_count != other.live_lane_count || self.coeff_count != other.coeff_count {
             return Err(AkitaError::InvalidSize {

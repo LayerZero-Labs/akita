@@ -12,9 +12,10 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
     dyadic_block_ranges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
-    golomb_rice_zigzag_width, CommittedGroupParams, FoldLinfProtocolBinding,
-    InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout, OpeningMethod,
-    SubringCoefficientPackingGeometry, TerminalCommittedGroupParams, TerminalResponseShape,
+    golomb_rice_zigzag_width, CoefficientPackingChallenges, CommittedGroupParams,
+    FoldLinfProtocolBinding, InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout,
+    OpeningFamily, OpeningMethod, SubringCoefficientPackingGeometry, TerminalCommittedGroupParams,
+    TerminalResponseShape,
 };
 
 use super::ring_relation::{
@@ -151,46 +152,18 @@ pub(crate) struct FoldProbeOutput<F: FieldCore> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GroupFoldChallenges(GroupFoldChallengeViews);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum GroupFoldChallengeViews {
-    EvaluationTrace(Challenges),
-    SubringCoefficientPacking {
-        geometry: SubringCoefficientPackingGeometry,
-        subring: Challenges,
-        embedded_a: Challenges,
-    },
-}
+type GroupFoldChallengeViews = OpeningFamily<Challenges, CoefficientPackingChallenges>;
 
 impl GroupFoldChallenges {
     pub(crate) fn ambient_a(&self) -> &Challenges {
         match &self.0 {
-            GroupFoldChallengeViews::EvaluationTrace(challenges) => challenges,
-            GroupFoldChallengeViews::SubringCoefficientPacking { embedded_a, .. } => embedded_a,
+            OpeningFamily::EvaluationTrace(challenges) => challenges,
+            OpeningFamily::SubringCoefficientPacking(challenges) => challenges.ambient_a(),
         }
     }
 
-    pub(crate) fn into_evaluation_trace(self) -> Result<Challenges, AkitaError> {
-        match self.0 {
-            GroupFoldChallengeViews::EvaluationTrace(challenges) => Ok(challenges),
-            GroupFoldChallengeViews::SubringCoefficientPacking { .. } => {
-                Err(AkitaError::InvalidSetup(
-                    "coefficient-packing relation execution is not implemented yet".into(),
-                ))
-            }
-        }
-    }
-
-    pub(crate) fn into_coefficient_packing(
-        self,
-    ) -> Result<(SubringCoefficientPackingGeometry, Challenges), AkitaError> {
-        match self.0 {
-            GroupFoldChallengeViews::SubringCoefficientPacking {
-                geometry, subring, ..
-            } => Ok((geometry, subring)),
-            GroupFoldChallengeViews::EvaluationTrace(_) => Err(AkitaError::InvalidSetup(
-                "EvaluationTrace challenge cannot drive coefficient packing".into(),
-            )),
-        }
+    pub(crate) fn into_family(self) -> GroupFoldChallengeViews {
+        self.0
     }
 }
 
@@ -465,9 +438,7 @@ fn draw_group_fold_challenges<F: FieldCore, E: akita_field::ExtField<F>, D: Fold
                 grind_nonce,
                 rejection,
             )
-            .map(|challenges| {
-                GroupFoldChallenges(GroupFoldChallengeViews::EvaluationTrace(challenges))
-            })
+            .map(|challenges| GroupFoldChallenges(OpeningFamily::EvaluationTrace(challenges)))
         }
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
@@ -503,17 +474,10 @@ fn draw_group_fold_challenges<F: FieldCore, E: akita_field::ExtField<F>, D: Fold
                 grind_nonce,
                 None,
             )?;
-            let embedded_a = subring.embed_subring_positions(
-                challenge_subring_dimension,
-                geometry.subring_embedding_stride(),
-                d_a,
-            )?;
             Ok(GroupFoldChallenges(
-                GroupFoldChallengeViews::SubringCoefficientPacking {
-                    geometry,
-                    subring,
-                    embedded_a,
-                },
+                OpeningFamily::SubringCoefficientPacking(CoefficientPackingChallenges::new(
+                    geometry, subring,
+                )?),
             ))
         }
     }
@@ -778,18 +742,19 @@ mod tests {
         let challenges =
             draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 3, 2, 7).unwrap();
         assert_eq!(draw.draws, 1);
-        let GroupFoldChallenges(GroupFoldChallengeViews::SubringCoefficientPacking {
-            geometry,
-            subring,
-            embedded_a,
-        }) = challenges
+        let GroupFoldChallenges(OpeningFamily::SubringCoefficientPacking(challenges)) = challenges
         else {
             panic!("expected coefficient-packing challenges");
         };
-        assert_eq!(geometry.subring_embedding_stride(), 2);
-        assert_eq!(subring.len(), 4);
-        assert_eq!(embedded_a.len(), subring.len());
-        for (canonical, embedded) in subring.as_slice().iter().zip(embedded_a.as_slice()) {
+        assert_eq!(challenges.geometry().subring_embedding_stride(), 2);
+        assert_eq!(challenges.canonical().len(), 4);
+        assert_eq!(challenges.ambient_a().len(), challenges.canonical().len());
+        for (canonical, embedded) in challenges
+            .canonical()
+            .as_slice()
+            .iter()
+            .zip(challenges.ambient_a().as_slice())
+        {
             assert_eq!(canonical.coeffs, embedded.coeffs);
             assert_eq!(canonical.positions.len(), embedded.positions.len());
             for (&subring_position, &ambient_position) in

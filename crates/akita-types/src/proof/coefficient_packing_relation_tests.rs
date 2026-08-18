@@ -9,10 +9,11 @@ use akita_field::{
 
 use crate::{
     fold_coefficient_packing_partials, relation_claim_from_compressed_rhs_extension,
-    relation_rhs_coeff_len, BasisMode, ChunkedWitnessCfg, CommitmentPayloadMode,
-    CommitmentRingDims, DigitRangePlan, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout, RelationAddressGeometry, RingMultiplierOpeningPoint, RingOpeningPoint,
-    RingRelationGroupOpening, RingVec, SisModulusProfileId, WitnessLayout,
+    relation_rhs_coeff_len, BasisMode, ChunkedWitnessCfg, CoefficientPackingChallenges,
+    CommitmentPayloadMode, CommitmentRingDims, DigitRangePlan, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, RelationAddressGeometry,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationGroupOpening, RingVec,
+    SisModulusProfileId, WitnessLayout,
 };
 use crate::{
     CommittedGroupProfile, GroupOpeningPlan, InnerCommitMatrixParams, PrecommittedLevelParams,
@@ -135,8 +136,9 @@ where
         .collect();
     let challenges =
         Challenges::from_sparse(sparse, prepared_point.num_live_blocks(), num_claims).unwrap();
-    let group_opening =
-        RingRelationGroupOpening::subring_coefficient_packing(geometry, challenges).unwrap();
+    let group_opening = RingRelationGroupOpening::coefficient_packing(
+        CoefficientPackingChallenges::new(geometry, challenges).unwrap(),
+    );
     let gamma = (0..num_claims)
         .map(|claim| Base::from_u64((claim + 3) as u64))
         .collect::<Vec<_>>();

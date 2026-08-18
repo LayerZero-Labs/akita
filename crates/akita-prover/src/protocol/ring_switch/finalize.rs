@@ -27,7 +27,7 @@ pub(crate) fn ring_switch_finalize<F, E, T>(
     gamma: Option<&[E]>,
     opening_claim_coefficients: &[E],
     prepared_relation_groups: &[crate::protocol::ring_relation::PreparedRelationGroup<F, E>],
-) -> Result<RingSwitchFinalization<F, E>, AkitaError>
+) -> Result<RingSwitchFinalization<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -143,53 +143,31 @@ where
     } else {
         gamma
     };
-    let coefficient_packing_batch = if has_coefficient_packing {
-        let prepared_points = prepared_relation_groups
-            .iter()
-            .enumerate()
-            .filter_map(|(group_index, group)| {
-                group
-                    .coefficient_packing_point()
-                    .map(|point| (group_index, point))
-            })
-            .collect::<Vec<_>>();
-        Some(akita_types::prepare_coefficient_packing_batch_semantics(
-            akita_types::CoefficientPackingBatchSemanticInputs {
-                level_params: lp,
-                opening_batch,
-                relation_plan: &relation_plan,
-                relation: instance,
-                prepared_points: &prepared_points,
-                alpha,
-                tau1: &tau1,
-                claim_coefficients: relation_claim_coefficients,
-            },
-        )?)
-    } else {
-        if prepared_relation_groups
-            .iter()
-            .any(|group| group.coefficient_packing_point().is_some())
-        {
-            return Err(AkitaError::InvalidInput(
-                "EvaluationTrace relation supplied coefficient-packing points".into(),
-            ));
-        }
-        None
-    };
+    let prepared_coefficient_packing_points = prepared_relation_groups
+        .iter()
+        .enumerate()
+        .filter_map(|(group_index, group)| {
+            group
+                .coefficient_packing_point()
+                .map(|point| (group_index, point))
+        })
+        .collect::<Vec<_>>();
 
     let prepare_relation_weight_factorization = || {
         let _span = tracing::info_span!("relation_weight_compilation").entered();
-        let events = build_relation_weight_events(RelationWeightEventInputs {
-            setup: RelationSetupSource::Matrix(setup),
-            instance,
-            alpha,
-            level_params: lp,
-            relation_row_point: &tau1,
-            claim_coefficients: relation_claim_coefficients,
-            opening_source_len,
-            opening_ring_dim,
-            coefficient_packing_batch: coefficient_packing_batch.as_ref(),
-        })?;
+        let (events, coefficient_packing_batch) =
+            build_relation_weight_events(RelationWeightEventInputs {
+                setup: RelationSetupSource::Matrix(setup),
+                instance,
+                alpha,
+                level_params: lp,
+                relation_row_point: &tau1,
+                claim_coefficients: relation_claim_coefficients,
+                opening_source_len,
+                opening_ring_dim,
+                relation_plan: &relation_plan,
+                prepared_coefficient_packing_points: &prepared_coefficient_packing_points,
+            })?;
         let ordinary = events.factor_common_alpha()?;
         let compression = lp
             .payload_mode
@@ -207,7 +185,7 @@ where
                 )
             })
             .transpose()?;
-        Ok::<_, AkitaError>((ordinary, compression))
+        Ok::<_, AkitaError>((ordinary, compression, coefficient_packing_batch))
     };
 
     #[cfg(feature = "parallel")]
@@ -232,7 +210,7 @@ where
         (relation_weight_factorization, w_compact)
     };
 
-    let (relation_weight_factorization, compression_relation_weights) =
+    let (relation_weight_factorization, compression_relation_weights, coefficient_packing_batch) =
         relation_weight_factorization_result.map_err(|err| {
             AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
         })?;

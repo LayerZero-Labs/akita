@@ -402,19 +402,6 @@ fn ensure_required_setup_field_elements(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    (@selection_policy default) => {
-        fn selection_policy() -> akita_schedules::SelectionPolicyId {
-            akita_schedules::SelectionPolicyId::for_policy(
-                Self::recursive_setup_planning(),
-                Self::RING_DIMENSION_SCHEDULE_MODE,
-            )
-        }
-    };
-    (@selection_policy $selection_policy:expr) => {
-        fn selection_policy() -> akita_schedules::SelectionPolicyId {
-            $selection_policy
-        }
-    };
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
             #[cfg(feature = $feat)]
@@ -433,16 +420,8 @@ macro_rules! impl_proof_optimized_preset {
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
         impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr, ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy, ring_dimension_schedule_mode = $mode);
-    };
     (@options ring_dimension_schedule_mode = $mode:expr) => {
         impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
-        impl_proof_optimized_preset!(@selection_policy default);
-    };
-    (@options selection_policy = $selection_policy:expr, ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
-        impl_proof_optimized_preset!(@selection_policy $selection_policy);
     };
     (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {

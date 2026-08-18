@@ -1,6 +1,6 @@
 //! Polynomial backends and prover-only witness state.
 
-pub(crate) mod coefficient_packing;
+mod coefficient_packing;
 mod dense;
 mod field_reduction;
 pub(crate) mod flat_blocks;

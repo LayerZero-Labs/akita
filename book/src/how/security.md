@@ -146,17 +146,20 @@ condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.
 
-Extraction forks one claim and block position at a time while holding the
-other transcript inputs fixed. The complete packed consistency equation is one
-polynomial identity in `E[Y]`. After including the `(Y^s + 1)Q_pack` term, its
-degree is at most `2s-1`, so its root bound is `(2s-1)/|E|`. The proof does not
-project to one base field coordinate and does not add a factor of `k` or a
-`1/|K|` error term.
+The implementation derives the complete claim and block challenge vector from
+one transcript seed. A fork of that query generally changes the whole vector,
+so it does not directly provide the coordinatewise forks used by the original
+extraction sketch. The security proof remains open. It must either prove a
+full-vector extraction theorem for the implemented distribution, including the
+matrix-invertibility probability and forking loss, or the challenge derivation
+must change to support coordinatewise forks.
 
-This error composes with the existing A, B, D, F, and H Module SIS binding
-events, the range and sumcheck errors, and the random oracle forking loss. See
-the [subring coefficient packing design record](../../../specs/archive/2026-Q3/subring-coefficient-packing.md)
-for the full derivation and acceptance checklist.
+The packed consistency equation still gives one polynomial identity in `E[Y]`.
+After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
+conditional polynomial-check error is `(2s-1)/|E|`. This root bound does not
+close the extraction gap. See the active
+[subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
+for the open acceptance criteria.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

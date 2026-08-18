@@ -80,7 +80,8 @@ pub use prove::{batched_prove, prove};
 use root_fold::prove_root;
 #[allow(unused_imports)]
 pub(crate) use root_group::{
-    PreparedGroupOpening, RootProverGroupMeta, RootProverGroupOpening, RootProverGroupTensor,
+    PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
+    RootProverGroupMeta, RootProverGroupOpening, RootProverGroupTensor,
 };
 pub use suffix::{prove_suffix, SuffixProverState};
 

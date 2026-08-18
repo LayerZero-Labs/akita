@@ -24,11 +24,14 @@ fn uniform_dimension_check_accepts_coefficient_packing() {
     let relation_geometry = crate::RelationWitnessGeometry::for_level(&params, &opening_batch, 1)
         .expect("packing relation geometry");
     let rhs_len = relation_rhs_coeff_len(relation_geometry.rhs_layout()).expect("rhs len");
-    let opening = RingRelationGroupOpening::subring_coefficient_packing(
-        SubringCoefficientPackingGeometry::try_new(1, PACK_D, PACK_D).expect("packing geometry"),
-        packing_challenges(&params, 1),
-    )
-    .expect("packing opening");
+    let opening = RingRelationGroupOpening::coefficient_packing(
+        CoefficientPackingChallenges::new(
+            SubringCoefficientPackingGeometry::try_new(1, PACK_D, PACK_D)
+                .expect("packing geometry"),
+            packing_challenges(&params, 1),
+        )
+        .expect("packing challenges"),
+    );
     let instance = RingRelationInstance::<F>::new(
         vec![opening],
         1,
@@ -45,12 +48,14 @@ fn uniform_dimension_check_accepts_coefficient_packing() {
         .ensure_ring_dim::<PACK_D>()
         .expect("packing has no EvaluationTrace multiplier point to validate");
 
-    let wrong_opening = RingRelationGroupOpening::subring_coefficient_packing(
-        SubringCoefficientPackingGeometry::try_new(1, 128, PACK_D)
-            .expect("wrong ambient packing geometry"),
-        packing_challenges(&params, 1),
-    )
-    .expect("schedule-independent packing opening");
+    let wrong_opening = RingRelationGroupOpening::coefficient_packing(
+        CoefficientPackingChallenges::new(
+            SubringCoefficientPackingGeometry::try_new(1, 128, PACK_D)
+                .expect("wrong ambient packing geometry"),
+            packing_challenges(&params, 1),
+        )
+        .expect("schedule-independent packing challenges"),
+    );
     let wrong_instance = RingRelationInstance::<F>::new(
         vec![wrong_opening],
         1,

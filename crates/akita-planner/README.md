@@ -1,16 +1,32 @@
 # Akita Planner
 
-The `akita-planner` crate is responsible for computing the parameters of each fold level in the Akita PCS, with the goal of minimizing proof size for a given field, ring dimension, number of variables, and number of polynomials to be batched.
+The `akita-planner` crate computes the parameters of each fold level in the
+Akita PCS. Uniform direct schedules minimize modeled proof bytes. Adaptive
+direct and recursive schedules minimize first-direct padded setup capacity,
+then proof bytes and total setup.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
-The planner covers the parameter-selection features supported by Akita, including batching and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
+The planner covers the parameter-selection features supported by Akita,
+including batching and extension fields. For each case it resolves the fold
+parameters under the selection policy bound into the generated catalog.
 
 The planner can also generate schedule values when a preset wants a table-backed runtime path. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search.
 
 ## What The Planner Optimizes
 
 Akita proofs recursively fold the witness through at least two levels before the terminal direct-send step. The planner chooses the cheapest supported folded sequence.
+
+The complete schedule orders are:
+
+```text
+uniform direct: (proof bytes, total setup, descriptor)
+adaptive direct or recursive: (first-direct padded capacity, proof bytes,
+                               total setup, descriptor)
+```
+
+For a direct schedule, the first direct edge is the root. For an offloaded
+schedule, it is the first edge after the setup-prefix chain.
 
 The output is an `akita_types::PlannedFoldSchedule`. Its protocol value is a
 typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
@@ -43,7 +59,8 @@ multiplicity is always `1`; multi-group roots derive those counts from
 - The scalar SIS policy identifier.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
-- Ring-subfield norm bound.
+- Ring dimension mode and recursive setup capability.
+- Selection policy and optional setup field budget.
 
 Source laws are separate planner-only values. For example, the one-hot policy
 owns its exact chunk size while runtime schedule keys retain only public group
@@ -79,10 +96,12 @@ For a fixed field, ring dimension, decomposition policy, and opening shape, the 
 
 Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
-Conceptually, a candidate level answers two questions:
+Conceptually, a candidate level answers three questions:
 
 - How many bytes does it cost to prove the next witness?
 - How many field elements will the next witness contain?
+- What padded setup capacity is exposed at the first direct edge, and what is
+  the total setup envelope?
 
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
 
@@ -108,15 +127,23 @@ The planner fails with `UnsupportedSchedule` when no candidate contains at least
 
 Recursive levels do not enumerate the full exponential tree of all possible `(log_basis, block_index_bits)` choices at every depth. That would make schedule search too expensive as the number of levels grows.
 
-Instead, for each recursive `log_basis`, `derive_candidate_level_params` scans the valid `block_index_bits` choices and keeps the candidate that minimizes the next witness length. This is a local shrinking rule: recursive levels commit dense balanced-digit witnesses, and reducing the next witness length is the main driver for making the remaining suffix cheaper.
+Instead, `derive_fold_candidates` scans the valid `block_index_bits` choices for
+each recursive `log_basis`. `FoldCandidatePolicy::Best` keeps the best
+contracting candidate under the local layout score. `Frontier` retains every
+contracting split candidate needed by proof-first, adaptive-dimension, or
+setup-offloading search.
 
 After that candidate is chosen, the suffix DP still performs the important global comparison:
 
 - Terminate after this fold and ship the clear terminal response.
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
-The memoized suffix state tracks the level, current witness length, and active
-basis choices. Ordinary recursive folds construct the single canonical
+The memoized suffix state tracks the level, current witness length, active
+basis choices, and parent-visible geometry. Uniform direct search keeps its
+proof-first frontier. Adaptive direct and recursive search share one projected
+frontier: a first-direct setup projection and a proof-payload projection. A
+candidate is pruned only when both projections make it irrelevant to every
+parent transition. Ordinary recursive folds construct the single canonical
 consistency/A/B/D relation and produce another recursive witness. The typed
 terminal fold constructs no relation matrix or quotient: it receives
 transcript-bound inner `t` from its predecessor and checks raw `e`, `t`, and
@@ -231,17 +258,30 @@ scripts/generate-schedule-tables.sh fp32_dense fp64_dense
 ```
 
 Add `--row-progress` when one of those searches is slow. It reports start,
-completion, elapsed time, and the selected fold count for each flattened row
-request. The flag observes only the row boundary after planning has completed;
-it adds no instrumentation to candidate enumeration and is disabled by
-default.
+completion, elapsed time, and the selected objective, proof bytes, total setup,
+first-direct capacity, dimensions, and fold count for each flattened row
+request. It is disabled by default.
 
-`--check-catalog` compares the union of regenerated and compiled keys. Its
-stable tab-separated report includes added, removed, changed, and equal rows,
-with old and new setup capacity, proof payload, fold count, and row identity.
-This check requires the generator's `catalog-check` feature; the repository
-script selects it automatically. Add `--catalog-report <path>` to keep that
-stable report separate from live progress on standard error.
+`--check-catalog` is a same-revision drift guard. It compares the union of the
+compiled and regenerated keys and labels those sides explicitly in its stable
+tab-separated report. The report includes added, removed, changed, and equal
+rows, with compiled and regenerated setup capacity, proof payload, fold count,
+and row identity. This check requires the generator's `catalog-check` feature;
+the repository script selects it automatically. Add `--catalog-report <path>`
+to keep that report separate from live progress on standard error.
+
+Revision audits are separate. `--catalog-snapshot <path>` writes one stable row
+per regenerated family and logical catalog key. To compare another revision,
+generate its snapshot before switching revisions, then pass that file through
+`--catalog-baseline <snapshot>`. The resulting `--catalog-report` is the
+complete baseline/current logical-key union. It includes exact lookup and row
+digests, first-direct padded capacity, total setup fields, proof bytes, fold
+counts, successor witness lengths, per-level EOR bytes, opening methods,
+packing geometry, and A security routes.
+The command writes the complete report, including intentional removals. This
+repository permits catalog-breaking revisions, so baseline/current policy is
+reviewed from the checked evidence. Same-head drift remains an automatic
+failure under `--check-catalog`.
 
 Targeted generation leaves the shared `mod.rs` wiring complete. Before a
 planner change is committed, run the unfiltered command above so every tracked

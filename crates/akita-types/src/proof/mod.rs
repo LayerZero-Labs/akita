@@ -8,12 +8,13 @@
 //! Proof, commitment, setup, and claim data shapes.
 
 pub mod batch;
-pub mod coefficient_packing_relation;
+mod coefficient_packing_relation;
 pub mod commitment;
 pub mod compression_relation_weights;
 pub mod relation;
 pub mod relation_address;
 pub mod relation_range_image;
+mod relation_weight_event;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
@@ -47,12 +48,13 @@ pub use batch::{
     ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
     RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
+#[cfg(any(debug_assertions, test))]
+pub use coefficient_packing_relation::CoefficientPackingRelationEvents;
 pub use coefficient_packing_relation::{
-    prepare_coefficient_packing_batch_semantics, prepare_coefficient_packing_group_semantics,
+    prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, CoefficientPackingBatchSemanticInputs,
-    CoefficientPackingBatchSemantics, CoefficientPackingGroupSemanticInputs,
-    CoefficientPackingGroupSemantics, CoefficientPackingRelationEvent,
-    CoefficientPackingRelationEvents, CoefficientPackingStage2Segment,
+    CoefficientPackingBatchSemantics, CoefficientPackingCompactFactors,
+    CoefficientPackingGroupSemantics, CoefficientPackingStage2Segment,
     CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
     CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
@@ -84,9 +86,11 @@ pub use relation_range_image::{
     reconstruct_l2_sq_from_gram, PhysicalResponsePlan, RelationRangeImageGroupPlan,
     RelationRangeImagePlan,
 };
+pub use relation_weight_event::{RelationWeightContribution, RelationWeightEvent};
 pub use ring_relation::{
-    ring_relation_segment_lengths, RingRelationGroupOpening, RingRelationGroupOpeningView,
-    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths,
+    ring_relation_segment_lengths, CoefficientPackingChallenges, RingRelationGroupOpening,
+    RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
+    RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{

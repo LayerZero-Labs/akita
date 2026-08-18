@@ -276,13 +276,9 @@ mod setup_prefix;
 
 pub(crate) use opening::PlannerOpeningCandidate;
 pub(crate) use recursive::{
-    derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    derive_recursive_candidate_views, derive_terminal_candidate_params,
-    recursive_split_search_domain,
-};
-#[cfg(test)]
-pub(crate) use recursive::{
-    derive_candidate_level_params_split_frontier_without_bounds, derive_linf_candidate_level_params,
+    derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
+    recursive_split_search_domain, FoldCandidatePolicy, RecursiveCandidateRequest,
+    RecursiveSetupPrefix, SplitBoundPolicy,
 };
 pub(crate) use setup_prefix::SetupPrefixSearchCache;
 pub(super) use setup_prefix::{derive_setup_prefix_groups, SetupPrefixSearchRequest};

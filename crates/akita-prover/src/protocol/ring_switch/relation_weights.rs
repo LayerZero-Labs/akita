@@ -6,64 +6,20 @@ mod setup_columns;
 use std::ops::Range;
 
 use akita_algebra::eq_poly::SplitEqEvals;
-use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
-use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CoefficientPackingBatchSemantics,
+    gadget_row_scalars, prepare_coefficient_packing_batch_semantics, r_decomp_levels,
+    AkitaExpandedSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
     CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningMethod,
-    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry, RingRelationInstance,
-    SetupProjectionGeometry,
+    PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
+    RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
 };
+pub use akita_types::{RelationWeightContribution, RelationWeightEvent};
 use setup_columns::{evaluate_setup_columns, SetupRows};
-
-/// Whether one relation event belongs to the protocol constraint or setup matrix.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RelationWeightContribution {
-    /// Consistency, A-row, opening, and quotient-denominator arithmetic.
-    Constraint,
-    /// D/B/A setup-matrix arithmetic replaceable by one offloaded setup claim.
-    SetupMatrix,
-}
-
-/// One aligned consecutive-alpha contribution to the flat relation weight table.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationWeightEvent<E: FieldCore> {
-    physical_coefficients: Range<usize>,
-    alpha_exponent_start: usize,
-    scalar: E,
-    contribution: RelationWeightContribution,
-}
-
-impl<E: FieldCore> RelationWeightEvent<E> {
-    /// Flat physical coefficient interval receiving this contribution.
-    #[must_use]
-    pub fn physical_coefficients(&self) -> Range<usize> {
-        self.physical_coefficients.clone()
-    }
-
-    /// Alpha exponent attached to the first coefficient in the interval.
-    #[must_use]
-    pub fn alpha_exponent_start(&self) -> usize {
-        self.alpha_exponent_start
-    }
-
-    /// Scalar multiplying the consecutive alpha powers.
-    #[must_use]
-    pub fn scalar(&self) -> E {
-        self.scalar
-    }
-
-    /// Whether this is constraint or setup-matrix arithmetic.
-    #[must_use]
-    pub fn contribution(&self) -> RelationWeightContribution {
-        self.contribution
-    }
-}
 
 /// Source of setup-matrix relation weights for this evaluation.
 #[derive(Clone, Copy)]
@@ -84,267 +40,14 @@ pub struct RelationWeightEventInputs<'a, F: FieldCore, E: FieldCore> {
     pub claim_coefficients: &'a [E],
     pub opening_source_len: usize,
     pub opening_ring_dim: usize,
-    /// Checked packing semantics in authenticated group order.
-    ///
-    /// Empty for the byte-identical EvaluationTrace path.
-    pub coefficient_packing_batch: Option<&'a CoefficientPackingBatchSemantics<F, E>>,
+    pub relation_plan: &'a RelationRangeImagePlan,
+    /// Prepared public packing points keyed by authenticated group index.
+    pub prepared_coefficient_packing_points:
+        &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<E>)],
 }
 
-/// Checked relation events plus the domain data needed by every consumer.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationWeightEvents<E: FieldCore> {
-    events: Vec<RelationWeightEvent<E>>,
-    alpha_powers: Vec<E>,
-    relation_coefficient_block_len: usize,
-    physical_field_len: usize,
-    setup_is_deferred: bool,
-}
-
-/// Exact common-alpha factorization of the padded relation-weight table.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationWeightFactorization<E: FieldCore> {
-    common_alpha_factor: Vec<E>,
-    relation_lane_weights: Vec<E>,
-}
-
-impl<E: FieldCore> RelationWeightFactorization<E> {
-    /// Alpha powers on the low coefficient block shared by every role.
-    #[must_use]
-    pub fn common_alpha_factor(&self) -> &[E] {
-        &self.common_alpha_factor
-    }
-
-    /// Relation weights after removing the shared low alpha factor.
-    #[must_use]
-    pub fn relation_lane_weights(&self) -> &[E] {
-        &self.relation_lane_weights
-    }
-
-    /// Consume the factorization without recomputing either component.
-    #[must_use]
-    pub fn into_common_alpha_factor_and_relation_lane_weights(self) -> (Vec<E>, Vec<E>) {
-        (self.common_alpha_factor, self.relation_lane_weights)
-    }
-
-    /// Expand this factorization over its complete padded flat domain.
-    pub fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
-        let length = self
-            .common_alpha_factor
-            .len()
-            .checked_mul(self.relation_lane_weights.len())
-            .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
-        let mut weights = Vec::with_capacity(length);
-        for &lane in &self.relation_lane_weights {
-            weights.extend(
-                self.common_alpha_factor
-                    .iter()
-                    .map(|&coefficient| lane * coefficient),
-            );
-        }
-        Ok(weights)
-    }
-}
-
-impl<E: FieldCore> RelationWeightEvents<E> {
-    fn push(
-        &mut self,
-        physical_start: usize,
-        coefficient_count: usize,
-        alpha_exponent_start: usize,
-        scalar: E,
-        contribution: RelationWeightContribution,
-    ) -> Result<(), AkitaError> {
-        if scalar.is_zero() {
-            return Ok(());
-        }
-        let physical_end = physical_start
-            .checked_add(coefficient_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation event address overflow".into()))?;
-        let alpha_exponent_end = alpha_exponent_start
-            .checked_add(coefficient_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation alpha range overflow".into()))?;
-        if coefficient_count == 0
-            || !coefficient_count.is_power_of_two()
-            || !physical_start.is_multiple_of(self.relation_coefficient_block_len)
-            || !coefficient_count.is_multiple_of(self.relation_coefficient_block_len)
-            || !alpha_exponent_start.is_multiple_of(self.relation_coefficient_block_len)
-            || physical_end > self.physical_field_len
-            || alpha_exponent_end > self.alpha_powers.len()
-            || (self.setup_is_deferred && contribution == RelationWeightContribution::SetupMatrix)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "relation event is unaligned or outside its checked domain".into(),
-            ));
-        }
-        self.events.push(RelationWeightEvent {
-            physical_coefficients: physical_start..physical_end,
-            alpha_exponent_start,
-            scalar,
-            contribution,
-        });
-        Ok(())
-    }
-
-    fn push_native_ring(
-        &mut self,
-        physical_start: usize,
-        role_ring_dimension: usize,
-        scalar: E,
-        contribution: RelationWeightContribution,
-    ) -> Result<(), AkitaError> {
-        if role_ring_dimension == 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        self.push(physical_start, role_ring_dimension, 0, scalar, contribution)
-    }
-
-    /// Semantic events in emission order. Overlaps are intentionally additive.
-    #[must_use]
-    pub fn events(&self) -> &[RelationWeightEvent<E>] {
-        &self.events
-    }
-
-    /// Materialize the complete padded flat coefficient table.
-    pub fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
-        if self.setup_is_deferred {
-            return Err(AkitaError::InvalidInput(
-                "cannot materialize relation weights with a deferred setup claim".into(),
-            ));
-        }
-        let mut weights = vec![E::zero(); self.physical_field_len];
-        for event in &self.events {
-            for (offset, alpha_power) in self.alpha_powers[event.alpha_exponent_start
-                ..event.alpha_exponent_start + event.physical_coefficients.len()]
-                .iter()
-                .copied()
-                .enumerate()
-            {
-                let physical = event.physical_coefficients.start + offset;
-                *weights.get_mut(physical).ok_or(AkitaError::InvalidProof)? +=
-                    event.scalar * alpha_power;
-            }
-        }
-        Ok(weights)
-    }
-
-    /// Compile the exact common-alpha factorization shared by all role dimensions.
-    pub fn factor_common_alpha(&self) -> Result<RelationWeightFactorization<E>, AkitaError> {
-        if self.setup_is_deferred {
-            return Err(AkitaError::InvalidSetup(
-                "relation factorization requires direct setup contributions".into(),
-            ));
-        }
-        let coeff_count = self.relation_coefficient_block_len;
-        let lane_capacity = self
-            .physical_field_len
-            .checked_div(coeff_count)
-            .filter(|capacity| capacity.is_power_of_two())
-            .ok_or_else(|| AkitaError::InvalidSetup("relation lane capacity is invalid".into()))?;
-        let mut relation_lane_weights = vec![E::zero(); lane_capacity];
-        for event in &self.events {
-            if !event
-                .physical_coefficients
-                .start
-                .is_multiple_of(coeff_count)
-                || !event
-                    .physical_coefficients
-                    .len()
-                    .is_multiple_of(coeff_count)
-                || !event.alpha_exponent_start.is_multiple_of(coeff_count)
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "relation event does not preserve the common alpha factor".into(),
-                ));
-            }
-            for coefficient_offset in (0..event.physical_coefficients.len()).step_by(coeff_count) {
-                let physical = event.physical_coefficients.start + coefficient_offset;
-                if !physical.is_multiple_of(coeff_count) {
-                    return Err(AkitaError::InvalidSetup(
-                        "flat relation layout breaks relation lane alignment".into(),
-                    ));
-                }
-                let lane = physical / coeff_count;
-                let alpha_exponent = event.alpha_exponent_start + coefficient_offset;
-                let alpha_power = *self
-                    .alpha_powers
-                    .get(alpha_exponent)
-                    .ok_or(AkitaError::InvalidProof)?;
-                *relation_lane_weights
-                    .get_mut(lane)
-                    .ok_or(AkitaError::InvalidProof)? += event.scalar * alpha_power;
-            }
-        }
-        let common_alpha_factor = self
-            .alpha_powers
-            .get(..coeff_count)
-            .ok_or(AkitaError::InvalidProof)?
-            .to_vec();
-        Ok(RelationWeightFactorization {
-            common_alpha_factor,
-            relation_lane_weights,
-        })
-    }
-
-    /// Evaluate the relation-weight MLE directly at one flat coefficient point.
-    pub fn evaluate_at_point(
-        &self,
-        point: &[E],
-        deferred_setup_claim: Option<E>,
-    ) -> Result<E, AkitaError> {
-        match (self.setup_is_deferred, deferred_setup_claim) {
-            (true, None) | (false, Some(_)) => return Err(AkitaError::InvalidProof),
-            _ => {}
-        }
-        if self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0) {
-            return Err(AkitaError::InvalidSize {
-                expected: self.physical_field_len.trailing_zeros() as usize,
-                actual: point.len(),
-            });
-        }
-
-        let equality = OffsetEqWindow::new(point)?;
-        let mut low_factor_cache = Vec::new();
-        let mut evaluation = deferred_setup_claim.unwrap_or_else(E::zero);
-        for event in &self.events {
-            let coefficient_count = event.physical_coefficients.len();
-            if !event
-                .physical_coefficients
-                .start
-                .is_multiple_of(coefficient_count)
-            {
-                let alpha_powers = &self.alpha_powers
-                    [event.alpha_exponent_start..event.alpha_exponent_start + coefficient_count];
-                let interval = alpha_powers.iter().copied().enumerate().fold(
-                    E::zero(),
-                    |sum, (offset, alpha_power)| {
-                        sum + alpha_power
-                            * equality.eval(event.physical_coefficients.start + offset)
-                    },
-                );
-                evaluation += event.scalar * interval;
-                continue;
-            }
-            let low_variable_count = coefficient_count.trailing_zeros() as usize;
-            let cache_key = (event.alpha_exponent_start, coefficient_count);
-            let low_factor = if let Some((_, cached)) = low_factor_cache
-                .iter()
-                .find(|(cached_key, _)| *cached_key == cache_key)
-            {
-                *cached
-            } else {
-                let alpha_powers = &self.alpha_powers
-                    [event.alpha_exponent_start..event.alpha_exponent_start + coefficient_count];
-                let factor = multilinear_eval(alpha_powers, &point[..low_variable_count])?;
-                low_factor_cache.push((cache_key, factor));
-                factor
-            };
-            let high_index = event.physical_coefficients.start >> low_variable_count;
-            let high_factor = eq_eval_at_index(&point[low_variable_count..], high_index);
-            evaluation += event.scalar * low_factor * high_factor;
-        }
-        Ok(evaluation)
-    }
-}
+mod events;
+pub use events::{RelationWeightEvents, RelationWeightFactorization};
 
 fn relation_d_group_width(
     lp: &CommittedGroupParams,
@@ -428,7 +131,13 @@ fn matching_row_range(
 #[tracing::instrument(skip_all, name = "build_relation_weight_events")]
 pub fn build_relation_weight_events<F, E>(
     inputs: RelationWeightEventInputs<'_, F, E>,
-) -> Result<RelationWeightEvents<E>, AkitaError>
+) -> Result<
+    (
+        RelationWeightEvents<E>,
+        Option<CoefficientPackingBatchSemantics<E>>,
+    ),
+    AkitaError,
+>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
@@ -442,7 +151,8 @@ where
         claim_coefficients: gamma,
         opening_source_len,
         opening_ring_dim,
-        coefficient_packing_batch,
+        relation_plan,
+        prepared_coefficient_packing_points,
     } = inputs;
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
@@ -532,22 +242,44 @@ where
         live_witness_coeff_len,
     )?
     .relation_coefficient_block_len();
-    if let Some(batch) = coefficient_packing_batch {
-        batch.validate_context(lp, opening_batch, instance, alpha, tau1, gamma)?;
-        if batch.relation_plan().relation_witness_geometry() != &relation_geometry
-            || batch.relation_plan().witness_layout() != &witness_layout
-            || batch
-                .relation_plan()
-                .relation_address_geometry()
-                .relation_coefficient_block_len()
-                != relation_coefficient_block_len
-        {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation batch plan disagrees with the current ring switch".into(),
+    if relation_plan.relation_witness_geometry() != &relation_geometry
+        || relation_plan.witness_layout() != &witness_layout
+        || relation_plan
+            .relation_address_geometry()
+            .relation_coefficient_block_len()
+            != relation_coefficient_block_len
+    {
+        return Err(AkitaError::InvalidSetup(
+            "relation plan disagrees with the current ring switch".into(),
+        ));
+    }
+    let has_coefficient_packing = instance
+        .group_openings()
+        .iter()
+        .any(|opening| opening.coefficient_packing_geometry().is_some());
+    let (coefficient_packing_events, coefficient_packing_batch) = if has_coefficient_packing {
+        let (events, batch) =
+            prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
+                level_params: lp,
+                opening_batch,
+                relation_plan,
+                relation: instance,
+                prepared_points: prepared_coefficient_packing_points,
+                alpha,
+                tau1,
+                claim_coefficients: gamma,
+            })?;
+        (events, Some(batch))
+    } else {
+        if !prepared_coefficient_packing_points.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "EvaluationTrace relation supplied coefficient-packing points".into(),
             ));
         }
-    }
+        (Vec::new(), None)
+    };
     let coefficient_packing_groups = coefficient_packing_batch
+        .as_ref()
         .map(CoefficientPackingBatchSemantics::groups)
         .unwrap_or(&[]);
     let mut relation_events = RelationWeightEvents {
@@ -575,26 +307,20 @@ where
                 "packing relation group appears more than once".into(),
             ));
         }
-        if semantics.relation_events().physical_field_len() != live_witness_coeff_len {
+        if semantics.stage2_terms().physical_field_len() != live_witness_coeff_len {
             return Err(AkitaError::InvalidSetup(
                 "packing relation live domain disagrees with the current ring switch".into(),
             ));
         }
-        if semantics.relation_events().relation_coefficient_block_len()
+        if semantics.stage2_terms().relation_coefficient_block_len()
             != relation_coefficient_block_len
         {
             return Err(AkitaError::InvalidSetup(
                 "packing relation coefficient block disagrees with the current ring switch".into(),
             ));
         }
-        if semantics.relation_events().alpha_powers()
-            != scalar_powers(alpha, semantics.geometry().challenge_subring_dimension())
-        {
-            return Err(AkitaError::InvalidSetup(
-                "packing relation alpha disagrees with the current ring switch".into(),
-            ));
-        }
     }
+    relation_events.extend_events(coefficient_packing_events)?;
     let d_view = if let Some(setup) = setup_matrix {
         let d_physical_columns = d_column_ranges
             .iter()
@@ -1067,18 +793,7 @@ where
             )?;
         }
     }
-    for semantics in coefficient_packing_groups {
-        for event in semantics.relation_events().events() {
-            relation_events.push(
-                event.physical_coefficients().start,
-                event.physical_coefficients().len(),
-                event.alpha_exponent_start(),
-                event.scalar(),
-                RelationWeightContribution::Constraint,
-            )?;
-        }
-    }
-    Ok(relation_events)
+    Ok((relation_events, coefficient_packing_batch))
 }
 
 #[cfg(test)]
