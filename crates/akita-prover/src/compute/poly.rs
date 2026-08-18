@@ -111,14 +111,19 @@ where
     /// rule for `modulus` and `centering_threshold`.
     ///
     /// The commit path compares this reach against
-    /// [`akita_types::sis::accepted_committed_source_bounds`] and rejects the
-    /// commitment when it falls outside. That interval intersects two
+    /// [`akita_types::sis::CommittedSourceContract::accepted_bounds`] and rejects
+    /// the commitment when it falls outside. That interval intersects two
     /// constraints: what `num_digits_inner` balanced digits can *represent* (the
     /// kernel silently discards anything above it, so a truncation would bind a
     /// different polynomial than the caller opens) and the bound the schedule was
     /// *priced* for (see
     /// [`akita_types::DecompositionParams::log_commit_bound`]). Only a bounded
     /// committed source constrains either side.
+    ///
+    /// This answers the *magnitude* half of the contract only. The source's
+    /// class — whether it is the representation the schedule's response caps were
+    /// priced against — is a separate admission check that no coefficient reach
+    /// can express.
     ///
     /// `centering_threshold` comes from
     /// `akita_algebra::ring::cyclotomic::decompose_centering_threshold`, so a
