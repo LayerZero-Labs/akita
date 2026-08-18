@@ -23,6 +23,7 @@
 //! primitives but contains no SIS formula of its own.
 
 pub mod ajtai_key;
+pub mod committed_source;
 pub mod compression;
 mod coverage;
 pub mod decomposition_digits;
@@ -42,17 +43,17 @@ pub use ajtai_key::{
     SisTableDigest, SisTableKey, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY,
     SUPPORTED_SIS_SECURITY_POLICIES,
 };
+pub use committed_source::{CommittedSourceClass, CommittedSourceContract};
 pub use coverage::{
     sis_role_cell, sis_role_cells, sis_role_dimension_supported, SisRoleCell,
     GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES, SIS_MAX_MODULE_RANK, SIS_REQUIRED_MAX_WIDTH,
 };
 pub use decomposition_digits::{
-    accepted_committed_source_bounds, balanced_digit_abs_max, balanced_digit_representable_bounds,
+    balanced_digit_abs_max, balanced_digit_representable_bounds,
     checked_balanced_digit_representable_bounds, compute_num_digits_field_width,
-    declared_committed_source_bounds, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, num_digits_for_bound, num_digits_for_linf_cap, num_digits_inner,
-    num_digits_inner_for_bound, num_digits_open, num_digits_setup_prefix_commit,
-    projected_role_ring_count,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    num_digits_for_bound, num_digits_for_linf_cap, num_digits_inner, num_digits_inner_for_bound,
+    num_digits_open, num_digits_setup_prefix_commit, projected_role_ring_count,
 };
 pub use honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,

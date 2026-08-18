@@ -493,7 +493,7 @@ fn heterogeneous_onehot_catalog_key(
 /// group.
 ///
 /// This is the mixed-bound cell: the precommitted group is frozen by
-/// `fp128::DenseBounded` (`log_commit_bound = 64` inside the 128-bit field) while the
+/// `fp128::DenseBounded` (`log_commit_bound = 65` inside the 128-bit field) while the
 /// root is planned under `fp128::OneHot` (`log_commit_bound = 1`). It exercises
 /// the fact that a precommitted group carries its own committed-source bound in
 /// its frozen `inner_commit_matrix` and does not have to agree with the planning

@@ -32,37 +32,72 @@ const MAX_EXACT_REACH_SPAN_BITS: u128 = 16;
 /// Nothing downstream needs the label — a grouped row is keyed on exact
 /// descriptor equality, so the wrong producer simply fails to resolve. It exists
 /// so a reader of a grouped row can tell a one-hot precommit from a bounded or
-/// full-width dense one without recomputing the interval by hand. `policy` comes
+/// full-width dense one without recomputing the geometry by hand. `policy` comes
 /// from the emit spec's per-key honest fold policies, so the class is the exact
 /// one the row was planned against rather than a guess from the digit depth.
+///
+/// # What this may and may not claim
+///
+/// The inputs are a descriptor plus the planned class. That is enough to state a
+/// **unit one-hot** admitted set exactly — `{0, 1}` with the policy's chunk size —
+/// because that source is structurally constrained and the chunk size is part of
+/// the class.
+///
+/// It is **not** enough to state a balanced-digit source's admitted set. That is
+/// the producer's `log_commit_bound` intersected with the digit envelope
+/// ([`akita_types::sis::CommittedSourceContract::accepted_bounds`]), and a frozen
+/// [`akita_types::CommittedGroupProfile`] deliberately records only the
+/// consequence of the declaration, never the declaration. `DenseBounded` enforces
+/// `[-2^64, 2^64 - 1]` while its 14 base-`2^5` digits span 70 bits, so printing
+/// the envelope as an acceptance claim would overstate the admitted set by 32x in
+/// a security-sensitive generated artifact.
+///
+/// So a balanced-digit descriptor names the envelope *as* an envelope, and says
+/// the producer's declaration may be tighter.
 pub(super) fn precommitted_source_note(
     log_basis: u32,
     digits: usize,
     policy: Option<&HonestFoldPolicySpec>,
 ) -> String {
-    let class = match policy {
-        Some(HonestFoldPolicySpec::UnitOneHot(_)) => "unit one-hot",
-        Some(HonestFoldPolicySpec::BalancedSignedDigit(_)) => "balanced signed digit",
-        None => "source class unrecorded",
-    };
     // Total digit span. Exact integer arithmetic on the exponent, so it stays
     // meaningful for the >128-bit spans a full-width row reaches.
     let span_bits = (digits as u128).saturating_mul(u128::from(log_basis));
-    // Exact interval for narrow spans, power-of-two magnitude for wide ones. Both
-    // sides come from the *checked* reaches, so exactness is guaranteed rather
-    // than incidental: the saturating pair understates past `u128` and would read
-    // as a real bound in a generated artifact. `None` on either side means the
-    // reach is past `u128`, which forces the magnitude form regardless of width.
-    let reach =
-        match akita_types::sis::checked_balanced_digit_representable_bounds(log_basis, digits) {
-            (Some(negative), Some(positive)) if span_bits <= MAX_EXACT_REACH_SPAN_BITS => {
-                format!("accepts [-{negative}, {positive}]")
-            }
-            _ => format!("accepts about +/-2^{}", span_bits.saturating_sub(1)),
-        };
-    format!(
-        "                // {class}: {digits} x base-2^{log_basis} digits, span {span_bits} bits, {reach}\n"
-    )
+    let geometry = format!("{digits} x base-2^{log_basis} digits, span {span_bits} bits");
+    let description = match policy {
+        // Structurally constrained, and the chunk size is part of the class, so
+        // the admitted set is exactly stateable.
+        Some(HonestFoldPolicySpec::UnitOneHot(one_hot)) => format!(
+            "unit one-hot: admits {{0, 1}}, one hot position per {} coefficients; {geometry}",
+            one_hot.source_chunk_size()
+        ),
+        // The producer's declared bound is not recoverable from a descriptor.
+        Some(HonestFoldPolicySpec::BalancedSignedDigit(_)) => format!(
+            "balanced signed digit: {geometry}, representable envelope {}; the producer's \
+             declared log_commit_bound may be tighter",
+            representable_envelope(log_basis, digits, span_bits)
+        ),
+        None => format!(
+            "source class unrecorded: {geometry}, representable envelope {}",
+            representable_envelope(log_basis, digits, span_bits)
+        ),
+    };
+    format!("                // {description}\n")
+}
+
+/// Balanced-digit representable envelope, rendered for a generated comment.
+///
+/// Exact interval for narrow spans, power-of-two magnitude for wide ones. Both
+/// sides come from the *checked* reaches, so exactness is guaranteed rather than
+/// incidental: the saturating pair understates past `u128` and would read as a
+/// real bound in a generated artifact. `None` on either side means the reach is
+/// past `u128`, which forces the magnitude form regardless of width.
+fn representable_envelope(log_basis: u32, digits: usize, span_bits: u128) -> String {
+    match akita_types::sis::checked_balanced_digit_representable_bounds(log_basis, digits) {
+        (Some(negative), Some(positive)) if span_bits <= MAX_EXACT_REACH_SPAN_BITS => {
+            format!("[-{negative}, {positive}]")
+        }
+        _ => format!("about +/-2^{}", span_bits.saturating_sub(1)),
+    }
 }
 
 /// Banner naming the declared committed-source bound, for bounded families only.
@@ -138,15 +173,17 @@ mod tests {
         }
     }
 
-    /// The precommitted note labels the source class and never leaks a
-    /// saturating reach.
+    /// A note may only claim what its inputs can recover.
     ///
-    /// `balanced_digit_representable_bounds` saturates once the true reach passes
-    /// `u128::MAX`, which a full-width 26-digit descriptor does. Printing that
-    /// value would read as a real bound in a generated artifact, so wide spans
-    /// print a power-of-two magnitude derived from the exponent instead.
+    /// The inputs are a descriptor plus the planned class. That determines a unit
+    /// one-hot source's admitted set exactly, but **not** a balanced-digit one's:
+    /// that is the producer's `log_commit_bound` intersected with the digit
+    /// envelope, and a frozen descriptor records only the consequence of the
+    /// declaration. So the balanced-digit note names an envelope, never an
+    /// acceptance, and the one-hot note names the real `{0, 1}` set rather than
+    /// the digit interval that merely contains it.
     #[test]
-    fn precommitted_note_labels_the_class_without_saturating_reaches() {
+    fn precommitted_note_claims_only_what_its_inputs_recover() {
         use akita_types::sis::{
             BalancedSignedDigitFoldPolicy, HonestFoldPolicySpec, UnitOneHotFoldPolicy,
         };
@@ -156,27 +193,48 @@ mod tests {
             BalancedSignedDigitFoldPolicy::universal(128),
         );
 
-        let saturated = akita_types::sis::balanced_digit_representable_bounds(5, 26).0;
-        assert_eq!(saturated, u128::MAX, "26 base-2^5 digits must saturate");
-
-        // A 3-bit span is readable, so it prints the exact interval.
+        // One-hot: the structural set and the chunk size, both exact. It must not
+        // claim the `[-4, 3]` digit interval, which merely contains `{0, 1}`.
         let note = precommitted_source_note(3, 1, Some(&one_hot));
         assert!(note.contains("unit one-hot"), "{note}");
-        assert!(note.contains("accepts [-4, 3]"), "{note}");
+        assert!(note.contains("admits {0, 1}"), "{note}");
+        assert!(
+            note.contains("one hot position per 256 coefficients"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("[-4, 3]"),
+            "a one-hot source does not admit the digit interval: {note}"
+        );
 
-        // The shipped `u64` bounded descriptor: 14 base-2^5 digits.
+        // Balanced digit: an envelope, explicitly not an acceptance. The shipped
+        // `u64` bounded descriptor is 14 base-2^5 digits spanning 70 bits, while
+        // its producer enforces `[-2^64, 2^64 - 1]` -- 32x tighter.
         let bounded = precommitted_source_note(5, 14, Some(&balanced));
         assert!(bounded.contains("balanced signed digit"), "{bounded}");
-        assert!(bounded.contains("span 70 bits"), "{bounded}");
+        assert!(bounded.contains("representable envelope"), "{bounded}");
         assert!(bounded.contains("+/-2^69"), "{bounded}");
+        assert!(
+            bounded.contains("declared log_commit_bound may be tighter"),
+            "the envelope must not read as the admitted set: {bounded}"
+        );
 
+        // No note may claim acceptance for a balanced-digit descriptor.
         let full = precommitted_source_note(5, 26, Some(&balanced));
+        for note in [&bounded, &full] {
+            assert!(
+                !note.contains("accepts"),
+                "a descriptor cannot recover the producer's admitted set: {note}"
+            );
+        }
+
+        // A saturating reach must never reach a generated file: 26 base-2^5
+        // digits overflow `u128`, so the wide form prints an exponent instead.
+        let saturated = akita_types::sis::balanced_digit_representable_bounds(5, 26).0;
+        assert_eq!(saturated, u128::MAX, "26 base-2^5 digits must saturate");
         assert!(full.contains("span 130 bits"), "{full}");
         assert!(full.contains("+/-2^129"), "{full}");
-        assert!(
-            !full.contains(&saturated.to_string()),
-            "a saturating reach must never reach the generated file: {full}"
-        );
+        assert!(!full.contains(&saturated.to_string()), "{full}");
 
         // An unlabelled descriptor says so rather than guessing a class.
         assert!(precommitted_source_note(5, 13, None).contains("source class unrecorded"));

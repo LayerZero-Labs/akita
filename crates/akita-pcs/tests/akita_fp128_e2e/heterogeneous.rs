@@ -473,6 +473,97 @@ fn bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size() {
     });
 }
 
+// A schedule's declared source *class* is a producer obligation, not only a
+// planning input, and it is independent of the numeric bound.
+//
+// `fp128::OneHot` prices at most one hot position per 256 source coefficients.
+// A dense polynomial whose values are all `1` reports centered reach `(0, 1)`,
+// which sits comfortably inside that schedule's one-digit `[-4, 3]` balanced
+// envelope — so every magnitude test admits it, while it carries up to 256x the
+// per-chunk energy the frozen response caps were planned for. Only a check on the
+// representation itself can reject it, and it must be rejected at `commit` rather
+// than surface later as an unexplained proof failure.
+//
+// The class must come from the declared honest-fold policy, never from
+// `log_commit_bound == 1`: this family deliberately allows class and bound to vary
+// independently, so inferring one from the other is the bug this guards.
+#[test]
+fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
+    const NV: usize = 14;
+
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(NV, 1).expect("setup");
+        let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
+        let stack =
+            UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+                .expect("stack");
+
+        let profile = OneHotCfg::profile_without_precommitted_groups(
+            akita_types::PolynomialGroupLayout::new(NV, 1),
+        )
+        .expect("one-hot profile");
+        let ring_d = profile.inner_commit_matrix.ring_dimension();
+
+        // Dense all-ones: inside the digit envelope, outside the source class.
+        let dense =
+            akita_prover::DensePoly::<F>::from_field_evals(NV, ring_d, &[F::one(); 1usize << NV])
+                .expect("dense poly");
+        let error = AkitaCommitmentScheme::<OneHotCfg>::commit(
+            &setup,
+            std::slice::from_ref(&dense),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .map(|_| ())
+        .expect_err("a dense source must not commit under a one-hot schedule");
+        assert!(
+            matches!(error, akita_field::AkitaError::InvalidInput(_)),
+            "expected InvalidInput, got {error:?}"
+        );
+
+        // The magnitudes really were admissible, so the rejection is the class
+        // check doing work rather than the interval check catching it anyway.
+        let contract = akita_types::sis::CommittedSourceContract::of(
+            OneHotCfg::root_honest_fold_policy(),
+            OneHotCfg::decomposition(),
+        );
+        let (negative, positive) =
+            contract.accepted_bounds(profile.log_basis_inner, profile.num_digits_inner);
+        assert!(
+            negative.is_some_and(|reach| reach >= 1) && positive.is_some_and(|reach| reach >= 1),
+            "the all-ones dense source fits the accepted magnitude interval [{negative:?}, {positive:?}]"
+        );
+
+        // The proper one-hot representation at the same geometry is accepted.
+        let onehot = akita_prover::OneHotPoly::<F, u8>::new(
+            256,
+            ring_d,
+            (0..(1usize << NV) / 256)
+                .map(|i| Some((i % 256) as u8))
+                .collect(),
+        )
+        .expect("one-hot poly");
+        AkitaCommitmentScheme::<OneHotCfg>::commit(
+            &setup,
+            std::slice::from_ref(&onehot),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("the declared one-hot representation must still commit");
+    });
+}
+
+/// The producer contract `fp128::DenseBounded` declares: class plus bound, read
+/// from the config rather than restated, so these tests cannot drift from it.
+#[cfg(feature = "schedules-fp128-dense-bounded")]
+fn bounded_contract() -> akita_types::sis::CommittedSourceContract {
+    akita_types::sis::CommittedSourceContract::of(
+        fp128::DenseBounded::root_honest_fold_policy(),
+        fp128::DenseBounded::decomposition(),
+    )
+}
+
 // The declared bound must contain every `u64`, and must say so in the type's own
 // terms rather than only through the digit geometry.
 #[cfg(feature = "schedules-fp128-dense-bounded")]
@@ -490,19 +581,21 @@ fn bounded_dense_declares_a_bound_that_contains_every_u64() {
         "the positive endpoint must be exactly u64::MAX"
     );
 
-    // The declared interval, read from the config's own decomposition.
-    let (negative, positive) =
-        akita_types::sis::declared_committed_source_bounds(BoundedDenseCfg::decomposition());
+    // The declared interval, read from the config's own producer contract.
+    let (negative, positive) = bounded_contract().declared_bounds();
     assert_eq!(positive, Some(u128::from(u64::MAX)));
     assert_eq!(negative, Some(1u128 << 64));
 
     // And a 64-bit *signed* declaration would not have covered it — the
     // off-by-one this guards against.
-    let (_, signed_64_positive) =
-        akita_types::sis::declared_committed_source_bounds(akita_types::DecompositionParams {
+    let (_, signed_64_positive) = akita_types::sis::CommittedSourceContract::of(
+        BoundedDenseCfg::root_honest_fold_policy(),
+        akita_types::DecompositionParams {
             log_commit_bound: 64,
             ..BoundedDenseCfg::decomposition()
-        });
+        },
+    )
+    .declared_bounds();
     assert!(
         signed_64_positive.expect("interior bound") < u128::from(u64::MAX),
         "a signed 64-bit bound must not reach u64::MAX; that is why the preset declares 65"
@@ -553,8 +646,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
 
         // The accepted interval, read from the config rather than recomputed, so
         // the test cannot drift from the shipped declaration.
-        let (negative_bound, positive_bound) =
-            akita_types::sis::declared_committed_source_bounds(BoundedDenseCfg::decomposition());
+        let (negative_bound, positive_bound) = bounded_contract().declared_bounds();
         let negative_bound = negative_bound.expect("an interior bound is constrained");
         let positive_bound = positive_bound.expect("an interior bound is constrained");
 

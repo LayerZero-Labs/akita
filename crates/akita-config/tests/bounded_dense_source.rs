@@ -67,7 +67,11 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
     // the positive endpoint; `64` would have covered only half of that.
     const { assert!(fp128::DenseBounded::ACCEPTS_UNSIGNED_64_BIT) };
     assert_eq!(
-        akita_types::sis::declared_committed_source_bounds(bounded),
+        akita_types::sis::CommittedSourceContract::of(
+            fp128::DenseBounded::root_honest_fold_policy(),
+            bounded,
+        )
+        .declared_bounds(),
         (Some(1u128 << 64), Some(u128::from(u64::MAX))),
     );
 
@@ -88,11 +92,24 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
         fp128::Dense::inner_basis_range()
     );
     // Both are the balanced signed-digit source class: the bound sizes the digit
-    // depth, it does not select a different honest-fold sizing rule.
+    // depth, it does not select a different honest-fold sizing rule. The class is
+    // what `commit` admits against, and it is read from the declared policy --
+    // never inferred from the bound, which is why these two can vary
+    // independently.
     assert!(matches!(
         fp128::DenseBounded::root_honest_fold_policy(),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_)
     ));
+    assert_eq!(
+        akita_types::sis::CommittedSourceClass::of(fp128::DenseBounded::root_honest_fold_policy()),
+        akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
+    );
+    assert_eq!(
+        akita_types::sis::CommittedSourceClass::of(fp128::OneHot::root_honest_fold_policy()),
+        akita_types::sis::CommittedSourceClass::UnitOneHot {
+            source_chunk_size: akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE,
+        },
+    );
 }
 
 #[test]

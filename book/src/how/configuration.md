@@ -254,21 +254,33 @@ the whole width, and a unit one-hot family already says so in its name.
 A **precommitted** group is a different case. Its frozen
 `CommittedGroupProfile` records geometry and matrices but neither the source class
 nor the bound its producer declared — only the consequence, `num_digits_inner`
-digits at `log_basis_inner`, which is what actually pins the interval the group is
-binding for. Nothing downstream needs the label, because a grouped row is keyed on
-exact descriptor equality and the wrong producer simply fails to resolve. So that a
-reader can still tell the classes apart, each precommitted descriptor in a
-generated row is preceded by a comment naming its source class and accepted reach:
+digits at `log_basis_inner`. Nothing downstream needs the label, because a grouped
+row is keyed on exact descriptor equality and the wrong producer simply fails to
+resolve. So that a reader can still tell the classes apart, each precommitted
+descriptor in a generated row is preceded by a comment naming its source class:
 
 ```rust
 precommitted_groups: &[
-    // balanced signed digit: 14 x base-2^5 digits, span 70 bits, accepts about +/-2^69
+    // unit one-hot: admits {0, 1}, one hot position per 256 coefficients; 1 x base-2^3 digits, span 3 bits
+    GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { .. }, .. },
+    // balanced signed digit: 14 x base-2^5 digits, span 70 bits, representable envelope about +/-2^69; the producer's declared log_commit_bound may be tighter
     GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { .. }, .. },
 ],
 ```
 
 The class comes from the honest fold policy the row was planned against, not from
 guessing at the digit depth.
+
+Note what each form does and does not claim. A unit one-hot source is
+structurally constrained and its chunk size is part of its class, so the comment
+states the **admitted set** exactly. A balanced-digit source's admitted set is its
+producer's `log_commit_bound` intersected with the digit envelope, and the
+producer's declaration is precisely what a frozen descriptor does not record — so
+the comment names the **representable envelope** and says the declaration may be
+tighter. `DenseBounded` is the live example: 14 base-`2^5` digits span 70 bits
+while the producer enforces `[-2^64, 2^64 - 1]`, 32x tighter. Printing the
+envelope as an acceptance claim would overstate the admitted set in exactly the
+artifact these comments exist to make auditable.
 
 The bound is per config, and a precommitted group freezes its own
 `inner_commit_matrix` — so one grouped root can open groups with different
