@@ -384,6 +384,13 @@ where
     if !exceeds(modulus.saturating_sub(threshold + 1), threshold) {
         return Ok(());
     }
+    // A `None` side reaches beyond every `u128`, so it cannot be the side that
+    // was exceeded; render it as such rather than leaking `Some`/`None` into a
+    // caller-facing error.
+    let render_reach = |reach: Option<u128>| match reach {
+        Some(value) => value.to_string(),
+        None => ">2^128".to_string(),
+    };
     for poly in polys {
         let (negative_abs, positive) =
             RootCommitSource::<F, D>::committed_centered_reach(poly, modulus, threshold)?;
@@ -391,8 +398,11 @@ where
             return Err(AkitaError::InvalidInput(format!(
                 "committed source exceeds the scheduled bound: centered coefficients reach \
                  [-{negative_abs}, {positive}] but {} balanced base-2^{} digits represent only \
-                 [-{negative_reach:?}, {positive_reach:?}]",
-                plan.num_digits_inner, plan.log_basis_inner,
+                 [-{}, {}]",
+                plan.num_digits_inner,
+                plan.log_basis_inner,
+                render_reach(negative_reach),
+                render_reach(positive_reach),
             )));
         }
     }

@@ -144,7 +144,12 @@ where
 /// implementation so the centering convention is written once: a canonical
 /// residue at or below `centering_threshold` is the positive side, anything above
 /// it is negative with magnitude `modulus - canonical`. That is the same split
-/// `akita_algebra::ring::cyclotomic::center_for_decomposition` applies.
+/// `akita_algebra::ring::cyclotomic::center_for_decomposition` applies. We track
+/// the magnitude directly rather than calling that helper because it is
+/// `pub(crate)` to `akita-algebra` and returns an `i128` centered value, which
+/// cannot hold the largest negative magnitude a full-width residue reaches
+/// (`modulus - canonical` can exceed `i128::MAX`); the range check needs the
+/// `u128` magnitude on each side.
 pub fn centered_reach_of_field_coeffs<F: FieldCore + CanonicalField>(
     coeffs: &[F],
     modulus: u128,

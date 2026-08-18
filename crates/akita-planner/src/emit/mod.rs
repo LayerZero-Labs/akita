@@ -19,6 +19,7 @@ use akita_types::{
 use crate::PlannerPolicy;
 mod publish;
 mod render;
+mod source_annotations;
 use akita_schedules::expected_catalog_identity;
 use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
@@ -31,6 +32,7 @@ pub use publish::publish_generated_outputs;
 pub use render::{
     render_generated_outputs, render_generated_outputs_with_validation, GeneratedOutput,
 };
+use source_annotations::{emit_bounded_source_banner, precommitted_source_note};
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -417,49 +419,6 @@ fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     }
 }
 
-/// One-line description of a frozen precommitted group's committed source.
-///
-/// A [`CommittedGroupProfile`] records geometry and matrices, never the source
-/// class or the bound its producer declared — those are offline planning inputs
-/// and deliberately absent from runtime schedule identity. What survives is the
-/// *consequence*: `num_digits_inner` digits at `log_basis_inner`, which pins the
-/// exact coefficient interval the group is binding for.
-///
-/// Nothing downstream needs the label — a grouped row is keyed on exact
-/// descriptor equality, so the wrong producer simply fails to resolve. It exists
-/// so a reader of a grouped row can tell a one-hot precommit from a bounded or
-/// full-width dense one without recomputing the interval by hand. `policy` comes
-/// from the emit spec's per-key honest fold policies, so the class is the exact
-/// one the row was planned against rather than a guess from the digit depth.
-fn precommitted_source_note(
-    log_basis: u32,
-    digits: usize,
-    policy: Option<&HonestFoldPolicySpec>,
-) -> String {
-    let class = match policy {
-        Some(HonestFoldPolicySpec::UnitOneHot(_)) => "unit one-hot",
-        Some(HonestFoldPolicySpec::BalancedSignedDigit(_)) => "balanced signed digit",
-        None => "source class unrecorded",
-    };
-    // Total digit span. Exact integer arithmetic on the exponent, so it stays
-    // meaningful for the >128-bit spans a full-width row reaches.
-    let span_bits = (digits as u128).saturating_mul(u128::from(log_basis));
-    // Small spans print their exact interval; wide ones print the magnitude as a
-    // power of two. Never print the saturating reaches from
-    // `balanced_digit_representable_bounds` — beyond `u128` those understate the
-    // true value and would read as a real bound here.
-    let reach = if span_bits <= 16 {
-        let (negative, positive) =
-            akita_types::sis::balanced_digit_representable_bounds(log_basis, digits);
-        format!("accepts [-{negative}, {positive}]")
-    } else {
-        format!("accepts about +/-2^{}", span_bits.saturating_sub(1))
-    };
-    format!(
-        "                // {class}: {digits} x base-2^{log_basis} digits, span {span_bits} bits, {reach}\n"
-    )
-}
-
 fn emit_schedule_entry(
     out: &mut String,
     key: &AkitaScheduleLookupKey,
@@ -816,44 +775,6 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     emit_family_module_from_entries(spec, materialized)
 }
 
-/// Banner naming the declared committed-source bound, for bounded families only.
-///
-/// Emitted for the **interior** of the bound range, `1 < log_commit_bound <
-/// field_bits`, and nothing else. The two endpoints are already self-describing
-/// and would only be noise:
-///
-/// - A full-field family decomposes over the whole field width, which is the
-///   reader's default assumption.
-/// - A unit one-hot family says so in its name, and its source type is
-///   *structurally* constrained to `{0, 1}` rather than range-checked, so the
-///   "`commit` rejects anything outside it" wording below would misdescribe it.
-///
-/// An interior bound is the surprising case: the rows carry a deliberately
-/// shallow `num_digits_inner`, and without this the only trace of why is a
-/// `log_commit_bound` buried in `CATALOG_IDENTITY`.
-///
-/// This is a comment, not data — `CATALOG_IDENTITY.decomposition` stays the single
-/// source of truth, and the banner is regenerated from it on every emit.
-fn emit_bounded_source_banner(decomposition: akita_types::DecompositionParams) -> String {
-    if !decomposition.has_bounded_committed_source() || decomposition.log_commit_bound <= 1 {
-        return String::new();
-    }
-    let bound = decomposition.log_commit_bound;
-    let field_bits = decomposition.field_bits();
-    format!(
-        "//\n\
-         // BOUNDED COMMITTED SOURCE: log_commit_bound = {bound} (field width {field_bits}).\n\
-         // Every root row below is sized for a source whose centered coefficients fit\n\
-         // {bound} signed bits, i.e. [-2^{}, 2^{} - 1] — not for arbitrary field\n\
-         // elements. That is why each root `num_digits_inner` is shallower than a\n\
-         // full-width family's. These rows are binding and complete only for\n\
-         // polynomials inside that range; `commit` rejects anything outside it.\n\
-         // Opening witnesses stay full-width ({field_bits} bits).\n",
-        bound - 1,
-        bound - 1,
-    )
-}
-
 pub(super) fn emit_family_module_from_entries(
     spec: &EmitSpec,
     materialized: Vec<MaterializedEntry>,
@@ -916,104 +837,6 @@ pub(super) fn emit_family_module_from_entries(
     out.push_str(&emit_identity_const(&identity));
 
     Ok(out)
-}
-
-#[cfg(test)]
-mod bounded_source_banner_tests {
-    use super::emit_bounded_source_banner;
-    use akita_types::DecompositionParams;
-
-    fn params(log_commit_bound: u32, log_open_bound: Option<u32>) -> DecompositionParams {
-        DecompositionParams {
-            log_basis: 3,
-            log_commit_bound,
-            log_open_bound,
-        }
-    }
-
-    /// Only the interior of the bound range is banner-worthy.
-    ///
-    /// The banner exists because a bounded family's shallow `num_digits_inner`
-    /// is otherwise unexplained in the generated source. Both endpoints already
-    /// explain themselves, and the one-hot endpoint would additionally be
-    /// *misdescribed*: its source is structurally `{0, 1}`, not range-checked.
-    #[test]
-    fn banner_is_emitted_only_for_an_interior_bound() {
-        // Full-field endpoints, with and without an explicit open bound.
-        assert!(emit_bounded_source_banner(params(128, None)).is_empty());
-        assert!(emit_bounded_source_banner(params(128, Some(128))).is_empty());
-        // Unit one-hot endpoint.
-        assert!(emit_bounded_source_banner(params(1, Some(128))).is_empty());
-
-        for bound in [2u32, 32, 64, 127] {
-            assert!(
-                !emit_bounded_source_banner(params(bound, Some(128))).is_empty(),
-                "bound {bound} is interior and must be announced"
-            );
-        }
-    }
-
-    /// The precommitted note labels the source class and never leaks a
-    /// saturating reach.
-    ///
-    /// `balanced_digit_representable_bounds` saturates once the true reach passes
-    /// `u128::MAX`, which a full-width 26-digit descriptor does. Printing that
-    /// value would read as a real bound in a generated artifact, so wide spans
-    /// print a power-of-two magnitude derived from the exponent instead.
-    #[test]
-    fn precommitted_note_labels_the_class_without_saturating_reaches() {
-        use akita_types::sis::{
-            BalancedSignedDigitFoldPolicy, HonestFoldPolicySpec, UnitOneHotFoldPolicy,
-        };
-
-        let one_hot = HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(128, 1, 256));
-        let balanced = HonestFoldPolicySpec::BalancedSignedDigit(
-            BalancedSignedDigitFoldPolicy::universal(128),
-        );
-
-        let saturated = akita_types::sis::balanced_digit_representable_bounds(5, 26).0;
-        assert_eq!(saturated, u128::MAX, "26 base-2^5 digits must saturate");
-
-        // A 3-bit span is readable, so it prints the exact interval.
-        let note = super::precommitted_source_note(3, 1, Some(&one_hot));
-        assert!(note.contains("unit one-hot"), "{note}");
-        assert!(note.contains("accepts [-4, 3]"), "{note}");
-
-        let bounded = super::precommitted_source_note(5, 13, Some(&balanced));
-        assert!(bounded.contains("balanced signed digit"), "{bounded}");
-        assert!(bounded.contains("span 65 bits"), "{bounded}");
-        assert!(bounded.contains("+/-2^64"), "{bounded}");
-
-        let full = super::precommitted_source_note(5, 26, Some(&balanced));
-        assert!(full.contains("span 130 bits"), "{full}");
-        assert!(full.contains("+/-2^129"), "{full}");
-        assert!(
-            !full.contains(&saturated.to_string()),
-            "a saturating reach must never reach the generated file: {full}"
-        );
-
-        // An unlabelled descriptor says so rather than guessing a class.
-        assert!(super::precommitted_source_note(5, 13, None).contains("source class unrecorded"));
-
-        // Every note stays a single comment line.
-        for note in [note, bounded, full] {
-            assert_eq!(note.lines().count(), 1, "{note}");
-            assert!(note.trim_start().starts_with("//"), "{note}");
-            assert!(note.ends_with('\n'), "{note}");
-        }
-    }
-
-    /// The banner states the declared bound and the signed interval it implies.
-    #[test]
-    fn banner_names_the_bound_and_its_signed_interval() {
-        let banner = emit_bounded_source_banner(params(64, Some(128)));
-        assert!(banner.contains("log_commit_bound = 64"));
-        assert!(banner.contains("field width 128"));
-        assert!(banner.contains("[-2^63, 2^63 - 1]"));
-        // Every line stays a comment: this is prepended to generated Rust source.
-        assert!(banner.lines().all(|line| line.starts_with("//")));
-        assert!(banner.ends_with('\n'));
-    }
 }
 
 #[cfg(all(test, feature = "catalog-gen"))]
