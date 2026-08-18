@@ -458,8 +458,8 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 //
 // This is the test that pins the preset against its *purpose* rather than
 // against its declaration. A generator narrowed to fit the declared bound would
-// pass even if the bound were mis-declared, which is exactly how a signed/unsigned
-// mix-up ships silently.
+// pass even if the bound were declared too narrow, which is exactly how a
+// signed/unsigned mix-up ships silently.
 #[cfg(feature = "schedules-fp128-dense-bounded")]
 #[test]
 fn bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size() {

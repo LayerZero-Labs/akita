@@ -358,9 +358,9 @@ where
 ///   witness beyond the L2 response caps frozen into the recursion suffix.
 ///
 /// Checking representability alone would admit up to 256x the declared bound at
-/// the shipped `log_basis_inner = 9` geometry, which is exactly how a
-/// mis-declared bound ships silently. A full-field schedule constrains neither
-/// side and returns early without scanning, so unbounded configs pay nothing.
+/// the shipped `log_basis_inner = 9` geometry, which is exactly how a too-narrow
+/// declaration ships silently. A full-field schedule constrains neither side and
+/// returns early without scanning, so unbounded configs pay nothing.
 ///
 /// When root tensor projection is enabled this runs on the *projected* sources,
 /// because those are the coefficients that get decomposed — tensor packing

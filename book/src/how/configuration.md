@@ -228,9 +228,9 @@ The two differ because the depth rounds up: 13 base-`2^5` digits span 65 bits, s
 they represent about `±2^64` while a `B = 64` schedule is priced for `±2^63`. The
 gap is geometry-dependent and can be large — 256× at the `log_basis_inner = 9`
 geometry the `nv = 24` row selects. Enforcing only representability would accept
-coefficients the schedule never declared, which is exactly how a mis-declared
-bound ships silently; enforcing the intersection turns that into an input error
-at `commit`.
+coefficients the schedule never declared, which is exactly how a too-narrow
+declaration ships silently; enforcing the intersection turns that into an input
+error at `commit`.
 
 `commit` compares each source's centered reach against that intersection and
 returns `AkitaError::InvalidInput` naming both the reach the data needs and the
