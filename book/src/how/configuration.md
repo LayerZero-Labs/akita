@@ -158,15 +158,51 @@ the committed-source class, not a per-preset constant with two legal values:
 | `log_commit_bound` | Source | Example preset |
 |---|---|---|
 | `1` | unit one-hot | `fp128::OneHot` |
-| `1 < B < field_bits` | bounded | `fp128::DenseBounded` (`B = 64`, see `DenseBounded::LOG_COMMIT_BOUND`) |
+| `1 < B < field_bits` | bounded | `fp128::DenseBounded` (`B = 65`, see `DenseBounded::LOG_COMMIT_BOUND`) |
 | `field_bits` | full field | `fp128::Dense` |
 
-The bound enters the protocol at exactly one place: the A-role digit depth
+### The bound is a *signed* bit width
+
+`B` denotes the centered range `[-2^(B-1), 2^(B-1) - 1]`: one sign bit plus
+`B - 1` magnitude bits. The gadget decomposition never sees a raw residue in
+`[0, q)` — it sees the centered representative, and balanced digits are
+themselves signed — so every bound here is a bound on signed magnitude.
+
+The practical consequence is an easy off-by-one. A `u64` workload reaches
+`u64::MAX = 2^64 - 1`, so it needs `B = 65`, not `64`; declaring `64` would cover
+only `[-2^63, 2^63 - 1]` and miss half of a uniform `u64` distribution. That is
+why `fp128::DenseBounded` declares 65. `DenseBounded::MAX_CENTERED_MAGNITUDE`
+states the same fact without the signed-bit-width indirection.
+
+The two endpoints of the table above do **not** follow this reading:
+
+* **Full field** (`B == field_bits`) means "any field element", not
+  `[-2^(field_bits-1), 2^(field_bits-1) - 1]`. `num_digits_for_bound` routes it
+  to `compute_num_digits_field_width`, plain `ceil(field_bits / log_basis)` with
+  no sign correction, because `decompose_centering_threshold` shifts the
+  threshold below `q/2` when `δ · log_basis == field_bits` so the longer negative
+  reach covers what the shorter positive reach cannot.
+* **Unit one-hot** (`B == 1`) is a depth selector, not an interval. Its source is
+  structurally `{0, 1}`; the signed reading `[-1, 0]` would exclude a hot
+  position.
+
+So the signed convention describes exactly the interior, which is also the only
+region where the declaration is enforced as an acceptance interval.
+
+### Where the bound enters
+
+Primarily the A-role digit depth
 `num_digits_inner = ceil(B / log_basis_inner)`. From there it fixes the A input
-width, the SIS rank that width demands, the shared setup matrix, and the
-level-1 witness the whole recursion suffix inherits. A caller who knows their
-witness fits 64 bits of a 128-bit field therefore pays for 64 bits of range
-instead of 128.
+width, the SIS rank that width demands, the shared setup matrix, and the level-1
+witness the whole recursion suffix inherits. A caller who knows their witness is
+`u64`-valued therefore pays for 65 bits of range instead of 128.
+
+It has one further consumer, and the two must be read together:
+`response_model::bounded_field_source_moment` charges a bounded source's final
+digit plane only the range the bound leaves, rather than a full `log_basis`. That
+is what turns the shallower depth into smaller L2 response caps down the
+recursion suffix — and it is why the declared bound has to be *enforced* rather
+than merely documented (see below).
 
 The bound does **not** change the honest-fold sizing rule. A bounded source and
 a full-field source both decompose into the same balanced digit alphabet and
@@ -177,20 +213,29 @@ which a dense source does not have.
 
 ### What a bounded commitment binds
 
-A commitment sized from `B` is binding and complete only for polynomials whose
-centered coefficients lie inside the range its digit depth represents
-(`akita_types::sis::balanced_digit_representable_bounds`). That is a smaller
-accepted witness space than full-field dense, priced by exactly the digit
-envelope the A-role SIS route already prices — the same statement one-hot has
-always made, generalized.
+A commitment sized from `B` is binding and complete only for polynomials inside
+`akita_types::sis::accepted_committed_source_bounds`, the **intersection** of two
+independent constraints:
 
-Because the space is smaller, an out-of-range coefficient must be rejected
-rather than committed: the decomposition keeps `num_digits_inner` digits and
-discards the rest, so a truncated commitment would bind a different polynomial
-than the caller opens. `commit` compares each source's centered reach against
-the scheduled envelope and returns an error. A schedule whose envelope already
-covers every centered field residue skips the check, so full-field presets pay
-nothing.
+1. **Representability** — the coefficient must be recoverable from
+   `num_digits_inner` balanced digits
+   (`checked_balanced_digit_representable_bounds`). Outside it the decomposition
+   keeps only the scheduled digits and the commitment binds a truncation.
+2. **Declaration** — the coefficient must lie inside `[-2^(B-1), 2^(B-1) - 1]`,
+   the range the schedule was *priced* for by the source-moment model above.
+
+The two differ because the depth rounds up: 13 base-`2^5` digits span 65 bits, so
+they represent about `±2^64` while a `B = 64` schedule is priced for `±2^63`. The
+gap is geometry-dependent and can be large — 256× at the `log_basis_inner = 9`
+geometry the `nv = 24` row selects. Enforcing only representability would accept
+coefficients the schedule never declared, which is exactly how a mis-declared
+bound ships silently; enforcing the intersection turns that into an input error
+at `commit`.
+
+`commit` compares each source's centered reach against that intersection and
+returns `AkitaError::InvalidInput` naming both the reach the data needs and the
+interval the schedule accepts. A full-field schedule constrains neither side and
+skips the scan entirely, so unbounded presets pay nothing.
 
 ### Identity and per-group bounds
 
@@ -217,7 +262,7 @@ generated row is preceded by a comment naming its source class and accepted reac
 
 ```rust
 precommitted_groups: &[
-    // balanced signed digit: 13 x base-2^5 digits, span 65 bits, accepts about +/-2^64
+    // balanced signed digit: 14 x base-2^5 digits, span 70 bits, accepts about +/-2^69
     GeneratedRootPrecommittedGroup { descriptor: CommittedGroupProfile { .. }, .. },
 ],
 ```
@@ -240,13 +285,18 @@ Adaptive presets select with
 setup-first. The bound's return is a smaller setup matrix and a smaller
 prover-side witness, **not** a smaller proof.
 
-Shipped `fp128` rows, bounded (`B = 64`) against full-width (`B = 128`):
+Shipped `fp128` rows, bounded (`B = 65`, i.e. every `u64`) against full-width
+(`B = 128`):
 
 | `nv` | `num_digits_inner` | setup field elements | level-1 witness |
 |---|---|---|---|
-| 14 | 26 → 13 | 131 072 → 65 536 (−50%) | 439 232 → 294 144 (−33%) |
+| 14 | 26 → 14 | 131 072 → 65 536 (−50%) | 439 232 → 302 336 (−31%) |
 | 24 | 26 → 8 | 2 818 048 → 2 097 152 (−26%) | 15 614 976 → 10 590 592 (−32%) |
 | 26 | 19 → 10 | 5 636 096 → 4 587 520 (−19%) | 31 922 560 → 26 603 264 (−17%) |
+
+`log_basis_inner = 5` (which `nv = 14` selects) is the only basis in
+`inner_basis_range` where covering `u64` rather than signed-64 costs a digit;
+`nv = 24` (`lb = 9`) and `nv = 26` (`lb = 7`) need the same depth either way.
 
 Estimated proof size is flat to slightly better across these sizes. At small
 `nv` the setup-first objective can even trade a noticeably larger proof for a
@@ -258,7 +308,8 @@ to a bounded catalog.
 - `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`,
   `validate`, `has_bounded_committed_source`).
 - `crates/akita-types/src/sis/decomposition_digits.rs`
-  (`balanced_digit_representable_bounds`,
+  (`accepted_committed_source_bounds`, `declared_committed_source_bounds`,
+  `balanced_digit_representable_bounds`,
   `checked_balanced_digit_representable_bounds`, `num_digits_inner_for_bound`).
 - `crates/akita-config/src/proof_optimized/fp128.rs` (`DenseBounded`).
 - `crates/akita-prover/src/api/commitment.rs` (the producer-side guard) and

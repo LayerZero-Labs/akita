@@ -39,14 +39,21 @@ one-hot preset now chooses dimensions per fold from generated adaptive tables;
 
 Use `fp128::OneHot` for direct one-hot and `fp128::Dense` for direct dense.
 
-**Bounded dense.** If every coefficient of your dense polynomial fits a known bit
-width narrower than the field, `fp128::DenseBounded` (bound 64 inside the 128-bit
-field, behind `schedules-fp128-dense-bounded`) sizes the commitment for that bound
-instead of the full field. It halves the A-role digit depth, and with it the
-shared setup matrix and the prover-side witness the recursion suffix inherits;
-proof size is roughly unchanged. The trade is that `commit` **rejects** a
-coefficient outside the bound rather than committing a truncated value, so use
-`fp128::Dense` when the bound cannot be guaranteed. See
+**Bounded dense.** If every coefficient of your dense polynomial is `u64`-valued,
+`fp128::DenseBounded` (behind `schedules-fp128-dense-bounded`) sizes the
+commitment for that range instead of the full 128-bit field. It roughly halves the
+A-role digit depth, and with it the shared setup matrix and the prover-side
+witness the recursion suffix inherits; proof size is roughly unchanged.
+
+The declared bound is `DenseBounded::LOG_COMMIT_BOUND = 65`, a **signed** bit
+width spanning `[-2^64, 2^64 - 1]`. It is 65 rather than 64 because the bound
+counts a sign bit, and `u64::MAX = 2^64 - 1` needs 64 magnitude bits on top of it;
+`DenseBounded::MAX_CENTERED_MAGNITUDE` states the accepted positive endpoint
+directly.
+
+The trade is that `commit` **rejects** a coefficient outside the declared range
+rather than committing a truncated value, so use `fp128::Dense` when the bound
+cannot be guaranteed. See
 [Bounded committed sources](../how/configuration.md#bounded-committed-sources).
 
 **Test harness vs profile defaults.** Direct protocol tests should use

@@ -445,6 +445,19 @@ fn emit_schedule_entry(
     if entry.root.precommitted_groups.is_empty() {
         writeln!(out, "            precommitted_groups: &[],").map_err(|e| e.to_string())?;
     } else {
+        // A grouped row must carry one planned honest-fold policy per precommitted
+        // descriptor. A short list would silently downgrade the annotation to
+        // "source class unrecorded", which in a generated artifact reads as a
+        // property of the row rather than a bug in the spec that produced it.
+        if precommitted_policies.len() != entry.root.precommitted_groups.len() {
+            return Err(format!(
+                "grouped key {:?} carries {} honest fold policies for {} precommitted groups; \
+                 every descriptor needs the policy its row was planned against",
+                key,
+                precommitted_policies.len(),
+                entry.root.precommitted_groups.len(),
+            ));
+        }
         writeln!(out, "            precommitted_groups: &[").map_err(|e| e.to_string())?;
         for (index, group) in entry.root.precommitted_groups.iter().enumerate() {
             out.push_str(&precommitted_source_note(

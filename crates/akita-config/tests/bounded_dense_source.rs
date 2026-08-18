@@ -2,8 +2,12 @@
 //!
 //! `fp128::DenseBounded` declares the same field, SIS profile, and balanced
 //! signed-digit source class as `fp128::Dense`; only its committed-source bound
-//! differs (`log_commit_bound = 64` instead of `128`). These tests pin what that
+//! differs (`log_commit_bound = 65` instead of `128`). These tests pin what that
 //! single parameter is allowed to change and what it must not.
+//!
+//! The bound is a **signed** bit width: `k` denotes `[-2^(k-1), 2^(k-1) - 1]`.
+//! `65` is therefore the smallest declaration containing every `u64`, which is
+//! the workload this preset exists for.
 
 #![allow(missing_docs)]
 // Both catalogs must be linked: every test here compares the bounded family
@@ -53,9 +57,19 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
     assert_eq!(bounded.field_bits(), full.field_bits());
     assert_eq!(
         bounded.log_commit_bound,
-        fp128::DenseBounded::LOG_COMMIT_BOUND
+        fp128::DenseBounded::LOG_COMMIT_BOUND,
+        "the preset constant and the macro argument must not drift apart"
     );
     assert_eq!(full.log_commit_bound, full.field_bits());
+
+    // The declaration must contain the workload the preset is for. `65` is a
+    // signed bit width, so it spans `[-2^64, 2^64 - 1]` and `u64::MAX` sits on
+    // the positive endpoint; `64` would have covered only half of that.
+    const { assert!(fp128::DenseBounded::ACCEPTS_UNSIGNED_64_BIT) };
+    assert_eq!(
+        akita_types::sis::declared_committed_source_bounds(bounded),
+        (Some(1u128 << 64), Some(u128::from(u64::MAX))),
+    );
 
     // Opening witnesses stay full-width: `t̂` / `ŵ` carry genuine field elements
     // regardless of how small the committed source is.

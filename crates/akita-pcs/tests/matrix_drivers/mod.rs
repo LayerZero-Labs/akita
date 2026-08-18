@@ -156,9 +156,10 @@ where
 /// Dense prove/verify round trip over a caller-supplied evaluation source.
 ///
 /// A bounded committed source rejects coefficients outside its declared range, so
-/// it supplies `bounded_dense_field_evals` instead of the full-width generator.
-/// Everything else — commitment, proof, serialization round trip, verification
-/// against an independent Lagrange oracle — is shared.
+/// it supplies `u64_dense_field_evals` — the workload its preset exists for —
+/// instead of the full-field generator. Everything else — commitment, proof,
+/// serialization round trip, verification against an independent Lagrange oracle
+/// — is shared.
 pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
     nv_values: &[usize],
     label: &[u8],

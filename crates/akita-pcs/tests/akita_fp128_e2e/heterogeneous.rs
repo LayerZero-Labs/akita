@@ -234,11 +234,11 @@ fn heterogeneous_group_types() {
 
 // fp128: a **bounded** dense precommit opened jointly with a one-hot final
 // group. The two groups declare different committed-source bounds inside the same
-// 128-bit field — `fp128::DenseBounded` commits against `log_commit_bound = 64` while
-// the root is planned under `fp128::OneHot`'s `log_commit_bound = 1` — so this is
-// the mixed-bound multi-group cell. It proves the bound is a per-group property
-// frozen into each group's own A matrix, not a batch-wide one, and that a bounded
-// group's full-width opening geometry still lines up with the shared root.
+// 128-bit field — `fp128::DenseBounded` commits against `log_commit_bound = 65`
+// while the root is planned under `fp128::OneHot`'s `log_commit_bound = 1` — so
+// this is the mixed-bound multi-group cell. It proves the bound is a per-group
+// property frozen into each group's own A matrix, not a batch-wide one, and that a
+// bounded group's full-width opening geometry still lines up with the shared root.
 #[cfg(feature = "schedules-fp128-dense-bounded")]
 #[test]
 fn bounded_dense_precommit_with_onehot_final_group() {
@@ -249,25 +249,11 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        // Coefficients that fill the declared 64-bit signed bound on both sides,
-        // so the test exercises the endpoints of the representable range rather
-        // than only small values. `log_commit_bound = 64` means the centered
-        // magnitude fits 64 signed bits, i.e. `[-2^63, 2^63 - 1]`.
-        let bounded_evals = (0..(1usize << BOUNDED_PRE_NV))
-            .map(|i| {
-                let magnitude = F::from_u64(match i % 4 {
-                    0 => 0,
-                    1 => 1,
-                    2 => (1u64 << 63) - 1,
-                    _ => u64::from((i % 1_000) as u32) + 7,
-                });
-                if i % 2 == 0 {
-                    magnitude
-                } else {
-                    -magnitude
-                }
-            })
-            .collect::<Vec<_>>();
+        // Full-width `u64` coefficients on both signs — the workload the bounded
+        // preset exists for — including the `±u64::MAX` endpoints. `commit` must
+        // accept all of them under `log_commit_bound = 65`, the signed bit width
+        // whose range `[-2^64, 2^64 - 1]` contains every `u64`.
+        let bounded_evals = u64_dense_field_evals(BOUNDED_PRE_NV, 0x8064_0001);
         let bounded_dense =
             akita_prover::DensePoly::from_field_evals(BOUNDED_PRE_NV, BOUNDED_D, &bounded_evals)
                 .expect("bounded dense poly");
@@ -466,31 +452,80 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 }
 
 // The bounded family's own scalar rows: a direct commit/prove/verify round trip
-// at every `nv` its catalog ships, with coefficients that fill the declared
-// 64-bit signed range on both sides.
+// at every `nv` its catalog ships, over the workload the preset exists for —
+// full-width `u64` coefficients on both signs, including the `±u64::MAX`
+// endpoints.
+//
+// This is the test that pins the preset against its *purpose* rather than
+// against its declaration. A generator narrowed to fit the declared bound would
+// pass even if the bound were mis-declared, which is exactly how a signed/unsigned
+// mix-up ships silently.
 #[cfg(feature = "schedules-fp128-dense-bounded")]
 #[test]
-fn bounded_dense_roundtrip_at_every_catalog_size() {
+fn bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size() {
     init_rayon_pool();
     run_on_large_stack(|| {
         prove_verify_dense_roundtrip_with_evals::<fp128::DenseBounded>(
             &[14, 24, 26],
             b"completeness/fp128_dense_bounded",
-            |nv, seed| bounded_dense_field_evals(nv, seed, fp128::DenseBounded::LOG_COMMIT_BOUND),
+            u64_dense_field_evals,
         );
     });
 }
 
-// A polynomial outside the declared bound must be rejected at commit time.
-//
-// The decomposition kernel peels exactly `num_digits_inner` digits and discards
-// the rest, so without this guard the commitment would silently bind the
-// truncated polynomial and the caller's opening claim would be for a different
-// one. The failure must be a clear input error at commit, not an opaque
-// verification failure later.
+// The declared bound must contain every `u64`, and must say so in the type's own
+// terms rather than only through the digit geometry.
 #[cfg(feature = "schedules-fp128-dense-bounded")]
 #[test]
-fn bounded_dense_commit_rejects_a_coefficient_above_the_bound() {
+fn bounded_dense_declares_a_bound_that_contains_every_u64() {
+    type BoundedDenseCfg = fp128::DenseBounded;
+
+    // `log_commit_bound` is a *signed* bit width: `k` is `[-2^(k-1), 2^(k-1) - 1]`.
+    // Covering `u64::MAX = 2^64 - 1` therefore takes 65, not 64.
+    assert_eq!(BoundedDenseCfg::LOG_COMMIT_BOUND, 65);
+    const { assert!(BoundedDenseCfg::ACCEPTS_UNSIGNED_64_BIT) };
+    assert_eq!(
+        BoundedDenseCfg::MAX_CENTERED_MAGNITUDE,
+        u128::from(u64::MAX),
+        "the positive endpoint must be exactly u64::MAX"
+    );
+
+    // The declared interval, read from the config's own decomposition.
+    let (negative, positive) =
+        akita_types::sis::declared_committed_source_bounds(BoundedDenseCfg::decomposition());
+    assert_eq!(positive, Some(u128::from(u64::MAX)));
+    assert_eq!(negative, Some(1u128 << 64));
+
+    // And a 64-bit *signed* declaration would not have covered it — the
+    // off-by-one this guards against.
+    let (_, signed_64_positive) =
+        akita_types::sis::declared_committed_source_bounds(akita_types::DecompositionParams {
+            log_commit_bound: 64,
+            ..BoundedDenseCfg::decomposition()
+        });
+    assert!(
+        signed_64_positive.expect("interior bound") < u128::from(u64::MAX),
+        "a signed 64-bit bound must not reach u64::MAX; that is why the preset declares 65"
+    );
+}
+
+// A polynomial outside the *declared* bound must be rejected at commit time.
+//
+// Two independent reasons, and the guard has to enforce the tighter one:
+//
+//  * Representability — the decomposition kernel peels exactly
+//    `num_digits_inner` digits and discards the rest, so a commitment would
+//    silently bind a truncation.
+//  * Declaration — the planner prices a bounded source's final digit plane at
+//    only the range its bound leaves, so a coefficient past the declaration
+//    inflates the level-1 witness beyond the frozen L2 response caps.
+//
+// The digit envelope is far wider than the declaration (the depth rounds up), so
+// checking representability alone would accept coefficients the schedule was
+// never priced for. This test pins the *declaration* as the accepted interval.
+#[cfg(feature = "schedules-fp128-dense-bounded")]
+#[test]
+fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
     type BoundedDenseCfg = fp128::DenseBounded;
     const NV: usize = 14;
     const BOUNDED_D: usize = BoundedDenseCfg::D;
@@ -516,46 +551,60 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_bound() {
             .map(|_| ())
         };
 
-        // The scheduled envelope for this row, taken from the row itself rather
-        // than recomputed, so the test cannot drift from the shipped schedule.
-        let profile = BoundedDenseCfg::profile_without_precommitted_groups(
-            akita_types::PolynomialGroupLayout::new(NV, 1),
-        )
-        .expect("bounded profile");
-        // The checked bounds, so the test reads the same exact interval the commit
-        // guard enforces rather than a saturating lower bound.
-        let (negative_reach, positive_reach) =
-            akita_types::sis::checked_balanced_digit_representable_bounds(
-                profile.log_basis_inner,
-                profile.num_digits_inner,
-            );
-        let negative_reach = negative_reach.expect("bounded negative reach fits u128");
-        let positive_reach = positive_reach.expect("bounded positive reach fits u128");
+        // The accepted interval, read from the config rather than recomputed, so
+        // the test cannot drift from the shipped declaration.
+        let (negative_bound, positive_bound) =
+            akita_types::sis::declared_committed_source_bounds(BoundedDenseCfg::decomposition());
+        let negative_bound = negative_bound.expect("an interior bound is constrained");
+        let positive_bound = positive_bound.expect("an interior bound is constrained");
 
+        // Both signed endpoints of the declaration, and every `u64` in between.
         let mut in_bound = vec![F::zero(); 1usize << NV];
-        in_bound[0] = F::from_u128(positive_reach);
-        in_bound[1] = -F::from_u128(negative_reach);
-        commit(&in_bound).expect("both signed endpoints of the envelope are representable");
+        in_bound[0] = F::from_u128(positive_bound);
+        in_bound[1] = -F::from_u128(negative_bound);
+        for (slot, value) in u64_magnitude_endpoints().into_iter().enumerate() {
+            in_bound[2 + slot] = value;
+        }
+        commit(&in_bound).expect("both declared endpoints and every u64 must be accepted");
 
+        // One past either endpoint is an input error.
         let mut over_positive = vec![F::zero(); 1usize << NV];
-        over_positive[3] = F::from_u128(positive_reach + 1);
+        over_positive[3] = F::from_u128(positive_bound + 1);
         let error = commit(&over_positive)
-            .expect_err("a coefficient above the positive reach must be rejected");
+            .expect_err("a coefficient above the declared bound must be rejected");
         assert!(
             matches!(error, akita_field::AkitaError::InvalidInput(_)),
             "expected InvalidInput, got {error:?}"
         );
 
         let mut over_negative = vec![F::zero(); 1usize << NV];
-        over_negative[3] = -F::from_u128(negative_reach + 1);
+        over_negative[3] = -F::from_u128(negative_bound + 1);
         assert!(
             commit(&over_negative).is_err(),
-            "a coefficient below the negative reach must be rejected"
+            "a coefficient below the declared bound must be rejected"
+        );
+
+        // The rejected value is still well inside what the digits can *represent*.
+        // Without the declaration half of the accepted-interval intersection this
+        // would commit successfully on a schedule priced for a narrower range —
+        // the regression this test exists to catch.
+        let profile = BoundedDenseCfg::profile_without_precommitted_groups(
+            akita_types::PolynomialGroupLayout::new(NV, 1),
+        )
+        .expect("bounded profile");
+        let (_, representable) = akita_types::sis::checked_balanced_digit_representable_bounds(
+            profile.log_basis_inner,
+            profile.num_digits_inner,
+        );
+        assert!(
+            representable.expect("shipped geometry fits u128") > positive_bound,
+            "the digit envelope must be strictly wider than the declaration, \
+             otherwise this test proves nothing about which one is enforced"
         );
 
         // A full-width dense commitment of the same out-of-range polynomial is
-        // fine: its envelope covers the whole centered field, so the guard is
-        // specific to a bounded source and costs unbounded configs nothing.
+        // fine: it declares the whole field, so the guard is specific to a bounded
+        // source and costs unbounded configs nothing.
         let full_setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).expect("setup");
         let full_prepared = CpuBackend::DEFAULT
             .prepare_setup(&full_setup)

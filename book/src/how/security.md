@@ -125,11 +125,18 @@ often, but it cannot make the verifier accept a response above the cap.
 ### The accepted committed-source space
 
 A committed level stores `num_digits_inner` balanced base-`2^log_basis_inner`
-digits per source coefficient, so the polynomials it is binding for are exactly
-those whose centered coefficients lie in the interval those digits represent. The
-declared committed-source bound `DecompositionParams::log_commit_bound` chooses
-that digit depth: `1` for a unit one-hot source, the field width for a full-field
-dense source, and any value in between for a bounded source.
+digits per source coefficient, so the polynomials it is binding for are those
+whose centered coefficients lie inside
+`akita_types::sis::accepted_committed_source_bounds` — the intersection of what
+those digits can represent with the declared bound
+`DecompositionParams::log_commit_bound` the schedule was priced for. The declared
+bound chooses the digit depth: `1` for a unit one-hot source, the field width for
+a full-field dense source, and any value in between for a bounded source.
+
+The intersection matters because the depth rounds up, so the representable
+envelope is strictly wider than the declaration — by 256x at some shipped
+geometries. The declaration is the binding side, because the planner prices a
+bounded source's final digit plane at only the range its bound leaves.
 
 A smaller bound is a smaller accepted witness space, not a weaker commitment. The
 A-role collision bounds above are computed from the same digit envelope the
@@ -139,11 +146,12 @@ identical to how one-hot has always been priced. The declared bound is inside
 serialized into the instance descriptor, so a proof cannot be replayed against a
 family with a different bound.
 
-The obligation the smaller space creates is on the *producer*: because the
-decomposition keeps only the scheduled digits and discards the remainder,
-committing an out-of-range coefficient would bind a different polynomial than the
-caller opens. `commit` therefore rejects such a source instead of committing a
-truncation. See
+The obligation the smaller space creates is on the *producer*, and it has two
+halves. Committing above the representable envelope would bind a truncation,
+because the decomposition keeps only the scheduled digits. Committing above the
+declared bound would instead inflate the level-1 witness past the L2 response caps
+frozen into the recursion suffix, because those caps were priced from the
+declaration. `commit` rejects both. See
 [Bounded committed sources](./configuration.md#bounded-committed-sources).
 
 The fold nonce does not incur a fixed 12-bit soundness loss. Every nonce trial
@@ -171,5 +179,5 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
   and optional L2 route).
 - `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
   `crates/akita-prover/src/api/commitment.rs`
-  (`ensure_sources_fit_committed_digit_envelope`) own the declared
+  (`ensure_sources_fit_accepted_interval`) own the declared
   committed-source bound and the producer-side range check.

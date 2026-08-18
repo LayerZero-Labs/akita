@@ -339,6 +339,15 @@ pub(crate) fn uniform_field_source_moment(
 /// of range would over-estimate its energy and inflate the L2 response cap the
 /// A rank is priced against. A full-field source passes its own field width and
 /// is unaffected.
+///
+/// Planes past the bound are **not** free. Balanced extraction carries:
+/// `|c_p| <= |v| / b^p + b / (2·(b - 1))`, so the plane just past the bound can
+/// still hold `±1`, and the canonical depth adds exactly one such plane whenever
+/// `log_basis` divides `source_log_bound` (the `+1` correction in
+/// `compute_num_digits`). Charging it `1` instead of dropping it keeps this a
+/// true deterministic maximum. This never fires for a full-field source, whose
+/// depth is `ceil(field_bits / log_basis)` and so never overshoots by a whole
+/// plane.
 fn bounded_field_source_moment(
     scalar_count: usize,
     source_log_bound: u32,
@@ -356,10 +365,12 @@ fn bounded_field_source_moment(
         let consumed = (plane as u32)
             .checked_mul(log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane width overflow".into()))?;
-        if consumed >= source_log_bound {
-            break;
-        }
-        let plane_bits = log_basis.min(source_log_bound - consumed);
+        // `max(1)` is the carry plane described above; below the bound this is
+        // just `min(log_basis, source_log_bound - consumed)`.
+        let plane_bits = source_log_bound
+            .saturating_sub(consumed)
+            .min(log_basis)
+            .max(1);
         let half_basis = 1u128
             .checked_shl(plane_bits - 1)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane bound overflow".into()))?;

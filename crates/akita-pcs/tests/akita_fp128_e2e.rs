@@ -73,15 +73,17 @@
 //! carries the mixed-bound cell:
 //!
 //! - `bounded_dense_precommit_with_onehot_final_group` — cfg=schedules-fp128-dense-bounded.
-//!   A `fp128::DenseBounded` precommit (bound 64 inside the 128-bit field) opened
+//!   A `fp128::DenseBounded` precommit (bound 65 inside the 128-bit field) opened
 //!   jointly with a `fp128::OneHot` final group, so the two groups in one root
 //!   disagree on their committed-source bound.
-//! - `bounded_dense_roundtrip_at_every_catalog_size` — cfg=same. The bounded
-//!   family's own scalar rows [14, 24, 26], with coefficients filling the declared
-//!   64-bit signed range on both sides.
-//! - `bounded_dense_commit_rejects_a_coefficient_above_the_bound` — cfg=same.
-//!   The producer-side guard: an out-of-range coefficient is an input error at
-//!   commit, never a silently truncated commitment.
+//! - `bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size` —
+//!   cfg=same. The bounded family's own scalar rows [14, 24, 26] over the workload
+//!   the preset exists for: full-width `u64` coefficients on both signs.
+//! - `bounded_dense_declares_a_bound_that_contains_every_u64` — cfg=same. The
+//!   bound is a *signed* bit width, so covering `u64::MAX` takes 65, not 64.
+//! - `bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound` —
+//!   cfg=same. The producer-side guard enforces the *declared* interval, which is
+//!   strictly tighter than what the digits can represent.
 
 #![allow(missing_docs)]
 #![cfg(feature = "schedules-default")]

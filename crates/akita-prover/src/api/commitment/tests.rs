@@ -366,6 +366,21 @@ fn slice_fixture_num_digits_inner() -> usize {
     akita_types::sis::compute_num_digits_field_width(32, 2)
 }
 
+/// Full-field decomposition matching the slice fixture's geometry.
+///
+/// `log_commit_bound == field_bits` is the unbounded endpoint, so the commit-side
+/// accepted interval is representability alone and the fixture keeps committing
+/// arbitrary field elements. A bounded declaration here would additionally
+/// constrain the source; that path is covered by the `fp128::DenseBounded` e2e
+/// tests, which own a real bounded catalog.
+fn slice_fixture_decomposition() -> akita_types::DecompositionParams {
+    akita_types::DecompositionParams {
+        log_basis: 2,
+        log_commit_bound: 32,
+        log_open_bound: Some(32),
+    }
+}
+
 fn commitment_params_for_slice_count(
     slice_count: akita_types::CommitmentSliceCount,
 ) -> CommittedGroupParams {
@@ -525,6 +540,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         &ctx,
         (&params).into(),
         &production_geometry,
+        slice_fixture_decomposition(),
     )
     .expect("production S=1 commitment");
     let (reference, compression_plan) =
@@ -567,6 +583,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
             &ctx,
             (&sliced_params).into(),
             &slice_geometry,
+            slice_fixture_decomposition(),
         )
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count

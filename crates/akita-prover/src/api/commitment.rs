@@ -340,26 +340,46 @@ where
     )
 }
 
-/// Reject a group whose sources do not fit the scheduled A-role digit envelope.
+/// Reject a group whose sources fall outside the interval this commitment
+/// accepts.
 ///
-/// The commitment stores `num_digits_inner` balanced base-`2^log_basis_inner`
-/// digits per source coefficient and the decomposition kernel discards anything
-/// beyond that, so an out-of-range coefficient would be committed as a *different*
-/// value than the caller later opens. Only a bounded committed source
-/// (see [`akita_types::DecompositionParams::log_commit_bound`]) can reach that
-/// state; a full-field depth is representable for every field element and returns
-/// early without scanning.
+/// The accepted interval is [`akita_types::sis::accepted_committed_source_bounds`],
+/// the intersection of two independent constraints — see that function for the
+/// full statement. In short:
 ///
-/// Both the coverage test and the per-source comparison are stated against
+/// - **Representability**: the commitment stores `num_digits_inner` balanced
+///   base-`2^log_basis_inner` digits per coefficient and the decomposition kernel
+///   discards anything beyond that, so an out-of-range coefficient would be
+///   committed as a *different* value than the caller later opens.
+/// - **Declaration**: the schedule is *priced* for `log_commit_bound`, which is
+///   narrower than what those digits can represent because the depth rounds up.
+///   The planner charges a bounded source's final digit plane only the range its
+///   bound leaves, so a coefficient past the declaration inflates the level-1
+///   witness beyond the L2 response caps frozen into the recursion suffix.
+///
+/// Checking representability alone would admit up to 256x the declared bound at
+/// the shipped `log_basis_inner = 9` geometry, which is exactly how a
+/// mis-declared bound ships silently. A full-field schedule constrains neither
+/// side and returns early without scanning, so unbounded configs pay nothing.
+///
+/// When root tensor projection is enabled this runs on the *projected* sources,
+/// because those are the coefficients that get decomposed — tensor packing
+/// combines base-field coefficients and can reach further than the logical
+/// source. The cost is that an out-of-range input pays for its projection before
+/// being rejected; checking the pre-projection source instead would be cheaper
+/// on the failure path but would police the wrong coefficients.
+///
+/// Both the early-out and the per-source comparison are stated against
 /// [`decompose_centering_threshold`] — the exact sign rule the decomposition uses.
 /// That matters: for a depth where `num_digits · log_basis == field_bits` (base 4,
 /// 16, or 256 on a 128-bit field) the threshold drops below `q / 2` precisely so
 /// that values above the shorter positive reach are centered negative instead,
 /// where the longer negative reach covers them. Testing against `q / 2` would
 /// declare those full-field depths uncovered and then reject valid field elements.
-fn ensure_sources_fit_committed_digit_envelope<F, P, const D: usize>(
+fn ensure_sources_fit_accepted_interval<F, P, const D: usize>(
     polys: &[P],
     plan: CommitInnerPlan,
+    decomposition: akita_types::DecompositionParams,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -371,11 +391,11 @@ where
     // Exact reaches, not the saturating ones: a saturated lower bound would
     // reject legitimate coefficients. `None` means the side is beyond every
     // `u128` and so cannot be exceeded.
-    let (negative_reach, positive_reach) =
-        akita_types::sis::checked_balanced_digit_representable_bounds(
-            plan.log_basis_inner,
-            plan.num_digits_inner,
-        );
+    let (negative_reach, positive_reach) = akita_types::sis::accepted_committed_source_bounds(
+        decomposition,
+        plan.log_basis_inner,
+        plan.num_digits_inner,
+    );
     let exceeds = |negative_abs: u128, positive: u128| {
         negative_reach.is_some_and(|reach| negative_abs > reach)
             || positive_reach.is_some_and(|reach| positive > reach)
@@ -397,8 +417,10 @@ where
         if exceeds(negative_abs, positive) {
             return Err(AkitaError::InvalidInput(format!(
                 "committed source exceeds the scheduled bound: centered coefficients reach \
-                 [-{negative_abs}, {positive}] but {} balanced base-2^{} digits represent only \
-                 [-{}, {}]",
+                 [-{negative_abs}, {positive}] but a source declared at \
+                 log_commit_bound = {} and committed as {} balanced base-2^{} digits accepts \
+                 only [-{}, {}]",
+                decomposition.log_commit_bound,
                 plan.num_digits_inner,
                 plan.log_basis_inner,
                 render_reach(negative_reach),
@@ -409,11 +431,21 @@ where
     Ok(())
 }
 
+/// Commit one group whose geometry has already been validated.
+///
+/// `decomposition` is the *config's* declared decomposition, not the row's. Only
+/// its `log_commit_bound` / `log_open_bound` are read, by
+/// [`ensure_sources_fit_accepted_interval`]; the row's own selected basis and
+/// depth come from `geometry`. It is threaded in from [`commit`] because the
+/// declared bound is a property of the `Cfg`, and neither `CommittedGroupParams`
+/// nor `CommitInnerPlan` carries it — a committed row records the *consequence*
+/// of the bound (its digit depth), never the bound itself.
 fn commit_with_validated_geometry<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
     geometry: CommitmentGeometry<'_>,
     slice_geometry: &akita_types::CommitmentSliceGeometry,
+    decomposition: akita_types::DecompositionParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore
@@ -452,10 +484,10 @@ where
         F,
         dims.d_a(),
         |D_A| {
-            // The A-role digit envelope is what a source has to fit, so this
-            // belongs to the inner dispatch and runs once, before any commitment
-            // arithmetic touches the coefficients.
-            ensure_sources_fit_committed_digit_envelope::<F, P, D_A>(polys, plan)?;
+            // The accepted interval is an A-role property, so this belongs to the
+            // inner dispatch and runs once, before any commitment arithmetic
+            // touches the coefficients.
+            ensure_sources_fit_accepted_interval::<F, P, D_A>(polys, plan, decomposition)?;
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 F,
@@ -664,6 +696,7 @@ where
             stack.commit(),
             geometry,
             &slice_geometry,
+            Cfg::decomposition(),
         )?
     } else {
         commit_with_validated_geometry::<Cfg::Field, P, B>(
@@ -671,6 +704,7 @@ where
             stack.commit(),
             geometry,
             &slice_geometry,
+            Cfg::decomposition(),
         )?
     };
 

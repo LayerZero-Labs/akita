@@ -12,6 +12,15 @@
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::DecompositionParams;
 
+/// Widest digit span whose exact accepted interval is still readable in a
+/// comment.
+///
+/// Purely a presentation threshold: past it the interval is a twenty-digit
+/// number that tells a reader less than `+/-2^64` does. It is not a correctness
+/// boundary — exactness is guaranteed by sourcing both sides from
+/// [`akita_types::sis::checked_balanced_digit_representable_bounds`].
+const MAX_EXACT_REACH_SPAN_BITS: u128 = 16;
+
 /// One-line description of a frozen precommitted group's committed source.
 ///
 /// A [`akita_types::CommittedGroupProfile`] records geometry and matrices, never
@@ -39,17 +48,18 @@ pub(super) fn precommitted_source_note(
     // Total digit span. Exact integer arithmetic on the exponent, so it stays
     // meaningful for the >128-bit spans a full-width row reaches.
     let span_bits = (digits as u128).saturating_mul(u128::from(log_basis));
-    // Small spans print their exact interval; wide ones print the magnitude as a
-    // power of two. Never print the saturating reaches from
-    // `balanced_digit_representable_bounds` — beyond `u128` those understate the
-    // true value and would read as a real bound here.
-    let reach = if span_bits <= 16 {
-        let (negative, positive) =
-            akita_types::sis::balanced_digit_representable_bounds(log_basis, digits);
-        format!("accepts [-{negative}, {positive}]")
-    } else {
-        format!("accepts about +/-2^{}", span_bits.saturating_sub(1))
-    };
+    // Exact interval for narrow spans, power-of-two magnitude for wide ones. Both
+    // sides come from the *checked* reaches, so exactness is guaranteed rather
+    // than incidental: the saturating pair understates past `u128` and would read
+    // as a real bound in a generated artifact. `None` on either side means the
+    // reach is past `u128`, which forces the magnitude form regardless of width.
+    let reach =
+        match akita_types::sis::checked_balanced_digit_representable_bounds(log_basis, digits) {
+            (Some(negative), Some(positive)) if span_bits <= MAX_EXACT_REACH_SPAN_BITS => {
+                format!("accepts [-{negative}, {positive}]")
+            }
+            _ => format!("accepts about +/-2^{}", span_bits.saturating_sub(1)),
+        };
     format!(
         "                // {class}: {digits} x base-2^{log_basis} digits, span {span_bits} bits, {reach}\n"
     )
@@ -154,10 +164,11 @@ mod tests {
         assert!(note.contains("unit one-hot"), "{note}");
         assert!(note.contains("accepts [-4, 3]"), "{note}");
 
-        let bounded = precommitted_source_note(5, 13, Some(&balanced));
+        // The shipped `u64` bounded descriptor: 14 base-2^5 digits.
+        let bounded = precommitted_source_note(5, 14, Some(&balanced));
         assert!(bounded.contains("balanced signed digit"), "{bounded}");
-        assert!(bounded.contains("span 65 bits"), "{bounded}");
-        assert!(bounded.contains("+/-2^64"), "{bounded}");
+        assert!(bounded.contains("span 70 bits"), "{bounded}");
+        assert!(bounded.contains("+/-2^69"), "{bounded}");
 
         let full = precommitted_source_note(5, 26, Some(&balanced));
         assert!(full.contains("span 130 bits"), "{full}");
@@ -181,10 +192,12 @@ mod tests {
     /// The banner states the declared bound and the signed interval it implies.
     #[test]
     fn banner_names_the_bound_and_its_signed_interval() {
-        let banner = emit_bounded_source_banner(params(64, Some(128)));
-        assert!(banner.contains("log_commit_bound = 64"));
+        let banner = emit_bounded_source_banner(params(65, Some(128)));
+        assert!(banner.contains("log_commit_bound = 65"));
         assert!(banner.contains("field width 128"));
-        assert!(banner.contains("[-2^63, 2^63 - 1]"));
+        // The bound is a signed bit width, so 65 spans `[-2^64, 2^64 - 1]` --
+        // the smallest declaration containing every `u64`.
+        assert!(banner.contains("[-2^64, 2^64 - 1]"));
         // Every line stays a comment: this is prepended to generated Rust source.
         assert!(banner.lines().all(|line| line.starts_with("//")));
         assert!(banner.ends_with('\n'));

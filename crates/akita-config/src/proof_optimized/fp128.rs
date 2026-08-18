@@ -47,28 +47,68 @@ pub struct OneHotMultiChunkW4R2;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DenseMultiChunk;
 
-/// Dense preset for witnesses known to fit 64 signed bits of the 128-bit field.
+/// Dense preset for witnesses known to fit an **unsigned 64-bit** magnitude
+/// inside the 128-bit field, i.e. `u64`-valued coefficients.
 ///
 /// Same field, same SIS modulus profile, and the same balanced signed-digit
 /// source class as [`Dense`]; the only difference is the declared committed-source
-/// bound (`log_commit_bound = 64` instead of `128`). That halves the A-role digit
-/// depth, and with it the A input width, the shared setup matrix, and the
-/// level-1 witness the whole recursion suffix inherits. Opening witnesses stay
-/// full-width (`log_open_bound = Some(128)`), because `t̂` / `ŵ` carry genuine
-/// field elements.
+/// bound. That roughly halves the A-role digit depth, and with it the A input
+/// width, the shared setup matrix, and the level-1 witness the whole recursion
+/// suffix inherits. Opening witnesses stay full-width
+/// (`log_open_bound = Some(128)`), because `t̂` / `ŵ` carry genuine field
+/// elements.
+///
+/// # Why the bound is `65` and not `64`
+///
+/// [`akita_types::DecompositionParams::log_commit_bound`] is a **signed** bit
+/// width: `k` denotes the centered range `[-2^(k-1), 2^(k-1) - 1]`, because the
+/// gadget decomposition works on centered representatives and balanced digits are
+/// themselves signed. A `u64` reaches `u64::MAX = 2^64 - 1`, so it needs one sign
+/// bit plus 64 magnitude bits — `log_commit_bound = 65`, not `64`. Declaring `64`
+/// would cover only `[-2^63, 2^63 - 1]` and miss half of a uniform `u64`
+/// distribution.
+///
+/// [`Self::ACCEPTS_UNSIGNED_64_BIT`] and [`Self::MAX_CENTERED_MAGNITUDE`] state
+/// the same fact without the signed-bit-width indirection; prefer them when
+/// asserting your data fits.
+///
+/// # What you must guarantee
 ///
 /// This is a **different commitment**, not a cheaper encoding of [`Dense`]: its
 /// catalog identity differs, and it is binding and complete only for polynomials
-/// whose centered coefficients fit the scheduled digit envelope. `commit` rejects
-/// an out-of-range coefficient rather than committing a truncation, so a caller
-/// that cannot guarantee the bound must use [`Dense`].
+/// whose centered coefficients lie inside the declared range. `commit` rejects an
+/// out-of-range coefficient rather than committing a truncation, so a caller that
+/// cannot guarantee the bound must use [`Dense`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DenseBounded;
 
 impl DenseBounded {
-    /// Committed-source bound in signed bits.
-    pub const LOG_COMMIT_BOUND: u32 = 64;
+    /// Committed-source bound as a **signed** bit width.
+    ///
+    /// `65` means the centered range `[-2^64, 2^64 - 1]`, which contains every
+    /// `u64`. See the type docs for why this is `65` rather than `64`.
+    pub const LOG_COMMIT_BOUND: u32 = 65;
+
+    /// Largest centered magnitude this preset commits, on the positive side.
+    ///
+    /// Exactly `u64::MAX`, so `u64`-valued coefficients sit on the endpoint and
+    /// anything above is rejected at `commit`.
+    pub const MAX_CENTERED_MAGNITUDE: u128 = (1u128 << (Self::LOG_COMMIT_BOUND - 1)) - 1;
+
+    /// Whether every `u64` value is inside the declared bound. Always true; kept
+    /// as a statement of this preset's purpose that callers can assert against.
+    pub const ACCEPTS_UNSIGNED_64_BIT: bool = Self::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128;
 }
+
+// The preset's whole reason to exist, enforced at compile time rather than left
+// to a test: the declared bound must contain every `u64`. `LOG_COMMIT_BOUND` is a
+// *signed* bit width, so a value of 64 would silently cover only `[-2^63, 2^63-1]`
+// and miss half of a uniform `u64` distribution. This makes that regression a
+// build failure in the crate that owns the number.
+const _: () = assert!(
+    DenseBounded::ACCEPTS_UNSIGNED_64_BIT,
+    "fp128::DenseBounded must declare a bound containing every u64"
+);
 
 impl_proof_optimized_preset!(
     Dense,
@@ -95,7 +135,10 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
     256,
     128,
-    64,
+    // Signed bit width: 65 == `[-2^64, 2^64 - 1]`, the smallest declaration that
+    // contains every `u64`. Kept in sync with `DenseBounded::LOG_COMMIT_BOUND`
+    // by `bound_is_the_only_declared_difference_from_full_width_dense`.
+    65,
     source = balanced_digits,
     schedules = (
         "schedules-fp128-dense-bounded",
