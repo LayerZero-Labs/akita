@@ -169,4 +169,7 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
-- `specs/bounded-dense-schedules.md` (declared committed-source bounds).
+- `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
+  `crates/akita-prover/src/api/commitment.rs`
+  (`ensure_sources_fit_committed_digit_envelope`) own the declared
+  committed-source bound and the producer-side range check.

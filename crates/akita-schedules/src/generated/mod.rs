@@ -371,8 +371,8 @@ pub(crate) fn validate_certified_bases(
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-dense")]
 pub mod fp128_dense;
-#[cfg(feature = "fp128-dense64")]
-pub mod fp128_dense64;
+#[cfg(feature = "fp128-dense-bounded")]
+pub mod fp128_dense_bounded;
 #[cfg(feature = "fp128-dense-multi-chunk")]
 pub mod fp128_dense_multi_chunk;
 #[cfg(feature = "fp128-onehot")]
@@ -404,11 +404,11 @@ pub fn fp128_dense_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(feature = "fp128-dense64")]
-pub fn fp128_dense64_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-dense-bounded")]
+pub fn fp128_dense_bounded_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_dense64::FP128_DENSE64_SCHEDULES,
-        identity: fp128_dense64::CATALOG_IDENTITY,
+        entries: fp128_dense_bounded::FP128_DENSE_BOUNDED_SCHEDULES,
+        identity: fp128_dense_bounded::CATALOG_IDENTITY,
     }
 }
 

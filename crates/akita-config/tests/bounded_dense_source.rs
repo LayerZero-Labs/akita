@@ -1,6 +1,6 @@
 //! Bounded committed-source guards.
 //!
-//! `fp128::Dense64` declares the same field, SIS profile, and balanced
+//! `fp128::DenseBounded` declares the same field, SIS profile, and balanced
 //! signed-digit source class as `fp128::Dense`; only its committed-source bound
 //! differs (`log_commit_bound = 64` instead of `128`). These tests pin what that
 //! single parameter is allowed to change and what it must not.
@@ -8,7 +8,10 @@
 #![allow(missing_docs)]
 // Both catalogs must be linked: every test here compares the bounded family
 // against its full-width sibling.
-#![cfg(all(feature = "schedules-fp128-dense64", feature = "schedules-fp128-dense"))]
+#![cfg(all(
+    feature = "schedules-fp128-dense-bounded",
+    feature = "schedules-fp128-dense"
+))]
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
@@ -43,12 +46,15 @@ fn root_shape<Cfg: CommitmentConfig>(num_vars: usize) -> RootShape {
 
 #[test]
 fn bound_is_the_only_declared_difference_from_full_width_dense() {
-    let bounded = fp128::Dense64::decomposition();
+    let bounded = fp128::DenseBounded::decomposition();
     let full = fp128::Dense::decomposition();
 
     assert_eq!(bounded.log_basis, full.log_basis);
     assert_eq!(bounded.field_bits(), full.field_bits());
-    assert_eq!(bounded.log_commit_bound, fp128::Dense64::LOG_COMMIT_BOUND);
+    assert_eq!(
+        bounded.log_commit_bound,
+        fp128::DenseBounded::LOG_COMMIT_BOUND
+    );
     assert_eq!(full.log_commit_bound, full.field_bits());
 
     // Opening witnesses stay full-width: `t̂` / `ŵ` carry genuine field elements
@@ -59,32 +65,32 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
     bounded.validate().expect("bounded decomposition is valid");
 
     assert_eq!(
-        fp128::Dense64::sis_modulus_profile(),
+        fp128::DenseBounded::sis_modulus_profile(),
         fp128::Dense::sis_modulus_profile()
     );
-    assert_eq!(fp128::Dense64::D, fp128::Dense::D);
+    assert_eq!(fp128::DenseBounded::D, fp128::Dense::D);
     assert_eq!(
-        fp128::Dense64::inner_basis_range(),
+        fp128::DenseBounded::inner_basis_range(),
         fp128::Dense::inner_basis_range()
     );
     // Both are the balanced signed-digit source class: the bound sizes the digit
     // depth, it does not select a different honest-fold sizing rule.
     assert!(matches!(
-        fp128::Dense64::root_honest_fold_policy(),
+        fp128::DenseBounded::root_honest_fold_policy(),
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_)
     ));
 }
 
 #[test]
 fn a_distinct_bound_is_a_distinct_catalog_identity() {
-    let bounded = akita_schedules::policy_digest(&policy_of::<fp128::Dense64>());
+    let bounded = akita_schedules::policy_digest(&policy_of::<fp128::DenseBounded>());
     let full = akita_schedules::policy_digest(&policy_of::<fp128::Dense>());
     assert_ne!(
         bounded, full,
         "the committed-source bound must separate two otherwise identical policies"
     );
 
-    let bounded_catalog = fp128::Dense64::schedule_catalog().expect("bounded catalog");
+    let bounded_catalog = fp128::DenseBounded::schedule_catalog().expect("bounded catalog");
     let full_catalog = fp128::Dense::schedule_catalog().expect("full-width catalog");
     assert_ne!(
         akita_schedules::identity_digest(&bounded_catalog.identity),
@@ -92,7 +98,7 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
     );
     assert_eq!(
         bounded_catalog.identity.decomposition.log_commit_bound,
-        fp128::Dense64::LOG_COMMIT_BOUND,
+        fp128::DenseBounded::LOG_COMMIT_BOUND,
         "the shipped catalog must carry the bound it was generated for"
     );
 
@@ -118,7 +124,7 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
 #[test]
 fn the_bound_shrinks_the_digit_depth_setup_and_next_witness() {
     for num_vars in [24usize, 26] {
-        let bounded = root_shape::<fp128::Dense64>(num_vars);
+        let bounded = root_shape::<fp128::DenseBounded>(num_vars);
         let full = root_shape::<fp128::Dense>(num_vars);
 
         assert!(
@@ -150,11 +156,11 @@ fn the_bound_shrinks_the_digit_depth_setup_and_next_witness() {
 #[test]
 fn generated_root_digit_depth_matches_the_declared_bound() {
     for family_decomposition in [
-        fp128::Dense64::decomposition(),
+        fp128::DenseBounded::decomposition(),
         fp128::Dense::decomposition(),
     ] {
         let catalog = if family_decomposition.has_bounded_committed_source() {
-            fp128::Dense64::schedule_catalog().expect("bounded catalog")
+            fp128::DenseBounded::schedule_catalog().expect("bounded catalog")
         } else {
             fp128::Dense::schedule_catalog().expect("full-width catalog")
         };

@@ -184,7 +184,7 @@ balanced signed-digit root use dense balanced-digit witness bounds.
 anywhere from `1` to the field width. It does not select the sizing rule; it sets
 the A-role digit depth `ceil(log_commit_bound / log_basis_inner)`, and through that
 the A input width, the SIS rank, and the next-level witness length. A bounded dense
-family (`fp128::Dense64`) differs from its full-width sibling in that parameter
+family (`fp128::DenseBounded`) differs from its full-width sibling in that parameter
 alone.
 
 ## Generated Tables

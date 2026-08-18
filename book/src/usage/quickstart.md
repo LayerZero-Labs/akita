@@ -40,8 +40,8 @@ one-hot preset now chooses dimensions per fold from generated adaptive tables;
 Use `fp128::OneHot` for direct one-hot and `fp128::Dense` for direct dense.
 
 **Bounded dense.** If every coefficient of your dense polynomial fits a known bit
-width narrower than the field, `fp128::Dense64` (bound 64 inside the 128-bit
-field, behind `schedules-fp128-dense64`) sizes the commitment for that bound
+width narrower than the field, `fp128::DenseBounded` (bound 64 inside the 128-bit
+field, behind `schedules-fp128-dense-bounded`) sizes the commitment for that bound
 instead of the full field. It halves the A-role digit depth, and with it the
 shared setup matrix and the prover-side witness the recursion suffix inherits;
 proof size is roughly unchanged. The trade is that `commit` **rejects** a

@@ -63,9 +63,9 @@ pub struct DenseMultiChunk;
 /// an out-of-range coefficient rather than committing a truncation, so a caller
 /// that cannot guarantee the bound must use [`Dense`].
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Dense64;
+pub struct DenseBounded;
 
-impl Dense64 {
+impl DenseBounded {
     /// Committed-source bound in signed bits.
     pub const LOG_COMMIT_BOUND: u32 = 64;
 }
@@ -89,7 +89,7 @@ impl_proof_optimized_preset!(
     }
 );
 impl_proof_optimized_preset!(
-    Dense64,
+    DenseBounded,
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
@@ -98,9 +98,9 @@ impl_proof_optimized_preset!(
     64,
     source = balanced_digits,
     schedules = (
-        "schedules-fp128-dense64",
-        "fp128_dense64",
-        fp128_dense64_table
+        "schedules-fp128-dense-bounded",
+        "fp128_dense_bounded",
+        fp128_dense_bounded_table
     ),
     ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
         num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,

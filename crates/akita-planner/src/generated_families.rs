@@ -172,7 +172,7 @@ const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
 /// `fp128_onehot` grouped catalog (see [`bounded_dense_onehot_catalog_key`]); 24
 /// and 26 are the sizes where the bound's setup and next-witness savings are
 /// measured against the matching `fp128_dense` rows.
-const FP128_DENSE64_KEYS: &[PolynomialGroupLayout] = &[
+const FP128_DENSE_BOUNDED_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     PolynomialGroupLayout::singleton(24),
     PolynomialGroupLayout::singleton(26),
@@ -493,7 +493,7 @@ fn heterogeneous_onehot_catalog_key(
 /// group.
 ///
 /// This is the mixed-bound cell: the precommitted group is frozen by
-/// `fp128::Dense64` (`log_commit_bound = 64` inside the 128-bit field) while the
+/// `fp128::DenseBounded` (`log_commit_bound = 64` inside the 128-bit field) while the
 /// root is planned under `fp128::OneHot` (`log_commit_bound = 1`). It exercises
 /// the fact that a precommitted group carries its own committed-source bound in
 /// its frozen `inner_commit_matrix` and does not have to agree with the planning
@@ -502,7 +502,7 @@ fn bounded_dense_onehot_catalog_key(
     preplans: &GenerationPreplans,
 ) -> Result<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), AkitaError> {
     let bounded_dense_group = PolynomialGroupLayout::new(14, 1);
-    let bounded_dense = planned_profile_without_precommitted_groups::<fp128::Dense64>(
+    let bounded_dense = planned_profile_without_precommitted_groups::<fp128::DenseBounded>(
         preplans,
         bounded_dense_group,
     )?;
@@ -511,7 +511,7 @@ fn bounded_dense_onehot_catalog_key(
             final_group: PolynomialGroupLayout::new(16, 1),
             precommitteds: vec![bounded_dense],
         },
-        vec![honest_fold_policy_of::<fp128::Dense64>()],
+        vec![honest_fold_policy_of::<fp128::DenseBounded>()],
     ))
 }
 
@@ -728,11 +728,11 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         no_group_batch_keys
     ),
     family_row!(
-        "fp128_dense64",
-        "FP128_DENSE64_SCHEDULES",
-        "fp128-dense64",
-        FP128_DENSE64_KEYS,
-        fp128::Dense64,
+        "fp128_dense_bounded",
+        "FP128_DENSE_BOUNDED_SCHEDULES",
+        "fp128-dense-bounded",
+        FP128_DENSE_BOUNDED_KEYS,
+        fp128::DenseBounded,
         no_group_batch_keys
     ),
     family_row!(

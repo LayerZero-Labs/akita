@@ -158,7 +158,7 @@ the committed-source class, not a per-preset constant with two legal values:
 | `log_commit_bound` | Source | Example preset |
 |---|---|---|
 | `1` | unit one-hot | `fp128::OneHot` |
-| `1 < B < field_bits` | bounded | `fp128::Dense64` (`B = 64`) |
+| `1 < B < field_bits` | bounded | `fp128::DenseBounded` (`B = 64`, see `DenseBounded::LOG_COMMIT_BOUND`) |
 | `field_bits` | full field | `fp128::Dense` |
 
 The bound enters the protocol at exactly one place: the A-role digit depth
@@ -200,10 +200,16 @@ descriptor. Two families differing only in their bound therefore have distinct
 catalog identities and cannot resolve each other's rows, and no new wire field
 is needed.
 
+A bounded family's generated module carries a banner naming its declared bound, so
+a reader of `crates/akita-schedules/src/generated/` can see why its root rows have
+a shallower `num_digits_inner` without decoding `CATALOG_IDENTITY`. The banner is
+emitted only for the interior of the range: a full-field family decomposes over
+the whole width, and a unit one-hot family already says so in its name.
+
 The bound is per config, and a precommitted group freezes its own
 `inner_commit_matrix` — so one grouped root can open groups with different
 bounds. The `bounded_dense_precommit_with_onehot_final_group` end-to-end test
-covers a `fp128::Dense64` precommit under a `fp128::OneHot` root. Only the
+covers a `fp128::DenseBounded` precommit under a `fp128::OneHot` root. Only the
 shared full-width opening geometry has to agree, which is why a bounded preset
 keeps `log_open_bound` at the true field width: `t̂` and `ŵ` carry genuine field
 elements.
@@ -213,20 +219,29 @@ elements.
 Adaptive presets select with
 `SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload`, i.e.
 setup-first. The bound's return is a smaller setup matrix and a smaller
-prover-side witness, not a smaller proof; at small `nv` the objective can even
-trade a noticeably larger proof for a smaller setup. Review proof size per
-`(nv, bound)` pair before adding a key to a bounded catalog. See
-[`specs/bounded-dense-schedules.md`](https://github.com/LayerZero-Labs/akita/blob/main/specs/bounded-dense-schedules.md)
-for measurements.
+prover-side witness, **not** a smaller proof.
+
+Shipped `fp128` rows, bounded (`B = 64`) against full-width (`B = 128`):
+
+| `nv` | `num_digits_inner` | setup field elements | level-1 witness |
+|---|---|---|---|
+| 14 | 26 → 13 | 131 072 → 65 536 (−50%) | 439 232 → 294 144 (−33%) |
+| 24 | 26 → 8 | 2 818 048 → 2 097 152 (−26%) | 15 614 976 → 10 590 592 (−32%) |
+| 26 | 19 → 10 | 5 636 096 → 4 587 520 (−19%) | 31 922 560 → 26 603 264 (−17%) |
+
+Estimated proof size is flat to slightly better across these sizes. At small
+`nv` the setup-first objective can even trade a noticeably larger proof for a
+smaller setup, so review proof size per `(nv, bound)` pair before adding a key
+to a bounded catalog.
 
 **Implementation map**
 
 - `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`,
   `validate`, `has_bounded_committed_source`).
 - `crates/akita-types/src/sis/decomposition_digits.rs`
-  (`balanced_digit_representable_bounds`, `balanced_digits_cover_centered_field`,
-  `num_digits_inner_for_bound`).
-- `crates/akita-config/src/proof_optimized/fp128.rs` (`Dense64`).
+  (`balanced_digit_representable_bounds`,
+  `checked_balanced_digit_representable_bounds`, `num_digits_inner_for_bound`).
+- `crates/akita-config/src/proof_optimized/fp128.rs` (`DenseBounded`).
 - `crates/akita-prover/src/api/commitment.rs` (the producer-side guard) and
   `crates/akita-prover/src/compute/poly.rs`
   (`RootCommitSource::committed_centered_reach`).

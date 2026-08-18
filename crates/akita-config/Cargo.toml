@@ -47,7 +47,7 @@ all-schedules = [
   "schedules-fp128-onehot-multi-chunk-w2r2",
   "schedules-fp128-onehot-multi-chunk-w4r2",
   "schedules-fp128-dense-multi-chunk",
-  "schedules-fp128-dense64",
+  "schedules-fp128-dense-bounded",
 ]
 schedules-fp128-onehot = ["akita-schedules/fp128-onehot"]
 schedules-fp128-dense = ["akita-schedules/fp128-dense"]
@@ -69,7 +69,7 @@ schedules-fp128-onehot-multi-chunk-w4r2 = [
   "akita-schedules/fp128-onehot-multi-chunk-w4r2",
 ]
 schedules-fp128-dense-multi-chunk = ["akita-schedules/fp128-dense-multi-chunk"]
-schedules-fp128-dense64 = ["akita-schedules/fp128-dense64"]
+schedules-fp128-dense-bounded = ["akita-schedules/fp128-dense-bounded"]
 
 schedules-fp32-dense = ["akita-schedules/fp32-dense"]
 schedules-fp32-onehot = ["akita-schedules/fp32-onehot"]

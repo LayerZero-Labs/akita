@@ -1,6 +1,6 @@
 use super::*;
 
-#[cfg(feature = "schedules-fp128-dense64")]
+#[cfg(feature = "schedules-fp128-dense-bounded")]
 use akita_field::FromPrimitiveInt;
 
 // ============================================================================
@@ -234,15 +234,15 @@ fn heterogeneous_group_types() {
 
 // fp128: a **bounded** dense precommit opened jointly with a one-hot final
 // group. The two groups declare different committed-source bounds inside the same
-// 128-bit field — `fp128::Dense64` commits against `log_commit_bound = 64` while
+// 128-bit field — `fp128::DenseBounded` commits against `log_commit_bound = 64` while
 // the root is planned under `fp128::OneHot`'s `log_commit_bound = 1` — so this is
 // the mixed-bound multi-group cell. It proves the bound is a per-group property
 // frozen into each group's own A matrix, not a batch-wide one, and that a bounded
 // group's full-width opening geometry still lines up with the shared root.
-#[cfg(feature = "schedules-fp128-dense64")]
+#[cfg(feature = "schedules-fp128-dense-bounded")]
 #[test]
 fn bounded_dense_precommit_with_onehot_final_group() {
-    type BoundedDenseCfg = fp128::Dense64;
+    type BoundedDenseCfg = fp128::DenseBounded;
     const BOUNDED_PRE_NV: usize = 14;
     const FINAL_NV: usize = 16;
     const BOUNDED_D: usize = BoundedDenseCfg::D;
@@ -468,15 +468,15 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 // The bounded family's own scalar rows: a direct commit/prove/verify round trip
 // at every `nv` its catalog ships, with coefficients that fill the declared
 // 64-bit signed range on both sides.
-#[cfg(feature = "schedules-fp128-dense64")]
+#[cfg(feature = "schedules-fp128-dense-bounded")]
 #[test]
 fn bounded_dense_roundtrip_at_every_catalog_size() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        prove_verify_dense_roundtrip_with_evals::<fp128::Dense64>(
+        prove_verify_dense_roundtrip_with_evals::<fp128::DenseBounded>(
             &[14, 24, 26],
-            b"completeness/fp128_dense64",
-            |nv, seed| bounded_dense_field_evals(nv, seed, fp128::Dense64::LOG_COMMIT_BOUND),
+            b"completeness/fp128_dense_bounded",
+            |nv, seed| bounded_dense_field_evals(nv, seed, fp128::DenseBounded::LOG_COMMIT_BOUND),
         );
     });
 }
@@ -488,10 +488,10 @@ fn bounded_dense_roundtrip_at_every_catalog_size() {
 // truncated polynomial and the caller's opening claim would be for a different
 // one. The failure must be a clear input error at commit, not an opaque
 // verification failure later.
-#[cfg(feature = "schedules-fp128-dense64")]
+#[cfg(feature = "schedules-fp128-dense-bounded")]
 #[test]
 fn bounded_dense_commit_rejects_a_coefficient_above_the_bound() {
-    type BoundedDenseCfg = fp128::Dense64;
+    type BoundedDenseCfg = fp128::DenseBounded;
     const NV: usize = 14;
     const BOUNDED_D: usize = BoundedDenseCfg::D;
 

@@ -72,8 +72,8 @@
 //! (`log_commit_bound = 1`); a bounded source is any value in between. Group E
 //! carries the mixed-bound cell:
 //!
-//! - `bounded_dense_precommit_with_onehot_final_group` — cfg=schedules-fp128-dense64.
-//!   A `fp128::Dense64` precommit (bound 64 inside the 128-bit field) opened
+//! - `bounded_dense_precommit_with_onehot_final_group` — cfg=schedules-fp128-dense-bounded.
+//!   A `fp128::DenseBounded` precommit (bound 64 inside the 128-bit field) opened
 //!   jointly with a `fp128::OneHot` final group, so the two groups in one root
 //!   disagree on their committed-source bound.
 //! - `bounded_dense_roundtrip_at_every_catalog_size` — cfg=same. The bounded
