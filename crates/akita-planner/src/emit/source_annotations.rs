@@ -96,20 +96,21 @@ fn representable_envelope(log_basis: u32, digits: usize, span_bits: u128) -> Str
     }
 }
 
-/// Banner naming the declared committed-source bound, for bounded families only.
+/// Banner naming the declared committed-source bound for bounded balanced signed
+/// digit families.
 ///
-/// Emitted for the **interior** of the bound range, `1 < log_commit_bound <
-/// field_bits`, and nothing else. The two endpoints are already self-describing
-/// and would only be noise:
+/// Emitted when the class is balanced signed digit and `log_commit_bound <
+/// field_bits`. This includes a balanced signed digit source at bound 1. The
+/// class and bound are independent, so the numeric endpoint does not make that
+/// source unit one-hot.
 ///
-/// - A full-field family decomposes over the whole field width, which is the
-///   reader's default assumption.
-/// - A unit one-hot family says so in its name, and its source type is
-///   *structurally* constrained to `{0, 1}` rather than range-checked, so the
-///   "`commit` rejects anything outside it" wording below would misdescribe it.
+/// A full-field balanced family needs no banner because it decomposes over the
+/// whole field width. A unit one-hot family never gets this banner, regardless
+/// of its bound, because its source is structurally constrained to `{0, 1}`
+/// rather than admitted by a signed interval.
 ///
-/// An interior bound is the surprising case: the rows carry a deliberately
-/// shallow `num_digits_inner`, and without this the only trace of why is a
+/// A bounded balanced family carries a deliberately shallow
+/// `num_digits_inner`. Without this banner, the only explanation is a
 /// `log_commit_bound` buried in `CATALOG_IDENTITY`.
 ///
 /// This is a comment, not data — `CATALOG_IDENTITY.decomposition` stays the single
