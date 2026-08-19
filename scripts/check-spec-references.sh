@@ -132,6 +132,7 @@ live_specs=(
   specs/heterogeneous-group-source-contracts.md
   specs/large-digit-ntt-infrastructure.md
   specs/packed-sumcheck.md
+  specs/parameter-struct-consolidation.md
   specs/role-native-projected-digit-layout.md
   specs/runtime-ring-cutover.md
   specs/selective-l2-fold-security-sizing.md

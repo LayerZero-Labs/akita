@@ -284,11 +284,18 @@ exactly one:
 
 **On the setup prefix.** Two fields claim authority today, and the docs and the
 dataflow disagree about which wins. Storing the prefix once as `groups[0]`
-satisfies both: it is owned by the fold that *consumes* it, which is what
-[typed-schedule-topology-cutover.md:100](typed-schedule-topology-cutover.md#L100)
-requires, and it is literally group 0, which is what the ~31 call sites reading
-`precommitted_group_iter` require. Removing either field alone would have forced
-one side to change.
+satisfies both: it is owned by the fold that *consumes* it, and it is literally
+group 0, which is what the ~31 call sites reading `precommitted_group_iter`
+require. Removing either field alone would have forced one side to change.
+
+The consuming-fold rule and the "`SetupPrefixSlotId` is the canonical runtime
+identity" rule were stated in
+[`typed-schedule-topology-cutover.md`](archive/2026-Q3/typed-schedule-topology-cutover.md#L100),
+which #414 archived without folding either rule into
+`book/src/how/configuration.md`. Neither is documented anywhere live, so this
+spec treats the code as the authority — the two `BTreeMap`s keyed on
+`SetupPrefixSlotId`, and the field doc comments — and closes the documentation
+gap as part of the work (see Documentation).
 
 One ordering conflict must be settled during step 5b:
 `precommitted_group_iter` puts the prefix **first**, while
@@ -408,15 +415,29 @@ which already is.
 
 - `book/src/how/configuration.md` owns the durable content and must be updated in
   the step-5 PR: the group/fold parameter model and the shared-D ownership rule.
+- **Close a pre-existing gap in the same chapter.** #414 archived
+  `typed-schedule-topology-cutover.md`, which was the only written statement of
+  two rules this spec depends on: the consuming fold owns the setup-prefix edge,
+  and `SetupPrefixSlotId` is the canonical runtime identity of a committed prefix.
+  Neither was folded into the book, so both are currently undocumented outside the
+  code. Step 5b changes the first rule's representation, so it is the right place
+  to write both down.
 - `book/src/usage/commitment-api.md` if any public signature changes shape.
+- **Registry entries, required for a live spec after #414.** This spec must appear
+  in `book/src/foundations/spec-index.md` and in the `live_specs` array of
+  `scripts/check-spec-references.sh`, which are kept in sync. Without the second,
+  CI does not scan this spec at all. Both are added by this spec's own PR.
+  Note that `specs/` root is at the PRUNING.md steady-state target of 15 specs
+  with this one included, so archiving on completion is not optional.
 - This spec's `Status` moves to `active` at step 1 and `implemented` at step 6,
   then folds into the book chapter and archives per
-  [`specs/PRUNING.md`](PRUNING.md).
-- `docs/doc-blast-radius.json` may need updating for the renamed types.
+  [`specs/PRUNING.md`](PRUNING.md). Update the status and the two registry entries
+  in the same PR that changes it.
+- `docs/doc-blast-radius.json` may need a region entry for the renamed types.
 - The companion draft-1 review is archived at
-  `specs/archive/2026-Q3/parameter-struct-consolidation-review.md`. All seven of
-  its blocking findings are resolved by this design; two were resolved by the
-  codebase itself before this revision.
+  [`parameter-struct-consolidation-review.md`](archive/2026-Q3/parameter-struct-consolidation-review.md).
+  All seven of its blocking findings are resolved by this design; two were
+  resolved by the codebase itself before this revision.
 
 ## Execution
 
@@ -490,12 +511,16 @@ config argument.
 
 ## References
 
-- [`specs/typed-schedule-topology-cutover.md`](typed-schedule-topology-cutover.md)
-  — canonical prefix identity and the `SetupPrefixSlotId` requirement.
 - [`specs/subring-coefficient-packing.md`](subring-coefficient-packing.md) — the
-  opening-method split this design carries per group (#394).
-- [`specs/commitment-slicing.md`](commitment-slicing.md) — `outer_slice_count`
-  and the single B-width authority (#388).
+  opening-method split this design carries per group (#394). Live spec.
+- Archived design records, for provenance only — per
+  [`specs/PRUNING.md`](PRUNING.md) these are not a source for new behavior:
+  [`typed-schedule-topology-cutover.md`](archive/2026-Q3/typed-schedule-topology-cutover.md)
+  (prefix identity and `SetupPrefixSlotId`; not yet folded into the book, see
+  Documentation) and
+  [`commitment-slicing.md`](archive/2026-Q3/commitment-slicing.md)
+  (`outer_slice_count` and the single B-width authority, #388; folded into
+  `book/src/how/commitment.md`).
 - Bounded committed dense sources (#407) — `log_commit_bound` as a declarable
   input, the per-level A-depth audit, and the `fp128_dense_bounded` catalog.
 - Transcript and verifier trust boundaries (#403) — pre-allocation schedule
