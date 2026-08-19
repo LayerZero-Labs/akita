@@ -290,33 +290,78 @@ fn compute_entry_coefficients<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>
 ) {
     let num_rows = precomp.num_rows();
     debug_assert!(out.len() >= num_rows);
+    let taylor_coefficients =
+        range_polynomial_taylor_coefficients(left_range_image, precomp.degree_q);
+    compute_entry_coefficients_from_taylor(
+        out,
+        precomp.degree_q,
+        taylor_coefficients,
+        range_image_delta,
+    );
+}
 
-    match precomp.degree_q {
+#[inline]
+fn range_polynomial_taylor_coefficients<E: FieldCore + FromPrimitiveInt>(
+    left_range_image: E,
+    degree: usize,
+) -> [E; 4] {
+    match degree {
         2 => {
             let twice_left = left_range_image + left_range_image;
-            out[0] = left_range_image * (left_range_image - E::from_u64(2));
-            out[1] = range_image_delta * (twice_left - E::from_u64(2));
-            out[2] = range_image_delta * range_image_delta;
+            [
+                left_range_image * (left_range_image - E::from_u64(2)),
+                twice_left - E::from_u64(2),
+                E::zero(),
+                E::zero(),
+            ]
         }
         4 => {
             let twice_left = left_range_image + left_range_image;
             let four_times_left = twice_left + twice_left;
             let eight_times_left = four_times_left + four_times_left;
             let sixteen_times_left = eight_times_left + eight_times_left;
+            let thirty_two_times_left = sixteen_times_left + sixteen_times_left;
+            let sixty_four_times_left = thirty_two_times_left + thirty_two_times_left;
             let left_squared = left_range_image * left_range_image;
+            let twice_left_squared = left_squared + left_squared;
+            let four_times_left_squared = twice_left_squared + twice_left_squared;
+            let six_times_left_squared = four_times_left_squared + twice_left_squared;
             let first_quadratic = left_squared - twice_left;
             let second_quadratic =
                 left_squared - (sixteen_times_left + twice_left) + E::from_u64(72);
-            let delta_squared = range_image_delta * range_image_delta;
-            let first_linear = range_image_delta * (twice_left - E::from_u64(2));
-            let second_linear = range_image_delta * (twice_left - E::from_u64(18));
+            [
+                first_quadratic * second_quadratic,
+                first_quadratic * (twice_left - E::from_u64(18))
+                    + second_quadratic * (twice_left - E::from_u64(2)),
+                six_times_left_squared - (sixty_four_times_left - four_times_left)
+                    + E::from_u64(108),
+                four_times_left - E::from_u64(20),
+            ]
+        }
+        _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
+    }
+}
 
-            out[0] = first_quadratic * second_quadratic;
-            out[1] = first_quadratic * second_linear + first_linear * second_quadratic;
-            out[2] = first_quadratic * delta_squared
-                + first_linear * second_linear
-                + delta_squared * second_quadratic;
-            out[3] = delta_squared * (first_linear + second_linear);
+#[inline]
+fn compute_entry_coefficients_from_taylor<E: FieldCore + HasUnreducedOps>(
+    out: &mut [E],
+    degree: usize,
+    taylor_coefficients: [E; 4],
+    range_image_delta: E,
+) {
+    match degree {
+        2 => {
+            out[0] = taylor_coefficients[0];
+            out[1] = taylor_coefficients[1] * range_image_delta;
+            out[2] = range_image_delta * range_image_delta;
+        }
+        4 => {
+            let delta_squared = range_image_delta * range_image_delta;
+            let delta_cubed = delta_squared * range_image_delta;
+            out[0] = taylor_coefficients[0];
+            out[1] = taylor_coefficients[1] * range_image_delta;
+            out[2] = taylor_coefficients[2] * delta_squared;
+            out[3] = taylor_coefficients[3] * delta_cubed;
             out[4] = delta_squared * delta_squared;
         }
         _ => unreachable!("direct range leaf only supports quadratic and quartic checks"),
@@ -340,12 +385,12 @@ fn compute_entry_coefficients_x4<E: FieldCore + FromPrimitiveInt + HasUnreducedO
     }
 }
 
-fn compute_range_round_polynomial_from_range_image<
+fn compute_range_round_polynomial_from_entry_coefficients<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
     polynomial_precomputation: &RangePolynomialPrecomputation,
-    range_image_pair: impl Fn(usize) -> (E, E) + Sync,
+    entry_coefficients: impl Fn(&mut [E], usize) + Sync,
 ) -> EqFactoredUniPoly<E> {
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
@@ -364,23 +409,9 @@ fn compute_range_round_polynomial_from_range_image<
 
             for chunk in 0..full_chunks {
                 let jl = chunk * 4;
-                let pairs = [
-                    range_image_pair(base_j + jl),
-                    range_image_pair(base_j + jl + 1),
-                    range_image_pair(base_j + jl + 2),
-                    range_image_pair(base_j + jl + 3),
-                ];
-                compute_entry_coefficients_x4(
-                    &mut batch_out,
-                    polynomial_precomputation,
-                    [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
-                    [
-                        pairs[0].1 - pairs[0].0,
-                        pairs[1].1 - pairs[1].0,
-                        pairs[2].1 - pairs[2].0,
-                        pairs[3].1 - pairs[3].0,
-                    ],
-                );
+                for (lane, coefficients) in batch_out.iter_mut().enumerate() {
+                    entry_coefficients(coefficients, base_j + jl + lane);
+                }
                 for (b_idx, bo) in batch_out.iter().enumerate() {
                     let e_in = e_first[jl + b_idx];
                     accumulate_dense_entry_coeffs(
@@ -394,13 +425,7 @@ fn compute_range_round_polynomial_from_range_image<
             let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
             for (tail_idx, &e_in) in e_first[full_chunks * 4..].iter().enumerate() {
                 let j = base_j + full_chunks * 4 + tail_idx;
-                let (left_range_image, right_range_image) = range_image_pair(j);
-                compute_entry_coefficients(
-                    &mut entry_buf,
-                    polynomial_precomputation,
-                    left_range_image,
-                    right_range_image - left_range_image,
-                );
+                entry_coefficients(&mut entry_buf, j);
                 accumulate_dense_entry_coeffs(
                     &mut inner_accum[..num_coeffs_q],
                     &entry_buf[..full_num_coeffs_q],
@@ -504,8 +529,41 @@ fn compute_range_round_polynomial_from_compact_image<
     )
 }
 
+struct FoldedOctetRangeImage<E: FieldCore> {
+    class_codes: Vec<u16>,
+    class_values: Vec<E>,
+    class_taylor_coefficients: Vec<[E; 4]>,
+    degree: usize,
+}
+
+impl<E: FieldCore + HasUnreducedOps> FoldedOctetRangeImage<E> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.class_codes.len()
+    }
+
+    #[inline]
+    fn value(&self, index: usize) -> E {
+        self.class_values[self.class_codes[index] as usize]
+    }
+
+    #[inline]
+    fn entry_coefficients(&self, out: &mut [E], index: usize) {
+        let left_class = self.class_codes[index] as usize;
+        let right_class = self.class_codes[index + 1] as usize;
+        let delta = self.class_values[right_class] - self.class_values[left_class];
+        compute_entry_coefficients_from_taylor(
+            out,
+            self.degree,
+            self.class_taylor_coefficients[left_class],
+            delta,
+        );
+    }
+}
+
 enum LowBasisRangeImageStorage<E: FieldCore> {
     Compact(std::sync::Arc<[i8]>),
+    FoldedOctets(FoldedOctetRangeImage<E>),
     Materialized(Vec<E>),
 }
 
