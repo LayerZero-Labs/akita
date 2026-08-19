@@ -397,39 +397,6 @@ impl CommittedGroupParams {
         self.num_digits_fold
     }
 
-    /// Maximum terminal folded-response norm certified by a group's fixed A matrix.
-    ///
-    /// This inverts the checked-in SIS table for the matrix's exact width and
-    /// rank, then applies the complete A-role weak-binding formula. It performs
-    /// no online lattice estimation and does not use the honest-response cap.
-    pub fn terminal_response_linf_limit_for_params(
-        &self,
-        params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<u128, AkitaError> {
-        let inner_commit_matrix = params.inner_commit_matrix_params();
-        let table_key = inner_commit_matrix.sis_table_key().ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "terminal response requires an L-infinity A-role matrix".to_string(),
-            )
-        })?;
-        if table_key.role != crate::sis::SisMatrixRole::Inner {
-            return Err(AkitaError::InvalidSetup(
-                "terminal response requires an A-role inner matrix".to_string(),
-            ));
-        }
-        // Bind the terminal wire to the selected SIS bucket. A larger bucket
-        // that the same rank happens to support is unused schedule slack.
-        let collision_capacity = table_key.coeff_linf_bound;
-        let challenge = crate::sis::FoldChallengeNorms::new(&self.fold_challenge_config);
-        crate::sis::max_response_linf_for_role_a_collision(collision_capacity, challenge.l1_norm)
-            .filter(|&limit| limit > 0)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "terminal inner matrix cannot certify a nonzero folded response".to_string(),
-                )
-            })
-    }
-
     /// Number of Boolean coordinates in the block-index domain.
     #[inline]
     pub fn block_index_bits(&self) -> usize {

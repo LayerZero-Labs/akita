@@ -399,5 +399,104 @@ fn terminal_layout_decode_rejects_oversized_group_count_before_allocation() {
     ));
 }
 
+/// Terminal A matrix pinned to one audited coefficient bucket.
+///
+/// The default [`test_lp`] fixture uses the largest bucket, whose certified
+/// capacity is far above the terminal wire limit, so it can only exercise the
+/// clamp. A small bucket puts the SIS bound in charge instead.
+fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixParams {
+    let base = test_lp();
+    let key = crate::sis::SisTableKey {
+        policy: base.inner_commit_matrix.security_policy(),
+        table_digest: base
+            .inner_commit_matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        modulus_profile: base.inner_commit_matrix.sis_modulus_profile(),
+        role: crate::sis::SisMatrixRole::Inner,
+        ring_dimension: 64,
+        coeff_linf_bound: bucket,
+    };
+    crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
+        key,
+        base.inner_commit_matrix.input_width(),
+    )
+    .expect("terminal test matrix for the requested bucket")
+}
+
+#[test]
+fn certified_terminal_cap_applies_the_wire_representation_limit() {
+    let lp = test_lp();
+    let raw = crate::sis::max_response_linf_for_role_a_collision(
+        lp.inner_commit_matrix
+            .coeff_linf_bound()
+            .expect("L infinity route"),
+        crate::sis::FoldChallengeNorms::new(&lp.fold_challenge_config).l1_norm,
+    )
+    .expect("raw SIS capacity");
+    assert!(
+        raw > crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        "fixture must exercise the clamp; raw capacity was {raw}"
+    );
+    let cap = crate::sis::certified_terminal_response_linf_cap(
+        &lp.inner_commit_matrix,
+        &lp.fold_challenge_config,
+    )
+    .expect("certified terminal cap");
+    assert_eq!(
+        cap,
+        crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        "a cap the terminal z wire cannot encode is not a usable cap"
+    );
+}
+
+#[test]
+fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
+    let matrix = terminal_matrix_with_bucket(2047);
+    let light = crate::sis::certified_terminal_response_linf_cap(
+        &matrix,
+        &SparseChallengeConfig::pm1_only(3),
+    )
+    .expect("light challenge cap");
+    let heavy = crate::sis::certified_terminal_response_linf_cap(
+        &matrix,
+        &SparseChallengeConfig::pm1_only(6),
+    )
+    .expect("heavy challenge cap");
+    assert!(
+        light < crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        "bucket must leave the SIS bound in charge; got {light}"
+    );
+    assert!(
+        heavy < light,
+        "a heavier challenge family must price the same matrix more conservatively: {heavy} vs {light}"
+    );
+}
+
+#[test]
+fn terminal_cap_has_exactly_one_implementation() {
+    // The schedule-side method must not re-derive the cap. If these ever
+    // disagree the split-brain this consolidation removed has returned.
+    for bucket in [2047u128, 8191, 67_108_863] {
+        let matrix = terminal_matrix_with_bucket(bucket);
+        for weight in [3usize, 6, 11] {
+            let sparse = SparseChallengeConfig::pm1_only(weight);
+            let mut lp = test_lp();
+            lp.inner_commit_matrix = matrix;
+            lp.fold_challenge_config = sparse;
+            let terminal = crate::TerminalCommittedGroupParams::from_expanded_group(lp);
+            assert_eq!(
+                terminal
+                    .certified_response_linf_cap(&sparse)
+                    .expect("schedule-side cap"),
+                crate::sis::certified_terminal_response_linf_cap(&matrix, &sparse)
+                    .expect("single-authority cap"),
+                "bucket {bucket}, challenge weight {weight}"
+            );
+        }
+    }
+}
+
 #[path = "test_support.rs"]
 mod test_support;

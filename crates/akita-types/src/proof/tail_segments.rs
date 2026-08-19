@@ -751,7 +751,11 @@ fn tail_segment_layout_from_groups<'a>(
             .checked_mul(params.a_rows_len())
             .and_then(|n| n.checked_mul(depth_commit))
             .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
-        let security_cap = lp.terminal_response_linf_limit_for_params(params)?;
+        // Price this group's response against *this group's* challenge family.
+        let security_cap = crate::sis::certified_terminal_response_linf_cap(
+            params.inner_commit_matrix_params(),
+            &params.fold_challenge_config(),
+        )?;
         if z_cap > security_cap {
             return Err(AkitaError::InvalidSetup(format!(
                 "terminal honest response cap {z_cap} exceeds inner-matrix SIS capacity {security_cap}"
@@ -925,7 +929,11 @@ where
             .iter()
             .map(|&coeff| i64::from(coeff))
             .collect();
-        let security_cap = lp.terminal_response_linf_limit_for_params(group.params)?;
+        // Price this group's response against *this group's* challenge family.
+        let security_cap = crate::sis::certified_terminal_response_linf_cap(
+            group.params.inner_commit_matrix_params(),
+            &group.params.fold_challenge_config(),
+        )?;
         let depth_witness = group.params.num_digits_inner();
         let inner_width = group.params.num_positions_per_block() * depth_witness;
         let row_count = group.z_folded_centered_flat.len() / ring_d;

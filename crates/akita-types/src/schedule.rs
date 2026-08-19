@@ -220,19 +220,7 @@ impl TerminalCommittedGroupParams {
                 "terminal L2 route has no independent Linf cap".into(),
             ));
         }
-        let challenge = crate::sis::FoldChallengeNorms::new(sparse);
-        let collision_capacity = self.inner_commit_matrix.coeff_linf_bound().ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal A cannot use an L2 security route".into())
-        })?;
-        let certified_capacity = crate::sis::max_response_linf_for_role_a_collision(
-            collision_capacity,
-            challenge.l1_norm,
-        )
-        .filter(|value| *value > 0)
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal A cannot certify a response".into()))?;
-        // Terminal NTT kernels currently consume signed i16 coefficients.
-        // This representation limit is independent of the SIS capacity.
-        Ok(certified_capacity.min(i16::MAX as u128))
+        crate::sis::certified_terminal_response_linf_cap(&self.inner_commit_matrix, sparse)
     }
 
     /// Validate that the wire carries exactly the norm cap required by the
