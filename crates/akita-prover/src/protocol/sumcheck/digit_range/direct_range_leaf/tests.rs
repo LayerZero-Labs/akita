@@ -251,6 +251,107 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
 }
 
 #[test]
+fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
+    // Regression test: the live-x-prefix round kernels used to assert
+    // rounds_completed < col_bits, but they run in the x phase where
+    // rounds_completed >= ring_bits, so the assert fired spuriously on the
+    // first x-phase round whenever ring_bits >= col_bits (the true invariant
+    // is rounds_completed < num_vars). Ring dimension 128 (ring_bits = 7)
+    // with 100 live columns (col_bits = 7) hits exactly that round.
+    let ring_bits = 7usize;
+    let live_x_cols = 100usize;
+    let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
+    assert!(ring_bits >= col_bits);
+    assert!(live_x_cols < 1usize << col_bits);
+    let y_len = 1usize << ring_bits;
+    for basis in [4usize, 8] {
+        let half = (basis / 2) as i8;
+        let digit_witness_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 11 + 3) % basis) as i8 - half)
+            .collect();
+        let padded_digit_witness =
+            pad_compact_witness(&digit_witness_prefix, live_x_cols, col_bits, ring_bits);
+        let tau0: Vec<F> = (0..(col_bits + ring_bits))
+            .map(|i| F::from_u64((i as u64) + 157))
+            .collect();
+        let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
+        let mut prefix_prover = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
+        let mut padded_prover = LowBasisRangeCheckProver::new(
+            std::sync::Arc::from(padded_digit_witness.as_slice()),
+            &tau0,
+            DigitRangePlan::new(basis).unwrap(),
+            1usize << col_bits,
+            col_bits,
+            ring_bits,
+        )
+        .unwrap();
+        let mut challenges = Vec::new();
+        let mut prefix_claim = F::zero();
+        let mut prefix_scale = F::one();
+        let mut padded_claim = F::zero();
+        let mut padded_scale = F::one();
+
+        for round in 0..(col_bits + ring_bits) {
+            let prefix_poly = prefix_prover.compute_round_eq_factored(round);
+            let padded_poly = padded_prover.compute_round_eq_factored(round);
+            assert_eq!(
+                prefix_poly, padded_poly,
+                "round {round} polynomial mismatch live_x_cols={live_x_cols} basis={basis}"
+            );
+
+            let challenge = F::from_u64((round as u64) + 163);
+            challenges.push(challenge);
+            let (prefix_linear_at_zero, prefix_linear_at_one) =
+                prefix_prover.current_linear_factor_evals();
+            (prefix_claim, prefix_scale) = advance_eq_factored_claim(
+                prefix_claim,
+                prefix_scale,
+                prefix_linear_at_zero,
+                prefix_linear_at_one,
+                &prefix_poly,
+                challenge,
+            );
+            let (padded_linear_at_zero, padded_linear_at_one) =
+                padded_prover.current_linear_factor_evals();
+            (padded_claim, padded_scale) = advance_eq_factored_claim(
+                padded_claim,
+                padded_scale,
+                padded_linear_at_zero,
+                padded_linear_at_one,
+                &padded_poly,
+                challenge,
+            );
+            prefix_prover.ingest_challenge(round, challenge);
+            padded_prover.ingest_challenge(round, challenge);
+        }
+
+        assert_eq!(
+            prefix_prover.final_range_image_eval(),
+            padded_prover.final_range_image_eval()
+        );
+        assert_eq!(prefix_claim, padded_claim);
+        assert_eq!(prefix_scale, padded_scale);
+        let padded_range_image: Vec<F> = build_compact_range_image(&padded_digit_witness)
+            .into_iter()
+            .map(|s| F::from_i64(i64::from(s)))
+            .collect();
+        assert_eq!(
+            prefix_prover.final_range_image_eval(),
+            multilinear_eval(&padded_range_image, &challenges).unwrap(),
+            "final s-claim mismatch live_x_cols={live_x_cols} basis={basis}"
+        );
+    }
+}
+
+#[test]
 fn stage1_fused_round2_transition_matches_two_pass_reference() {
     let col_bits = 3usize;
     let ring_bits = 2usize;
