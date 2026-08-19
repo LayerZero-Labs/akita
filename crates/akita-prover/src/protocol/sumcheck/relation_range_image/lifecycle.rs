@@ -1,5 +1,22 @@
 use super::*;
 
+fn stage2_geometry(
+    lane_bits: usize,
+    coefficient_bits: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let lane_bits_u32 = u32::try_from(lane_bits)
+        .map_err(|_| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+    let coefficient_bits_u32 = u32::try_from(coefficient_bits)
+        .map_err(|_| AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string()))?;
+    let lane_capacity = 1usize
+        .checked_shl(lane_bits_u32)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+    let coeff_count = 1usize.checked_shl(coefficient_bits_u32).ok_or_else(|| {
+        AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
+    })?;
+    Ok((lane_capacity, coeff_count))
+}
+
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     /// Create a stage-2 instance containing only the virtual range-image term.
     ///
@@ -19,20 +36,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         lane_bits: usize,
         coefficient_bits: usize,
     ) -> Result<Self, AkitaError> {
-        let lane_capacity = 1usize
-            .checked_shl(
-                u32::try_from(lane_bits).map_err(|_| {
-                    AkitaError::InvalidInput("stage-2 lane width overflow".to_string())
-                })?,
-            )
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
-        let coeff_count = 1usize
-            .checked_shl(u32::try_from(coefficient_bits).map_err(|_| {
-                AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-            })?)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-            })?;
+        let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
         Self::new(
             E::one(),
             w_evals_compact,
@@ -79,23 +83,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 "live_lane_count must be at least 1".to_string(),
             ));
         }
-        let lane_bits_u32 = u32::try_from(lane_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
-        let coefficient_bits_u32 = u32::try_from(coefficient_bits).map_err(|_| {
-            AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-        })?;
-        let lane_capacity = 1usize
-            .checked_shl(lane_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+        let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
         if live_lane_count > lane_capacity {
             return Err(AkitaError::InvalidSize {
                 expected: lane_capacity,
                 actual: live_lane_count,
             });
         }
-        let coeff_count = 1usize.checked_shl(coefficient_bits_u32).ok_or_else(|| {
-            AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-        })?;
         let witness_len = live_lane_count
             .checked_mul(coeff_count)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
