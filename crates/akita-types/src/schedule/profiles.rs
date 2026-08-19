@@ -258,25 +258,22 @@ impl CommittedGroupProfile {
         Ok(())
     }
 
-    /// Validate that frozen exact block geometry matches `group.num_vars`.
+    /// Validate that frozen block geometry covers the exact logical group.
+    ///
+    /// A logical source may end inside its last physical A ring. The unused
+    /// coefficients of that ring are canonical zeroes and are not part of the
+    /// multilinear domain.
     pub fn validate_root_geometry(&self) -> Result<(), AkitaError> {
         let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
         let alpha = inner_ring_dimension.trailing_zeros() as usize;
-        let Some(source_field_len) = self
-            .num_live_ring_elements_per_claim
-            .checked_mul(inner_ring_dimension)
-        else {
-            return Err(AkitaError::InvalidSetup(
-                "commitment group layout geometry overflow".to_string(),
-            ));
-        };
         let num_vars = u32::try_from(self.group.num_vars()).map_err(|_| {
             AkitaError::InvalidSetup("commitment group variable count exceeds u32".to_string())
         })?;
         let expected_field_len = 1usize.checked_shl(num_vars).ok_or_else(|| {
             AkitaError::InvalidSetup("commitment group field length overflow".to_string())
         })?;
-        if source_field_len != expected_field_len
+        let expected_live_ring_elements = expected_field_len.div_ceil(inner_ring_dimension);
+        if self.num_live_ring_elements_per_claim != expected_live_ring_elements
             || self.num_positions_per_block == 0
             || !self.num_positions_per_block.is_power_of_two()
             || self.num_live_blocks
@@ -286,8 +283,9 @@ impl CommittedGroupProfile {
         {
             return Err(AkitaError::InvalidSetup(format!(
                 "precommitted group geometry does not match group.num_vars: \
-                 N={} L={} F={} alpha={} group.num_vars={}",
+                 N={} expected_N={} L={} F={} alpha={} group.num_vars={}",
                 self.num_live_ring_elements_per_claim,
+                expected_live_ring_elements,
                 self.num_positions_per_block,
                 self.num_live_blocks,
                 alpha,

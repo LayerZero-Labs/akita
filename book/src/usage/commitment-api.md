@@ -102,6 +102,24 @@ The frozen precommitted descriptor a recursive grouped row carries is exactly
 `Cfg::profile_without_precommitted_groups(group)`, which is what makes the split
 sound.
 
+A group does not need a complete scalar opening schedule merely to be committed
+before a later grouped opening. In that case, use the configuration that owns
+the grouped catalog and select its precommit profile:
+
+```rust
+let pre = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &prior_polynomials,
+    &stack,
+    GroupContext::scheduler_precommit(),
+)?;
+```
+
+The generated catalog authorizes the exact A and B profile. The later grouped
+row supplies the D opening route. If the logical source ends inside one physical
+A ring, the remaining coefficients are canonical zeroes. They are not extra
+multilinear evaluations.
+
 Every `PolynomialGroupClaims` owns one complete opening point, its evaluations,
 and its commitment.
 Polynomials within one group share that point.

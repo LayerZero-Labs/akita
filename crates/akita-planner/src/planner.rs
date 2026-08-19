@@ -26,6 +26,201 @@ use crate::PlannerPolicy;
 
 type PrecommittedGroupSeed = (CommittedGroupProfile, HonestFoldPolicySpec);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PrecommitProfileScore {
+    complete_outer_coefficients: usize,
+    setup_field_elements: usize,
+    inner_ring_dimension: usize,
+    outer_ring_dimension: usize,
+    inner_output_rank: usize,
+    outer_output_rank: usize,
+    log_basis_inner: u32,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
+    outer_slice_count: usize,
+}
+
+fn precommit_profile_score(
+    profile: &CommittedGroupProfile,
+) -> Result<PrecommitProfileScore, AkitaError> {
+    let inner_ring_dimension = profile.inner_commit_matrix.ring_dimension();
+    let outer_ring_dimension = profile.outer_commit_matrix.ring_dimension();
+    let complete_outer_coefficients = profile.outer_slice_count.complete_source_coefficients(
+        profile.outer_commit_matrix.output_rank(),
+        outer_ring_dimension,
+    )?;
+    let setup_field_elements = akita_types::commit_only_setup_field_elements(
+        &profile.inner_commit_matrix,
+        &profile.outer_commit_matrix,
+        profile.outer_slice_count,
+    )?;
+    Ok(PrecommitProfileScore {
+        complete_outer_coefficients,
+        setup_field_elements,
+        inner_ring_dimension,
+        outer_ring_dimension,
+        inner_output_rank: profile.inner_commit_matrix.output_rank(),
+        outer_output_rank: profile.outer_commit_matrix.output_rank(),
+        log_basis_inner: profile.log_basis_inner,
+        num_live_blocks: profile.num_live_blocks,
+        num_positions_per_block: profile.num_positions_per_block,
+        outer_slice_count: profile.outer_slice_count.get(),
+    })
+}
+
+/// Plan the canonical A/B commitment profile for one exact logical group.
+///
+/// This planner does not construct a D opening route. The returned profile is
+/// intended for a group committed now and opened later under a generated
+/// multi-group schedule. Sources shorter than one A ring keep their exact
+/// multilinear arity and use canonical zeroes only in the unused physical ring
+/// coefficients.
+pub fn plan_precommit_profile(
+    group: PolynomialGroupLayout,
+    honest_fold_policy: HonestFoldPolicySpec,
+    policy: &PlannerPolicy,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    akita_schedules::planner_support::validate_policy(policy)?;
+    group.validate()?;
+    let logical_len = 1usize
+        .checked_shl(group.num_vars() as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("precommit logical length overflow".into()))?;
+    let source = crate::schedule_params::root_inner_basis_source(
+        honest_fold_policy,
+        policy.decomposition.log_commit_bound,
+    );
+    let (min_inner_basis, max_inner_basis) = source.search_range(policy)?;
+    let (log_basis_outer, _) = crate::policy::log_basis_search_range_at_level(policy, 0);
+    let num_digits_outer = num_digits_open(DecompositionParams {
+        log_basis: log_basis_outer,
+        ..policy.decomposition
+    });
+    let dimension_ceiling = crate::schedule_params::initial_dimension_ceiling(policy)?;
+    let dimensions = crate::schedule_params::dimension_candidates(policy, 0, dimension_ceiling)?;
+    let mut best: Option<(PrecommitProfileScore, CommittedGroupProfile)> = None;
+
+    for dimensions in dimensions {
+        let d_a = dimensions.d_a();
+        let num_live_ring_elements_per_claim = logical_len.div_ceil(d_a);
+        if !num_live_ring_elements_per_claim.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "dyadic source and A ring produced a non-dyadic live-ring count".into(),
+            ));
+        }
+        let reduced_vars = num_live_ring_elements_per_claim.trailing_zeros() as usize;
+        let openings = PlannerOpeningCandidate::coefficient_packing_domain(
+            0,
+            policy.claim_ext_degree,
+            dimensions,
+        )?;
+        if openings.is_empty() {
+            continue;
+        }
+
+        for log_basis_inner in min_inner_basis..=max_inner_basis {
+            let num_digits_inner =
+                source.num_digits_inner(policy.decomposition, log_basis_inner)?;
+            let witness_norms =
+                honest_fold_policy.witness_norms_for_inner_basis(log_basis_inner, d_a);
+            for block_index_bits in 0..=reduced_vars {
+                let position_index_bits = reduced_vars - block_index_bits;
+                let num_live_blocks = 1usize << block_index_bits;
+                let num_positions_per_block = 1usize << position_index_bits;
+                let Some(width_s) =
+                    decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
+                else {
+                    continue;
+                };
+                for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+                    if outer_slice_count
+                        .validate_for_commitment(
+                            0,
+                            akita_types::CommitmentPayloadMode::Compressed,
+                            num_live_blocks,
+                        )
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    let mut conservative = None;
+                    for opening in &openings {
+                        let Some(candidate) =
+                            derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
+                                policy,
+                                fold_policy: &honest_fold_policy,
+                                ring_challenge_cfg: &opening.challenge_config(),
+                                challenge_dimension: opening.challenge_dimension(d_a),
+                                dimensions,
+                                payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                                num_claims: group.num_polynomials(),
+                                num_live_ring_elements_per_claim,
+                                num_live_blocks,
+                                num_positions_per_block,
+                                num_chunks: policy.chunks_at_level(0),
+                                outer_slice_count,
+                                witness_norms,
+                                log_basis_open: log_basis_outer,
+                                width_s,
+                                num_digits_outer,
+                                modeled_linf_cap: None,
+                            })?
+                        else {
+                            continue;
+                        };
+                        if candidate.inner_commit_matrix.coeff_linf_bound().is_none() {
+                            continue;
+                        }
+                        let candidate_key = (
+                            candidate.inner_commit_matrix.coeff_linf_bound(),
+                            candidate.inner_commit_matrix.output_rank(),
+                            candidate.outer_commit_matrix.output_rank(),
+                        );
+                        if conservative
+                            .as_ref()
+                            .is_none_or(|(current_key, _)| candidate_key > *current_key)
+                        {
+                            conservative = Some((candidate_key, candidate));
+                        }
+                    }
+                    let Some((_, candidate)) = conservative else {
+                        continue;
+                    };
+                    let profile = CommittedGroupProfile {
+                        version: CommittedGroupProfile::VERSION,
+                        group,
+                        num_live_ring_elements_per_claim,
+                        num_positions_per_block,
+                        num_live_blocks,
+                        outer_slice_count,
+                        log_basis_inner,
+                        num_digits_inner,
+                        inner_commit_matrix: candidate.inner_commit_matrix,
+                        log_basis_outer,
+                        num_digits_outer,
+                        outer_commit_matrix: candidate.outer_commit_matrix,
+                    };
+                    profile.validate_frozen_precommit(policy.decomposition.field_bits())?;
+                    let score = precommit_profile_score(&profile)?;
+                    if best
+                        .as_ref()
+                        .is_none_or(|(best_score, _)| score < *best_score)
+                    {
+                        best = Some((score, profile));
+                    }
+                }
+            }
+        }
+    }
+
+    best.map(|(_, profile)| profile).ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "no exact precommit profile for num_vars={}, num_polynomials={}",
+            group.num_vars(),
+            group.num_polynomials()
+        ))
+    })
+}
+
 fn materialize_precommitted_group_for_open_basis(
     (layout, honest_fold_policy): &PrecommittedGroupSeed,
     policy: &PlannerPolicy,
