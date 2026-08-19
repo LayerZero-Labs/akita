@@ -401,10 +401,20 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
+    (@committed_source_class (unit_one_hot $source_chunk_size:expr)) => {
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            akita_types::sis::CommittedSourceClass::UnitOneHot {
+                source_chunk_size: $source_chunk_size,
+            }
+        }
+    };
     (@committed_source_class balanced_digits) => {
         fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
             akita_types::sis::CommittedSourceClass::BalancedSignedDigit
         }
+    };
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = unit_one_hot($source_chunk_size:expr), schedules = $schedules:tt, ring_dimension_schedule_mode = $mode:expr) => {
+        $crate::impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, (unit_one_hot $source_chunk_size), $schedules, ring_dimension_schedule_mode = $mode);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedules = $schedules:tt, ring_dimension_schedule_mode = $mode:expr) => {
         $crate::impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $schedules, ring_dimension_schedule_mode = $mode);
@@ -412,7 +422,7 @@ macro_rules! impl_proof_optimized_preset {
     (@options ring_dimension_schedule_mode = $mode:expr) => {
         $crate::impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, $schedules:tt, $($options:tt)*) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:tt, $schedules:tt, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;

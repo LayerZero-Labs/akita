@@ -3,6 +3,9 @@ use super::*;
 #[derive(Clone, Copy, Debug, Default)]
 struct NoCatalog;
 
+#[derive(Clone, Copy, Debug, Default)]
+struct CustomOneHot32NoCatalog;
+
 crate::impl_proof_optimized_preset!(
     NoCatalog,
     akita_field::Prime64Offset59,
@@ -17,6 +20,20 @@ crate::impl_proof_optimized_preset!(
     }
 );
 
+crate::impl_proof_optimized_preset!(
+    CustomOneHot32NoCatalog,
+    akita_field::Prime32Offset99,
+    akita_field::FpExt4<akita_field::Prime32Offset99>,
+    akita_types::SisModulusProfileId::Q32Offset99,
+    32,
+    1,
+    source = unit_one_hot(32),
+    schedules = none,
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::UniformDimension {
+        ring_dimension: 128
+    }
+);
+
 #[test]
 fn exported_preset_can_fail_closed_without_a_catalog() {
     use crate::CommitmentConfig;
@@ -25,6 +42,26 @@ fn exported_preset_can_fail_closed_without_a_catalog() {
     assert_eq!(
         NoCatalog::committed_source_class(),
         akita_types::sis::CommittedSourceClass::BalancedSignedDigit
+    );
+}
+
+#[test]
+fn exported_preset_can_set_its_one_hot_source_chunk() {
+    use crate::CommitmentConfig;
+
+    assert_eq!(
+        CustomOneHot32NoCatalog::committed_source_class(),
+        akita_types::sis::CommittedSourceClass::UnitOneHot {
+            source_chunk_size: 32
+        }
+    );
+    assert_eq!(
+        CustomOneHot32NoCatalog::committed_source_contract()
+            .expect("valid one-hot source contract")
+            .class(),
+        akita_types::sis::CommittedSourceClass::UnitOneHot {
+            source_chunk_size: 32
+        }
     );
 }
 
