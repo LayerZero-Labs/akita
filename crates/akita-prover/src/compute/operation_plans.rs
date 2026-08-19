@@ -56,7 +56,7 @@ impl CommitInnerPlan {
         }
     }
 
-    /// Build inner-commit parameters from a frozen standalone precommit profile.
+    /// Build inner-commit parameters from a catalog-authorized precommit profile.
     pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
         Self {
             n_a: profile.inner_commit_matrix.output_rank(),

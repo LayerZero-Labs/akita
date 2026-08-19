@@ -19,8 +19,8 @@ pub use catalog_identity::{
 pub use generated::*;
 pub use resolve::{
     estimate_proof_bytes, resolve_generated_catalog_row_for_key,
-    resolve_generated_catalog_row_for_profiles, resolve_generated_schedule_selection,
-    schedule_from_entry, ResolvedScheduleRow,
+    resolve_generated_catalog_row_for_profiles, resolve_generated_precommit_profile,
+    resolve_generated_schedule_selection, schedule_from_entry, ResolvedScheduleRow,
 };
 pub use runtime::{
     default_sis_security_policy, expanded_schedule_proof_payload_bytes, validate_policy,

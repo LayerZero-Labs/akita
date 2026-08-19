@@ -26,16 +26,18 @@ A generated catalog ships one row per supported request shape.
 - A **scalar row** is the row for a polynomial group with no precommitted groups. It is
   what `GroupContext::scheduler_without_precommitted_groups()` selects, and what
   `CommitmentConfig::profile_without_precommitted_groups` reads a frozen commitment
-  profile from. An independent commitment always uses it, including when that
-  commitment later becomes a precommitted group.
+  profile from. An independent commitment uses this path.
 - A **grouped row** is the row keyed on a final group plus an exact ordered
   prefix of precommitted group profiles. It is what
   `GroupContext::scheduler_with_precommitted_groups` selects, and it is the row the
   whole batch is opened under.
 
-Every grouped row's frozen precommitted descriptor equals the scalar-row profile for
-that same group, which
-`every_grouped_precommitted_descriptor_has_a_generated_producer` enforces.
+A group committed before a grouped opening uses
+`GroupContext::scheduler_precommit()`. The configuration resolves its unique
+profile from the generated catalog. If the group has a scalar row, both paths
+use the same profile. A group with no complete standalone opening schedule may
+instead have an A and B profile planned directly for its exact logical shape.
+The catalog rejects conflicting profiles for the same group.
 
 ## Notation
 

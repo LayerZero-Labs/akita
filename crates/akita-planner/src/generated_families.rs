@@ -15,7 +15,9 @@ use std::any::TypeId;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
-use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
+use crate::{
+    find_schedule, plan_precommit_profile, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy,
+};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_schedules::GeneratedScheduleTable;
@@ -280,19 +282,25 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
 }
 
-/// Frozen profile a group commits with when it has no precommitted groups.
+/// Canonical profile used when a group is committed before a grouped opening.
 ///
-/// Generation cannot read the catalog it is producing, so this plans the row
-/// instead of selecting it. `CommitmentConfig::profile_without_precommitted_groups`
-/// is the runtime counterpart, and
-/// `every_grouped_precommitted_descriptor_has_a_generated_producer` asserts the two
-/// agree on every shipped descriptor.
-fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
+/// Reuse the group's own scalar profile when it has a complete opening
+/// schedule. Otherwise plan only its exact A/B commitment geometry. The
+/// fallback never derives parameters from a different polynomial group.
+fn planned_precommit_profile<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
 ) -> Result<CommittedGroupProfile, AkitaError> {
-    let schedule = preplans.scalar::<Cfg>(group)?;
-    CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
+    match preplans.scalar::<Cfg>(group) {
+        Ok(schedule) => CommittedGroupProfile::try_from_params(
+            group,
+            &schedule.root.params.final_group.commitment,
+        ),
+        Err(AkitaError::UnsupportedSchedule(_)) => {
+            plan_precommit_profile(group, honest_fold_policy_of::<Cfg>(), &policy_of::<Cfg>())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -365,7 +373,7 @@ fn fp128_onehot_multichunk_w2r2_grouped_requests(
 ) -> Result<GroupedGenerationRequests, AkitaError> {
     type Cfg = fp128::OneHotMultiChunkW2R2;
     let group = PolynomialGroupLayout::new(14, 1);
-    let precommitted = planned_profile_without_precommitted_groups::<Cfg>(preplans, group)?;
+    let precommitted = planned_precommit_profile::<Cfg>(preplans, group)?;
     Ok(vec![GroupedGenerationRequest::new(
         group,
         vec![PrecommittedProducer::from_config::<Cfg>(precommitted)?],
@@ -385,7 +393,7 @@ fn single_pre_grouped_requests<Cfg: CommitmentConfig + 'static>(
     pre_group: PolynomialGroupLayout,
     final_group: PolynomialGroupLayout,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    let precommitted = planned_profile_without_precommitted_groups::<Cfg>(preplans, pre_group)?;
+    let precommitted = planned_precommit_profile::<Cfg>(preplans, pre_group)?;
     Ok(vec![GroupedGenerationRequest::new(
         final_group,
         vec![PrecommittedProducer::from_config::<Cfg>(precommitted)?],
@@ -449,8 +457,7 @@ fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted =
-        planned_profile_without_precommitted_groups::<BaseCfg>(preplans, precommitted_group)?;
+    let precommitted = planned_precommit_profile::<BaseCfg>(preplans, precommitted_group)?;
     Ok(vec![GroupedGenerationRequest::new(
         PolynomialGroupLayout::new(32, 2),
         vec![
@@ -465,9 +472,8 @@ fn heterogeneous_onehot_catalog_key(
 ) -> Result<GroupedGenerationRequest, AkitaError> {
     let onehot_group = PolynomialGroupLayout::new(14, 1);
     let dense_group = PolynomialGroupLayout::new(15, 2);
-    let onehot =
-        planned_profile_without_precommitted_groups::<fp128::OneHot>(preplans, onehot_group)?;
-    let dense = planned_profile_without_precommitted_groups::<fp128::Dense>(preplans, dense_group)?;
+    let onehot = planned_precommit_profile::<fp128::OneHot>(preplans, onehot_group)?;
+    let dense = planned_precommit_profile::<fp128::Dense>(preplans, dense_group)?;
     Ok(GroupedGenerationRequest::new(
         PolynomialGroupLayout::new(16, 1),
         vec![
@@ -490,10 +496,8 @@ fn bounded_dense_onehot_catalog_key(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequest, AkitaError> {
     let bounded_dense_group = PolynomialGroupLayout::new(14, 1);
-    let bounded_dense = planned_profile_without_precommitted_groups::<fp128::DenseBounded>(
-        preplans,
-        bounded_dense_group,
-    )?;
+    let bounded_dense =
+        planned_precommit_profile::<fp128::DenseBounded>(preplans, bounded_dense_group)?;
     Ok(GroupedGenerationRequest::new(
         PolynomialGroupLayout::new(16, 1),
         vec![PrecommittedProducer::from_config::<fp128::DenseBounded>(
@@ -505,14 +509,10 @@ fn bounded_dense_onehot_catalog_key(
 fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    let singleton_pre = planned_profile_without_precommitted_groups::<BaseCfg>(
-        preplans,
-        PolynomialGroupLayout::new(14, 1),
-    )?;
-    let pair_pre = planned_profile_without_precommitted_groups::<BaseCfg>(
-        preplans,
-        PolynomialGroupLayout::new(14, 2),
-    )?;
+    let singleton_pre =
+        planned_precommit_profile::<BaseCfg>(preplans, PolynomialGroupLayout::new(14, 1))?;
+    let pair_pre =
+        planned_precommit_profile::<BaseCfg>(preplans, PolynomialGroupLayout::new(14, 2))?;
     let singleton = PrecommittedProducer::from_config::<BaseCfg>(singleton_pre)?;
     let pair = PrecommittedProducer::from_config::<BaseCfg>(pair_pre)?;
     Ok(vec![
@@ -631,9 +631,7 @@ fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
 ) -> Result<PrecommittedProducer, AkitaError> {
-    PrecommittedProducer::from_config::<Cfg>(planned_profile_without_precommitted_groups::<Cfg>(
-        preplans, group,
-    )?)
+    PrecommittedProducer::from_config::<Cfg>(planned_precommit_profile::<Cfg>(preplans, group)?)
 }
 
 /// Every `Cfg` that has a generated schedule table.

@@ -138,6 +138,24 @@ fn explicit_rows_accept_adaptive_families() {
 }
 
 #[test]
+fn explicit_precommit_plans_its_exact_partial_ring_group() {
+    let family = family_by_name("fp64_dense").expect("known family");
+    let group = PolynomialGroupLayout::singleton(4);
+    let producer = (family.explicit_precommitted_group)(&GenerationPreplans::default(), group)
+        .expect("direct exact precommit profile");
+    let request =
+        GroupedGenerationRequest::new(PolynomialGroupLayout::singleton(16), vec![producer]);
+    let profile = request.key().precommitteds[0];
+
+    assert_eq!(profile.group, group);
+    assert_eq!(profile.num_live_ring_elements_per_claim, 1);
+    assert!(profile.inner_commit_matrix.ring_dimension() > 16);
+    profile
+        .validate_frozen_precommit(64)
+        .expect("partial-ring profile is catalog-ready");
+}
+
+#[test]
 fn explicit_group_rejects_source_metadata() {
     assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
 }

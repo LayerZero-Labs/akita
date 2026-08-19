@@ -42,6 +42,6 @@ pub use emit::{
     publish_generated_outputs, render_generated_outputs, render_generated_outputs_with_validation,
     EmitSpec, GeneratedOutput, MaterializationDiagnostics,
 };
-pub use planner::find_schedule;
+pub use planner::{find_schedule, plan_precommit_profile};
 pub use policy::InnerBasisSource;
 pub use schedule_params::suffix_opening_layout;

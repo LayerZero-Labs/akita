@@ -41,6 +41,8 @@ use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 mod descriptor;
 #[path = "schedule_tests/execution_admission.rs"]
 mod execution_admission;
+#[path = "schedule_tests/partial_profile.rs"]
+mod partial_profile;
 
 type F = Prime128OffsetA7F7;
 // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
