@@ -19,8 +19,8 @@ use akita_schedules::planner_support::projected_collision_role_price;
 use crate::schedule_params::{
     derive_ab_commitment_candidate, derive_selected_suffix_schedule,
     materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
-    AbCommitmentCandidateRequest, PlannerOpeningCandidate, RingChallengeConfigFn, ScheduleMemo,
-    SuffixCtx, SuffixState,
+    AbCommitmentCandidateRequest, PlannerOpeningCandidate, RingChallengeConfigFn,
+    ScheduleCandidate, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -185,7 +185,6 @@ pub(crate) fn root_level_candidates_for_basis(
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
     precommitted_openings: &[PlannerOpeningCandidate],
-    root_input_witness_len: usize,
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
     require_witness_contraction: bool,
@@ -193,13 +192,14 @@ pub(crate) fn root_level_candidates_for_basis(
     dimensions.validate_role_projection()?;
     opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
     let field_bits = policy.decomposition.field_bits();
+    let root_input_witness_bits = 1usize
+        .checked_shl(key.final_group.num_vars() as u32)
+        .and_then(|len| len.checked_mul(field_bits as usize))
+        .ok_or_else(|| AkitaError::InvalidSetup("root batch witness bit length overflow".into()))?;
     let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
-        return Err(AkitaError::UnsupportedSchedule(format!(
-            "root batch num_vars={} does not exceed log2(ring_dimension)={alpha}",
-            key.final_group.num_vars()
-        )));
+        return Ok(Vec::new());
     }
 
     if precommitted_honest_fold_policies.len() != key.precommitteds.len() {
@@ -238,9 +238,6 @@ pub(crate) fn root_level_candidates_for_basis(
         ),
     };
     let opening_batch = key.opening_layout()?;
-    let initial_witness_len_bits = root_input_witness_len
-        .checked_mul(field_bits as usize)
-        .ok_or_else(|| AkitaError::InvalidSetup("root batch witness bit length overflow".into()))?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
     let num_ring_elems = 1usize.checked_shl(reduced_vars as u32).ok_or_else(|| {
@@ -345,7 +342,7 @@ pub(crate) fn root_level_candidates_for_basis(
                             "root batch next witness bit length overflow".into(),
                         )
                     })?
-                    >= initial_witness_len_bits
+                    >= root_input_witness_bits
             {
                 continue;
             }
@@ -493,6 +490,35 @@ fn root_final_group_level_params_candidate(
     Ok(Some(params))
 }
 
+fn search_complete_candidate(
+    ctx: SuffixCtx<'_>,
+    initial_state: SuffixState,
+    allow_noncontractive_root: bool,
+) -> Result<Option<ScheduleCandidate>, AkitaError> {
+    let ctx = SuffixCtx {
+        allow_noncontractive_root,
+        ..ctx
+    };
+    let mut memo = ScheduleMemo::new();
+    let started = ctx.diagnostics.map(|_| Instant::now());
+    let suffix = derive_selected_suffix_schedule(&ctx, &mut memo, initial_state, 0);
+    if let (Some(diagnostics), Some(started)) = (ctx.diagnostics, started) {
+        diagnostics.add_suffix_dp_time(started.elapsed());
+        let (hits, misses) = memo.setup_prefix_cache_diagnostics();
+        diagnostics.record_setup_prefix_cache(hits, misses);
+    }
+    let suffix = suffix?;
+    let selected = match ctx.policy.selection_policy {
+        crate::SelectionPolicyId::MinEstimatedProofPayload => {
+            select_complete_candidate(ctx.policy, suffix.payload_candidates(), ctx.diagnostics)?
+        }
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+            select_complete_candidate(ctx.policy, suffix.setup_candidates(), ctx.diagnostics)?
+        }
+    };
+    Ok(selected.cloned())
+}
+
 /// Build the fold schedule selected by a full schedule lookup key.
 pub fn find_schedule(
     key: &AkitaScheduleLookupKey,
@@ -543,40 +569,27 @@ pub fn find_schedule(
         root_honest_fold_policy: Some(final_honest_fold_policy),
         precommitted_honest_fold_policies,
         level_zero_is_root: true,
+        allow_noncontractive_root: false,
     };
-    let mut memo = ScheduleMemo::new();
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
-    let suffix_started = diagnostics.map(|_| Instant::now());
-    let suffix = derive_selected_suffix_schedule(
-        &suffix_ctx,
-        &mut memo,
-        SuffixState {
-            level: 0,
-            current_witness_len: root_input_witness_len,
-            current_lb: 0,
-            source_moment: None,
-            incoming_setup_prefix: None,
-            dimension_ceiling,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        },
-        0,
-    );
-    if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
-        diagnostics.add_suffix_dp_time(started.elapsed());
-        let (hits, misses) = memo.setup_prefix_cache_diagnostics();
-        diagnostics.record_setup_prefix_cache(hits, misses);
-    }
-    let suffix = suffix?;
-    let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => {
-            select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
-        }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
-        }
+    let initial_state = SuffixState {
+        level: 0,
+        current_witness_len: root_input_witness_len,
+        current_lb: 0,
+        source_moment: None,
+        incoming_setup_prefix: None,
+        dimension_ceiling,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
     };
+    // Preserve the existing optimized search and catalog choices. Only a
+    // request with no complete contractive schedule pays for the exhaustive
+    // root fallback.
+    let best = search_complete_candidate(suffix_ctx, initial_state, false)?.map_or_else(
+        || search_complete_candidate(suffix_ctx, initial_state, true),
+        |candidate| Ok(Some(candidate)),
+    )?;
 
-    let Some(best) = best.cloned() else {
+    let Some(best) = best else {
         if key.precommitteds.is_empty()
             && matches!(
                 active_policy.ring_dimension_schedule_mode,
@@ -584,13 +597,13 @@ pub fn find_schedule(
             )
         {
             return Err(AkitaError::UnsupportedSchedule(format!(
-                "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
+                "no mixed-D schedule in the audited fold domain for num_vars={}, num_polynomials={}",
                 key.final_group.num_vars(),
                 key.final_group.num_polynomials()
             )));
         }
         return Err(AkitaError::UnsupportedSchedule(format!(
-            "no multi-group schedule with at least two folds for num_vars={}",
+            "no multi-group schedule in the audited fold domain for num_vars={}",
             key.final_group.num_vars()
         )));
     };
@@ -639,3 +652,7 @@ pub fn find_schedule(
     }
     planned
 }
+
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/planner_totality.rs"]
+mod totality_tests;
