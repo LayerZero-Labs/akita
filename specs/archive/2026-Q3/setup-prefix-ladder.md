@@ -101,7 +101,7 @@ setup-prefix slots.
 - For local manual verification, run the recursive setup profile:
 
 ```bash
-AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 AKITA_SETUP_MODE=recursive \
+AKITA_MODE=onehot_fp128_multi_group_recursive AKITA_NUM_VARS=32 AKITA_SETUP_MODE=recursive \
   cargo run --release -p akita-pcs --example profile
 ```
 
@@ -109,7 +109,7 @@ To inspect prefix-slot agreement across setup, prover, and verifier, pipe the
 same command through a log filter:
 
 ```bash
-AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 AKITA_SETUP_MODE=recursive \
+AKITA_MODE=onehot_fp128_multi_group_recursive AKITA_NUM_VARS=32 AKITA_SETUP_MODE=recursive \
   cargo run --release -p akita-pcs --example profile
 ```
 
@@ -183,6 +183,6 @@ the implemented subset.
 - `specs/setup-offloading-planner.md`
 - `crates/akita-types/src/proof/setup_prefix.rs`
 - `crates/akita-prover/src/api/setup_prefix.rs`
-- `crates/akita-setup/src/recursion.rs`
-- `crates/akita-prover/src/protocol/sumcheck/setup_sumcheck.rs`
+- `crates/akita-setup/src/recursive_prefixes.rs`
+- `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`
 - `crates/akita-verifier/src/stages/stage3.rs`

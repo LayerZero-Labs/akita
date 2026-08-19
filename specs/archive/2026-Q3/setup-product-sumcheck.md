@@ -5,7 +5,7 @@
 | Author(s)   |                                |
 | Created     | 2026-06-02                     |
 | Status      | archived                       |
-| PR          | #147; refactored by #287, #311, and #337 |
+| PR          | #147; refactored by #287, #301, #311, #318, and #337 |
 | Superseded-by | book/src/how/proving/sumcheck-stages.md and book/src/how/verifying/setup_contribution.md |
 | Book-chapter | book/src/how/proving/sumcheck-stages.md |
 
@@ -20,7 +20,7 @@
 > artifact necessarily selects the direct scalar schedule, so its former
 > `--setup-mode recursive` flag and blob mode byte were misleading and are
 > removed. Exercise recursive stage 3 with the config-typed multi-group profile
-> and `recursive_setup_e2e` tests described below.
+> and the config-selected recursive E2E tests described below.
 
 ## Summary
 
@@ -43,13 +43,13 @@ end to end.
 
 Key abstractions and surfaces:
 
-- `akita-prover` `protocol::sumcheck::setup_sumcheck::SetupSumcheckProver` —
+- `akita-prover` `protocol::sumcheck::akita_stage3::AkitaStage3Prover` —
   Akita-specific setup-product sumcheck prover. Moved out of the previous
   general `akita-sumcheck::factored_product` module; its `prove` entry point
   now folds in the term-preparation logic that used to live in `flow.rs`.
 - `akita-verifier` `stages::stage3::SetupSumcheckVerifier` — the verifier
   counterpart, with a two-phase `new` (derive the setup evaluation plan and
-  sumcheck round count from the ring-switch row evaluation) + `verify` (replay
+  sumcheck round count from the ring-switch row evaluation) + `verify_stage3` (replay
   the extension-opening-reduction sumcheck and close it against local
   non-materialized setup and setup-weight evaluations) API. Lives under
   `stages/` alongside stage1/stage2.
@@ -60,14 +60,18 @@ Key abstractions and surfaces:
 
 ### Invariants
 
-- **Prover/verifier symmetry.** A proof produced under `Recursive` verifies
-  under `Recursive`; a proof produced under `Direct` verifies under `Direct`.
-  Protected by `crates/akita-pcs/tests/recursive_setup_e2e.rs`
-  (`recursive_onehot_nv20`, `recursive_onehot_nv25`).
-- **Mode is load-bearing, not cosmetic.** A `Recursive` proof must be rejected
-  under `Direct` and vice versa, because the modes disagree on whether the
-  embedded stage-3 sumcheck is present. Protected by
-  `recursive_onehot_cross_mode_rejects_nv20`.
+- **Prover/verifier symmetry.** A proof produced by the supported recursive
+  config verifies under that config. The ignored production-sized test
+  `generated_recursive_onehot_profile_proves_with_setup_offload` in
+  `crates/akita-pcs/tests/recursive_setup_e2e.rs` delegates to
+  `recursive_multi_group_round_trip` in `tests/common/mod.rs`, which covers
+  schedule resolution, setup-prefix provisioning, prove, serialization, and
+  verify.
+- **Mode is load-bearing, not cosmetic.** `AkitaBatchedProof::stage3_for_mode`
+  rejects an unexpected Stage 3 payload or a missing payload, and the recursive
+  round-trip helper rejects tampered Stage 3 claims, prefix evaluations, and
+  sumcheck coefficients. There is no dedicated cross-mode E2E test with the
+  old names previously listed here.
 - **Setup-contribution value agreement.** The recursive setup-product sumcheck
   must reduce to the same setup contribution as the direct matrix scan.
   Protected at the unit level by the existing materialized-vs-direct
@@ -91,13 +95,12 @@ Key abstractions and surfaces:
 - **ZK support for the recursive setup path.** Hiding/blinding the
   setup-product sumcheck (masked sumcheck rounds, hiding commitments on the
   carried setup claim) is explicitly **out of scope** and deferred to future
-  work. The e2e tests and example are gated `#![cfg(not(feature = "zk"))]`, and
-  the `Recursive` path is not yet exercised under the `zk` feature.
-- **Carried-opening batching / setup-prefix commitment delegation.** This spec
-  keeps the stage-3 sumcheck closed against local verifier scans of the setup
-  prefix and `setup_index_weight_S`; it does not carry the `(rho_setup_idx, rho_y, s_rho)`
-  setup-prefix opening into the next recursive fold or batch it with the
-  folded-witness opening (STACK.md slices 02B/02C/04).
+  work. The current recursive E2E target is `profile-ci` gated and does not
+  claim coverage for the `zk` feature.
+- **Carried-opening batching / setup-prefix commitment delegation in the
+  original Stage 3 delivery.** The later planner and setup-offloading work in
+  PRs #301 and #318 added the carried setup-prefix opening and grouped
+  successor path described by the live planner spec.
 - **Planner/table changes.** No schedule-table regeneration; mode selection is
   orthogonal to the schedule.
 - **Making `Recursive` the default.** `Direct` remains the default mode for the
@@ -114,9 +117,11 @@ below so this archived record does not look like an open task.
 - [x] `AkitaStage3Prover` lives in `akita-prover`; `akita-sumcheck` no longer
       exposes a general `factored_product` module.
 - [x] `SetupSumcheckVerifier` lives in `akita-verifier::stages::stage3` with a
-      `new` + `verify` split.
-- [x] `recursive_setup_e2e` covers recursive round-trip behavior and cross-mode
-      rejection.
+      `new` + `verify_stage3` split.
+- [x] `recursive_setup_e2e` covers the supported recursive round trip,
+      serialization, setup-prefix binding, and Stage 3 tamper rejection through
+      its shared helper. Cross-mode rejection is enforced by
+      `AkitaBatchedProof::stage3_for_mode`, but is not a dedicated E2E case.
 - [x] `cargo run --release -p akita-pcs --example profile` with
       `AKITA_SETUP_MODE=recursive` (and `direct` for comparison) exercises the
       recursive setup-contribution path with per-mode proof-size reporting.
@@ -125,9 +130,11 @@ below so this archived record does not look like an open task.
 
 ### Testing Strategy
 
-- New: `crates/akita-pcs/tests/recursive_setup_e2e.rs` — recursive prove +
-  serialize round-trip + verify (one-hot D=64, nv=20/25), plus a cross-mode
-  rejection test. Uses `run_on_large_stack` and the shared `common` fixtures.
+- New: `crates/akita-pcs/tests/recursive_setup_e2e.rs` — one ignored,
+  production-sized fp128 one-hot recursive prove + serialize round-trip +
+  verify case. Its shared `common` fixture uses two `nv=16` precommitted
+  one-hot groups and a two-polynomial `nv=32` final group, then checks setup
+  prefixes and Stage 3 tampering.
 - Must continue passing: all existing `Direct`-mode e2e suites
   (`single_poly_e2e`, `akita_e2e`, `multipoint_batched_e2e`,
   `batched_aggregated_e2e`, `transcript_hardening*`), and the
@@ -148,12 +155,13 @@ D=32), trace-only:
 - **nv=32:** `akita_verify` Recursive 2.972 G vs Direct 2.746 G total cycles
   (Recursive ≈ +8.3%); fold 0 dominates (~2.26 G MLE step).
 
-So in isolation `Recursive` is slightly more expensive than `Direct`; its value
-is realized only once the carried setup-prefix opening replaces the matrix scan
-(future work, STACK.md slice 04). Verify with:
+These measurements are historical and predate the carried setup-prefix
+integration. In the current selected recursive path, the verifier validates the
+prefix slot and uses the carried setup-prefix opening instead of deriving that
+opening by scanning the setup matrix. Verify the current profile path with:
 
 ```bash
-AKITA_MODE=onehot_fp128_d64_recursive AKITA_SETUP_MODE=recursive \
+AKITA_MODE=onehot_fp128_multi_group_recursive AKITA_SETUP_MODE=recursive \
   cargo run --release -p akita-pcs --example profile
 ```
 
@@ -163,19 +171,19 @@ AKITA_MODE=onehot_fp128_d64_recursive AKITA_SETUP_MODE=recursive \
 
 - **Prover** (`akita-prover`): `core::{suffix,root_fold}` thread
   `setup_contribution_mode`. For `Recursive` on a non-terminal level they call
-  `SetupSumcheckProver::prove`, which prepares the setup terms (required length,
+  `AkitaStage3Prover::prove`, which prepares the setup terms (required length,
   `setup_index_weight`, `alpha` powers) and runs the sumcheck, emitting a
   `SetupSumcheckProof` into the root fold proof's `stage3_sumcheck_proof`. For
   `Direct` the field is `None`.
 - **Verifier** (`akita-verifier`): `protocol::core::{suffix,root_fold}` select the
   stage-3 proof based on mode (`InvalidSetup` if present/absent inconsistently),
   construct `SetupSumcheckVerifier::new(...)` from the ring-switch row
-  evaluation, and call `verify(...)`. The verifier replays the
+  evaluation, and call `verify_stage3(...)`. The verifier replays the
   `ExtensionOpeningReductionSumcheck`, then closes the final claim against
-  `setup_val * setup_index_weight * alpha_val`. `setup_val` is computed by
-  scanning the selected setup prefix against the ring/setup-index equality
-  tables, while `setup_index_weight` is evaluated directly at the setup-index
-  challenge point from the cached segment partition
+  `setup_val * setup_index_weight * alpha_val`. `setup_val` is the carried
+  setup-prefix opening evaluation after the verifier validates slot coverage
+  and transcript binding. `setup_index_weight` is evaluated directly at the
+  setup-index challenge point from the cached segment partition
   (`SetupContributionPlan::evaluate_setup_index_weight_mle`).
 - **Types** (`akita-types`): `SETUP_SUMCHECK_DEGREE` and the
   `SetupContributionMode` enum.
@@ -189,9 +197,10 @@ AKITA_MODE=onehot_fp128_d64_recursive AKITA_SETUP_MODE=recursive \
   Akita only needs the setup-specific instance, and the prover-only logic
   belongs in `akita-prover` per the crate-boundary rules. A general module would
   be dead surface.
-- **Select the recursion mode via an environment variable.** Rejected in favor
-  of a CLI flag with a `direct` default, and recording the mode in the blob so
-  host and guest cannot disagree.
+- **Select the recursion mode through a caller mode or serialized blob.** The
+  old mode argument and blob byte were removed. The current schedule and config
+  bind whether the Stage 3 payload is present, while the profile example keeps
+  `AKITA_SETUP_MODE` only as a local workload selector.
 
 ## Documentation
 
@@ -206,5 +215,5 @@ AKITA_MODE=onehot_fp128_d64_recursive AKITA_SETUP_MODE=recursive \
 - `STACK.md` rows 03B (`setup-product-sumcheck`) and 04 (`setup-claim-offloading`).
 - `specs/archive/2026-Q3/setup-layout-repack.md`, `book/src/how/verifying/matrix_evaluation.md`.
 - `crates/akita-verifier/src/stages/stage3.rs`,
-  `crates/akita-prover/src/protocol/sumcheck/setup_sumcheck.rs`.
+  `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`.
 - Profiling: `profile/akita-recursion/README.md`.

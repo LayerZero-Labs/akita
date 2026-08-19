@@ -26,7 +26,8 @@ Akita's balanced inner commitment decomposition was artificially limited by an
 so `i8` is exact through `L = 8` and `i16` is exact through `L = 16`. This PR
 provides the complete arithmetic and prepared-setup infrastructure needed for
 large inner bases, with bases 10 and 11 as the immediate target. It does not
-change planner policy or generated schedules yet.
+change planner policy or generated schedules in PR #358 itself. The planner
+follow-up landed separately in PR #355 and is recorded below.
 
 The implementation also cuts the terminal verifier's `A * z` relation over to
 one signed-`i16` NTT matvec. Decoded terminal coefficients outside `i16` are
@@ -104,9 +105,10 @@ inside `(-P/2, P/2)`, which is the implemented condition
 For balanced base `2^L`, the canonical conservative bound is
 `B = 2^(L-1)`. For the terminal relation, all decoded coefficients are checked
 to fit `i16`, so `B = 2^15 = 32768` (`L = 16`). Capacity arithmetic must be
-overflow-safe and shared by preparation, warming, execution, tests, and any
-future planner capability check. There must not be separate wrapper formulas or
-weaker field/profile-specific approximations.
+overflow-safe and shared by preparation, warming, execution, tests, and cache
+capability checks. The planner shares the signed-digit storage envelope, but it
+does not call the field/ring/width CRT selector. Any future planner capacity
+gate must use that canonical selector rather than a weaker approximation.
 
 The canonical base profiles are:
 
@@ -345,9 +347,9 @@ it must preserve the single public cache contract and the exactness selector.
 
 ### Non-Goals
 
-1. Enabling planner emission of L10/L11 schedules or regenerating schedule
-   catalogs. That is a follow-up once the planner proves those schedules
-   Pareto-optimal under the canonical capability and security contracts.
+1. Changing planner emission or regenerating schedule catalogs as part of PR
+   #358. That follow-up was completed separately in PR #355; this record keeps
+   the implementation boundary explicit.
 2. Supporting balanced bases above 16 or coefficients wider than `i16` in the
    terminal relation.
 3. Adding the tail unconditionally to Q64/Q128 or to every `i16` operation.
@@ -361,8 +363,9 @@ it must preserve the single public cache contract and the exactness selector.
 7. Requiring AVX-512, AVX2, NEON, Metal, or CUDA for correctness.
 8. Standardizing a GPU buffer layout in this PR. The interface must permit one,
    but the CPU layout remains an implementation detail.
-9. Reworking planner/security pricing beyond exposing the one canonical
-   implementability contract needed by the follow-up planner PR.
+9. Reworking planner/security pricing beyond the basis capability needed by
+   PR #355. Exact field/ring/width CRT selection remains a runtime NTT
+   preparation concern.
 10. Adding a protocol-level benchmark fixture. This PR measures the NTT matvec
     kernel directly so rank, ring degree, accumulation width, digit storage,
     and exactness-tail selection can be varied independently.
@@ -789,8 +792,9 @@ and terminal verification contract used by the implementation.
 The planner follow-up is complete. The proof-optimized configuration now
 searches inner bases through L10 for Q32 and L11 for Q64 and Q128, while the
 planner validates recursive balanced bases through the signed-i16 limit. The
-planner and NTT implementation share the signed-digit capacity contract rather
-than keeping a separate planner-local approximation.
+planner and NTT implementation share the signed-digit storage envelope, while
+the exact field/ring/width CRT selector remains in
+`akita-types::ntt_cache` and is used by prover and verifier preparation.
 
 ## Reviewer Map
 
