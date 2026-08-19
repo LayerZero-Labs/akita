@@ -22,10 +22,11 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_prover::{NttExecutionRequirements, NttOperationCluster};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, PolynomialGroupLayout,
-    SetupContributionMode,
+    AkitaScheduleLookupKey, FoldSchedule, NttCacheKey, NttTransformDomain, OpeningMethod,
+    PolynomialGroupLayout, SetupContributionMode, SubringCoefficientPackingGeometry,
 };
 use common::*;
 
@@ -64,25 +65,27 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
                 .map(|slot| slot.natural_len)
         })
         .collect::<Vec<_>>();
-    eprintln!(
-        "W8R2 setup capacities: provisioned_k2={}, provisioned_k4={}, exact_prover={}, exact_verifier={}, incoming_prefixes={:?}",
-        setup_for_two.num_field_elements,
-        setup_for_four.num_field_elements,
-        prover.num_field_elements,
-        verifier.num_field_elements,
-        incoming_prefixes
+    assert_eq!(setup_for_two.num_field_elements, 32_768);
+    assert_eq!(setup_for_four.num_field_elements, 8_388_608);
+    assert_eq!(prover.num_field_elements, 8_388_608);
+    assert_eq!(verifier.num_field_elements, 3_432_448);
+    assert_eq!(
+        incoming_prefixes,
+        [Some(8_388_608), None, None, None, None, None]
     );
     // Exactly one fold carries a setup prefix, and it carries the length the
-    // committed catalog states. Reading the length from the schedule keeps this
-    // assertion from pinning a planner output that legitimately moves.
+    // committed catalog states. These values deliberately pin the shipped row:
+    // a planner change must update the fixture and explain the new setup shape.
     assert_eq!(
         incoming_prefixes.len(),
         schedule.schedule().recursive_folds.len()
     );
     assert!(incoming_prefixes[0].is_some());
     assert!(incoming_prefixes[1..].iter().all(Option::is_none));
-    assert_eq!(prover.num_field_elements, 16_777_216);
-    assert_eq!(verifier.num_field_elements, 8_388_608);
+    assert!(
+        verifier.num_field_elements <= prover.num_field_elements,
+        "verifier setup must remain a prefix of the prover setup"
+    );
 
     // `K=2` cannot reach the four-polynomial grouped root, and this family
     // ships no row without precommitted groups. The only shape it can still serve is
@@ -100,6 +103,62 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     assert_eq!(setup_for_four.num_field_elements, prover.num_field_elements);
 }
 
+#[test]
+fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
+    let key = w8r2_profiling_key();
+    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&key)
+        .expect("W8R2 schedule")
+        .into_schedule();
+    let first_recursive = &schedule.recursive_folds[0].params;
+    assert_eq!(first_recursive.witness_partition.num_chunks(), 8);
+    let prefix = first_recursive
+        .incoming_setup_prefix
+        .as_ref()
+        .expect("W8R2 first recursive fold must consume a setup prefix");
+    let witness_a = &first_recursive.witness.inner_commit_matrix;
+    let prefix_a = &prefix.commitment_params.layout.inner_commit_matrix;
+    assert_eq!(
+        (
+            witness_a.ring_dimension(),
+            witness_a.output_rank(),
+            witness_a.input_width(),
+        ),
+        (64, 5, 2_048),
+    );
+    assert_eq!(
+        (
+            prefix_a.ring_dimension(),
+            prefix_a.output_rank(),
+            prefix_a.input_width(),
+        ),
+        (64, 6, 4_096),
+    );
+
+    let witness_tail =
+        NttCacheKey::from_matrix_shape(64, 5, 2_048, NttTransformDomain::I16TailBothTransforms)
+            .expect("valid W8R2 witness tail key");
+    let prefix_tail =
+        NttCacheKey::from_matrix_shape(64, 6, 4_096, NttTransformDomain::I16TailBothTransforms)
+            .expect("valid W8R2 prefix tail key");
+    let requirements =
+        NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
+    let has_tail = |expected| {
+        requirements.entries().iter().any(|entry| {
+            entry.fold_level == 1
+                && entry.cluster == NttOperationCluster::RingSwitch
+                && entry.key == expected
+        })
+    };
+    assert!(
+        !has_tail(witness_tail),
+        "the smaller recursive-witness bound must remain on the base CRT profile"
+    );
+    assert!(
+        has_tail(prefix_tail),
+        "the incoming prefix must inherit the consuming W8 chunk count"
+    );
+}
+
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".
 ///
 /// The generated table is exact for the `(32, 2) + two (16, 1)` profiling key, so
@@ -113,28 +172,77 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "W8R2 profile must have at least three fold levels, got {}",
         1 + schedule.recursive_folds.len()
     );
+    for (level, params) in [
+        &schedule.root.params.final_group.commitment,
+        &schedule.recursive_folds[0].params.witness,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } = params.opening_method
+        else {
+            panic!("level {level} must use coefficient packing");
+        };
+        let geometry = SubringCoefficientPackingGeometry::try_new(
+            W8R2Cfg::EXT_DEGREE,
+            params.d_a(),
+            challenge_subring_dimension,
+        )
+        .expect("valid coefficient-packing geometry");
+        let expected_d_a = if level == 0 { 256 } else { 64 };
+        assert_eq!(
+            params.d_a(),
+            expected_d_a,
+            "level {level} must preserve its exact A-ring dimension"
+        );
+        assert_eq!(
+            challenge_subring_dimension, 64,
+            "level {level} must use the 64-coefficient challenge subring"
+        );
+        let expected_packing_factor = if level == 0 { 4 } else { 1 };
+        assert_eq!(geometry.packing_factor(), expected_packing_factor);
+        if level == 0 {
+            assert!(
+                geometry.packing_factor() > 1,
+                "the root must use reduced-width coefficient packing"
+            );
+        }
+    }
     assert_eq!(
-        schedule.root.params.final_group.commitment.role_dims(),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 128,
-        },
-        "level 0 must use the A/B/D role dimensions the shipped W8R2 row selects"
+        schedule.root.params.precommitted_groups.len(),
+        2,
+        "W8R2 must carry the two frozen singleton groups"
     );
+    for (group_index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+        assert_eq!(
+            group.commitment.layout.inner_commit_matrix.ring_dimension(),
+            512
+        );
+        let expected_subring_dimension = if group_index == 0 { 64 } else { 128 };
+        assert_eq!(
+            group.commitment.opening.opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: expected_subring_dimension,
+            },
+            "precommitted group {group_index} must preserve its exact packing domain"
+        );
+        let geometry = SubringCoefficientPackingGeometry::try_new(
+            W8R2Cfg::EXT_DEGREE,
+            group.commitment.layout.inner_commit_matrix.ring_dimension(),
+            expected_subring_dimension,
+        )
+        .expect("valid precommitted packing geometry");
+        assert_eq!(
+            geometry.packing_factor(),
+            if group_index == 0 { 8 } else { 4 }
+        );
+    }
     assert_eq!(
-        schedule.recursive_folds[0].params.witness.role_dims(),
-        CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 128,
-        },
-        "level 1 must use the A/B/D role dimensions the shipped W8R2 row selects"
-    );
-    assert_eq!(
-        schedule.recursive_folds[1].params.witness.role_dims(),
-        CommitmentRingDims::uniform(64),
-        "level 2 must retain the shipped uniform D64 suffix dimensions"
+        schedule.recursive_folds[1].params.witness.opening_method,
+        OpeningMethod::EvaluationTrace,
+        "the level-2 fold must consume the packing-produced flat witness through EvaluationTrace"
     );
 
     // Levels 0 and 1 both use the W8R2 witness partition: 8 chunks over the two
@@ -172,6 +280,17 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             .is_some(),
         "level 1 must consume the level-0 setup prefix"
     );
+    assert!(matches!(
+        schedule.recursive_folds[0]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+            .expect("level-1 setup prefix")
+            .commitment_params
+            .opening
+            .opening_method,
+        OpeningMethod::SubringCoefficientPacking { .. }
+    ));
 
     // Level 2 is the single-chunk direct fold after the selected offload edge.
     let level2 = &schedule.recursive_folds[1].params;

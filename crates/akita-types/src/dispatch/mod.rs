@@ -37,8 +37,6 @@ pub enum ProtocolRingDispatchTierId {
 pub enum ProtocolDispatchSlot {
     /// A/B/D matrix role (`RingRole`).
     Role(RingRole),
-    /// Configured uniform-policy algebra ring dimension.
-    UniformPolicy,
     /// CRT/NTT cache warm and build.
     Ntt,
     /// Compression-only F/H matrices under the modulus-profile ladder.
@@ -216,7 +214,7 @@ mod tests {
 
     #[test]
     fn small_field_commitment_dispatch_reaches_profile_caps() {
-        for (d, expected) in [(512usize, 512), (1024, 1024)] {
+        for (d, expected) in [(512usize, 512), (1024, 1024), (2048, 2048)] {
             assert_eq!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -236,25 +234,21 @@ mod tests {
         )
         .is_err());
         assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
+            ProtocolDispatchSlot::Role(RingRole::Outer),
             Prime64Offset59,
             1024usize,
             |D| Ok(D)
         )
         .is_err());
-    }
-
-    #[test]
-    fn fp64_uniform_policy_dispatch_matches_declared_d512_cap() {
         assert_eq!(
             dispatch_for_field!(
-                ProtocolDispatchSlot::UniformPolicy,
+                ProtocolDispatchSlot::Role(RingRole::Inner),
                 Prime64Offset59,
-                512usize,
+                1024usize,
                 |D| Ok(D)
             )
-            .expect("declared fp64 uniform-policy dimension must dispatch"),
-            512
+            .expect("supported fp64 inner dimension"),
+            1024
         );
     }
 
@@ -389,18 +383,25 @@ mod tests {
         assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_ok).is_ok());
 
         let fp32_high_a = CommitmentRingDims {
-            inner: 512,
+            inner: 2048,
             outer: 64,
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_a).is_ok());
 
         let fp32_high_b = CommitmentRingDims {
-            inner: 512,
+            inner: 2048,
             outer: 512,
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_b).is_err());
+
+        let fp64_high_a = CommitmentRingDims {
+            inner: 1024,
+            outer: 64,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime64Offset59>(fp64_high_a).is_ok());
 
         let fp128_high_b = CommitmentRingDims {
             inner: 64,
@@ -415,5 +416,12 @@ mod tests {
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_a).is_ok());
+
+        let fp128_too_high_a = CommitmentRingDims {
+            inner: 1024,
+            outer: 64,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_too_high_a).is_err());
     }
 }

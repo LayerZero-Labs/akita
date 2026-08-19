@@ -118,10 +118,15 @@ fn validate_canonical_transition_lengths(
         )));
     }
     let expected_root_output = if root_params.has_precommitted_groups() {
-        root_params.output_witness_len_for_field_bits(field_bits, &profiles.opening_layout()?)?
+        root_params.output_witness_len_for_field_bits(
+            field_bits,
+            policy.claim_ext_degree,
+            &profiles.opening_layout()?,
+        )?
     } else {
         planned_next_witness_len(
             field_bits,
+            policy.claim_ext_degree,
             root_params,
             profiles.final_group.group.num_polynomials(),
             root_params.witness_chunk.num_chunks,
@@ -149,6 +154,7 @@ fn validate_canonical_transition_lengths(
         }
         let expected_output = planned_next_witness_len(
             field_bits,
+            policy.claim_ext_degree,
             &step.params.witness,
             1,
             step.params.witness.witness_chunk.num_chunks,

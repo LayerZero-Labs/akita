@@ -1,4 +1,122 @@
 use super::*;
+use std::sync::Arc;
+
+fn two_source_linear_terms(
+    live_lane_count: usize,
+    coeff_count: usize,
+) -> (PreparedProverLinearTerms<F>, Vec<F>) {
+    let source0 = (0..coeff_count)
+        .map(|index| F::from_u64(101 + 3 * index as u64))
+        .collect::<Vec<_>>();
+    let source1 = (0..coeff_count)
+        .map(|index| F::from_u64(211 + 5 * index as u64))
+        .collect::<Vec<_>>();
+    let mut segments = Vec::with_capacity(2 * live_lane_count);
+    let mut terms = Vec::with_capacity(2 * live_lane_count);
+    let mut dense = vec![F::zero(); live_lane_count * coeff_count];
+    for lane in 0..live_lane_count {
+        let target = lane * coeff_count;
+        for (source_index, source) in [&source0, &source1].into_iter().enumerate() {
+            let factor = F::from_u64(307 + 7 * lane as u64 + 11 * source_index as u64);
+            let segment_start = segments.len();
+            segments.push(StructuredLinearSegment {
+                physical_coefficient_start: target,
+                source_coefficient_start: 0,
+                coefficient_count: coeff_count,
+            });
+            terms.push(StructuredLinearTerm {
+                factor,
+                source_index,
+                segment_range: segment_start..segments.len(),
+            });
+            for coefficient in 0..coeff_count {
+                dense[target + coefficient] += factor * source[coefficient];
+            }
+        }
+    }
+    let weights = StructuredLinearWeights {
+        sources: vec![Arc::from(source0), Arc::from(source1)],
+        segments,
+        terms,
+        physical_field_len: dense.len(),
+    };
+    let prepared = PreparedProverLinearTerms::from_structured_weights(&weights, coeff_count)
+        .expect("two shared structured sources should prepare");
+    assert_eq!(prepared.source_count(), 2);
+    assert_eq!(prepared.materialize_dense(), dense);
+    (prepared, dense)
+}
+
+#[test]
+fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
+    let lane_bits = 5usize;
+    let coefficient_bits = 4usize;
+    let live_lane_count = 19usize;
+    let coeff_count = 1usize << coefficient_bits;
+    let b = 8usize;
+    let half = (b / 2) as i8;
+    let compact_witness = (0..live_lane_count * coeff_count)
+        .map(|index| ((13 * index + 3) % b) as i8 - half)
+        .collect::<Vec<_>>();
+    let stage1_point = (0..lane_bits + coefficient_bits)
+        .map(|index| F::from_u64(401 + 13 * index as u64))
+        .collect::<Vec<_>>();
+    let common_alpha_factor = (0..coeff_count)
+        .map(|index| F::from_u64(503 + 17 * index as u64))
+        .collect::<Vec<_>>();
+    let relation_lane_weights = (0..1usize << lane_bits)
+        .map(|index| F::from_u64(601 + 19 * index as u64))
+        .collect::<Vec<_>>();
+    let params = Stage2Params {
+        stage1_point: &stage1_point,
+        b,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
+    };
+    let (structured, dense) = two_source_linear_terms(live_lane_count, coeff_count);
+    let mut optimized = new_stage2_test_prover_with_linear_terms(
+        F::from_u64(701),
+        compact_witness.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
+        dense.clone(),
+        structured,
+        params,
+    );
+    assert!(optimized.can_use_deferred_compact_prefix());
+    let (structured, _) = two_source_linear_terms(live_lane_count, coeff_count);
+    let mut direct = new_stage2_test_prover_with_linear_terms(
+        F::from_u64(701),
+        compact_witness,
+        common_alpha_factor,
+        relation_lane_weights,
+        dense,
+        structured,
+        params,
+    );
+    direct.compact_prefix_stage1_point = None;
+
+    let mut optimized_claim = optimized.input_claim();
+    let mut direct_claim = direct.input_claim();
+    assert_eq!(optimized_claim, direct_claim);
+    for round in 0..lane_bits + coefficient_bits {
+        let optimized_poly = optimized.compute_round_univariate(round, optimized_claim);
+        let direct_poly = direct.compute_round_univariate(round, direct_claim);
+        assert_eq!(optimized_poly, direct_poly, "mismatch at round {round}");
+        let challenge = F::from_u64(809 + 23 * round as u64);
+        optimized_claim = optimized_poly.evaluate(&challenge);
+        direct_claim = direct_poly.evaluate(&challenge);
+        optimized.ingest_challenge(round, challenge);
+        direct.ingest_challenge(round, challenge);
+    }
+    assert_eq!(optimized_claim, direct_claim);
+    assert_eq!(optimized.final_w_eval(), direct.final_w_eval());
+    assert_eq!(
+        optimized.linear_terms.final_value().unwrap(),
+        direct.linear_terms.final_value().unwrap()
+    );
+}
 
 #[test]
 fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
@@ -205,11 +323,8 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     );
     let expected_alpha_round2 =
         RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
-    let mut expected_trace = PreparedProverEvaluationTrace::from_dense(
-        trace_compact.clone(),
-        live_lane_count,
-        coeff_count,
-    );
+    let mut expected_trace =
+        PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_lane_count, coeff_count);
     expected_trace.fold_two_coefficients(r0, r1);
     let expected_relation_lane_weights = prover.relation_lane_weights.clone();
 
@@ -234,7 +349,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     expected.split_eq.bind(r1);
     expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
     expected.common_alpha_factor = expected_alpha_round2.clone();
-    expected.evaluation_trace = expected_trace;
+    expected.linear_terms = expected_trace;
     expected.rounds_completed = 2;
     expected.relation_lane_weights = expected_relation_lane_weights.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
@@ -253,7 +368,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         .map(|quad| fold_two_round_quad(quad[0], quad[1], quad[2], quad[3], r0, r1))
         .collect::<Vec<_>>();
     assert_eq!(
-        prover.evaluation_trace.materialize_dense(),
+        prover.linear_terms.materialize_dense(),
         expected_trace_round2,
         "two-round handoff must preserve the folded trace"
     );

@@ -441,7 +441,6 @@ where
                 continue;
             }
             let first_claim_coefficient = unit.e_coefficient_index(
-                group_dims.d_a(),
                 group_dims.d_d(),
                 num_claims,
                 digit_count,
@@ -621,11 +620,11 @@ mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
     use akita_config::proof_optimized::fp128;
-    use akita_config::CommitmentConfig;
     use akita_types::{
         basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
-        DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry,
-        RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
+        CommittedGroupParams, DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint,
+        RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint,
+        SisModulusProfileId, WitnessLayout,
     };
 
     #[test]
@@ -750,25 +749,35 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type Cfg = fp128::Dense;
-        type F = fp128::Field;
+        type F = akita_field::Prime128OffsetA7F7;
         type E = F;
-        const D: usize = Cfg::D;
+        const D: usize = 128;
         const NUM_VARIABLES: usize = 16;
 
         let opening_batch =
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
-        let level_params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
-            .expect("level parameters")
-            .schedule()
-            .root
-            .params
-            .final_group
-            .commitment
-            .clone();
+        let level_params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            3,
+            2,
+            4,
+            3,
+            akita_challenges::SparseChallengeConfig::production_for_ring_dim(D)
+                .expect("D128 challenge"),
+        )
+        .with_decomp(64, (1usize << NUM_VARIABLES) / D, 2, 2, 2)
+        .expect("local EvaluationTrace geometry");
+        let relation_witness_geometry =
+            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+                &level_params,
+                &opening_batch,
+            )
+            .expect("evaluation-trace relation geometry");
         let witness_layout = WitnessLayout::new(
             &level_params,
             &opening_batch,
+            &relation_witness_geometry,
             2,
             r_decomp_levels::<F>(level_params.log_basis_open),
         )
@@ -778,6 +787,7 @@ mod tests {
             RelationAddressGeometry::new(level_params.role_dims(), D / 2, live_len)
                 .expect("flat trace domain");
         let plan = RelationRangeImagePlan::new(
+            relation_witness_geometry,
             relation_address_geometry,
             DigitRangePlan::new(1usize << level_params.log_basis_open).expect("range basis"),
             witness_layout,
@@ -866,7 +876,6 @@ mod tests {
                                 for role_coefficient in 0..group_dims.d_d() {
                                     let address = unit
                                         .e_coefficient_index(
-                                            group_dims.d_a(),
                                             group_dims.d_d(),
                                             group_layout.num_polynomials(),
                                             parameters.opening_digit_weights().len(),

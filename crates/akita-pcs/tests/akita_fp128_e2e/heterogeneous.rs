@@ -27,19 +27,10 @@ fn heterogeneous_group_types() {
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
 
-        // Derive the OneHot pre-commit ring_d from the row without prior
-        // groups, so the polynomial matches what `commit` selects below.
-        let pre_d = OneHotCfg::profile_without_precommitted_groups(
-            akita_types::PolynomialGroupLayout::new(ONEHOT_PRE_NV, 1),
-        )
-        .expect("onehot pre profile without precommitted groups")
-        .inner_commit_matrix
-        .ring_dimension();
         let onehot_k_pre = 256usize;
         let pre_chunks = (1usize << ONEHOT_PRE_NV) / onehot_k_pre;
         let onehot_pre = akita_prover::OneHotPoly::<F, u8>::new(
             onehot_k_pre,
-            pre_d,
             (0..pre_chunks)
                 .map(|i| (i % 3 == 0).then_some((i % onehot_k_pre) as u8))
                 .collect(),
@@ -52,12 +43,10 @@ fn heterogeneous_group_types() {
         let dense_evals_b = (0..(1usize << DENSE_PRE_NV))
             .map(|i| F::from_u64((i % 509) as u64))
             .collect::<Vec<_>>();
-        let dense_a =
-            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_a)
-                .expect("dense a");
-        let dense_b =
-            akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, DENSE_D, &dense_evals_b)
-                .expect("dense b");
+        let dense_a = akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, &dense_evals_a)
+            .expect("dense a");
+        let dense_b = akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, &dense_evals_b)
+            .expect("dense b");
 
         let final_onehot = make_onehot_poly(FINAL_NV, 0x1701_0000);
 
@@ -245,7 +234,6 @@ fn bounded_dense_precommit_with_onehot_final_group() {
     type BoundedDenseCfg = fp128::DenseBounded;
     const BOUNDED_PRE_NV: usize = 14;
     const FINAL_NV: usize = 16;
-    const BOUNDED_D: usize = BoundedDenseCfg::D;
 
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -255,7 +243,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         // whose range `[-2^64, 2^64 - 1]` contains every `u64`.
         let bounded_evals = u64_dense_field_evals(BOUNDED_PRE_NV, 0x8064_0001);
         let bounded_dense =
-            akita_prover::DensePoly::from_field_evals(BOUNDED_PRE_NV, BOUNDED_D, &bounded_evals)
+            akita_prover::DensePoly::from_field_evals(BOUNDED_PRE_NV, &bounded_evals)
                 .expect("bounded dense poly");
         let final_onehot = make_onehot_poly(FINAL_NV, 0x8064_0000);
 
@@ -503,12 +491,9 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
             akita_types::PolynomialGroupLayout::new(NV, 1),
         )
         .expect("one-hot profile");
-        let ring_d = profile.inner_commit_matrix.ring_dimension();
-
         // Dense all-ones: inside the digit envelope, outside the source class.
-        let dense =
-            akita_prover::DensePoly::<F>::from_field_evals(NV, ring_d, &[F::one(); 1usize << NV])
-                .expect("dense poly");
+        let dense = akita_prover::DensePoly::<F>::from_field_evals(NV, &[F::one(); 1usize << NV])
+            .expect("dense poly");
         let error = AkitaCommitmentScheme::<OneHotCfg>::commit(
             &setup,
             std::slice::from_ref(&dense),
@@ -536,7 +521,6 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         // The proper one-hot representation at the same geometry is accepted.
         let onehot = akita_prover::OneHotPoly::<F, u8>::new(
             256,
-            ring_d,
             (0..(1usize << NV) / 256)
                 .map(|i| Some((i % 256) as u8))
                 .collect(),
@@ -618,7 +602,6 @@ fn bounded_dense_declares_a_bound_that_contains_every_u64() {
 fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
     type BoundedDenseCfg = fp128::DenseBounded;
     const NV: usize = 14;
-    const BOUNDED_D: usize = BoundedDenseCfg::D;
 
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -630,8 +613,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
                 .expect("stack");
 
         let commit = |evals: &[F]| {
-            let poly = akita_prover::DensePoly::from_field_evals(NV, BOUNDED_D, evals)
-                .expect("dense poly");
+            let poly = akita_prover::DensePoly::from_field_evals(NV, evals).expect("dense poly");
             AkitaCommitmentScheme::<BoundedDenseCfg>::commit(
                 &setup,
                 std::slice::from_ref(&poly),
@@ -704,8 +686,8 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
             full_setup.expanded.as_ref(),
         )
         .expect("stack");
-        let poly = akita_prover::DensePoly::from_field_evals(NV, DENSE_D, &over_positive)
-            .expect("dense poly");
+        let poly =
+            akita_prover::DensePoly::from_field_evals(NV, &over_positive).expect("dense poly");
         AkitaCommitmentScheme::<DenseCfg>::commit(
             &full_setup,
             std::slice::from_ref(&poly),
@@ -727,7 +709,7 @@ fn heterogeneous_compute_backends() {
         type Scheme = AkitaCommitmentScheme<Cfg>;
 
         let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
-        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals).unwrap();
+        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
 
         let setup = Scheme::setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");

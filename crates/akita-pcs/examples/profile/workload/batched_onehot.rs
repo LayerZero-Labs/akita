@@ -57,11 +57,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let group_layout = PolynomialGroupLayout::new(nv, num_polys);
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
         .map(|poly_idx| {
-            make_profile_onehot_poly::<FF>(
-                nv,
-                layout.d_a(),
-                0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32),
-            )
+            make_profile_onehot_poly::<FF>(nv, 0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32))
         })
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
@@ -174,8 +170,14 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             setup_contribution_mode,
             plan,
         );
-        emit_runtime_schedule_summary(label, plan, group_layout, Cfg::decomposition().field_bits())
-            .expect("runtime schedule report geometry");
+        emit_runtime_schedule_summary(
+            label,
+            plan,
+            group_layout,
+            Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -196,6 +198,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             &schedule,
             group_layout,
             Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(

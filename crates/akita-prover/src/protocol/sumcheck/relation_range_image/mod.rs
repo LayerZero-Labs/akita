@@ -1,4 +1,4 @@
-//! Fused relation, evaluation-trace, and range-image sumcheck prover.
+//! Fused relation, structured-opening, and range-image sumcheck prover.
 //!
 //! This sumcheck views the committed witness as one flat LSB-first Boolean table.
 //! The current state machine splits its point after
@@ -38,9 +38,11 @@
 //! `y_alpha` runs `FoldEvaluation | A | B(u) | D(v)` for quotient rows; the
 //! opening target enters the Stage-2 claim through EvaluationTrace.
 //!
-//! The fused EvaluationTrace term binds the committed fold witness to the public
-//! opening through a fixed, public multilinear `TraceWeight(address)` (nonzero only
-//! on the `e_hat` digit segment). Its input contribution is
+//! The structured linear term engine binds the committed fold witness to the public
+//! opening through fixed public multilinear weights. EvaluationTrace contributes one
+//! such weight on the `e_hat` digit segment. Coefficient packing contributes its direct
+//! scalar-opening weight plus a separate packing-consistency weight on `z_hat`. The
+//! EvaluationTrace input contribution is
 //! `eq(tau1, EvaluationTrace_row_index) * trace_target`, where `trace_target` is
 //! the incoming opening claim (or the EOR final claim on extension-opening-reduction
 //! paths). It reuses the existing row-index challenge (`tau1`) and adds no extra
@@ -219,9 +221,9 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
     accum_small_signed::<E>(rel, 4, dp, dw);
 }
 
-/// Fused relation, evaluation-trace, and range-image sumcheck prover.
+/// Fused relation, structured-linear, and range-image sumcheck prover.
 ///
-/// Holds one witness state shared by the range-image, relation, and evaluation-trace
+/// Holds one witness state shared by the range-image, relation, and structured-linear
 /// terms. The compact prefix is materialized once into the folded field suffix.
 /// The range-image term is pre-weighted by `batching_coeff` through `split_eq`, so
 /// the round polynomial is:
@@ -237,11 +239,11 @@ pub struct RelationRangeImageProver<E: FieldCore> {
     common_alpha_factor: Vec<E>,
     relation_lane_weights: Vec<E>,
     additional_relation_terms: Option<AdditionalRelationTerms<E>>,
-    evaluation_trace: PreparedProverEvaluationTrace<E>,
+    linear_terms: PreparedProverLinearTerms<E>,
     live_lane_count: usize,
     lane_bits: usize,
     num_vars: usize,
-    relation_trace_claim: E,
+    relation_linear_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
     compact_prefix_stage1_point: Option<Vec<E>>,
@@ -254,6 +256,7 @@ pub struct RelationRangeImageProver<E: FieldCore> {
 }
 
 mod additional_terms;
+mod coefficient_packing_terms;
 mod coefficient_prefix;
 mod coefficient_round_fold;
 mod compact_prefix;
@@ -264,16 +267,21 @@ mod lifecycle;
 mod round_flow;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
-pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
+pub(in crate::protocol) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
+pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverLinearTerms};
+#[cfg(test)]
+pub(crate) use evaluation_trace::{
+    StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
+};
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
-    // Fused relation (`alpha * m`) + trace-weight addend for one witness
+    // Fused relation (`alpha * m`) + structured-linear addend for one witness
     // corner. `witness_idx0` is the first flat index of an adjacent pair in
     // the Boolean `w` table (`lane * coeff_count + coefficient`).
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_trace(
+    pub(super) fn accumulate_fused_relation_linear(
         &self,
         rel: &mut [E; 3],
         w0: E,
@@ -284,14 +292,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     ) {
         let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
-            .evaluation_trace
+            .linear_terms
             .pair_from_flat_index(witness_idx0, coeff_count);
         accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn accumulate_fused_relation_trace_signed(
+    pub(super) fn accumulate_fused_relation_linear_signed(
         &self,
         rel: &mut [E::MulU64Accum; 6],
         w0: i64,
@@ -302,17 +310,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     ) {
         let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
-            .evaluation_trace
+            .linear_terms
             .pair_from_flat_index(witness_idx0, coeff_count);
         accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
     #[inline]
-    pub(super) fn fold_evaluation_trace_for_current_round(&mut self, challenge: E) {
+    pub(super) fn fold_linear_terms_for_current_round(&mut self, challenge: E) {
         if self.in_coefficient_round() {
-            self.evaluation_trace.fold_coefficients(challenge);
+            self.linear_terms.fold_coefficients(challenge);
         } else {
-            self.evaluation_trace.fold_lanes(challenge);
+            self.linear_terms.fold_lanes(challenge);
         }
     }
 }

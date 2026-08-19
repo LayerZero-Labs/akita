@@ -4,8 +4,12 @@
 |-------------|--------------------------------|
 | Author(s)   | Taghi Badakhshan               |
 | Created     | 2026-05-30                     |
-| Status      | in progress                    |
+| Status      | historical                     |
 | PR          | `taghi/perf/eor-sc` ([#136](https://github.com/LayerZero-Labs/akita/pull/136))     |
+
+> **Historical design record.** Root EOR was superseded by subring coefficient
+> packing. The surviving suffix and terminal EOR implementation is documented
+> in the Akita Book.
 
 ## Summary
 

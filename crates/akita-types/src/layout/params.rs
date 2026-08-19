@@ -12,7 +12,7 @@ use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::{
     CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
-    SetupPrefixSlotId,
+    ScheduledSetupPrefix,
 };
 
 pub use crate::sis::{
@@ -61,7 +61,8 @@ mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 pub use precommitted::{
-    LevelParamsLike, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+    opening_d_segment_width, GroupOpeningPlan, LevelParamsLike, OpeningFamily, OpeningMethod,
+    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
 };
 
 /// Gadget basis used by opening-digit segments in the shared D product.
@@ -86,6 +87,10 @@ pub fn shared_d_digit_log_basis(
 pub struct CommittedGroupParams {
     /// Public B/D payload encoding selected for this fold level.
     pub payload_mode: crate::CommitmentPayloadMode,
+    /// Physical source encoding authenticated by A and B.
+    pub source_encoding: crate::CommittedSourceEncoding,
+    /// Procedure used to reduce and open this group's coefficients.
+    pub opening_method: OpeningMethod,
     /// Base-2 logarithm of the A/source gadget decomposition base.
     pub log_basis_inner: u32,
     /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
@@ -132,7 +137,7 @@ pub struct CommittedGroupParams {
     /// [`crate::RecursiveFoldParams::incoming_setup_prefix`] is authoritative;
     /// [`crate::FoldSchedule::validate_structure`] rejects disagreement before
     /// prover or verifier execution.
-    pub setup_prefix: Option<SetupPrefixSlotId>,
+    pub setup_prefix: Option<ScheduledSetupPrefix>,
 }
 
 impl CommittedGroupParams {
@@ -254,6 +259,8 @@ impl CommittedGroupParams {
     ) -> Self {
         Self {
             payload_mode: crate::CommitmentPayloadMode::Compressed,
+            source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
+            opening_method: OpeningMethod::EvaluationTrace,
             log_basis_inner: log_basis,
             log_basis_outer: log_basis,
             log_basis_open: log_basis,
@@ -488,6 +495,7 @@ impl CommittedGroupParams {
                 "commitment request requires at least one polynomial".into(),
             ));
         }
+        self.source_encoding.validate(self.d_a())?;
         self.validate_block_geometry()?;
         self.outer_slice_count.validate_for_commitment(
             fold_level,
@@ -600,7 +608,17 @@ impl CommittedGroupParams {
     /// Kept next to [`CommittedGroupParams`] so protocol-affecting field changes are
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(self.payload_mode.tag());
+        self.append_descriptor_bytes_with_payload_mode(bytes, self.payload_mode);
+    }
+
+    pub(crate) fn append_descriptor_bytes_with_payload_mode(
+        &self,
+        bytes: &mut Vec<u8>,
+        payload_mode: crate::CommitmentPayloadMode,
+    ) {
+        bytes.push(payload_mode.tag());
+        self.source_encoding.append_descriptor_bytes(bytes);
+        self.opening_method.append_descriptor_bytes(bytes);
         push_u32(bytes, self.log_basis_inner);
         push_u32(bytes, self.log_basis_outer);
         push_u32(bytes, self.log_basis_open);
@@ -732,7 +750,7 @@ impl CommittedGroupParams {
         OpeningClaimsLayout::from_root_groups(&precommitted, final_group)
     }
 
-    pub fn validate_opening_batch(
+    pub(crate) fn validate_opening_batch_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
@@ -752,7 +770,7 @@ impl CommittedGroupParams {
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             group_params.validate()?;
-            if group_params.log_basis_open != self.log_basis_open {
+            if group_params.opening.log_basis_open != self.log_basis_open {
                 return Err(AkitaError::InvalidSetup(
                     "all opening groups must use the batch-shared opening basis".to_string(),
                 ));
@@ -765,6 +783,13 @@ impl CommittedGroupParams {
             }
         }
         opening_batch.root_final_group_index()
+    }
+
+    pub fn validate_opening_batch(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        self.validate_opening_batch_geometry(opening_batch)
     }
 
     /// Resolve one opening group's A/B dimensions with this level's shared D.
@@ -788,21 +813,42 @@ impl CommittedGroupParams {
         Ok(dims)
     }
 
+    /// Resolve one opening group's structural A/B/D dimensions without
+    /// requiring that its opening method is executable by the caller.
+    ///
+    /// Consumers must still apply their own method admission before executing
+    /// method-specific algebra.
+    pub fn group_role_dims_geometry(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<CommitmentRingDims, AkitaError> {
+        let final_group_index = self.validate_opening_batch_geometry(opening_batch)?;
+        let dims = if group_index == final_group_index {
+            self.role_dims()
+        } else {
+            self.precommitted_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .role_dims(self.open_commit_matrix.ring_dimension())
+        };
+        dims.validate_role_projection()?;
+        Ok(dims)
+    }
+
     /// Resolve flat relation-address geometry across every opening group's
     /// native A/B dimensions and this level's shared D dimension.
     pub fn relation_address_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
+        extension_degree: usize,
         outgoing_witness_ring_dimension: usize,
         live_witness_coeff_len: usize,
     ) -> Result<RelationAddressGeometry, AkitaError> {
         self.validate_opening_batch(opening_batch)?;
-        let group_role_dims = (0..opening_batch.num_groups())
-            .map(|group_index| self.group_role_dims(opening_batch, group_index))
-            .collect::<Result<Vec<_>, _>>()?;
-        RelationAddressGeometry::new_for_groups(
-            self.role_dims(),
-            &group_role_dims,
+        let relation_geometry =
+            crate::RelationWitnessGeometry::for_level(self, opening_batch, extension_degree)?;
+        RelationAddressGeometry::for_relation(
+            &relation_geometry,
             outgoing_witness_ring_dimension,
             live_witness_coeff_len,
         )
@@ -812,10 +858,14 @@ impl CommittedGroupParams {
     pub fn compression_relation_address_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
+        extension_degree: usize,
         outgoing_witness_ring_dimension: usize,
         live_witness_coeff_len: usize,
     ) -> Result<CompressionRelationAddressGeometry, AkitaError> {
-        let compression_row_dims = crate::relation_rhs_layout_for(self, opening_batch)?
+        let relation_geometry =
+            crate::RelationWitnessGeometry::for_level(self, opening_batch, extension_degree)?;
+        let compression_row_dims = relation_geometry
+            .rhs_layout()
             .row_families()?
             .into_iter()
             .filter_map(|row| {
@@ -823,7 +873,7 @@ impl CommittedGroupParams {
                     row,
                     RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
                 )
-                .then_some(row.ring_dim())
+                .then_some(row.geometry().polynomial_modulus_dimension())
             })
             .collect::<Vec<_>>();
         CompressionRelationAddressGeometry::new(
@@ -861,6 +911,26 @@ impl CommittedGroupParams {
         group_index: usize,
     ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
+        if group_index == final_group_index {
+            return Ok(self);
+        }
+        self.precommitted_group_params(group_index)
+            .map(|group| group as &dyn LevelParamsLike)
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Resolve one group's structurally validated parameters without admitting
+    /// its opening method for execution.
+    ///
+    /// Construction code uses this boundary while a new opening method is
+    /// being prepared. Execution paths must use [`Self::group_params`], which
+    /// additionally enforces the currently supported method set.
+    pub fn group_params_geometry<'a>(
+        &'a self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+        let final_group_index = self.validate_opening_batch_geometry(opening_batch)?;
         if group_index == final_group_index {
             return Ok(self);
         }
@@ -1049,8 +1119,9 @@ impl CommittedGroupParams {
     pub fn output_witness_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
+        extension_degree: usize,
     ) -> Result<usize, AkitaError> {
-        self.output_witness_len_for_field_bits(F::modulus_bits(), opening_batch)
+        self.output_witness_len_for_field_bits(F::modulus_bits(), extension_degree, opening_batch)
     }
 
     /// Exact live next-witness length using an explicit base-field bit width.
@@ -1060,14 +1131,17 @@ impl CommittedGroupParams {
     pub fn output_witness_len_for_field_bits(
         &self,
         field_bits: u32,
+        extension_degree: usize,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
-        self.validate_opening_batch(opening_batch)?;
+        let relation_geometry =
+            crate::RelationWitnessGeometry::for_level(self, opening_batch, extension_degree)?;
         let witness_layout = crate::WitnessLayout::new(
             self,
             opening_batch,
+            &relation_geometry,
             self.witness_chunk.num_chunks,
             crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_open),
         )?;
@@ -1197,6 +1271,8 @@ impl CommittedGroupParams {
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
             payload_mode: self.payload_mode,
+            source_encoding: self.source_encoding,
+            opening_method: self.opening_method,
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
@@ -1254,6 +1330,8 @@ impl CommittedGroupParams {
     pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
             payload_mode: other.payload_mode,
+            source_encoding: other.source_encoding,
+            opening_method: other.opening_method,
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,

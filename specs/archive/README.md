@@ -12,6 +12,12 @@ to track current behavior; update the owning book chapter instead.
 
 | Spec | Final status | Book chapter | Archived |
 |------|--------------|--------------|----------|
+| `2026-Q3/eor-streamed-prover.md` | historical | `book/src/how/proving/extension-opening-reduction.md` | 2026-Q3 |
+| `2026-Q3/eor-sumcheck-prover-acceleration.md` | historical | `book/src/how/proving/extension-opening-reduction.md` | 2026-Q3 |
+| `2026-Q3/extension-field-opening-batching.md` | historical | `book/src/how/proving/extension-opening-reduction.md` | 2026-Q3 |
+| `2026-Q3/protocol-core-eor-consolidation.md` | historical | `book/src/how/proving/extension-opening-reduction.md` | 2026-Q3 |
+| `2026-Q3/protocol-field-geometry-cutover.md` | historical | `book/src/how/proving/fold-path.md` | 2026-Q3 |
+| `2026-Q3/akita-polyops-cutover.md` | historical | `book/src/how/architecture.md` | 2026-Q3 |
 | `2026-Q3/commitment-compression-cutover.md` | archived | `book/src/how/proving/akita-fold-realizations.md` | 2026-Q3 |
 | `2026-Q3/relation-range-image-sumcheck.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |
 | `2026-Q3/pr375-prover-streaming-and-onehot-unification.md` | archived | `book/src/how/optimizations.md` | 2026-Q3 |

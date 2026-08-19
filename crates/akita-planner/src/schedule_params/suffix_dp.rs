@@ -6,30 +6,39 @@ use std::{
 
 use akita_field::AkitaError;
 use akita_types::{
-    active_setup_field_len, level_proof_bytes, terminal_response_planner_bytes,
-    try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
-    CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
+    active_setup_field_len, terminal_response_planner_bytes, AkitaScheduleLookupKey,
+    CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
+    TerminalResponseShape,
 };
 
-use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
+use crate::PlannerPolicy;
 
 use super::{
-    derive_candidate_level_params, derive_candidate_level_params_split_frontier,
-    dimension_candidates, level_setup_field_elements, stage3_payload_bytes_for_successor,
-    suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
-    CandidateTerminalResponse, MixedScore, ScheduleCandidate, SetupPrefixSearchCache,
+    derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
+    dimension_candidates, level_setup_field_elements, suffix_opening_layout,
+    terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
+    CompleteObjectiveBound, FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveSetupPrefix,
+    ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
+mod candidates;
 mod frontier;
 mod prune;
 mod state;
 mod terminal;
 
-use frontier::{consider_child_suffixes, FrontierProjection, ProjectedFrontier};
+#[cfg(test)]
+pub(super) use candidates::{packing_precommit_opening_products, state_allows_terminal_seed};
+use frontier::{consider_child_suffixes, ProjectedFrontier, Projection};
 use state::*;
 pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState};
 pub(crate) use terminal::try_terminal_direct_suffix_cost;
+
+const SETUP_AND_PAYLOAD_PROJECTIONS: &[Projection] =
+    &[Projection::FirstDirectSetup, Projection::Payload];
+const PAYLOAD_PROJECTION: &[Projection] = &[Projection::Payload];
+const SETUP_PROJECTION: &[Projection] = &[Projection::FirstDirectSetup];
 
 fn offloaded_witness_contracts(
     input_witness_len: usize,
@@ -59,15 +68,21 @@ fn offloaded_witness_contracts(
 
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
+    diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
     next_witness_len: usize,
     natural_setup_field_len: usize,
     level_setup_field_elements: usize,
-    eor_bytes: usize,
     offloaded: bool,
     require_child_fold: bool,
     setup_field_budget: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct ChildEdgePrice {
+    direct_payload_bytes: usize,
+    stage3_payload_bytes: usize,
 }
 
 struct PendingScheduleCandidate {
@@ -77,6 +92,88 @@ struct PendingScheduleCandidate {
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
     terminal: Arc<CandidateTerminalResponse>,
+}
+
+struct StateFrontiers {
+    projected: ProjectedFrontier,
+}
+
+impl StateFrontiers {
+    fn new() -> Self {
+        Self {
+            projected: ProjectedFrontier::default(),
+        }
+    }
+
+    fn candidate_count(&self) -> usize {
+        self.projected.candidate_count()
+    }
+}
+
+struct LevelCandidateEdge<'a> {
+    params: &'a CommittedGroupParams,
+    next_witness_len: usize,
+    natural_setup_field_len: usize,
+    require_child_fold: bool,
+}
+
+struct CandidateChildren<'a> {
+    direct: Option<&'a SuffixResult>,
+    offloaded: Option<&'a SuffixResult>,
+}
+
+type LevelCandidate = (
+    CommittedGroupParams,
+    usize,
+    usize,
+    Option<crate::response_model::SourceMomentEstimate>,
+);
+
+type GuidedLevelCandidate = (CompleteObjectiveBound, Option<usize>, LevelCandidate);
+
+enum CandidateTraversal {
+    Plain(std::vec::IntoIter<LevelCandidate>),
+    Guided(std::vec::IntoIter<GuidedLevelCandidate>),
+}
+
+#[derive(Clone, Copy)]
+enum GuideScope {
+    CompleteRoot,
+    RecursivePrefix,
+}
+
+impl GuideScope {
+    fn for_state(
+        policy: &PlannerPolicy,
+        is_complete_root: bool,
+        incoming_setup_prefix: Option<usize>,
+    ) -> Option<Self> {
+        if is_complete_root {
+            Some(Self::CompleteRoot)
+        } else if incoming_setup_prefix.is_some()
+            && policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+        {
+            Some(Self::RecursivePrefix)
+        } else {
+            None
+        }
+    }
+}
+
+impl Iterator for CandidateTraversal {
+    type Item = (
+        Option<(CompleteObjectiveBound, Option<usize>)>,
+        LevelCandidate,
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Plain(candidates) => candidates.next().map(|candidate| (None, candidate)),
+            Self::Guided(candidates) => candidates
+                .next()
+                .map(|(bound, natural_len, candidate)| (Some((bound, natural_len)), candidate)),
+        }
+    }
 }
 
 impl PendingScheduleCandidate {
@@ -103,48 +200,45 @@ impl PendingScheduleCandidate {
     }
 }
 
-fn child_choice(
+fn child_edge_price(
     edge: &ChildEdge<'_>,
-    suffix: &ScheduleCandidate,
-) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
-    let child_is_terminal = suffix.folds.is_empty();
-    if edge.require_child_fold && child_is_terminal {
-        return Ok(None);
-    }
-    if edge.offloaded {
-        if child_is_terminal || suffix.folds.len() == 1 {
-            return Ok(None);
-        }
-        if suffix.metrics().first_direct_setup_capacity
-            >= super::SetupPrefixCapacity::for_natural_len(edge.natural_setup_field_len)
-        {
-            return Ok(None);
-        }
-    }
-
-    let direct_payload_bytes = level_proof_bytes(
-        edge.policy.decomposition.field_bits(),
-        edge.policy.challenge_field_bits()?,
-        &edge.candidate_params,
-        suffix.first_fold_params(),
-        edge.next_witness_len,
-        Some(if child_is_terminal {
-            akita_types::NextWitnessBindingPolicy::TerminalInnerState
-        } else {
-            akita_types::NextWitnessBindingPolicy::OuterPayload
-        }),
-    )?
-    .checked_add(edge.eor_bytes)
-    .ok_or_else(|| AkitaError::InvalidSetup("level proof size overflow".to_string()))?;
-    let stage3_payload_bytes =
-        stage3_payload_bytes_for_successor(edge.policy, suffix.first_fold_params())?;
+    successor: Option<&CommittedGroupParams>,
+) -> Result<ChildEdgePrice, AkitaError> {
+    let (direct_payload_bytes, stage3_payload_bytes) =
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            edge.policy,
+            &edge.candidate_params,
+            successor,
+            edge.current_witness_len,
+            edge.next_witness_len,
+        )?;
     if edge.offloaded != (stage3_payload_bytes != 0) {
         return Err(AkitaError::InvalidSetup(
             "setup edge topology disagrees with Stage-3 accounting".to_string(),
         ));
     }
-    let total_bytes = direct_payload_bytes
-        .checked_add(stage3_payload_bytes)
+    Ok(ChildEdgePrice {
+        direct_payload_bytes,
+        stage3_payload_bytes,
+    })
+}
+
+fn child_choice(
+    edge: &ChildEdge<'_>,
+    edge_price: ChildEdgePrice,
+    suffix: &ScheduleCandidate,
+) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
+    if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
+        edge.require_child_fold,
+        edge.offloaded,
+        edge.natural_setup_field_len,
+    ) {
+        return Ok(None);
+    }
+
+    let total_bytes = edge_price
+        .direct_payload_bytes
+        .checked_add(edge_price.stage3_payload_bytes)
         .and_then(|value| value.checked_add(suffix.total_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
     let setup_field_elements = edge
@@ -169,8 +263,8 @@ fn child_choice(
         params: Arc::clone(&edge.candidate_params),
         input_witness_len: edge.current_witness_len,
         output_witness_len: edge.next_witness_len,
-        estimated_direct_payload_bytes: direct_payload_bytes,
-        estimated_stage3_payload_bytes: stage3_payload_bytes,
+        estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
+        estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
@@ -182,156 +276,261 @@ fn child_choice(
     }))
 }
 
-fn consider_mixed_child_suffixes(
-    edge: &ChildEdge<'_>,
-    child_candidates: &[ScheduleCandidate],
-    frontier: &mut Vec<ScheduleCandidate>,
-) -> Result<(), AkitaError> {
-    for suffix in child_candidates {
-        let Some(candidate) = child_choice(edge, suffix)? else {
-            continue;
-        };
-        insert_mixed_frontier(edge.policy, frontier, candidate.into_candidate());
+fn direct_edge_lower_bound(
+    policy: &PlannerPolicy,
+    params: &CommittedGroupParams,
+    input_witness_len: usize,
+    output_witness_len: usize,
+    natural_setup_field_len: usize,
+) -> Result<CompleteObjectiveBound, AkitaError> {
+    let (proof_bytes, stage3_bytes) =
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            policy,
+            params,
+            None,
+            input_witness_len,
+            output_witness_len,
+        )?;
+    if stage3_bytes != 0 {
+        return Err(AkitaError::InvalidSetup(
+            "direct-edge lower bound unexpectedly includes Stage-3 bytes".into(),
+        ));
     }
-    Ok(())
+    Ok(CompleteObjectiveBound::for_direct_edge(
+        policy,
+        SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
+        proof_bytes,
+        level_setup_field_elements(params)?,
+    ))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn price_level_candidate_with_children(
+fn complete_root_bound_is_strictly_worse(
+    policy: &PlannerPolicy,
+    lower_bound: CompleteObjectiveBound,
+    frontier: &ProjectedFrontier,
+) -> bool {
+    match policy.selection_policy {
+        crate::SelectionPolicyId::MinEstimatedProofPayload => frontier
+            .by_parent_cost
+            .values()
+            .flat_map(frontier::ObjectiveChoices::payload_candidates)
+            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => frontier
+            .by_parent_cost
+            .values()
+            .flat_map(frontier::ObjectiveChoices::setup_candidates)
+            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+    }
+}
+
+fn direct_edge_bound_is_strictly_worse(
+    policy: &PlannerPolicy,
+    guide_scope: GuideScope,
+    params: &CommittedGroupParams,
+    natural_setup_field_len: usize,
+    lower_bound: CompleteObjectiveBound,
+    frontier: &ProjectedFrontier,
+) -> Result<bool, AkitaError> {
+    match guide_scope {
+        GuideScope::CompleteRoot => Ok(complete_root_bound_is_strictly_worse(
+            policy,
+            lower_bound,
+            frontier,
+        )),
+        GuideScope::RecursivePrefix => {
+            let parent_cost = ParentObservableKey::new(policy, Some(params))?;
+            Ok(frontier.recursive_direct_bound_is_strictly_worse(
+                &parent_cost,
+                SetupPrefixCapacity::for_natural_len(natural_setup_field_len),
+                lower_bound,
+            ))
+        }
+    }
+}
+
+fn candidate_traversal(
+    policy: &PlannerPolicy,
+    guide_scope: Option<GuideScope>,
+    opening_layout: &OpeningClaimsLayout,
+    current_witness_len: usize,
+    candidates: Vec<LevelCandidate>,
+) -> Result<CandidateTraversal, AkitaError> {
+    if guide_scope.is_none() {
+        return Ok(CandidateTraversal::Plain(candidates.into_iter()));
+    }
+    let mut guided = candidates
+        .into_iter()
+        .map(|candidate| {
+            let natural_len = (policy.selection_policy
+                == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload)
+                .then(|| active_setup_field_len(&candidate.0, opening_layout))
+                .transpose()?;
+            let lower_bound = direct_edge_lower_bound(
+                policy,
+                &candidate.0,
+                current_witness_len,
+                candidate.1,
+                natural_len.unwrap_or_default(),
+            )?;
+            Ok((lower_bound, natural_len, candidate))
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    guided.sort_by_key(|(lower_bound, _, (_, next_witness_len, _, _))| {
+        (*lower_bound, *next_witness_len)
+    });
+    Ok(CandidateTraversal::Guided(guided.into_iter()))
+}
+
+fn price_terminal_candidate(
     ctx: &SuffixCtx<'_>,
     state: SuffixState,
     candidate_params: &CommittedGroupParams,
-    next_witness_len: usize,
-    eor_bytes: usize,
+    opening_reduction_bytes: usize,
     natural_len: usize,
-    direct_child: Option<&SuffixResult>,
-    offloaded_child: Option<&SuffixResult>,
-    require_child_fold: bool,
-    frontier: &mut ProjectedFrontier,
-    mixed_frontier: &mut Vec<ScheduleCandidate>,
+    frontiers: &mut StateFrontiers,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
+    let direct_projections =
+        if state.incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0) {
+            SETUP_AND_PAYLOAD_PROJECTIONS
+        } else {
+            PAYLOAD_PROJECTION
+        };
+    if (ctx.level_zero_is_root && state.level == 0)
+        || state.incoming_setup_prefix.is_some()
+        || candidate_params.has_precommitted_groups()
+    {
+        return Ok(());
+    }
+    let field_bits = policy.decomposition.field_bits();
+    let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
+        policy,
+        state.current_witness_len,
+        candidate_params,
+        field_bits,
+        ctx.key,
+        state.level,
+        None,
+        state.source_moment,
+    )?
+    else {
+        return Ok(());
+    };
+    let level_proof_size = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
+        .checked_add(opening_reduction_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".into()))?;
+    let total = level_proof_size
+        .checked_add(suffix_cost)
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".to_string()))?;
+    direct_step.estimated_direct_payload_bytes = level_proof_size;
+    let candidate = ScheduleCandidate {
+        first_direct_setup_field_len: Some(NonZeroUsize::new(natural_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
+        })?),
+        total_bytes: total,
+        setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
+        folds: super::CandidateFoldChain::default(),
+        terminal: Arc::new(direct_step),
+    };
+    frontiers.projected.consider_candidate(
+        policy,
+        ctx.diagnostics,
+        candidate.clone(),
+        direct_projections,
+    )?;
+    Ok(())
+}
+
+fn price_level_candidate_with_children(
+    ctx: &SuffixCtx<'_>,
+    state: SuffixState,
+    candidate: LevelCandidateEdge<'_>,
+    children: CandidateChildren<'_>,
+    frontiers: &mut StateFrontiers,
+) -> Result<(), AkitaError> {
+    let policy = ctx.policy;
+    let LevelCandidateEdge {
+        params: candidate_params,
+        next_witness_len,
+        natural_setup_field_len: natural_len,
+        require_child_fold,
+    } = candidate;
     // Only a prefix-consuming state is read through the setup projection by
-    // an offloaded parent. The top-level recursive objective also reads the
+    // an offloaded parent. The top-level setup-first objective also reads the
     // root setup projection. Ordinary direct suffixes are consumed solely
     // through the payload projection, so retaining a parallel setup winner
     // there duplicates frontier work and memo ownership with no observer.
-    let direct_projection =
+    let direct_projections =
         if state.incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0) {
-            FrontierProjection::Both
+            SETUP_AND_PAYLOAD_PROJECTIONS
         } else {
-            FrontierProjection::Payload
+            PAYLOAD_PROJECTION
         };
-    // Branch A: terminate directly on the witness entering this state.
-    // There is no alternative terminal-shaped predecessor output: the
-    // predecessor produces one canonical witness, and the terminal inner
-    // commitment consumes that exact witness.
-    let adaptive_terminal_is_allowed = !matches!(
-        policy.ring_dimension_schedule_mode,
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            num_search_levels,
-            ..
-        } if policy.selection_policy
-            == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-            && state.level < num_search_levels
-    );
-    if adaptive_terminal_is_allowed
-        && !(ctx.level_zero_is_root && state.level == 0)
-        && state.incoming_setup_prefix.is_none()
-        && !candidate_params.has_precommitted_groups()
-    {
-        let field_bits = policy.decomposition.field_bits();
-        if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
-            policy,
-            state.current_witness_len,
-            candidate_params,
-            field_bits,
-            ctx.key,
-            state.level,
-            None,
-            state.source_moment,
-        )? {
-            let level_proof_size = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
-                .checked_add(eor_bytes)
-                .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".into()))?;
-            let total = level_proof_size.checked_add(suffix_cost).ok_or_else(|| {
-                AkitaError::InvalidSetup("terminal proof size overflow".to_string())
-            })?;
-            direct_step.estimated_direct_payload_bytes = level_proof_size;
-            let candidate = ScheduleCandidate {
-                first_direct_setup_field_len: Some(NonZeroUsize::new(natural_len).ok_or_else(
-                    || AkitaError::InvalidSetup("direct setup field length must be nonzero".into()),
-                )?),
-                total_bytes: total,
-                setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
-                folds: super::CandidateFoldChain::default(),
-                terminal: Arc::new(direct_step),
-            };
-            frontier.consider_candidate(policy, candidate.clone(), direct_projection)?;
-            insert_mixed_frontier(policy, mixed_frontier, candidate);
-        }
-    }
-
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
+        diagnostics: ctx.diagnostics,
         candidate_params: Arc::new(candidate_params.clone()),
         current_witness_len: state.current_witness_len,
         next_witness_len,
         natural_setup_field_len: natural_len,
         level_setup_field_elements,
-        eor_bytes,
         offloaded: false,
         require_child_fold,
         setup_field_budget: ctx.setup_field_budget,
     };
-    if let Some(direct_child) = direct_child {
-        consider_child_suffixes(
-            &direct_edge,
-            direct_child.payload_candidates(),
-            state.incoming_setup_prefix,
-            direct_projection,
-            frontier,
-        )?;
-        if state.incoming_setup_prefix.is_none() {
-            consider_mixed_child_suffixes(
+    if let Some(direct_child) = children.direct {
+        for candidates in direct_child.payload_only.values() {
+            consider_child_suffixes(
                 &direct_edge,
-                &direct_child.mixed_frontier,
-                mixed_frontier,
+                candidates,
+                state.incoming_setup_prefix,
+                direct_projections,
+                &mut frontiers.projected,
+            )?;
+        }
+        for choices in direct_child.setup_and_payload.values() {
+            consider_child_suffixes(
+                &direct_edge,
+                choices.payload_candidates(),
+                state.incoming_setup_prefix,
+                direct_projections,
+                &mut frontiers.projected,
             )?;
         }
     }
-    if let Some(offloaded_child) = offloaded_child {
+    if let Some(offloaded_child) = children.offloaded {
         let offloaded_edge = ChildEdge {
             offloaded: true,
             ..direct_edge
         };
-        consider_child_suffixes(
-            &offloaded_edge,
-            offloaded_child.setup_candidates(),
-            state.incoming_setup_prefix,
-            FrontierProjection::FirstDirectSetup,
-            frontier,
-        )?;
-        consider_child_suffixes(
-            &offloaded_edge,
-            offloaded_child.payload_candidates(),
-            state.incoming_setup_prefix,
-            FrontierProjection::Payload,
-            frontier,
-        )?;
+        for choices in offloaded_child.setup_and_payload.values() {
+            consider_child_suffixes(
+                &offloaded_edge,
+                choices.setup_candidates(),
+                state.incoming_setup_prefix,
+                SETUP_PROJECTION,
+                &mut frontiers.projected,
+            )?;
+            consider_child_suffixes(
+                &offloaded_edge,
+                choices.payload_candidates(),
+                state.incoming_setup_prefix,
+                PAYLOAD_PROJECTION,
+                &mut frontiers.projected,
+            )?;
+        }
     }
 
     Ok(())
 }
 
-/// Shared inputs for root-level `CommittedGroupParams` candidates.
-/// Suffix DP for the selected recursive schedule at
+/// Derive the suffix frontier for the selected recursive schedule at
 /// `(level, current_witness_len, current_lb)`.
 ///
 /// At each state, the projected maps keep the setup and payload winners for
 /// each parent-visible first-fold key (from
-/// [`derive_candidate_level_params`]). A candidate may terminate on the current
+/// [`derive_fold_candidates`]). A candidate may terminate on the current
 /// witness when there is no incoming setup prefix, or fold again and consume
 /// `incoming_setup_prefix` when present. Fold-again edges plan exactly one child
 /// state: recursive setup edges pass the outgoing setup prefix to the child,
@@ -342,29 +541,30 @@ pub(crate) fn derive_selected_suffix_schedule(
     state: SuffixState,
     depth: usize,
 ) -> Result<Arc<SuffixResult>, AkitaError> {
-    let SuffixCtx {
-        policy,
-        default_ring_challenge_cfg,
-        ring_challenge_config,
-        key,
-        setup_field_budget: _,
-        root_lookup_key,
-        root_honest_fold_policy,
-        precommitted_honest_fold_policies,
-        level_zero_is_root,
-    } = *ctx;
+    let policy = ctx.policy;
+    let diagnostics = ctx.diagnostics;
+    let root_honest_fold_policy = ctx.root_honest_fold_policy;
+    let precommitted_honest_fold_policies = ctx.precommitted_honest_fold_policies;
+    let level_zero_is_root = ctx.level_zero_is_root;
+    if let Some(diagnostics) = diagnostics {
+        diagnostics.record_suffix_call();
+    }
     let SuffixState {
         level,
         current_witness_len,
         current_lb,
         source_moment,
         incoming_setup_prefix,
-        dimension_ceiling,
+        dimension_ceiling: _,
         payload_phase,
     } = state;
     let memo_key = state.memo_key(policy);
     if depth <= MAX_RECURSION_DEPTH {
-        if let Some(cached) = memo.get(&memo_key) {
+        let cached = memo.get(&memo_key);
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_memo_result(cached.is_some());
+        }
+        if let Some(cached) = cached {
             return Ok(Arc::clone(cached));
         }
     }
@@ -388,252 +588,135 @@ pub(crate) fn derive_selected_suffix_schedule(
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (level_zero_is_root && level == 0);
     let mut payload_only = BTreeMap::new();
-    let mut setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices> = BTreeMap::new();
-    let mut mixed_frontier = Vec::new();
-    let root_level_key = root_lookup_key.filter(|_| level == 0);
-    if root_level_key.is_some() && incoming_setup_prefix.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "root batch cannot consume an incoming setup prefix".to_string(),
-        ));
-    }
-    if level_zero_is_root && level == 0 && root_level_key.is_none() {
-        return Err(AkitaError::InvalidSetup(
-            "root-level suffix state is missing its opening lookup key".to_string(),
-        ));
-    }
-    if payload_phase == akita_types::CommitmentPayloadPhase::RawSuffix
-        && incoming_setup_prefix.is_some()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "raw commitment suffix cannot consume a recursive setup prefix".to_string(),
-        ));
-    }
-    let root_opening_layout = root_level_key
-        .map(AkitaScheduleLookupKey::opening_layout)
-        .transpose()?;
-    let root_eor_key = root_level_key
-        .map(|root_key| {
-            root_key
-                .num_polynomials()
-                .map(|total_polys| PolynomialGroupLayout::new(root_key.max_num_vars(), total_polys))
-        })
-        .transpose()?;
-    let scalar_opening_layout = if root_level_key.is_some() {
-        None
-    } else {
-        Some(suffix_opening_layout(
-            current_witness_len,
-            incoming_setup_prefix,
-        )?)
-    };
-    let eor_key = if let Some(root_eor_key) = root_eor_key {
-        root_eor_key
-    } else if level_zero_is_root && level == 0 {
-        key
-    } else {
-        let layout = scalar_opening_layout.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("suffix opening layout is missing".to_string())
-        })?;
-        PolynomialGroupLayout::new(layout.max_num_vars(), layout.num_total_polynomials())
-    };
-    let inner_source = if level_zero_is_root && level == 0 {
-        super::root_inner_basis_source(
-            root_honest_fold_policy.ok_or_else(|| {
-                AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
-            })?,
-            policy.decomposition.log_commit_bound,
-        )
-    } else {
-        crate::InnerBasisSource::BalancedDigits {
-            log_basis: current_lb,
-        }
-    };
-    let (min_inner_basis, max_inner_basis) = inner_source.search_range(policy)?;
-    let (min_open_basis, max_open_basis) =
-        crate::policy::log_basis_search_range_at_level(policy, level);
-    let mut dimension_work = Vec::new();
-    for dimensions in dimension_candidates(policy, level, dimension_ceiling)? {
-        let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
-            policy.challenge_field_bits()?,
-            policy.claim_ext_degree,
-            level,
-            eor_key,
-            current_witness_len,
-            dimensions.d_a(),
-        )?
-        else {
-            continue;
-        };
-        let ring_challenge_cfg = if root_level_key.is_some()
-            && dimensions == CommitmentRingDims::uniform(policy.uniform_ring_dimension)
-        {
-            *default_ring_challenge_cfg
-        } else {
-            let Ok(config) = ring_challenge_config(dimensions.d_a()) else {
-                continue;
-            };
-            config
-        };
-        dimension_work.push((dimensions, eor_bytes, ring_challenge_cfg));
-    }
+    let mut setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices> =
+        BTreeMap::new();
+    let candidate_domain = candidates::CandidateDomain::prepare(ctx, state)?;
+    let root_level_key = candidate_domain.root_level_key;
+    let current_opening_layout = &candidate_domain.opening_layout;
     // Every opening basis contributes to one state frontier. In particular,
     // terminal-direct candidates have no first fold and therefore share the
     // `None` key; they must be compared by the canonical objective instead of
     // being overwritten by the last basis visited.
-    let mut frontier = ProjectedFrontier::default();
-    for open_lb in min_open_basis..=max_open_basis {
-        if open_lb < current_lb {
-            continue;
-        }
-        let current_opening_layout = if root_level_key.is_some() {
-            root_opening_layout.as_ref().ok_or_else(|| {
-                AkitaError::InvalidSetup("root batch opening layout is missing".to_string())
-            })?
-        } else {
-            scalar_opening_layout.as_ref().ok_or_else(|| {
-                AkitaError::InvalidSetup("scalar suffix opening layout is missing".to_string())
-            })?
-        };
-        let require_child_fold =
-            root_level_key.is_some_and(|root_key| !root_key.precommitteds.is_empty());
-        let mut candidates = Vec::new();
-
-        for inner_lb in min_inner_basis..=max_inner_basis {
-            if let Some(root_key) = root_level_key {
-                for &(dimensions, eor_bytes, ring_challenge_cfg) in &dimension_work {
-                    let dimension_candidates = root_level_candidates_for_basis(
-                        root_key,
-                        root_honest_fold_policy.ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "root batch is missing its honest fold policy".to_string(),
-                            )
-                        })?,
-                        precommitted_honest_fold_policies,
-                        policy,
-                        dimensions,
-                        &ring_challenge_cfg,
-                        ring_challenge_config,
-                        current_witness_len,
-                        inner_lb,
-                        open_lb,
-                        true,
-                    )?;
-                    candidates.extend(
-                        dimension_candidates
-                            .into_iter()
-                            .map(|(params, next_witness_len)| {
-                                (params, next_witness_len, eor_bytes)
-                            }),
-                    );
-                }
-            } else {
-                for &(dimensions, eor_bytes, ring_challenge_cfg) in &dimension_work {
-                    for &mode in
-                        payload_phase.candidate_modes(level, incoming_setup_prefix.is_some())
-                    {
-                        let retain_split_frontier = incoming_setup_prefix.is_some()
-                            || matches!(
-                                policy.ring_dimension_schedule_mode,
-                                crate::RingDimensionScheduleMode::AdaptiveDimension {
-                                    num_search_levels,
-                                    ..
-                                } if level < num_search_levels
-                            );
-                        let level_candidates = if retain_split_frontier {
-                            derive_candidate_level_params_split_frontier(
-                                Some(&mut memo.setup_prefixes),
-                                policy,
-                                mode,
-                                &ring_challenge_cfg,
-                                dimensions,
-                                current_witness_len,
-                                inner_source,
-                                inner_lb,
-                                open_lb,
-                                level,
-                                incoming_setup_prefix,
-                                source_moment,
+    let mut frontiers = StateFrontiers::new();
+    for open_lb in candidate_domain.opening_basis_range.clone() {
+        let candidates = candidate_domain.generate_for_opening_basis(
+            ctx,
+            state,
+            open_lb,
+            &mut memo.setup_prefixes,
+        )?;
+        let fold_candidates = candidates.folds;
+        let terminal_candidates = candidates.terminal;
+        let attach_source_moments =
+            |candidates: Vec<candidates::RawLevelCandidate>| -> Result<Vec<_>, AkitaError> {
+                let mut candidates_with_source = Vec::with_capacity(candidates.len());
+                for candidate in candidates {
+                    let candidates::RawLevelCandidate {
+                        params: candidate_params,
+                        next_witness_len,
+                        opening_reduction_bytes,
+                    } = candidate;
+                    let next_source_moment = if policy.selective_l2_response_model_enabled() {
+                        let source_groups = if root_level_key.is_some() {
+                            crate::response_model::root_group_source_moments(
+                                &candidate_params,
+                                current_opening_layout,
+                                root_honest_fold_policy.ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "root batch is missing its response source policy".into(),
+                                    )
+                                })?,
+                                precommitted_honest_fold_policies,
+                                policy.decomposition,
                             )?
+                        } else if let Some(natural_prefix_len) = incoming_setup_prefix {
+                            let prefix_params =
+                                candidate_params.group_params(current_opening_layout, 0)?;
+                            let prefix_moment = crate::response_model::uniform_field_source_moment(
+                                natural_prefix_len,
+                                policy.decomposition.field_bits(),
+                                prefix_params.log_basis_inner(),
+                                prefix_params.num_digits_inner(),
+                            )?;
+                            vec![
+                                prefix_moment,
+                                source_moment.ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "recursive response source is missing".into(),
+                                    )
+                                })?,
+                            ]
                         } else {
-                            derive_candidate_level_params(
-                                Some(&mut memo.setup_prefixes),
-                                policy,
-                                mode,
-                                &ring_challenge_cfg,
-                                dimensions,
-                                current_witness_len,
-                                inner_source,
-                                inner_lb,
-                                open_lb,
-                                level,
-                                incoming_setup_prefix,
-                                source_moment,
-                            )?
+                            vec![source_moment.ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "recursive response source is missing".into(),
+                                )
+                            })?]
                         };
-                        candidates.extend(level_candidates.into_iter().map(
-                            |(params, next_witness_len)| (params, next_witness_len, eor_bytes),
-                        ));
-                    }
+                        Some(crate::response_model::next_source_moment(
+                            &candidate_params,
+                            current_opening_layout,
+                            &source_groups,
+                            policy.decomposition.field_bits(),
+                            policy.claim_ext_degree,
+                        )?)
+                    } else {
+                        None
+                    };
+                    candidates_with_source.push((
+                        candidate_params,
+                        next_witness_len,
+                        opening_reduction_bytes,
+                        next_source_moment,
+                    ));
                 }
-            }
-        }
-        let mut candidates_with_source = Vec::with_capacity(candidates.len());
-        for (candidate_params, next_witness_len, eor_bytes) in candidates {
-            let next_source_moment = if policy.selective_l2_response_model_enabled() {
-                let source_groups = if root_level_key.is_some() {
-                    crate::response_model::root_group_source_moments(
-                        &candidate_params,
-                        current_opening_layout,
-                        root_honest_fold_policy.ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "root batch is missing its response source policy".into(),
-                            )
-                        })?,
-                        precommitted_honest_fold_policies,
-                        policy.decomposition,
-                    )?
-                } else if let Some(natural_prefix_len) = incoming_setup_prefix {
-                    let prefix_params = candidate_params.group_params(current_opening_layout, 0)?;
-                    let prefix_moment = crate::response_model::uniform_field_source_moment(
-                        natural_prefix_len,
-                        policy.decomposition.field_bits(),
-                        prefix_params.log_basis_inner(),
-                        prefix_params.num_digits_inner(),
-                    )?;
-                    vec![
-                        prefix_moment,
-                        source_moment.ok_or_else(|| {
-                            AkitaError::InvalidSetup("recursive response source is missing".into())
-                        })?,
-                    ]
-                } else {
-                    vec![source_moment.ok_or_else(|| {
-                        AkitaError::InvalidSetup("recursive response source is missing".into())
-                    })?]
-                };
-                Some(crate::response_model::next_source_moment(
-                    &candidate_params,
-                    current_opening_layout,
-                    &source_groups,
-                    policy.decomposition.field_bits(),
-                    policy.claim_ext_degree,
-                )?)
-            } else {
-                None
+                Ok(candidates_with_source)
             };
-            candidates_with_source.push((
-                candidate_params,
-                next_witness_len,
-                eor_bytes,
-                next_source_moment,
-            ));
+        // Terminal projection discards B, D, and the unused successor witness.
+        // Do not run fold-layout Pareto pruning here: its coordinates can
+        // discard the A matrix or basis that is optimal after terminal
+        // conversion. The terminal objective frontier below compares the
+        // actual setup and response bytes.
+        let generated_candidate_count = terminal_candidates
+            .len()
+            .saturating_add(fold_candidates.len());
+        let terminal_candidate_count = terminal_candidates.len();
+        for candidate in terminal_candidates {
+            let natural_len = active_setup_field_len(&candidate.params, current_opening_layout)?;
+            price_terminal_candidate(
+                ctx,
+                state,
+                &candidate.params,
+                candidate.opening_reduction_bytes,
+                natural_len,
+                &mut frontiers,
+            )?;
         }
-        let candidates = prune::level_candidates(current_opening_layout, candidates_with_source)?;
+        let candidates = prune::level_candidates(
+            current_opening_layout,
+            attach_source_moments(fold_candidates)?,
+        )?;
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_candidates(
+                generated_candidate_count,
+                terminal_candidate_count.saturating_add(candidates.len()),
+            );
+        }
         if candidates.is_empty() {
             continue;
         }
 
-        for (candidate_params, next_witness_len, eor_bytes, next_source_moment) in candidates {
+        let guide_scope =
+            GuideScope::for_state(policy, root_level_key.is_some(), incoming_setup_prefix);
+        let candidates = candidate_traversal(
+            policy,
+            guide_scope,
+            current_opening_layout,
+            current_witness_len,
+            candidates,
+        )?;
+
+        for (guide, (candidate_params, next_witness_len, _, next_source_moment)) in candidates {
             if let Some(natural_prefix_len) = incoming_setup_prefix {
                 let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
                 if !offloaded_witness_contracts(
@@ -648,12 +731,41 @@ pub(crate) fn derive_selected_suffix_schedule(
                     continue;
                 }
             }
-            let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
+            let natural_len = guide.and_then(|(_, natural_len)| natural_len).map_or_else(
+                || active_setup_field_len(&candidate_params, current_opening_layout),
+                Ok,
+            )?;
             let direct_edge_is_admissible = incoming_setup_prefix.is_none_or(|incoming_len| {
                 akita_types::padded_setup_prefix_len(natural_len)
                     < akita_types::padded_setup_prefix_len(incoming_len)
             });
-            let direct_child = if !direct_edge_is_admissible {
+            let prune_direct_edge = if direct_edge_is_admissible {
+                guide
+                    .zip(guide_scope)
+                    .map(|((lower_bound, _), guide_scope)| {
+                        direct_edge_bound_is_strictly_worse(
+                            policy,
+                            guide_scope,
+                            &candidate_params,
+                            natural_len,
+                            lower_bound,
+                            &frontiers.projected,
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if prune_direct_edge {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics.record_guided_direct_edge_prune();
+                }
+                if !policy.recursive_setup_planning {
+                    continue;
+                }
+            }
+            let direct_child = if !direct_edge_is_admissible || prune_direct_edge {
                 None
             } else if depth == MAX_RECURSION_DEPTH {
                 Some(empty_suffix_result())
@@ -701,30 +813,37 @@ pub(crate) fn derive_selected_suffix_schedule(
             price_level_candidate_with_children(
                 ctx,
                 state,
-                &candidate_params,
-                next_witness_len,
-                eor_bytes,
-                natural_len,
-                direct_child.as_deref(),
-                offloaded_child.as_deref(),
-                require_child_fold,
-                &mut frontier,
-                &mut mixed_frontier,
+                LevelCandidateEdge {
+                    params: &candidate_params,
+                    next_witness_len,
+                    natural_setup_field_len: natural_len,
+                    require_child_fold: candidate_domain.require_child_fold,
+                },
+                CandidateChildren {
+                    direct: direct_child.as_deref(),
+                    offloaded: offloaded_child.as_deref(),
+                },
+                &mut frontiers,
             )?;
         }
     }
-    for (key, choices) in frontier.by_parent_cost {
+    if let Some(diagnostics) = diagnostics {
+        diagnostics.record_completed_state(frontiers.candidate_count());
+    }
+    for (key, choices) in frontiers.projected.by_parent_cost {
         if retains_setup_projection {
             setup_and_payload.insert(key, choices);
-        } else if let Some(choice) = choices.payload {
-            payload_only.insert(key, choice);
+        } else {
+            let candidates = choices.into_payload_candidates();
+            if !candidates.is_empty() {
+                payload_only.insert(key, candidates);
+            }
         }
     }
 
     let result = Arc::new(SuffixResult {
         payload_only,
         setup_and_payload,
-        mixed_frontier,
     });
     memo.insert(memo_key, Arc::clone(&result));
     Ok(result)

@@ -18,8 +18,7 @@ use crate::backend::poly_helpers::{
 };
 use crate::compute::{CommitInnerPlan, CpuBackend, RootCommitKernel};
 use akita_types::{
-    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, FpExtEncoding,
-    WitnessLayout,
+    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, WitnessLayout,
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -160,6 +159,7 @@ impl AsRef<[i8]> for RecursiveWitnessFlat {
 #[derive(Debug, Clone, Copy)]
 pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
     coeffs: &'a [[i8; D]],
+    live_coeff_len: usize,
     live_ring_elems: usize,
     padded_ring_elems: usize,
     known_balanced_log_basis: Option<u32>,
@@ -192,6 +192,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
 
         Ok(Self {
             coeffs,
+            live_coeff_len,
             live_ring_elems: live_coeff_len.div_ceil(D),
             padded_ring_elems: coeffs.len().next_power_of_two().max(1),
             known_balanced_log_basis,
@@ -505,11 +506,11 @@ where
 // Source-typed prove views + CpuBackend kernels for [`RecursiveWitnessFlat`].
 // ===========================================================================
 
-use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
     TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
@@ -533,6 +534,10 @@ where
     fn num_ring_elems(&self) -> usize {
         padded_ring_elems_for_live_len::<D>(self.live_coeff_len)
     }
+
+    fn num_live_ring_elems(&self) -> usize {
+        self.live_coeff_len.div_ceil(D)
+    }
 }
 
 /// D-free polynomial metadata for the recursive suffix witness (H2 boundary).
@@ -552,19 +557,10 @@ where
 /// mandate, `num_vars` here is derived from the witness's own logical length, never
 /// from a const `D`.
 ///
-/// `num_ring_elems` is not on the suffix `to_opening_shape` path (only
-/// `num_vars` is consumed there); the D-keyed ring-element count is recovered
-/// inside kernels via the D-typed `RootPolyShape`/`SuffixWitnessView`. The
-/// D-free value reported here is the flat coefficient count, consistent with
-/// `num_vars`.
 impl<F> RootPolyMeta<F> for RecursiveWitnessFlat
 where
     F: FieldCore,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.live_coeff_len.max(1)
-    }
-
     fn num_vars(&self) -> usize {
         let coeff_count = self.live_coeff_len.next_power_of_two().max(1);
         coeff_count.trailing_zeros() as usize
@@ -794,20 +790,6 @@ where
             source.tensor_packed_extension_evals()?,
         ))
     }
-
-    fn root_projection(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        E: FpExtEncoding<F>,
-    {
-        let _ = source;
-        Err(AkitaError::InvalidInput(
-            "recursive suffix witnesses are not tensor-projected root polynomials".to_string(),
-        ))
-    }
 }
 
 impl<F, E, const D: usize> TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>
@@ -847,6 +829,59 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitnessView::tensor_packed_extension_sparse_linear_combination(&refs, coeffs)
+    }
+}
+
+impl<F, E, const D: usize>
+    SubringCoefficientPackingBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+{
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: SuffixWitnessBatchView<'_, F, D>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|witness| {
+                let view = witness.view::<F, D>()?;
+                plan.validate::<D>(view.num_vars())?;
+                if view.live_ring_elems != plan.point.num_live_positions() {
+                    return Err(AkitaError::InvalidSize {
+                        expected: plan.point.num_live_positions(),
+                        actual: view.live_ring_elems,
+                    });
+                }
+                let coordinates =
+                    crate::backend::coefficient_packing::partials_from_position_source::<
+                        F,
+                        E,
+                        i8,
+                        D,
+                    >(
+                        plan,
+                        view.num_vars(),
+                        |position| view.coeffs.get(position).ok_or(AkitaError::InvalidProof),
+                        |position, coefficient_index, coefficient| {
+                            let flat_index = position * D + coefficient_index;
+                            if flat_index < view.live_coeff_len {
+                                F::from_i8(coefficient)
+                            } else {
+                                F::zero()
+                            }
+                        },
+                    )?;
+                SubringCoefficientPackingPartials::new(
+                    plan.point.geometry(),
+                    plan.point.num_live_blocks(),
+                    coordinates,
+                )
+            })
+            .collect()
     }
 }
 
@@ -903,22 +938,6 @@ mod tests {
         assert_eq!(committed.coeffs.len(), tensor.coeffs.len());
         assert_eq!(tensor.live_ring_elems, 70);
         assert_eq!(tensor.num_vars(), 13);
-    }
-
-    #[test]
-    fn suffix_root_projection_is_rejected() {
-        const D: usize = 16;
-        type E = akita_field::FpExt4<F>;
-        let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
-        let witness = RecursiveWitnessFlat::from_i8_digits(digits);
-        let view = witness.tensor_view().expect("tensor view");
-        let err = TensorProjectionKernel::<SuffixWitnessView<'_, F, D>, F, E, D>::root_projection(
-            &CpuBackend::DEFAULT,
-            None,
-            view,
-        )
-        .expect_err("suffix witnesses must not tensor-project");
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
     }
 
     #[test]

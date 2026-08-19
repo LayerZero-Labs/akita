@@ -22,8 +22,8 @@ use akita_field::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    RecursiveProveBackend, RootPolyShape, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    RuntimeRootProvePoly,
+    RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor,
+    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeRootProvePoly,
 };
 use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly};
@@ -42,7 +42,7 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: RuntimeRootProvePoly<FF> + RuntimeRootCommitPoly<FF>,
+    P: RuntimeRootProvePoly<FF> + RuntimeCommitSource<FF>,
 >(
     label: &str,
     setup: &AkitaProverSetup<Cfg::Field>,
@@ -79,8 +79,9 @@ fn run_prove<
         + HasOptimizedFold
         + AkitaSerialize
         + Valid,
-    CpuBackend: RuntimeRootCommitBackend<FF, P, Cfg::ExtField>
-        + RecursiveProveBackend<FF, P, Cfg::ExtField>,
+    CpuBackend: RuntimeCommitBackendFor<FF, P>
+        + RecursiveProveBackend<FF, P, Cfg::ExtField>
+        + RuntimeCoefficientPackingBackendFor<FF, P, Cfg::ExtField>,
 {
     let pools = ProfileThreadPools::get();
     let poly_refs: [&P; 1] = [poly];
@@ -147,8 +148,14 @@ fn run_prove<
                 plan,
             );
         }
-        emit_runtime_schedule_summary(label, plan, group_layout, Cfg::decomposition().field_bits())
-            .expect("runtime schedule report geometry");
+        emit_runtime_schedule_summary(
+            label,
+            plan,
+            group_layout,
+            Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
+        )
+        .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -176,6 +183,7 @@ fn run_prove<
             &schedule,
             group_layout,
             Cfg::decomposition().field_bits(),
+            Cfg::EXT_DEGREE,
         )
         .expect("runtime schedule report geometry");
         emit_proof_tail_report::<FF, Cfg::ExtField>(
@@ -297,7 +305,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     };
     let poly = {
         let _span = tracing::info_span!("profile_dense_construct_poly").entered();
-        DensePoly::<FF>::from_field_evals(nv, D, evals).unwrap()
+        DensePoly::<FF>::from_field_evals(nv, evals).unwrap()
     };
     let opening = {
         let _span = tracing::info_span!("profile_dense_compute_expected_opening").entered();
@@ -410,7 +418,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + AkitaSerialize
         + Valid,
 {
-    let onehot_poly = make_profile_onehot_poly::<FF>(nv, layout.d_a(), 0xbeef_cafe);
+    let onehot_poly = make_profile_onehot_poly::<FF>(nv, 0xbeef_cafe);
     let mut rng = StdRng::seed_from_u64(0xfeed_face);
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt);

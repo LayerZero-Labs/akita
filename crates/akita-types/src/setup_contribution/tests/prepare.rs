@@ -33,16 +33,22 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         4,
         (0..8).map(|index| test_scalar(11 + index)).collect(),
     );
+    let joint_geometry = crate::RelationWitnessGeometry::for_evaluation_trace_execution(
+        &inputs.level_params,
+        &inputs.opening_batch,
+    )
+    .unwrap();
     let layout = WitnessLayout::new(
         &inputs.level_params,
         &inputs.opening_batch,
+        &joint_geometry,
         1,
         inputs.depth_fold().unwrap(),
     )
     .unwrap();
     let relation_geometry = inputs
         .level_params
-        .relation_address_geometry(&inputs.opening_batch, TEST_D, layout.live_coeff_len())
+        .relation_address_geometry(&inputs.opening_batch, 1, TEST_D, layout.live_coeff_len())
         .unwrap();
     let full_vec_randomness = (0..relation_geometry.relation_lane_variable_count())
         .map(|idx| test_scalar(101 + idx as u128))
@@ -106,7 +112,10 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         a_row_start: 1,
         b_row_start: 2,
     };
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 2).unwrap();
+    let joint_geometry =
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+            .unwrap();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, &joint_geometry, 1, 2).unwrap();
     let opening_source_len = witness_layout.live_coeff_len();
     let eq_tau1 = (0..rows.next_power_of_two())
         .map(|idx| test_scalar(11 + idx as u128))
@@ -123,6 +132,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     let prepared = SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
+        1,
         eq_tau1,
         &witness_layout,
         &[group],
@@ -212,6 +222,7 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
     let deferred = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
+        1,
         inputs.eq_tau1.clone(),
         &layout,
         &groups,

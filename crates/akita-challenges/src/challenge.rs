@@ -91,7 +91,19 @@ impl SparseChallenge {
             ));
         }
 
-        let mut seen = vec![false; ring_d];
+        const INLINE_WORDS: usize = 32;
+        let word_count = ring_d.div_ceil(u64::BITS as usize);
+        let mut inline_seen = [0u64; INLINE_WORDS];
+        let mut heap_seen = Vec::new();
+        let seen = if word_count <= INLINE_WORDS {
+            &mut inline_seen[..word_count]
+        } else {
+            heap_seen
+                .try_reserve_exact(word_count)
+                .map_err(|_| AkitaError::InvalidInput("challenge dimension is too large".into()))?;
+            heap_seen.resize(word_count, 0);
+            heap_seen.as_mut_slice()
+        };
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
             if idx >= ring_d {
@@ -104,12 +116,16 @@ impl SparseChallenge {
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            if seen[idx] {
+            let word = seen
+                .get_mut(idx / u64::BITS as usize)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mask = 1u64 << (idx % u64::BITS as usize);
+            if *word & mask != 0 {
                 return Err(AkitaError::InvalidInput(
                     "sparse challenge positions must be unique".to_string(),
                 ));
             }
-            seen[idx] = true;
+            *word |= mask;
         }
         Ok(())
     }

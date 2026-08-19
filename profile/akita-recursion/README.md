@@ -167,8 +167,8 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 ## Adaptive dimension pin and historical D64 measurements
 
-The artifact, host, and guest share `D = fp128::OneHot::D = 256`, the adaptive
-preset's root envelope. The generated `nv=20` and `nv=32` scalar rows both use
+The artifact, host, and guest share a fixed source-view dimension `D = 256`, the
+adaptive preset's root envelope. The generated `nv=20` and `nv=32` scalar rows both use
 A=D256 at the root and may transition to smaller per-level dimensions. The
 artifact rejects any requested arity whose selected root A dimension does not
 match this Jolt monomorphization.

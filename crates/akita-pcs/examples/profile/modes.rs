@@ -377,7 +377,7 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     type Cfg = fp128::Dense;
     assert_singleton_mode("dense_fp128", num_polys);
     let prime = fp128_prime_label();
-    run_dense_mode::<{ Cfg::D }, Cfg>(
+    run_dense_mode::<512, Cfg>(
         "dense_fp128",
         &format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ==="),
         nv,
@@ -389,7 +389,7 @@ fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
     assert_eq!(nv, 16, "dense W8R2 profiles nv=16");
     assert_singleton_mode("dense_fp128_multi_chunk_w8r2", num_polys);
     let prime = fp128_prime_label();
-    run_dense_mode::<{ Cfg::D }, Cfg>(
+    run_dense_mode::<256, Cfg>(
         "dense_fp128_multi_chunk_w8r2",
         &format!(
             "=== dense_fp128_multi_chunk_w8r2 (fp128, {prime}, adaptive ring dimensions, distributed chunked relation, num_chunks=8 x 2 leading levels) ==="
@@ -402,12 +402,12 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
     match profile_setup_contribution_mode() {
         SetupContributionMode::Direct => {
             type Cfg = fp128::OneHot;
-            run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128", nv, num_polys);
+            run_profile_onehot_fp128_with_cfg::<256, Cfg>("onehot_fp128", nv, num_polys);
         }
         SetupContributionMode::Recursive => {
             type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
             assert_eq!(nv, 36, "recursive onehot_fp128 profiles nv=36");
-            run_profile_onehot_fp128_with_cfg::<{ Cfg::D }, Cfg>("onehot_fp128", nv, num_polys);
+            run_profile_onehot_fp128_with_cfg::<256, Cfg>("onehot_fp128", nv, num_polys);
         }
     }
 }
@@ -472,7 +472,7 @@ fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtFiel
         "{label} opens two precommitted singleton groups plus two main polynomials"
     );
     tracing::info!(
-        "=== {label} (fp128, {}, config D={D}, flat public setup, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {MULTI_GROUP_FINAL_NUM_VARS}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, source fixture view D={D}, flat public setup, generated per-level dimensions, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {MULTI_GROUP_FINAL_NUM_VARS}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
         fp128_prime_label()
     );
     run_recursive_multi_group_onehot::<F, D, Cfg>(
@@ -490,7 +490,7 @@ fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
         SetupContributionMode::Direct,
         "onehot_fp128_multi_group supports direct setup contribution only"
     );
-    run_multi_group_mode::<{ Cfg::D }, Cfg>(
+    run_multi_group_mode::<256, Cfg>(
         "onehot_fp128_multi_group",
         "generated per-level dimensions",
         nv,
@@ -500,7 +500,7 @@ fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_fp128_multi_group_recursive(nv: usize, num_polys: usize) {
     type Cfg = fp128::OneHot;
-    run_multi_group_mode::<{ Cfg::D }, Cfg>(
+    run_multi_group_mode::<256, Cfg>(
         "onehot_fp128_multi_group_recursive",
         "adaptive ring dimensions + recursive setup",
         nv,
@@ -510,7 +510,7 @@ fn run_profile_onehot_fp128_multi_group_recursive(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, num_polys: usize) {
     type Cfg = fp128::OneHotMultiChunk;
-    run_multi_group_mode::<{ Cfg::D }, Cfg>(
+    run_multi_group_mode::<256, Cfg>(
         "onehot_fp128_multi_group_recursive_multi_chunk_w8r2",
         "adaptive ring dimensions + recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
         nv,
@@ -567,27 +567,27 @@ fn run_profile_onehot_fp128_multi_chunk_w4r2(nv: usize, num_polys: usize) {
 fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
     type Cfg = fp32::OneHot;
     let title = small_field_onehot_title("fp32", nv, num_polys);
-    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32", &title, nv, num_polys);
+    run_onehot_mode_for::<fp32::Field, 256, Cfg>("onehot_fp32", &title, nv, num_polys);
 }
 
 fn run_profile_dense_fp32(nv: usize, num_polys: usize) {
     type Cfg = fp32::Dense;
     assert_singleton_mode("dense_fp32", num_polys);
     let title = small_field_dense_title("fp32");
-    run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32", &title, nv);
+    run_dense_mode_for::<fp32::Field, 256, Cfg>("dense_fp32", &title, nv);
 }
 
 fn run_profile_dense_fp64(nv: usize, num_polys: usize) {
     type Cfg = fp64::Dense;
     assert_singleton_mode("dense_fp64", num_polys);
     let title = small_field_dense_title("fp64");
-    run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64", &title, nv);
+    run_dense_mode_for::<fp64::Field, 256, Cfg>("dense_fp64", &title, nv);
 }
 
 fn run_profile_onehot_fp64(nv: usize, num_polys: usize) {
     type Cfg = fp64::OneHot;
     let title = small_field_onehot_title("fp64", nv, num_polys);
-    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64", &title, nv, num_polys);
+    run_onehot_mode_for::<fp64::Field, 256, Cfg>("onehot_fp64", &title, nv, num_polys);
 }
 
 #[cfg(not(feature = "profile-onehot-fp128"))]

@@ -1,5 +1,60 @@
 use super::*;
 
+fn response_geometry_params(opening_method: akita_types::OpeningMethod) -> CommittedGroupParams {
+    let mut params = CommittedGroupParams::params_only(
+        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        256,
+        2,
+        2,
+        2,
+        2,
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+            .expect("D64 challenge"),
+    )
+    .with_decomp(4, 8, 2, 2, 2)
+    .expect("response geometry params");
+    params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    params.opening_method = opening_method;
+    let opening = params.open_commit_matrix;
+    params.open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+        opening.security_policy(),
+        opening.sis_table_key().table_digest,
+        opening.sis_modulus_profile(),
+        opening.output_rank(),
+        opening.input_width(),
+        opening.coeff_linf_bound(),
+        128,
+    );
+    params
+}
+
+#[test]
+fn next_source_moment_prices_packing_e_and_r_but_keeps_ambient_t() {
+    let opening = OpeningClaimsLayout::new(0, 1).expect("opening batch");
+    let source = SourceMomentEstimate::new(1 << 16).expect("source moment");
+    let packing = response_geometry_params(akita_types::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    });
+    let trace = response_geometry_params(akita_types::OpeningMethod::EvaluationTrace);
+    let packing_moment =
+        next_source_moment(&packing, &opening, &[source], 128, 2).expect("packing source moment");
+    let trace_moment =
+        next_source_moment(&trace, &opening, &[source], 128, 2).expect("trace source moment");
+    assert!(packing_moment.mean_l2_sq() < trace_moment.mean_l2_sq());
+    assert_eq!(
+        packing_moment.components[T_COMPONENT],
+        trace_moment.components[T_COMPONENT]
+    );
+    assert!(
+        packing_moment.components[E_COMPONENT].mean_l2_sq
+            < trace_moment.components[E_COMPONENT].mean_l2_sq
+    );
+    assert!(
+        packing_moment.components[R_COMPONENT].mean_l2_sq
+            < trace_moment.components[R_COMPONENT].mean_l2_sq
+    );
+}
+
 #[test]
 fn field_plane_moments_include_the_residual_top_plane() {
     let energy = field_digit_energy(1_000_000, 64, 6, 11).unwrap();

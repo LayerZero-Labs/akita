@@ -50,8 +50,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_bytes(&policy.sis_table_digest.0);
     h.write_bytes(&policy.sis_l2_table_digest.0);
     h.write_u64(u64::from(policy.selective_l2_response_model.tag()));
-    h.write_u64(policy.uniform_ring_dimension as u64);
-    h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
     write_ring_dimension_schedule_mode(&mut h, policy.ring_dimension_schedule_mode);
     write_decomposition(&mut h, policy.decomposition);
     h.write_u64(policy.claim_ext_degree as u64);
@@ -84,8 +82,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_bytes(&identity.sis_table_digest.0);
     h.write_bytes(&identity.sis_l2_table_digest.0);
     h.write_u64(u64::from(identity.selective_l2_response_model.tag()));
-    h.write_u64(identity.uniform_ring_dimension as u64);
-    h.write_u64(identity.setup_prefix_inner_ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
     h.write_u64(identity.claim_ext_degree as u64);
     h.write_u64(identity.chal_ext_degree as u64);
@@ -143,8 +139,6 @@ struct CatalogIdentityExpectation {
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
     sis_l2_table_digest: akita_types::SisL2TableDigest,
-    uniform_ring_dimension: usize,
-    setup_prefix_inner_ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
     claim_ext_degree: usize,
     chal_ext_degree: usize,
@@ -176,8 +170,6 @@ impl CatalogIdentityExpectation {
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
             sis_l2_table_digest: identity.sis_l2_table_digest,
-            uniform_ring_dimension: identity.uniform_ring_dimension,
-            setup_prefix_inner_ring_dimension: identity.setup_prefix_inner_ring_dimension,
             decomposition: identity.decomposition,
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
@@ -223,8 +215,6 @@ fn catalog_identity_expectation(
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
         sis_l2_table_digest: policy.sis_l2_table_digest,
-        uniform_ring_dimension: policy.uniform_ring_dimension,
-        setup_prefix_inner_ring_dimension: policy.setup_prefix_inner_ring_dimension,
         decomposition: policy.decomposition,
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
@@ -264,8 +254,6 @@ pub fn expected_catalog_identity(
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,
         sis_l2_table_digest: expected.sis_l2_table_digest,
-        uniform_ring_dimension: expected.uniform_ring_dimension,
-        setup_prefix_inner_ring_dimension: expected.setup_prefix_inner_ring_dimension,
         decomposition: expected.decomposition,
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
@@ -395,7 +383,14 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             collect_group_ring_dimensions(fold.witness, &mut dims);
             push_unique(&mut dims, fold.open_commit_matrix.ring_dimension as usize);
             if let Some(prefix) = fold.incoming_setup_prefix {
-                collect_group_ring_dimensions(prefix.commitment, &mut dims);
+                push_unique(
+                    &mut dims,
+                    prefix.commitment.inner_commit_matrix.ring_dimension(),
+                );
+                push_unique(
+                    &mut dims,
+                    prefix.commitment.outer_commit_matrix.ring_dimension(),
+                );
             }
         }
         push_unique(
@@ -445,17 +440,11 @@ fn validate_entry_dimensions(
             previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;
-        let terminal_is_admitted = match mode {
-            RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-                terminal_d == ring_dimension
-            }
-            RingDimensionScheduleMode::AdaptiveDimension {
-                suffix_dimensions, ..
-            } => suffix_dimensions.contains(&terminal_d),
-        };
+        let terminal_level = entry.recursive_folds.len() + 1;
+        let terminal_is_admitted = terminal_dimension_is_admitted(mode, terminal_level, terminal_d);
         if !terminal_is_admitted {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal D{terminal_d} is outside the policy suffix domain for key {:?}",
+                "generated terminal D{terminal_d} is outside the policy terminal dimension domain for key {:?}",
                 entry.root.final_group.layout
             )));
         }
@@ -470,6 +459,30 @@ fn validate_entry_dimensions(
         }
     }
     Ok(())
+}
+
+fn terminal_dimension_is_admitted(
+    mode: RingDimensionScheduleMode,
+    terminal_level: usize,
+    terminal_d: usize,
+) -> bool {
+    match mode {
+        RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            terminal_d == ring_dimension
+        }
+        RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels,
+            suffix_dimensions,
+            potential_a_dimensions,
+            ..
+        } => {
+            if terminal_level < num_search_levels {
+                potential_a_dimensions.contains(&terminal_d)
+            } else {
+                suffix_dimensions.contains(&terminal_d)
+            }
+        }
+    }
 }
 
 fn validate_level_dimensions(
@@ -562,15 +575,18 @@ fn entries_key_digest_with_setup_prefix_content_mode(
         write_generated_group(&mut h, entry.root.final_group.commitment);
         h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
         h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
+        write_opening_method(&mut h, entry.root.final_group.opening_method);
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
             h.write_u64(u64::from(group.num_digits_fold));
+            write_opening_method(&mut h, group.opening_method);
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
         write_generated_partition(&mut h, entry.root.witness_partition);
         h.write_u64(entry.recursive_folds.len() as u64);
         for fold in entry.recursive_folds {
+            write_opening_method(&mut h, fold.opening_method);
             write_generated_group(&mut h, fold.witness);
             write_generated_open_matrix(&mut h, fold.open_commit_matrix);
             write_generated_partition(&mut h, fold.witness_partition);
@@ -580,7 +596,8 @@ fn entries_key_digest_with_setup_prefix_content_mode(
                     write_setup_prefix_content_mode_full_prefix(&mut h);
                 }
                 h.write_u64(prefix.natural_len);
-                write_generated_group(&mut h, prefix.commitment);
+                h.write_bytes(&prefix.commitment.canonical_descriptor_bytes());
+                h.write_bytes(&prefix.opening.canonical_descriptor_bytes());
             }
         }
         write_generated_geometry(&mut h, entry.terminal.geometry);
@@ -590,6 +607,18 @@ fn entries_key_digest_with_setup_prefix_content_mode(
         h.write_u64(u64::from(entry.terminal.fold_digit_count));
     }
     h.finish()
+}
+
+fn write_opening_method(h: &mut Fnv64, method: akita_types::OpeningMethod) {
+    match method {
+        akita_types::OpeningMethod::EvaluationTrace => {}
+        akita_types::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => {
+            h.write_u64(1);
+            h.write_u64(challenge_subring_dimension as u64);
+        }
+    }
 }
 
 fn write_generated_geometry(h: &mut Fnv64, value: GeneratedBlockGeometry) {
@@ -733,6 +762,26 @@ impl Fnv64 {
     }
 }
 
+#[cfg(test)]
+mod terminal_dimension_tests {
+    use super::*;
+
+    #[test]
+    fn adaptive_terminal_uses_potential_dimensions_only_before_suffix_cutover() {
+        let mode = RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels: 2,
+            suffix_dimensions: &[64],
+            potential_a_dimensions: &[64, 128],
+            potential_b_dimensions: &[64],
+            potential_d_dimensions: &[64],
+        };
+
+        assert!(terminal_dimension_is_admitted(mode, 1, 128));
+        assert!(!terminal_dimension_is_admitted(mode, 2, 128));
+        assert!(terminal_dimension_is_admitted(mode, 2, 64));
+    }
+}
+
 #[cfg(all(test, feature = "fp128-onehot-recursive"))]
 mod tests {
     use super::*;
@@ -765,8 +814,6 @@ mod tests {
             sis_security_policy: stale.identity.sis_security_policy,
             sis_table_digest: stale.identity.sis_table_digest,
             sis_l2_table_digest: stale.identity.sis_l2_table_digest,
-            uniform_ring_dimension: stale.identity.uniform_ring_dimension,
-            setup_prefix_inner_ring_dimension: stale.identity.setup_prefix_inner_ring_dimension,
             decomposition: stale.identity.decomposition,
             claim_ext_degree: stale.identity.claim_ext_degree,
             chal_ext_degree: stale.identity.chal_ext_degree,

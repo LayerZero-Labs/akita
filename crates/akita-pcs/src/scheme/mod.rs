@@ -7,10 +7,10 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, RuntimeCommitBackendFor,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend, UniformProverStack,
+    ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeCommitSource,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend, UniformProverStack,
 };
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
@@ -20,18 +20,16 @@ use akita_transcript::Transcript;
 use akita_types::AkitaBatchedProof;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    dispatch_for_field, validate_ring_subfield_role, BasisMode, FoldSchedule, FpExtEncoding,
-    GroupBatchStatement, OpeningClaimsLayout, SetupMatrixCapacity,
+    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
+    SetupMatrixCapacity,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
-/// Root ring degree is derived from `Cfg`'s schedule policy at setup time
-/// (`policy_of::<Cfg>().uniform_ring_dimension`, equal to `Cfg::D` for
-/// uniform-D presets).
-/// Per-level suffix folds dispatch on each step's schedule `ring_dimension`.
+/// Every concrete ring degree is derived from the selected schedule. Setup is
+/// flat and does not carry a nominal ring dimension.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
@@ -65,18 +63,9 @@ where
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
-        dispatch_for_field!(
-            ProtocolDispatchSlot::UniformPolicy,
-            Cfg::Field,
-            ring_d,
-            |D| {
-                validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-                akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
-                    max_num_vars,
-                    max_num_polys_per_commitment_group,
-                )
-            }
+        akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+            max_num_vars,
+            max_num_polys_per_commitment_group,
         )
     }
 
@@ -115,18 +104,6 @@ where
         setup.to_verifier_setup(capacity)
     }
 
-    /// Validate the field tower against the config schedule policy ring dimension.
-    fn validate_cfg_ring_policy() -> Result<usize, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
-        dispatch_for_field!(
-            ProtocolDispatchSlot::UniformPolicy,
-            Cfg::Field,
-            ring_d,
-            |D| validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
-        )?;
-        Ok(ring_d)
-    }
-
     /// Commit one polynomial group in its complete parameter context.
     ///
     /// # Errors
@@ -144,10 +121,10 @@ where
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
-        P: RuntimeRootCommitPoly<Cfg::Field>,
-        B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+        P: RuntimeCommitSource<Cfg::Field>,
+        B: RuntimeCommitBackendFor<Cfg::Field, P>,
     {
-        Self::validate_cfg_ring_policy()?;
+        akita_config::validate_config_policy::<Cfg>()?;
         akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, context)
     }
 
@@ -176,27 +153,24 @@ where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B, B>,
+        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,
         B: ComputeBackendSetup<Cfg::Field>
             + RuntimeCommitBackendFor<Cfg::Field, akita_prover::RecursiveWitnessFlat>
             + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-            + RuntimeOpeningProveBackendFor<
+            + RuntimeCoefficientPackingBackendFor<
                 Cfg::Field,
-                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
+                RecursiveFoldSource<Cfg::Field>,
+                Cfg::ExtField,
             > + SuffixOpeningProveBackend<Cfg::Field>
             + DigitRowsComputeBackend<Cfg::Field>
             + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-            + RuntimeTensorBackendFor<
-                Cfg::Field,
-                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
-                Cfg::ExtField,
-            > + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+            + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
             + RuntimeRingSwitchProveBackend<Cfg::Field>
             + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     {
         let t_prove_total = Instant::now();
-        Self::validate_cfg_ring_policy()?;
+        akita_config::validate_config_policy::<Cfg>()?;
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
             &setup.expanded,
             &setup.prefix_slots,
@@ -228,7 +202,7 @@ where
         statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        Self::validate_cfg_ring_policy()?;
+        akita_config::validate_config_policy::<Cfg>()?;
         batched_verify_inner::<Cfg, T>(proof, setup, transcript, statement, basis)
     }
 

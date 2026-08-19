@@ -101,7 +101,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     nv: usize,
 ) {
     let evals = make_dense_evals::<Cfg>(nv);
-    let poly = DensePoly::<F>::from_field_evals(nv, D, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(nv, &evals).unwrap();
     let pt = random_point(nv);
     let opening = multilinear_eval(&evals, &pt).unwrap();
 
@@ -283,7 +283,7 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
         .map(|_| Some(rng.gen_range(0..onehot_k)))
         .collect();
 
-    let onehot_poly = OneHotPoly::<F>::new(onehot_k, root_ring_dimension, indices.clone()).unwrap();
+    let onehot_poly = OneHotPoly::<F>::new(onehot_k, indices.clone()).unwrap();
 
     let dense_evals: Vec<F> = {
         let mut evals = vec![F::from_u64(0); total_field];
@@ -440,13 +440,13 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 }
 
 fn bench_dense_nv14(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::Dense::D }, fp128::Dense>(c, "dense-adaptive", 14);
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 14);
 }
 fn bench_dense_nv16(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::Dense::D }, fp128::Dense>(c, "dense-adaptive", 16);
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 16);
 }
 fn bench_dense_nv24(c: &mut Criterion) {
-    bench_dense_phases::<{ fp128::Dense::D }, fp128::Dense>(c, "dense-adaptive", 24);
+    bench_dense_phases::<256, fp128::Dense>(c, "dense-adaptive", 24);
 }
 
 fn bench_onehot_nv15(c: &mut Criterion) {

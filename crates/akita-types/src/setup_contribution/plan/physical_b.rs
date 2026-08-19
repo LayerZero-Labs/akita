@@ -150,7 +150,7 @@ pub(super) fn build_group_b_setup_tensors<E: FieldCore>(
     let physical_b = &group.physical_b;
     let geometry = physical_b.geometry();
     let (b_subcolumns, _) = SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
-    let source_lanes = group.a_ratio;
+    let source_lanes = group.a_relation_ratio;
     let a_row_setup_stride = checked_mul(
         group.depth_commit,
         b_subcolumns,
@@ -168,7 +168,7 @@ pub(super) fn build_group_b_setup_tensors<E: FieldCore>(
     )?;
     let subcolumn_relation_stride = checked_mul(
         group.depth_commit,
-        group.b_ratio,
+        group.b_relation_ratio,
         "setup B subcolumn relation stride overflow",
     )?;
     let block_relation_stride = checked_mul(
@@ -246,7 +246,7 @@ pub(super) fn build_group_b_setup_tensors<E: FieldCore>(
                     relation_lane_start,
                     E::one(),
                     vec![
-                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_ratio),
+                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_relation_ratio),
                         EqPairTensorAxis::unit(
                             b_subcolumns,
                             group.depth_commit,

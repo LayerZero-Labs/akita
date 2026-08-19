@@ -1,8 +1,8 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::super::*;
-use super::{absorb_protocol_opening_points, FoldClaimMaterial};
-use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
+use super::{absorb_protocol_opening_points, FoldClaimMaterial, PreparedFoldOpeningPoint};
+use akita_types::{dispatch_for_field, TerminalCommittedGroupParams};
 
 pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
@@ -370,102 +370,6 @@ where
     })
 }
 
-/// Extension-claim root prefix: per-group point width checks, direct
-/// preparation at gate-off roots, and one batched EOR sumcheck at gate-on
-/// roots. Payload presence is enforced exactly against the per-level
-/// predicate inside `verify_eor_sumcheck`.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
-    claims: &OpeningClaims<'_, E, &Commitment<F>>,
-    openings: &[E],
-    opening_batch: &OpeningClaimsLayout,
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    basis: BasisMode,
-    root_lp: &CommittedGroupParams,
-    transcript: &mut T,
-) -> Result<FoldClaimMaterial<F, E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let mut group_points = Vec::with_capacity(opening_batch.num_groups());
-    for group_index in 0..opening_batch.num_groups() {
-        let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
-        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
-        let group_lp = root_lp.group_params(opening_batch, group_index)?;
-        let target_len = group_alpha_bits
-            .checked_add(group_lp.position_index_bits())
-            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("group opening point length overflow".to_string())
-            })?;
-        let group_point = claims.group_point(group_index)?;
-        if group_point.len() != target_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        group_points.push(group_point);
-    }
-    let requires_reduction = root_tensor_projection_enabled::<F, E>(
-        root_lp.role_dims().d_a(),
-        opening_batch.max_num_vars(),
-    );
-    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-    if !requires_reduction {
-        for (group_index, group_point) in group_points.iter().enumerate() {
-            let group_lp = root_lp.group_params(opening_batch, group_index)?;
-            let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
-            let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
-            let prepared = dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                group_dims.d_a(),
-                |D| {
-                    prepare_opening_point::<F, E, D>(
-                        group_point,
-                        basis,
-                        group_lp.num_positions_per_block(),
-                        group_lp.num_live_blocks(),
-                        group_alpha_bits,
-                    )
-                }
-            )?;
-            prepared_points.push(prepared);
-        }
-    }
-    let eor_replay = verify_fold_eor::<F, E, T>(
-        extension_opening_reduction,
-        &group_points,
-        openings,
-        opening_batch,
-        basis,
-        root_lp,
-        requires_reduction,
-        transcript,
-    )?;
-    if requires_reduction {
-        prepared_points = eor_replay
-            .groups
-            .into_iter()
-            .map(|group| group.prepared)
-            .collect();
-    }
-    let eor_final_relation = eor_replay.final_relation;
-    if prepared_points.len() != opening_batch.num_groups() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let (reduction_final_claims, reduction_factors) = eor_final_relation
-        .map_or((None, None), |(claims, factors)| {
-            (Some(claims), Some(factors))
-        });
-    Ok(FoldClaimMaterial {
-        prepared_points,
-        openings: openings.to_vec(),
-        reduction_final_claims,
-        reduction_factors,
-    })
-}
-
 /// Terminal-suffix extension-claim prefix: one batched EOR replay over the
 /// recursive opening group, then the prepared points are absorbed.
 #[allow(clippy::too_many_arguments)]
@@ -553,7 +457,10 @@ where
     absorb_protocol_opening_points(&protocol_point_refs, transcript);
     let (final_claims, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
     Ok(FoldClaimMaterial {
-        prepared_points: groups.into_iter().map(|group| group.prepared).collect(),
+        prepared_points: groups
+            .into_iter()
+            .map(|group| PreparedFoldOpeningPoint::EvaluationTrace(group.prepared))
+            .collect(),
         openings: openings.to_vec(),
         reduction_final_claims: Some(final_claims),
         reduction_factors: Some(factors_by_group),

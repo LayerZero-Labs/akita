@@ -224,10 +224,6 @@ name = "extension_opening_reduction"
 harness = false
 
 [[bench]]
-name = "onehot_root_projection_commit"
-harness = false
-
-[[bench]]
 name = "fft_smooth"
 harness = false
 

@@ -250,6 +250,21 @@ where
         }
     }
 
+    if let Some(value) = try_eval_bit_aligned_digit_intervals(
+        challenges,
+        base_offsets,
+        outer_start,
+        live_len,
+        outer_stride,
+        digit_stride,
+        digit_weights,
+        high_weights,
+        low_weights,
+        base_scales,
+    )? {
+        return Ok(value);
+    }
+
     let mut cursor = outer_start;
     let prefix_end = if cursor.is_multiple_of(low_len) {
         cursor
@@ -360,6 +375,120 @@ where
         )?;
     }
     Ok(out)
+}
+
+/// Evaluate the carry-aware bit-aligned specialization of an affine interval.
+///
+/// When the physical outer stride is a power of two and there is no explicit
+/// low factor, the address map separates exactly as
+///
+/// ```text
+/// low  = (base_low + digit_stride * digit) mod stride
+/// high = base_high + row
+///      + floor((base_low + digit_stride * digit) / stride).
+/// ```
+///
+/// Since the validated digit span is shorter than one outer stride, arbitrary
+/// base residues produce at most two carry classes. Each class factors into one
+/// digit contraction on the low point and one consecutive outer contraction on
+/// the high point. This avoids constructing and combining a full carry matrix.
+/// All other layouts return `None` and use the general affine evaluator.
+#[allow(clippy::too_many_arguments)]
+fn try_eval_bit_aligned_digit_intervals<F, A, H>(
+    challenges: &[F],
+    base_offsets: &[usize],
+    outer_start: usize,
+    live_len: usize,
+    outer_stride: usize,
+    digit_stride: usize,
+    digit_weights: &[F],
+    high_weights: &H,
+    low_weights: &[A],
+    base_scales: &[F],
+) -> Result<Option<A>, AkitaError>
+where
+    F: FieldCore,
+    A: AffineWeight<F>,
+    H: AffineWeightSource<F, A> + ?Sized,
+{
+    if !low_weights.is_empty() || !outer_stride.is_power_of_two() {
+        return Ok(None);
+    }
+    let low_bits = outer_stride.trailing_zeros() as usize;
+    if low_bits > challenges.len() {
+        return Ok(None);
+    }
+    let low_mask = outer_stride - 1;
+    let work = base_offsets
+        .len()
+        .checked_mul(
+            live_len
+                .checked_mul(2)
+                .and_then(|rows| rows.checked_add(digit_weights.len()))
+                .ok_or_else(|| AkitaError::InvalidInput("affine aligned work overflow".into()))?,
+        )
+        .ok_or_else(|| AkitaError::InvalidInput("affine aligned work overflow".into()))?;
+    if work > MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual: work,
+        });
+    }
+
+    let (low_challenges, high_challenges) = challenges.split_at(low_bits);
+    let high_window = OffsetEqWindow::new(high_challenges)?;
+    let template = high_weights
+        .with_weight(outer_start, |weight| weight.zero_like())
+        .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
+    let outer_end = outer_start
+        .checked_add(live_len)
+        .ok_or_else(|| AkitaError::InvalidInput("affine outer window overflow".into()))?;
+    let mut out = template.zero_like();
+    for (base_index, &base_offset) in base_offsets.iter().enumerate() {
+        let base_low = base_offset & low_mask;
+        let mut digit_evaluations = [F::zero(), F::zero()];
+        for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+            let shifted = base_low
+                .checked_add(digit.checked_mul(digit_stride).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine digit offset overflow".into())
+                })?)
+                .ok_or_else(|| AkitaError::InvalidInput("affine digit offset overflow".into()))?;
+            let carry = shifted / outer_stride;
+            let low_index = shifted & low_mask;
+            let evaluation = digit_evaluations.get_mut(carry).ok_or_else(|| {
+                AkitaError::InvalidInput("affine aligned digit carry exceeds one".into())
+            })?;
+            *evaluation += digit_weight * eq_eval_at_index(low_challenges, low_index);
+        }
+        let base_high = base_offset >> low_bits;
+        for (carry, mut digit_evaluation) in digit_evaluations.into_iter().enumerate() {
+            if let Some(&scale) = base_scales.get(base_index) {
+                digit_evaluation *= scale;
+            }
+            if digit_evaluation.is_zero() {
+                continue;
+            }
+            let mut outer_evaluation = template.zero_like();
+            for outer in outer_start..outer_end {
+                let high_index = base_high
+                    .checked_add(carry)
+                    .and_then(|base| base.checked_add(outer - outer_start))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("affine high address overflow".into())
+                    })?;
+                let eq_high = high_window.eval(high_index);
+                if !eq_high.is_zero() {
+                    high_weights
+                        .with_weight(outer, |weight| outer_evaluation.add_scaled(weight, eq_high))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("affine high factor out of range".into())
+                        })?;
+                }
+            }
+            out.add_scaled(&outer_evaluation, digit_evaluation);
+        }
+    }
+    Ok(Some(out))
 }
 
 #[derive(Clone, Copy)]

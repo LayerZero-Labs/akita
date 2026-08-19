@@ -1078,22 +1078,23 @@ pub fn validate_terminal_response_z_payload<F: FieldCore>(
 
 /// Emit one group's role-native E planes at canonical witness addresses.
 #[allow(clippy::too_many_arguments)]
-pub fn emit_witness_e_planes<const D_A: usize, const D_ROLE: usize>(
+pub fn emit_witness_e_planes<const D_ROLE: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
+    source_physical_width: usize,
     num_claims: usize,
     depth_open: usize,
     digits: &DigitBlocks,
     source_num_live_blocks: usize,
 ) -> Result<(), AkitaError> {
-    if !D_A.is_multiple_of(D_ROLE) {
+    if !source_physical_width.is_multiple_of(D_ROLE) {
         return Err(AkitaError::InvalidSetup(
             "witness E dimensions must satisfy D_ROLE | D_A".into(),
         ));
     }
     digits.ensure_stride::<D_ROLE>()?;
-    let role_subcolumns = D_A / D_ROLE;
+    let role_subcolumns = source_physical_width / D_ROLE;
     let expected = num_claims
         .checked_mul(source_num_live_blocks)
         .and_then(|n| n.checked_mul(role_subcolumns))
@@ -1107,6 +1108,11 @@ pub fn emit_witness_e_planes<const D_A: usize, const D_ROLE: usize>(
     }
     let flat = digits.typed_planes::<D_ROLE>()?;
     for unit in layout.units_for_group(group_id)? {
+        if unit.e_geometry().physical_coefficient_width() != source_physical_width {
+            return Err(AkitaError::InvalidSetup(
+                "witness E source width disagrees with resolved geometry".into(),
+            ));
+        }
         for claim in 0..num_claims {
             for global_block in unit.global_block_range() {
                 let semantic = claim * source_num_live_blocks + global_block;
@@ -1115,7 +1121,6 @@ pub fn emit_witness_e_planes<const D_A: usize, const D_ROLE: usize>(
                         let source =
                             (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
                         let destination = unit.e_coefficient_index(
-                            D_A,
                             D_ROLE,
                             num_claims,
                             depth_open,
@@ -1267,8 +1272,10 @@ pub fn emit_witness_r_planes<const D: usize>(
     quotient_depth: usize,
     planes: &[[i8; D]],
 ) -> Result<(), AkitaError> {
-    if layout.r_rows().iter().any(|row| row.ring_dim() != D)
-        || quotient_depth != layout.quotient_depth()
+    if layout.r_rows().iter().any(|row| {
+        row.geometry().polynomial_modulus_dimension() != D
+            || row.geometry().coordinate_plane_count() != 1
+    }) || quotient_depth != layout.quotient_depth()
     {
         return Err(AkitaError::InvalidSetup(
             "witness R source shape is malformed".into(),
@@ -1289,7 +1296,7 @@ pub fn emit_witness_r_planes<const D: usize>(
         for digit in 0..quotient_depth {
             write_witness_coefficients(
                 out,
-                layout.r_coefficient_index(row, digit, 0)?,
+                layout.r_coefficient_index(row, digit, 0, 0)?,
                 &planes[row * quotient_depth + digit],
             )?;
         }

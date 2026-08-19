@@ -18,7 +18,6 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
 use akita_recursion_glue::{AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
@@ -30,7 +29,8 @@ use tracing_subscriber::EnvFilter;
 const TRUSTED_BENCHMARK_ARTIFACT_ENV: &str = "AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT";
 type F = fp128::Field;
 type Cfg = fp128::OneHot;
-const D: usize = <Cfg as CommitmentConfig>::D;
+/// Concrete ring view used by the recursion artifact's fixed input schema.
+const SOURCE_VIEW_D: usize = 256;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -138,7 +138,7 @@ fn load_blob(input: &Path) -> Result<Vec<u8>, String> {
 
 fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
     info!("strictly decoding and verifying verifier-input blob before trusted benchmark replay");
-    let decoded = AkitaJoltInputs::<F, D>::read_from_bytes::<Cfg>(blob)
+    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(blob)
         .map_err(|err| format!("strict input decode failed: {err}"))?;
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings = [decoded.opening];

@@ -18,7 +18,7 @@ pub const SUPPORTED_CHALLENGE_RING_DIMS: &[usize] =
 ///
 /// Compression maps and NTT kernels have separate, field-profile-specific
 /// dispatch domains. Their smaller dimensions must not enter role admission.
-pub const SUPPORTED_COMMITMENT_RING_DIMS: [usize; 5] = [64, 128, 256, 512, 1024];
+pub const SUPPORTED_COMMITMENT_RING_DIMS: [usize; 6] = [64, 128, 256, 512, 1024, 2048];
 
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
 pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
@@ -232,12 +232,12 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
                 .field_bits(),
         )?;
         group.commitment.validate()?;
-        if group.commitment.log_basis_open != final_params.log_basis_open {
+        if group.commitment.opening.log_basis_open != final_params.log_basis_open {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} opening basis disagrees with the batch-shared basis"
             )));
         }
-        if group.commitment.fold_challenge_config.weight() == 0 {
+        if group.commitment.opening.fold_challenge_config.weight() == 0 {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} has an empty fold challenge"
             )));

@@ -36,6 +36,9 @@ rand = "0.8"
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false, features = [
+  "test-support",
+] }
 
 [features]
 default = ["schedules-default", "transcript-blake2b"]

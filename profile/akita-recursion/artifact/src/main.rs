@@ -51,7 +51,9 @@ struct Args {}
 
 type F = fp128::Field;
 type Cfg = fp128::OneHot;
-const D: usize = <Cfg as CommitmentConfig>::D;
+/// Concrete ring view used by the recursion artifact's fixed input schema.
+/// The Akita schedule may select different A, B, and D dimensions internally.
+const SOURCE_VIEW_D: usize = 256;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
@@ -75,10 +77,13 @@ fn opening_from_poly<'a, I>(
 ) -> Result<F, String>
 where
     I: OneHotIndex,
-    CpuBackend:
-        OpeningFoldKernel<<OneHotPoly<F, I> as RootOpeningSource<F, D>>::OpeningView<'a>, F, D>,
+    CpuBackend: OpeningFoldKernel<
+        <OneHotPoly<F, I> as RootOpeningSource<F, SOURCE_VIEW_D>>::OpeningView<'a>,
+        F,
+        SOURCE_VIEW_D,
+    >,
 {
-    let alpha_bits = D.trailing_zeros() as usize;
+    let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits
         .checked_add(layout.position_index_bits())
         .and_then(|n| n.checked_add(layout.block_index_bits()))
@@ -115,7 +120,7 @@ where
     )
     .map_err(|err| format!("opening fold: {err}"))?;
     let y_ring = opening.eval;
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
+    let v = reduce_inner_opening_to_ring_element::<F, SOURCE_VIEW_D>(inner_point, basis)
         .map_err(|err| format!("inner opening point should match ring dimension: {err}"))?;
     Ok((y_ring * v.sigma_m1()).coefficients()[0])
 }
@@ -237,7 +242,7 @@ fn run() -> Result<(), String> {
     let prime = fp128_prime_label();
     tracing::info!(
         nv,
-        d = D,
+        d = SOURCE_VIEW_D,
         onehot_k,
         prime = %prime,
         "generating Akita verifier-input artifact (single-poly adaptive OneHot)"
@@ -249,7 +254,7 @@ fn run() -> Result<(), String> {
             .map(|row| row.schedule().root.params.final_group.commitment.clone())
             .expect("layout");
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout).expect("proof schedule");
-    let alpha_bits = D.trailing_zeros() as usize;
+    let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
     // `opening_from_poly` (`point.len() <= target_num_vars`, i.e.
@@ -258,7 +263,7 @@ fn run() -> Result<(), String> {
     // message than the helper would emit.
     if required_vars != nv {
         return Err(format!(
-            "OneHot D={D} layout at nv={nv} expects exactly {required_vars} variables \
+            "OneHot D={SOURCE_VIEW_D} layout at nv={nv} expects exactly {required_vars} variables \
              (alpha_bits={alpha_bits} + position_index_bits={} + block_index_bits={}); pick an AKITA_NUM_VARS that matches the layout",
             layout.position_index_bits(), layout.block_index_bits()
         ));
@@ -269,7 +274,7 @@ fn run() -> Result<(), String> {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = layout
         .num_live_ring_elements_per_claim
-        .checked_mul(D)
+        .checked_mul(SOURCE_VIEW_D)
         .ok_or_else(|| "total field size overflow".to_string())?;
     let total_chunks = total_field / onehot_k;
     if total_chunks * onehot_k != total_field {
@@ -281,7 +286,7 @@ fn run() -> Result<(), String> {
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    let onehot_poly = OneHotPoly::<F, u8>::new(onehot_k, D, indices)
+    let onehot_poly = OneHotPoly::<F, u8>::new(onehot_k, indices)
         .map_err(|err| format!("failed to build onehot polynomial: {err}"))?;
     let opening_point: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -376,7 +381,7 @@ fn run() -> Result<(), String> {
     );
 
     let proof_shape = proof.shape();
-    let inputs: AkitaJoltInputs<F, D> = AkitaJoltInputs {
+    let inputs: AkitaJoltInputs<F, SOURCE_VIEW_D> = AkitaJoltInputs {
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
         num_vars: nv as u64,
         opening_point,
@@ -393,7 +398,7 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("encode jolt inputs blob failed: {err}"))?;
     // Round-trip before publishing so a buggy encoding fails on the host
     // instead of leaving a trusted benchmark artifact on disk.
-    let decoded = AkitaJoltInputs::<F, D>::read_from_bytes::<Cfg>(&blob)
+    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(&blob)
         .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
@@ -415,7 +420,7 @@ fn run() -> Result<(), String> {
     let blob_mib = blob_kib / 1024.0;
     tracing::info!(
         nv,
-        d = D,
+        d = SOURCE_VIEW_D,
         bytes = blob.len(),
         kib = blob_kib,
         mib = blob_mib,

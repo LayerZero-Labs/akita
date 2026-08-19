@@ -1,11 +1,12 @@
 //! Root schedule planning.
 
-use akita_challenges::SparseChallengeConfig;
+use std::time::Instant;
+
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_open,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, HonestFoldPolicy,
-    HonestFoldPolicySpec, HonestFoldSizingQuery, OpenCommitMatrixParams, SisMatrixRole,
+    decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
+    OpenCommitMatrixParams, SisMatrixRole,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
@@ -18,7 +19,8 @@ use akita_schedules::planner_support::projected_collision_role_price;
 use crate::schedule_params::{
     derive_ab_commitment_candidate, derive_selected_suffix_schedule,
     materialize_candidate_schedule, recursive_split_search_domain, select_complete_candidate,
-    AbCommitmentCandidateRequest, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    AbCommitmentCandidateRequest, PlannerOpeningCandidate, RingChallengeConfigFn, ScheduleMemo,
+    SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -27,10 +29,20 @@ type PrecommittedGroupSeed = (CommittedGroupProfile, HonestFoldPolicySpec);
 fn materialize_precommitted_group_for_open_basis(
     (layout, honest_fold_policy): &PrecommittedGroupSeed,
     policy: &PlannerPolicy,
-    ring_challenge_cfg: SparseChallengeConfig,
+    opening: PlannerOpeningCandidate,
+    shared_opening_ring_dimension: usize,
     log_basis_open: u32,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     let ring_dimension = layout.inner_commit_matrix.ring_dimension();
+    opening.validate_for(
+        0,
+        policy.claim_ext_degree,
+        CommitmentRingDims {
+            inner: ring_dimension,
+            outer: layout.outer_commit_matrix.ring_dimension(),
+            opening: shared_opening_ring_dimension,
+        },
+    )?;
     let num_chunks = policy.chunks_at_level(0);
     let num_fold_coeffs = layout
         .inner_commit_matrix
@@ -41,19 +53,17 @@ fn materialize_precommitted_group_for_open_basis(
     let group_claims = layout.group.num_polynomials();
     let num_digits_fold = honest_fold_policy.num_digits_fold(HonestFoldSizingQuery {
         ring_dimension,
+        challenge_dimension: opening.challenge_dimension(ring_dimension),
         num_claims: group_claims,
         num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
         num_live_blocks: layout.num_live_blocks,
         num_positions_per_block: layout.num_positions_per_block,
         num_chunks,
         num_fold_coeffs,
-        witness_norms: honest_fold_policy.witness_norms_for_inner_basis(
-            layout.log_basis_inner,
-            ring_dimension,
-            layout.group.num_vars(),
-        ),
+        witness_norms: honest_fold_policy
+            .witness_norms_for_inner_basis(layout.log_basis_inner, ring_dimension)?,
         log_basis_response: log_basis_open,
-        challenge_config: &ring_challenge_cfg,
+        challenge_config: &opening.challenge_config(),
     })?;
     let Some(required_a_bound) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
@@ -61,7 +71,7 @@ fn materialize_precommitted_group_for_open_basis(
         policy.sis_modulus_profile,
         ring_dimension,
         log_basis_open,
-        &ring_challenge_cfg,
+        &opening.challenge_config(),
         num_digits_fold,
     ) else {
         return Ok(None);
@@ -93,7 +103,8 @@ fn materialize_precommitted_group_for_open_basis(
             sis_table_digest: policy.sis_table_digest,
             sis_modulus_profile: policy.sis_modulus_profile,
         },
-        ring_challenge_cfg,
+        opening.method(),
+        opening.challenge_config(),
         log_basis_open,
     )
     .map(Some)
@@ -102,7 +113,7 @@ fn materialize_precommitted_group_for_open_basis(
 struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     dimensions: CommitmentRingDims,
-    ring_challenge_cfg: &'a SparseChallengeConfig,
+    opening: PlannerOpeningCandidate,
     final_honest_fold_policy: HonestFoldPolicySpec,
     final_num_vars: usize,
     main_num_polys: usize,
@@ -121,19 +132,18 @@ struct RootFinalGroupCandidateInput<'a> {
 
 fn precommitted_groups_for_open_basis(
     seeds: &[PrecommittedGroupSeed],
+    openings: &[PlannerOpeningCandidate],
     policy: &PlannerPolicy,
-    ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
 ) -> Result<Option<(Vec<PrecommittedLevelParams>, usize)>, AkitaError> {
     let mut groups = Vec::with_capacity(seeds.len());
-    for group in seeds {
-        let ring_challenge_cfg =
-            ring_challenge_config(group.0.inner_commit_matrix.ring_dimension())?;
+    for (group, opening) in seeds.iter().zip(openings.iter().copied()) {
         let Some(materialized) = materialize_precommitted_group_for_open_basis(
             group,
             policy,
-            ring_challenge_cfg,
+            opening,
+            shared_opening_ring_dimension,
             log_basis_open,
         )?
         else {
@@ -144,7 +154,9 @@ fn precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width(shared_opening_ring_dimension)?)
+            .checked_add(
+                group.d_segment_width(policy.claim_ext_degree, shared_opening_ring_dimension)?,
+            )
             .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
     }
     Ok(Some((groups, d_width)))
@@ -152,6 +164,7 @@ fn precommitted_groups_for_open_basis(
 
 pub(crate) fn root_batch_next_w_len(
     field_bits: u32,
+    extension_degree: usize,
     params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<Option<usize>, AkitaError> {
@@ -159,7 +172,7 @@ pub(crate) fn root_batch_next_w_len(
         return Ok(None);
     }
     params
-        .output_witness_len_for_field_bits(field_bits, opening_batch)
+        .output_witness_len_for_field_bits(field_bits, extension_degree, opening_batch)
         .map(Some)
 }
 
@@ -170,14 +183,15 @@ pub(crate) fn root_level_candidates_for_basis(
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
-    ring_challenge_cfg: &SparseChallengeConfig,
-    ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    opening: PlannerOpeningCandidate,
+    precommitted_openings: &[PlannerOpeningCandidate],
     root_input_witness_len: usize,
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
     require_witness_contraction: bool,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
+    opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
     let field_bits = policy.decomposition.field_bits();
     let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
@@ -194,6 +208,17 @@ pub(crate) fn root_level_candidates_for_basis(
                 .to_string(),
         ));
     }
+    if precommitted_openings.len() != key.precommitteds.len() {
+        return Err(AkitaError::InvalidSetup(
+            "root precommit opening candidate count mismatch".into(),
+        ));
+    }
+    if precommitted_openings
+        .iter()
+        .any(|candidate| candidate.is_coefficient_packing() != opening.is_coefficient_packing())
+    {
+        return Ok(Vec::new());
+    }
     let precommitted_groups = key
         .precommitteds
         .iter()
@@ -203,7 +228,7 @@ pub(crate) fn root_level_candidates_for_basis(
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         dimensions,
-        ring_challenge_cfg,
+        opening,
         final_honest_fold_policy,
         final_num_vars: key.final_group.num_vars(),
         main_num_polys: key.final_group.num_polynomials(),
@@ -245,20 +270,17 @@ pub(crate) fn root_level_candidates_for_basis(
 
     let mut candidates = Vec::new();
     let shared_opening_ring_dimension = dimensions.d_d();
-    if precommitted_groups.iter().any(|group| {
-        !group
-            .0
-            .inner_commit_matrix
-            .ring_dimension()
-            .is_multiple_of(shared_opening_ring_dimension)
-    }) {
+    if !crate::schedule_params::precommitted_groups_support_opening_dimension(
+        key.precommitteds.iter(),
+        shared_opening_ring_dimension,
+    ) {
         return Ok(Vec::new());
     }
     let Some((candidate_precommitted_groups, candidate_precommitted_d_width)) =
         precommitted_groups_for_open_basis(
             &precommitted_groups,
+            precommitted_openings,
             policy,
-            ring_challenge_config,
             shared_opening_ring_dimension,
             candidate_log_basis_open,
         )?
@@ -306,8 +328,12 @@ pub(crate) fn root_level_candidates_for_basis(
             &opening_batch,
             slice_candidates,
         )? {
-            let Some(output_witness_len) =
-                root_batch_next_w_len(field_bits, &candidate_params, &opening_batch)?
+            let Some(output_witness_len) = root_batch_next_w_len(
+                field_bits,
+                policy.claim_ext_degree,
+                &candidate_params,
+                &opening_batch,
+            )?
             else {
                 continue;
             };
@@ -372,15 +398,14 @@ fn root_final_group_level_params_candidate(
         return Ok(None);
     };
     let num_chunks = policy.chunks_at_level(0);
-    let witness_norms = ctx.final_honest_fold_policy.witness_norms_for_inner_basis(
-        log_basis_inner,
-        d_a,
-        ctx.final_num_vars,
-    );
+    let witness_norms = ctx
+        .final_honest_fold_policy
+        .witness_norms_for_inner_basis(log_basis_inner, d_a)?;
     let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
         policy,
         fold_policy: &ctx.final_honest_fold_policy,
-        ring_challenge_cfg: ctx.ring_challenge_cfg,
+        ring_challenge_cfg: &ctx.opening.challenge_config(),
+        challenge_dimension: ctx.opening.challenge_dimension(d_a),
         dimensions,
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         num_claims: ctx.main_num_polys,
@@ -402,24 +427,29 @@ fn root_final_group_level_params_candidate(
     let inner_commit_matrix = ab_candidate.inner_commit_matrix;
     let outer_commit_matrix = ab_candidate.outer_commit_matrix;
 
-    let Some(main_d_width) =
-        decomposed_w_ring_count(num_digits_open, num_live_blocks, ctx.main_num_polys)
-    else {
+    let Ok(main_d_width) = akita_types::opening_d_segment_width(
+        ctx.opening.method(),
+        policy.claim_ext_degree,
+        d_a,
+        dimensions.d_d(),
+        num_digits_open,
+        num_live_blocks,
+        ctx.main_num_polys,
+    ) else {
         return Ok(None);
     };
     let Some((open_key, main_d_width)) = projected_collision_role_price(
         policy,
         akita_types::SisMatrixRole::Open,
-        d_a,
+        dimensions.d_d(),
         dimensions.d_d(),
         main_d_width,
         log_basis_open,
     ) else {
         return Ok(None);
     };
-    // Frozen precommit segments are already projected to the root's shared D
-    // dimension by `precommitted_groups_for_open_basis`; only the main native
-    // width passes through the A-to-D projection above.
+    // Every group width is already expressed in shared D-native subcolumns.
+    // The collision-role pricing above only selects the D key and bound.
     let d_width = main_d_width
         .checked_add(precommitted_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("root batch D width overflow".to_string()))?;
@@ -430,6 +460,14 @@ fn root_final_group_level_params_candidate(
 
     let params = CommittedGroupParams {
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        source_encoding: akita_types::CommittedSourceEncoding::for_producer(
+            ctx.opening.method(),
+            policy.claim_ext_degree,
+            d_a,
+            ctx.final_num_vars,
+            true,
+        ),
+        opening_method: ctx.opening.method(),
         log_basis_inner,
         log_basis_outer: log_basis_open,
         log_basis_open,
@@ -440,7 +478,7 @@ fn root_final_group_level_params_candidate(
         num_positions_per_block,
         num_live_blocks,
         outer_slice_count,
-        fold_challenge_config: *ctx.ring_challenge_cfg,
+        fold_challenge_config: ctx.opening.challenge_config(),
         num_digits_inner,
         num_digits_outer,
         num_digits_open,
@@ -455,19 +493,6 @@ fn root_final_group_level_params_candidate(
     Ok(Some(params))
 }
 
-fn validate_direct_adaptive_dimension_schedule_request(
-    policy: &PlannerPolicy,
-) -> Result<(), AkitaError> {
-    if policy.selection_policy
-        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    {
-        return Err(AkitaError::InvalidSetup(
-            "adaptive search requires MinSetupMatrixFieldElementsThenProofPayload".into(),
-        ));
-    }
-    Ok(())
-}
-
 /// Build the fold schedule selected by a full schedule lookup key.
 pub fn find_schedule(
     key: &AkitaScheduleLookupKey,
@@ -476,15 +501,10 @@ pub fn find_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    let diagnostics = crate::diagnostics::active();
+    let diagnostics = diagnostics.as_deref();
     akita_schedules::planner_support::validate_policy(policy)?;
     key.validate(policy.decomposition.field_bits())?;
-    if matches!(
-        policy.ring_dimension_schedule_mode,
-        crate::RingDimensionScheduleMode::AdaptiveDimension { .. }
-    ) && !policy.recursive_setup_planning
-    {
-        validate_direct_adaptive_dimension_schedule_request(policy)?;
-    }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let scalar_policy;
     let active_policy = if key.precommitteds.is_empty() && !policy.recursive_setup_planning {
@@ -496,7 +516,9 @@ pub fn find_schedule(
     } else {
         policy
     };
-    let setup_field_budget = if active_policy.recursive_setup_planning {
+    let setup_field_budget = if active_policy.selection_policy
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+    {
         active_policy.setup_field_budget
     } else {
         None
@@ -511,10 +533,9 @@ pub fn find_schedule(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
         })?;
-    let ring_challenge_cfg = ring_challenge_config(active_policy.uniform_ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy: active_policy,
-        default_ring_challenge_cfg: &ring_challenge_cfg,
+        diagnostics,
         ring_challenge_config,
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
@@ -524,20 +545,8 @@ pub fn find_schedule(
         level_zero_is_root: true,
     };
     let mut memo = ScheduleMemo::new();
-    let dimension_ceiling = match active_policy.ring_dimension_schedule_mode {
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            CommitmentRingDims::uniform(ring_dimension)
-        }
-        crate::RingDimensionScheduleMode::AdaptiveDimension {
-            potential_a_dimensions,
-            ..
-        } => CommitmentRingDims::uniform(
-            potential_a_dimensions
-                .last()
-                .copied()
-                .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
-        ),
-    };
+    let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
+    let suffix_started = diagnostics.map(|_| Instant::now());
     let suffix = derive_selected_suffix_schedule(
         &suffix_ctx,
         &mut memo,
@@ -551,16 +560,19 @@ pub fn find_schedule(
             payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
         },
         0,
-    )?;
+    );
+    if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
+        diagnostics.add_suffix_dp_time(started.elapsed());
+        let (hits, misses) = memo.setup_prefix_cache_diagnostics();
+        diagnostics.record_setup_prefix_cache(hits, misses);
+    }
+    let suffix = suffix?;
     let best = match active_policy.selection_policy {
         crate::SelectionPolicyId::MinEstimatedProofPayload => {
-            select_complete_candidate(active_policy, suffix.payload_candidates())?
-        }
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-            select_complete_candidate(active_policy, &suffix.mixed_frontier)?
+            select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-            select_complete_candidate(active_policy, suffix.setup_candidates())?
+            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
     };
 
@@ -582,12 +594,14 @@ pub fn find_schedule(
             key.final_group.num_vars()
         )));
     };
-    let first_direct_setup_field_len = if active_policy.recursive_setup_planning {
+    let first_direct_setup_field_len = if active_policy.selection_policy
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+    {
         Some(
             best.first_direct_setup_field_len
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(
-                        "recursive setup schedule is missing its first direct setup size".into(),
+                        "setup-first schedule is missing its first direct setup size".into(),
                     )
                 })?
                 .get(),
@@ -595,11 +609,33 @@ pub fn find_schedule(
     } else {
         None
     };
-    materialize_candidate_schedule(
+    if let Some(diagnostics) = diagnostics {
+        let metrics = best.metrics();
+        diagnostics.record_selected(
+            active_policy.selection_policy,
+            metrics.proof_bytes,
+            metrics.setup_field_elements,
+            metrics.first_direct_setup_capacity.field_elements(),
+            best.folds
+                .to_vec()
+                .iter()
+                .map(|fold| fold.params.role_dims())
+                .collect(),
+        );
+    }
+    let materialization_started = diagnostics.map(|_| Instant::now());
+    let root_layout = key.opening_layout()?;
+    let planned = materialize_candidate_schedule(
         best.total_bytes,
         best.setup_field_elements,
         first_direct_setup_field_len,
+        active_policy.selection_policy,
+        &root_layout,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),
-    )
+    );
+    if let (Some(diagnostics), Some(started)) = (diagnostics, materialization_started) {
+        diagnostics.add_final_materialization_time(started.elapsed());
+    }
+    planned
 }

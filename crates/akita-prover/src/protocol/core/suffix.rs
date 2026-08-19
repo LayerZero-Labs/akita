@@ -2,10 +2,10 @@ use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
-use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::AkitaCommitmentHint;
@@ -92,7 +92,11 @@ where
         + 'stack,
     O: SuffixOpeningProveBackend<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-        + DigitRowsComputeBackend<Cfg::Field>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     TS: SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
@@ -108,6 +112,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
+    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let planned_num_levels = schedule.num_fold_levels();
     if planned_num_levels < 2 {
         return Err(AkitaError::InvalidSetup(
@@ -433,12 +438,11 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>
-        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>
-        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>,
+        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>,
     O: DigitRowsComputeBackend<F>
         + RuntimeOpeningProveBackendFor<F, RecursiveWitnessFlat>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+        + RuntimeCoefficientPackingBackendFor<F, RecursiveFoldSource<F>, E>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
@@ -479,7 +483,6 @@ where
     let opening_point = &sumcheck_challenges;
 
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let needs_extension_reduction = E::EXT_DEGREE > 1;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
@@ -487,7 +490,7 @@ where
         .setup_prefix
         .as_ref()
         .map(|id| {
-            prefix_slots.get(id).ok_or_else(|| {
+            prefix_slots.get(&id.slot_id()).ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "planned setup-prefix slot is missing from prover setup".into(),
                 )
@@ -508,6 +511,10 @@ where
         &witness_polys[..],
         (Commitment::new(witness_commitment), suffix_hint),
     )?;
+    let opening_batch = block_claims.opening_layout()?;
+    let opening_method = super::fold::uniform_opening_method(level_params, &opening_batch)?;
+    let needs_extension_reduction =
+        super::fold::extension_opening_reduction_enabled(opening_method, E::EXT_DEGREE > 1);
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()

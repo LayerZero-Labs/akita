@@ -3,8 +3,8 @@ use super::*;
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn accumulate_fused_partial_lane_relation<E: FieldCore>(
-    evaluation_trace: &PreparedProverEvaluationTrace<E>,
-    trace_coeff_count: usize,
+    linear_terms: &PreparedProverLinearTerms<E>,
+    linear_coeff_count: usize,
     rel: &mut [E; 3],
     w0: E,
     dw: E,
@@ -15,15 +15,15 @@ fn accumulate_fused_partial_lane_relation<E: FieldCore>(
     next_live_lane_count: usize,
 ) {
     let (t0, t1) = if next_left_lane + 1 < next_live_lane_count {
-        evaluation_trace.pair_at_lanes(
+        linear_terms.pair_at_lanes(
             next_left_lane,
             next_left_lane + 1,
             coefficient,
-            trace_coeff_count,
+            linear_coeff_count,
         )
     } else {
         (
-            evaluation_trace.get(next_left_lane, coefficient, trace_coeff_count),
+            linear_terms.get(next_left_lane, coefficient, linear_coeff_count),
             E::zero(),
         )
     };
@@ -33,8 +33,8 @@ fn accumulate_fused_partial_lane_relation<E: FieldCore>(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>(
-    evaluation_trace: &PreparedProverEvaluationTrace<E>,
-    trace_coeff_count: usize,
+    linear_terms: &PreparedProverLinearTerms<E>,
+    linear_coeff_count: usize,
     rel: &mut [E::MulU64Accum; 6],
     w0: i64,
     dw: i64,
@@ -45,10 +45,10 @@ fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>
     live_lane_count: usize,
 ) {
     let (t0, t1) = if left + 1 < live_lane_count {
-        evaluation_trace.pair_at_lanes(left, left + 1, coefficient, trace_coeff_count)
+        linear_terms.pair_at_lanes(left, left + 1, coefficient, linear_coeff_count)
     } else {
         (
-            evaluation_trace.get(left, coefficient, trace_coeff_count),
+            linear_terms.get(left, coefficient, linear_coeff_count),
             E::zero(),
         )
     };
@@ -81,7 +81,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let next_relation_lane_weights =
             Self::fold_relation_lane_weights(&self.relation_lane_weights, r);
         let mut out = vec![E::zero(); coeff_count * next_live_lane_count];
-        let evaluation_trace = &self.evaluation_trace;
+        let linear_terms = &self.linear_terms;
 
         if self.can_skip_norm_linear_coeff() {
             #[cfg(feature = "parallel")]
@@ -133,7 +133,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let p0 = alpha_factor * lane_weight0;
                             let p1 = alpha_factor * lane_weight1;
                             accumulate_fused_partial_lane_relation(
-                                evaluation_trace,
+                                linear_terms,
                                 coeff_count,
                                 &mut rel,
                                 w0,
@@ -215,7 +215,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let p0 = alpha_factor * lane_weight0;
                             let p1 = alpha_factor * lane_weight1;
                             accumulate_fused_partial_lane_relation(
-                                evaluation_trace,
+                                linear_terms,
                                 coeff_count,
                                 &mut rel,
                                 w0,
@@ -295,7 +295,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let p0 = alpha_factor * lane_weight0;
                             let p1 = alpha_factor * lane_weight1;
                             accumulate_fused_partial_lane_relation(
-                                evaluation_trace,
+                                linear_terms,
                                 coeff_count,
                                 &mut rel,
                                 w0,
@@ -380,7 +380,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let p0 = alpha_factor * lane_weight0;
                             let p1 = alpha_factor * lane_weight1;
                             accumulate_fused_partial_lane_relation(
-                                evaluation_trace,
+                                linear_terms,
                                 coeff_count,
                                 &mut rel,
                                 w0,
@@ -435,7 +435,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let block_size = num_first.min(live_pairs);
         let common_alpha_factor = &self.common_alpha_factor;
         let relation_lane_weights = &self.relation_lane_weights;
-        let evaluation_trace = &self.evaluation_trace;
+        let linear_terms = &self.linear_terms;
         let coeff_count = common_alpha_factor.len();
         debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
 
@@ -490,7 +490,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let p0 = alpha_factor * lane_weight0;
                             let p1 = alpha_factor * lane_weight1;
                             accumulate_fused_partial_lane_relation_signed(
-                                evaluation_trace,
+                                linear_terms,
                                 coeff_count,
                                 &mut rel,
                                 w0_i64,
@@ -580,7 +580,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             let p0 = alpha_factor * lane_weight0;
                             let p1 = alpha_factor * lane_weight1;
                             accumulate_fused_partial_lane_relation_signed(
-                                evaluation_trace,
+                                linear_terms,
                                 coeff_count,
                                 &mut rel,
                                 w0_i64,
@@ -644,7 +644,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let block_size = num_first.min(live_pairs);
         let common_alpha_factor = &self.common_alpha_factor;
         let relation_lane_weights = &self.relation_lane_weights;
-        let evaluation_trace = &self.evaluation_trace;
+        let linear_terms = &self.linear_terms;
         let coeff_count = common_alpha_factor.len();
         let tiles =
             crate::protocol::sumcheck::ReductionTiles::new(coeff_count, live_pairs, block_size);
@@ -693,7 +693,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         let p0 = alpha_factor * lane_weight0;
                         let p1 = alpha_factor * lane_weight1;
                         accumulate_fused_partial_lane_relation(
-                            evaluation_trace,
+                            linear_terms,
                             coeff_count,
                             &mut rel,
                             w0,
@@ -767,7 +767,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         let p0 = alpha_factor * lane_weight0;
                         let p1 = alpha_factor * lane_weight1;
                         accumulate_fused_partial_lane_relation(
-                            evaluation_trace,
+                            linear_terms,
                             coeff_count,
                             &mut rel,
                             w0,

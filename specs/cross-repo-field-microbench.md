@@ -385,7 +385,7 @@ Phase 2 (after all Phase 1 data is committed):
 - Existing Akita field microbench suite: `crates/akita-pcs/benches/field_arith/` (`arithmetic.rs`, `base.rs`, `ext2.rs`, `ext4.rs`, `params.rs`, `comparison.rs`).
 - `book/src/how/optimizations.md`: Akita 31-bit optimization, Plonky3 Monty31/Mersenne31 references, recorded packed-mul numbers.
 - `specs/avx-simd-port.md`: AVX2/AVX-512/NEON packed backends, target-cpu flag convention, and the noted Mersenne31 ext4 bench gap this spec closes.
-- `specs/extension-field-opening-batching.md`: Akita extension-field representations (`Fp2`, tower/power/ring-subfield `Fp4`).
+- `specs/archive/2026-Q3/extension-field-opening-batching.md`: historical Akita extension-field representations (`Fp2`, tower/power/ring-subfield `Fp4`).
 - Plonky3 0.5.3: `p3-field`, `p3-mersenne-31`, `p3-baby-bear`, `p3-koala-bear`. `p3-field`, `p3-koala-bear`, `p3-monty-31` (plus poseidon/challenger/dft/matrix/util) are already in `Cargo.lock` via `spongefish`; `p3-mersenne-31` and `p3-baby-bear` are added at the same 0.5.3 version.
 - Sumcheck soundness `<= v*d / |F|` over `v` rounds: Lund-Fortnow-Karloff-Nisan, "Algebraic Methods for Interactive Proof Systems" (LFKN, 1992); Thaler, *Proofs, Arguments, and Zero-Knowledge*, Prop. 2.9.
 - FRI / Reed-Solomon proximity-gap soundness and its field-size dependence (distinct from the query/PoW term): Ben-Sasson, Carmon, Ishai, Kopparty, Saraf, "Proximity Gaps for Reed-Solomon Codes" (BCIKS, 2020), ePrint 2020/654.

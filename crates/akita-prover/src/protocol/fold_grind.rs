@@ -8,12 +8,15 @@ use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
+pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{
-    dyadic_block_ranges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
-    golomb_rice_zigzag_width, CommittedGroupParams, FoldLinfProtocolBinding,
-    InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout, TerminalCommittedGroupParams,
-    TerminalResponseShape,
+    draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width, CommittedGroupParams,
+    FoldLinfProtocolBinding, InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout,
+    TerminalCommittedGroupParams, TerminalResponseShape,
 };
+#[cfg(test)]
+use akita_types::{OpeningFamily, OpeningMethod};
 
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
@@ -142,7 +145,7 @@ impl<G> Clone for FoldGrindGroup<'_, '_, G> {
 pub(crate) struct FoldProbeOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) coefficients: FoldChunkCoefficients,
-    pub(crate) challenges: Challenges,
+    pub(crate) challenges: GroupFoldChallenges,
 }
 
 pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {
@@ -204,6 +207,7 @@ where
         first_jointly_accepted_nonce(binding.max_grind_attempts, |nonce| {
             let mut preview = PreviewFoldDraw::new(transcript);
             let challenges = preview.draw_folding_challenges_with_rejection(
+                akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
                 0,
                 params.num_live_blocks,
@@ -255,6 +259,7 @@ where
         })?;
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
     let live_challenges = live.draw_folding_challenges_with_rejection(
+        akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
         0,
         params.num_live_blocks,
@@ -418,27 +423,12 @@ where
                 let mut preview = PreviewFoldDraw::new(transcript);
                 for prepared_group in groups {
                     let group = &prepared_group.input;
-                    let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
-                    let challenge_config = group.params.fold_challenge_config();
-                    let rejection = matches!(
-                        group.params.inner_commit_matrix_params().security_route(),
-                        InnerCommitSecurityRoute::L2 { .. }
-                    )
-                    .then(|| {
-                        akita_challenges::selective_l2_operator_norm_rejection(
-                            ring_d,
-                            &challenge_config,
-                        )
-                    })
-                    .flatten();
-                    let challenges = preview.draw_folding_challenges_with_rejection(
-                        ring_d,
+                    let challenges = draw_group_fold_challenges::<F, E, _>(
+                        &mut preview,
+                        group.params,
                         group.group_index,
-                        group.params.num_live_blocks(),
                         group.group.num_polynomials(),
-                        &challenge_config,
                         nonce,
-                        rejection,
                     )?;
                     let output =
                         group
@@ -468,24 +458,14 @@ where
             groups.iter().zip(candidate_outputs.iter_mut())
         {
             let group = &prepared_group.input;
-            let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
+            #[cfg(feature = "response-model-diagnostics")]
             let challenge_config = group.params.fold_challenge_config();
-            let rejection = matches!(
-                group.params.inner_commit_matrix_params().security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-            .then(|| {
-                akita_challenges::selective_l2_operator_norm_rejection(ring_d, &challenge_config)
-            })
-            .flatten();
-            let challenges = live.draw_folding_challenges_with_rejection(
-                ring_d,
+            let challenges = draw_group_fold_challenges::<F, E, _>(
+                &mut live,
+                group.params,
                 group.group_index,
-                group.params.num_live_blocks(),
                 group.group.num_polynomials(),
-                &challenge_config,
                 nonce,
-                rejection,
             )?;
             if challenges != output.challenges {
                 return Err(AkitaError::InvalidInput(
@@ -512,7 +492,7 @@ where
                         group_index = group.group_index,
                         nonce,
                         attempts = nonce + 1,
-                        ring_dimension = ring_d,
+                        ring_dimension = group.params.inner_commit_matrix_params().ring_dimension(),
                         num_polynomials = group.group.num_polynomials(),
                         num_live_blocks = group.params.num_live_blocks(),
                         num_positions_per_block = group.params.num_positions_per_block(),
@@ -631,9 +611,94 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
-    use akita_challenges::SparseChallenge;
+    use akita_challenges::{SparseChallenge, SparseChallengeConfig};
+    use akita_types::SisModulusProfileId;
 
     type F = akita_field::Prime128Offset275;
+
+    #[derive(Default)]
+    struct FixedDraw {
+        draws: usize,
+    }
+
+    impl FoldDraw for FixedDraw {
+        fn absorb_and_squeeze(&mut self, _label: &[u8], _payload: &[u8]) -> Vec<u8> {
+            self.draws += 1;
+            vec![11; akita_transcript::FOLD_CHALLENGE_SEED_LEN]
+        }
+    }
+
+    #[test]
+    fn packing_draw_has_one_subring_value_and_derived_a_view() {
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            128,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+        )
+        .with_decomp(4, 6, 2, 2, 2)
+        .unwrap();
+        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+
+        let mut draw = FixedDraw::default();
+        let challenges =
+            draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 3, 2, 7).unwrap();
+        assert_eq!(draw.draws, 1);
+        let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
+            panic!("expected coefficient-packing challenges");
+        };
+        assert_eq!(challenges.geometry().subring_embedding_stride(), 2);
+        assert_eq!(challenges.canonical().len(), 4);
+        assert_eq!(challenges.ambient_a().len(), challenges.canonical().len());
+        for (canonical, embedded) in challenges
+            .canonical()
+            .as_slice()
+            .iter()
+            .zip(challenges.ambient_a().as_slice())
+        {
+            assert_eq!(canonical.coeffs, embedded.coeffs);
+            assert_eq!(canonical.positions.len(), embedded.positions.len());
+            for (&subring_position, &ambient_position) in
+                canonical.positions.iter().zip(&embedded.positions)
+            {
+                assert_eq!(ambient_position, 2 * subring_position);
+            }
+        }
+    }
+
+    #[test]
+    fn packing_draw_rejects_unaudited_family_before_squeeze() {
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            128,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(128).unwrap(),
+        )
+        .with_decomp(4, 6, 2, 2, 2)
+        .unwrap();
+        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+
+        for config in [
+            SparseChallengeConfig::pm1_only(0),
+            SparseChallengeConfig::pm1_only(1),
+        ] {
+            params.fold_challenge_config = config;
+            let mut draw = FixedDraw::default();
+            assert!(draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 0, 1, 0).is_err());
+            assert_eq!(draw.draws, 0);
+        }
+    }
 
     #[test]
     fn empty_chunk_window_has_zero_fold_challenges() {

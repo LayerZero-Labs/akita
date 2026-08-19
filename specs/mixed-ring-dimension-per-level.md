@@ -55,14 +55,14 @@ A, B, and D dimensions during the adaptive prefix. It prices each complete
 schedule before selection. B and D are not chosen by a separate local rank
 heuristic.
 
-Recursive-setup requests use a distinct adaptive path. Their suffix DP searches
-explicit per-matrix dimension tuples and jointly chooses role dimensions,
-block geometry, commitment payload mode, and whether each supported edge
-evaluates setup directly or offloads it through a carried setup-prefix opening.
-This applies to both scalar roots and grouped roots; direct grouped roots
-preserve their frozen committed profiles while searching the final-group
-A/B/D tuple under the direct setup-first objective. Prover and verifier replay
-generated rows and do not invoke the planner at runtime.
+Recursive-setup requests use the same adaptive search and projected frontier.
+They add offload transitions that jointly choose role dimensions, block
+geometry, commitment payload mode, and whether each supported edge evaluates
+setup directly or carries a setup-prefix opening. This applies to scalar and
+grouped roots. Direct grouped roots preserve their frozen committed profiles
+while searching the final-group A/B/D tuple under the shared first-direct
+objective. Prover and verifier replay generated rows and do not invoke the
+planner at runtime.
 
 The production recursive catalogs cover both the scalar fp128 `nv=36`
 profiling row and the grouped profiling key with a 32-variable, two-polynomial
@@ -94,11 +94,10 @@ Supporting recursion required closing six planner/runtime gaps; registering an
 adaptive base config on the old recursive planner would still have produced a
 uniform-D64 suffix.
 
-1. **Use the objective selected by the request.** Direct grouped requests enter
-   the setup-envelope-first adaptive frontier while preserving frozen input
-   descriptors. Requests with `recursive_setup_planning = true` enter the
-   setup-aware suffix frontier, where offload edges and exact role tuples are
-   selected together.
+1. **Use one adaptive objective and frontier.** Adaptive direct and recursive
+   requests enter the same projected suffix frontier while preserving frozen
+   input descriptors. Recursive setup adds offload transitions; it does not
+   change the objective or create a second frontier engine.
 2. **Enumerate exact tuples under a per-role ceiling.** For each searched level,
    the DP enumerates the Cartesian product of the configured A/B/D domains,
    rejects non-divisor projections, and enforces
@@ -117,8 +116,8 @@ uniform-D64 suffix.
    successor but committed as an input of that successor. Prefix derivation
    therefore receives the consuming candidate's exact A and B dimensions.
    Prefix slot metadata, natural support/full-prefix length, SIS rows, and challenge config
-   all agree with those dimensions. This removes the old assumption that every
-   recursive prefix uses `Cfg::D`.
+   all agree with those dimensions. No config-wide ring dimension participates
+   in prefix sizing or setup dispatch.
 5. **Preserve enough information in the suffix frontier.** Two successor
    schedules with the same payload byte counts can still have different
    committed geometry. The parent-visible frontier key therefore uses the full
@@ -133,24 +132,25 @@ uniform-D64 suffix.
    profiler and E2Es use these configs, so runtime proving never depends on the
    offline search implementation.
 
-The recursive objective remains
-`MinFirstDirectSetupThenPayload`: it first minimizes the setup footprint at the
-first direct edge after any offloaded prefix, then exact proof payload and the
-remaining deterministic tie-breaks. Dimension is not optimized in isolation;
-larger A/B/D candidates survive only when their effect on ranks, witness
-contraction, proof bytes, and the setup envelope wins under that objective.
+Adaptive direct and recursive schedules use one objective,
+`MinFirstDirectSetupThenPayload`. It first minimizes the setup footprint at
+the first direct edge after any offloaded prefix, then exact proof payload,
+total setup, and the canonical descriptor. Dimension is not optimized in
+isolation. Larger A/B/D candidates survive only when their effect on ranks,
+witness contraction, proof bytes, and the setup envelope wins under that
+objective.
 
-The implemented direct-scalar policy is:
+The implemented adaptive direct policy is:
 
 ```text
-1. smallest physical setup matrix, measured in base-field elements;
+1. smallest padded setup capacity at the first direct edge;
 2. smallest exact modeled proof payload;
-3. deterministic canonical tie-break only.
+3. smallest total physical setup, measured in base-field elements;
+4. deterministic canonical descriptor.
 ```
 
-This policy is catalog-bound for the default direct scalar fp128 one-hot and
-dense families. Their generated identities use
-`MinSetupMatrixFieldElementsThenProofPayload`. A caller that supplies an
+This is the same policy used by recursive setup planning. It is catalog-bound
+for every adaptive direct and recursive family. A caller that supplies an
 adaptive dimension policy with a proof-payload selection policy is rejected
 rather than silently changing objectives. Prover and verifier remain
 catalog-only and never run the planner.
@@ -337,7 +337,6 @@ verifier-reachable dynamic programming.
 
 | Policy input | Current meaning |
 |---|---|
-| `uniform_ring_dimension` | Uniform-only A/B/D candidate; ignored by adaptive search |
 | `ring_dimension_schedule_mode` | Uniform candidate or catalog-bound adaptive A/B/D domains plus a monotone uniform-tuple suffix domain |
 | `decomposition`, `basis_range` | Digit policy; root basis is pinned to the configured minimum, later bases are searched and non-decreasing |
 | SIS profile, policy, table digest | Exact role-aware minimum-rank lookup identity |
@@ -355,9 +354,8 @@ The shipped selection policies are:
 
 | Policy | Current comparison |
 |---|---|
-| `MinEstimatedProofPayload` | Direct schedules: exact proof payload only |
-| `MinSetupMatrixFieldElementsThenProofPayload` | Adaptive direct schedules: physical setup fields, then exact proof payload, then descriptor bytes |
-| `MinFirstDirectSetupThenPayload` | Recursive setup schedules: first later direct setup scan, then exact proof payload, subject to an optional host budget |
+| `MinEstimatedProofPayload` | Uniform direct schedules: exact proof payload, then total setup and descriptor |
+| `MinFirstDirectSetupThenPayload` | Adaptive direct and recursive schedules: first direct setup capacity, then exact proof payload, total setup, and descriptor, subject to an optional host budget |
 
 The ordinary uniform direct policy computes a setup envelope but does not use
 it for selection. The canonical fp128 one-hot and dense presets each resolve
@@ -566,45 +564,25 @@ extending the existing canonical candidate functions. Do not retain
 `retarget_commitment_matrices` as a production post-planning pass or add
 `*_for_dims` forwarding wrappers.
 
-### Exact dynamic programming and Pareto frontier
+### Exact dynamic programming and projected frontier
 
-The setup objective composes by `max`, while proof bytes compose by addition:
-
-```text
-combined.setup = max(level.setup, child.setup)
-combined.proof = level.proof + child.proof
-```
-
-This breaks a one-best-child DP. For example:
+Adaptive direct and recursive planning use one complete order:
 
 ```text
-child X = (setup 10, proof 100)
-child Y = (setup 20, proof  50)
-parent setup = 30
+(first direct padded setup capacity, proof bytes, total setup, descriptor)
 ```
 
-X is lexicographically better in isolation, but both complete schedules have
-setup 30 under the parent, so Y is globally better. Discarding Y at the child
-state is incorrect.
+A recursive parent may either expose the child's first-direct setup or replace
+that edge with an offloaded prefix. It may also consume the child's proof
+projection after parent-owned setup has masked the setup coordinates. A
+one-best-child DP is therefore unsound.
 
-Each suffix state must therefore retain the nondominated frontier of:
-
-```text
-(max_setup_matrix_field_elements, exact_proof_payload_bytes)
-```
-
-Within one exact parent-visible first-step partition, candidate X can safely
-prune Y only when:
-
-```text
-X.setup <= Y.setup
-X.proof < Y.proof
-```
-
-A setup-only improvement is not sufficient: a larger parent can mask both
-setup footprints, leaving an exact cost tie whose canonical descriptor still
-has to be compared. This proof-strict rule is intentionally narrower than an
-ordinary two-objective Pareto frontier.
+Each suffix state retains two projections per exact parent-visible key. The
+setup projection orders first-direct capacity, proof, and total setup. The
+payload projection retains proof winners needed after a parent has fixed the
+first-direct coordinate. A candidate may be pruned only when it is safely
+dominated in both projections. Strict proof comparison preserves descriptor
+ties.
 
 Parent proof pricing depends on the exact first child fold (outgoing
 commitment, terminal binding, and optional Stage 3). Safe pruning must be
@@ -635,10 +613,10 @@ domain is part of catalog identity:
    component must be at least that dimension so entering the suffix cannot
    increase a dimension.
 5. Enumerate direct-terminal and direct-child edges over the selected split
-   domain, price them with the
-   existing exact proof-size functions, combine physical setup cost by `max`,
-   and retain the required frontier per full canonical first-step descriptor. Exact-cost ties
-   survive until the root descriptor comparator chooses a canonical winner.
+   domain, price them with the existing exact proof-size and setup-capacity
+   functions, and retain both projections per full canonical first-step
+   descriptor. Exact-cost ties survive until the root descriptor comparator
+   chooses a canonical winner.
 6. Do not terminate before L2: the terminal and every fold from L2 onward use
    a tuple admitted by the suffix domain.
 7. At the root, choose the global minimum by the requested score.
@@ -660,15 +638,15 @@ including `d_setup`, not only its natural length.
 
 ### Selection policy and the current nv=36 data
 
-The catalog-bound selection policy has semantics:
+The catalog-bound adaptive selection policy has semantics:
 
 ```text
-MinSetupMatrixFieldElementsThenProofPayload
+MinFirstDirectSetupThenPayload
 ```
 
-Do not change the meaning of `MinEstimatedProofPayload` in place. Existing
-uniform catalogs may continue to use the old ID until intentionally
-regenerated; adaptive mixed-D catalogs use the new ID.
+Do not change the meaning of `MinEstimatedProofPayload` in place. Uniform
+direct catalogs continue to use it. Adaptive direct and recursive catalogs use
+the same setup-first ID and the same complete-schedule frontier.
 
 The current benchmark makes the requested policy's result concrete:
 
@@ -709,12 +687,12 @@ This subsection records the plan before adaptive recursive catalogs shipped.
 The current recursive objective remains:
 
 ```text
-(first later direct setup scan, proof payload)
+(first later direct setup capacity, proof payload, total setup, descriptor)
 ```
 
-Recursive setup selection is a distinct semantic policy, not a special case of
-setup-envelope-first selection. Setup-prefix commitments now use the consuming
-edge's exact A/B dimensions.
+Adaptive direct and recursive setup share this objective. Recursive topology
+adds offload edges; it does not add another selection policy. Setup-prefix
+commitments use the consuming edge's exact A/B dimensions.
 
 The original sequence was:
 
@@ -797,16 +775,17 @@ is recomputed over every admitted A dimension.
 
 ### Historical setup/config cutover (superseded)
 
-The original mixed-D proposal treated `CommitmentConfig::D` and a scalar
-`PlannerPolicy::ring_dimension` as a setup-generation dimension, a uniform
-planner candidate, and a backend policy at once. That model was removed by
+The original mixed-D proposal treated one global config field and one scalar
+planner field as a setup-generation dimension, a uniform planner candidate,
+and a backend policy at once. That model was removed by
 the flat setup cutover in
 [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 
-Current code keeps `CommitmentConfig::D` only as the uniform candidate for
-presets that choose one, exposes `PlannerPolicy::uniform_ring_dimension`, and
-measures setup capacity directly in base-field elements. The public matrix has
-no generation dimension, and cache/catalog identity does not include one.
+The completed cutover removed both duplicate config-wide dimension fields.
+Uniform presets put their one value in `ring_dimension_schedule_mode`.
+Adaptive presets bind their complete A, B, and D domains there. Setup capacity
+is measured directly in base-field elements. The public matrix has no
+generation dimension.
 The historical design below is retained only to explain why the separation
 was required; it is not an active implementation contract.
 
@@ -864,9 +843,10 @@ byte-identical.
    suffix domain.
 5. Retain the unpruned L0/L1 frontier; do not apply rank-one dimension caps
    until an equivalence key is proved against the unpruned reference traversal.
-6. Retain edge-safe setup/proof frontiers across the mixed boundary, then use
+6. Retain edge-safe first-direct/payload projections across the mixed boundary, then use
    the same catalog-bound split policy throughout the suffix.
-7. Select by setup field elements, then proof bytes, then descriptor bytes.
+7. Select by first-direct padded capacity, proof bytes, total setup, then
+   descriptor bytes.
 8. Bind recursive setup-family dimensions to the same explicit catalog policy.
 
 #### Cut 2: catalog replay and shipped adaptive families (implemented)
@@ -897,7 +877,8 @@ above:
   of independently audited A/B/D domains and the per-profile uniform suffix;
 - the one canonical `find_schedule` entry point dispatches by schedule mode:
   uniform mode preserves the proof-payload objective, while adaptive mode
-  selects by physical setup field elements and then exact modeled proof bytes;
+  selects by first-direct padded capacity, exact modeled proof bytes, total
+  setup, and the canonical descriptor;
 - root and recursive candidates enumerate A/B/D independently and derive each
   role-local width, SIS key, and matrix from the complete tuple;
 - adaptive-prefix levels enumerate admissible component-wise descending tuples.
@@ -913,14 +894,15 @@ above:
 - the dedicated mixed-search memo includes the parent dimension ceiling, while
   suffix states use their exact uniform dimension and the catalog-bound split
   policy;
-- mixed-boundary states retain the required setup/proof alternatives per exact
-  parent-visible first fold;
+- mixed-boundary states retain the required first-direct and payload
+  projections per exact parent-visible first fold;
 - scalar and grouped recursive requests both use the adaptive setup-aware
   suffix planner; a scalar root may carry its setup-prefix opening into the
   first recursive fold without adding an application precommit group.
 
-`crates/akita-planner/examples/mixed_dimension_search.rs` exercises both the
-implemented and preserved paths. With `nv=18` and the following candidate
+The following example records the retired total-setup-first checkpoint. It is
+historical measurement data, not current selection evidence.
+`crates/akita-planner/examples/mixed_dimension_search.rs` used `nv=18` and the following candidate
 tuples:
 
 ```text
@@ -950,10 +932,9 @@ Release-process measurements after the bounded-search change were:
 | 24 | 0.22 s | `256/128/128` | `128/64/64` | D64 | 524,288 | 90,976 |
 | 36 | 0.46 s | `256/128/128` | `64/64/64` | D64 | 67,108,864 | 99,368 |
 
-The `nv=24` and `nv=36` rows supersede the earlier A-pruned checkpoint.
-The adaptive-prefix tuple enumeration admits the D256 root and selects it because
-setup fields are the primary objective, even though the `nv=36` proof is
-larger than the former pruned result.
+The `nv=24` and `nv=36` rows superseded an earlier A-pruned checkpoint under
+the retired objective. They must not be used as exact expected winners for the
+current first-direct objective.
 
 These are planner smoke-test wall times, not a controlled benchmark; the
 process and filesystem caches were warm after the first run. The material
@@ -1017,7 +998,7 @@ bounded to named supported workload keys.
 | SIS admission tests | Unsupported role/dimension/bucket/width is candidate infeasibility; malformed policy is an error |
 | Unpruned reference traversal | Constrained L0/L1 frontier and selected schedule match the same canonical candidate set without production pruning |
 | Independent formula regressions | Hand-calculated setup rounding, EOR feasibility, SIS-cell skipping, and complete-schedule descriptor ties match the implementation |
-| Parent-envelope counterexample | The DP retains the lower-proof child after a larger parent setup masks child setup differences |
+| Two-projection counterexample | A lower-first-direct setup winner must not prune the lower-proof payload candidate required by an offloaded parent |
 | Transition tests | A/B/D are component-wise non-increasing; L2+ is uniform and belongs to the configured suffix domain |
 | Deterministic tie-break | Exact-cost ties resolve by full canonical schedule descriptor bytes |
 | Terminal tests | Mixed search does not terminate before the suffix boundary |
@@ -1025,7 +1006,7 @@ bounded to named supported workload keys.
 | Identity drift | Every candidate-domain or objective change invalidates the old table |
 | Setup parity | Planned field-element envelope equals allocated setup capacity and runtime fit checks |
 | Determinism | Repeated and parallel table generation emits byte-identical rows |
-| Benchmark policy | The constrained `nv=36` search completes and reports `256/128/128 → D64` with 67,108,864 physical setup fields |
+| Production policy | Every adaptive catalog row matches the shared first-direct objective and passes generated replay |
 
 These tests cover direct scalar, direct grouped, multi-chunk, and recursive
 generated replay. Each newly shipped grouped workload still requires a named
@@ -1034,7 +1015,7 @@ catalog row and matching end-to-end coverage.
 ### Target search policy
 
 The planner uses the deterministic
-`(physical setup fields, proof bytes, descriptor bytes)` comparator subject to
+`(first-direct padded capacity, proof bytes, total setup fields, descriptor bytes)` comparator subject to
 catalog-bound constraints:
 
 1. only the configured adaptive prefix searches mixed dimensions;
@@ -1337,7 +1318,7 @@ continue to cover mixed-D search and validation at the planning boundary.
 
 ### Lower-level coverage
 
-- planner tests compare the mixed Pareto frontier with B-varying and D-varying
+- planner tests compare the projected first-direct and payload frontier with B-varying and D-varying
   unpruned traversals and assert literal hand-priced winning root tuples. They
   also show that a lower
   D256 A rank can reduce B width after both B matrices reach rank one, preserve

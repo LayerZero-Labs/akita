@@ -2,7 +2,7 @@ use super::common::*;
 use super::stage1::*;
 use super::stage2::*;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::LowBasisRangeCheckProver;
-use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
+use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -460,7 +460,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(7),
         F::from_u64(11),
     ];
-    let evaluation_trace = PreparedProverEvaluationTrace::from_dense(vec![F::zero(); 10], 5, 2);
+    let evaluation_trace = PreparedProverLinearTerms::from_dense(vec![F::zero(); 10], 5, 2);
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
             &w_compact,
@@ -511,11 +511,8 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
 
     assert_eq!(
         {
-            let evaluation_trace = PreparedProverEvaluationTrace::from_dense(
-                trace_compact.clone(),
-                live_x_cols,
-                y_len,
-            );
+            let evaluation_trace =
+                PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_x_cols, y_len);
             build_stage2_bivariate_skip_proof_from_m_compact(
                 &w_compact,
                 &alpha_evals_y,
@@ -555,7 +552,7 @@ fn stage2_bivariate_skip_proof_builder_with_prepared_trace_matches_dense() {
         .map(|i| F::from_u64((11 * i as u64) + 13))
         .collect();
     let evaluation_trace =
-        PreparedProverEvaluationTrace::from_dense(trace_compact.clone(), live_x_cols, y_len);
+        PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_x_cols, y_len);
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((17 * i as u64) + 19))
         .collect();
@@ -627,7 +624,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             )
         })
         .collect();
-    let evaluation_trace = PreparedProverEvaluationTrace::from_dense(
+    let evaluation_trace = PreparedProverLinearTerms::from_dense(
         vec![F::zero(); live_x_cols * y_len],
         live_x_cols,
         y_len,

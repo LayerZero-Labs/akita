@@ -54,17 +54,13 @@ pub enum CommittedSourceClass {
 impl CommittedSourceClass {
     /// Project this source class onto its offline honest-fold sizing policy.
     ///
-    /// The class remains the declaration. Field width and extension degree are
-    /// geometry needed only by the sizing policy.
+    /// The class remains the declaration. Field width is geometry needed only
+    /// by the sizing policy.
     #[must_use]
-    pub const fn honest_fold_policy(
-        self,
-        field_bits: u32,
-        extension_degree: usize,
-    ) -> HonestFoldPolicySpec {
+    pub const fn honest_fold_policy(self, field_bits: u32) -> HonestFoldPolicySpec {
         match self {
             Self::UnitOneHot { source_chunk_size } => HonestFoldPolicySpec::UnitOneHot(
-                UnitOneHotFoldPolicy::new(field_bits, extension_degree, source_chunk_size),
+                UnitOneHotFoldPolicy::canonical(field_bits, source_chunk_size),
             ),
             Self::BalancedSignedDigit => HonestFoldPolicySpec::BalancedSignedDigit(
                 BalancedSignedDigitFoldPolicy::universal(field_bits),
@@ -264,7 +260,7 @@ mod tests {
     #[test]
     fn the_policy_is_derived_from_the_class_not_the_bound() {
         assert_eq!(
-            CommittedSourceClass::BalancedSignedDigit.honest_fold_policy(128, 1),
+            CommittedSourceClass::BalancedSignedDigit.honest_fold_policy(128),
             HonestFoldPolicySpec::BalancedSignedDigit(BalancedSignedDigitFoldPolicy::universal(
                 128
             ))
@@ -273,8 +269,8 @@ mod tests {
             CommittedSourceClass::UnitOneHot {
                 source_chunk_size: 256
             }
-            .honest_fold_policy(128, 1),
-            HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::new(128, 1, 256))
+            .honest_fold_policy(128),
+            HonestFoldPolicySpec::UnitOneHot(UnitOneHotFoldPolicy::canonical(128, 256))
         );
 
         // A balanced-digit source declared at bound 1 stays balanced-digit, and a

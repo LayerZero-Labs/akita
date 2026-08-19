@@ -9,6 +9,7 @@ pub mod compression;
 pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
+mod subring_coefficient_packing;
 pub use dispatch::{
     compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
     ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
@@ -62,7 +63,7 @@ pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
     embed_ring_subfield_scalar_flat, embed_ring_subfield_vector, embed_subfield,
     pack_tensor_base_lift_i8_digits, psi_embed, recover_ring_subfield_inner_product, trace_h,
-    validate_ring_subfield_role, FpExtEncoding, SubfieldParams,
+    FpExtEncoding, SubfieldParams,
 };
 pub use golomb_rice::{
     golomb_rice_flat_admit_terminal_wire, golomb_rice_flat_rows_admit_terminal_wire,
@@ -78,15 +79,16 @@ pub use instance_descriptor::{
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    gadget_row_scalars, lagrange_weights, monomial_weights, opening_domain_len,
-    packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes,
+    gadget_row_scalars, lagrange_weights, monomial_weights, opening_d_segment_width,
+    opening_domain_len, packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
     sumcheck_rounds, terminal_response_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
     witness_commitment_domain_len, BasisMode, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
-    LevelParamsLike, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, RingMatrixView,
-    RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
+    GroupOpeningPlan, LevelParamsLike, OpeningFamily, OpeningMethod,
+    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, RingMatrixView, RingOpeningPoint,
+    RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
     centered_quotient_requires_i16_tail, centered_quotient_requires_i16_tail_for_field,
@@ -102,35 +104,41 @@ pub use proof::{
     build_compression_relation_weights, build_terminal_response,
     build_terminal_response_from_groups, canonical_base_field_proof_shape,
     commit_only_setup_field_elements, compression_relation_claim_from_rhs_extension,
-    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, emit_witness_e_planes,
-    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    decode_terminal_z_golomb_payload, derive_public_matrix_prefix, draw_group_fold_challenges,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
     folded_root_supports_opening_shape, generate_relation_rhs, padded_setup_prefix_len,
-    prepare_opening_point, raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
+    prepare_coefficient_packing_batch_semantics,
+    prepare_coefficient_packing_verifier_batch_semantics, prepare_opening_point,
+    raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
     relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, ring_relation_segment_lengths,
-    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    root_tensor_projection_enabled_for_width, sample_akita_setup_seed, sample_row_coefficients,
+    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_row_count,
+    ring_relation_segment_lengths, ring_subfield_packed_extension_opening_point,
+    sample_akita_setup_seed, sample_row_coefficients, scheduled_setup_prefix,
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     setup_prefix_coverage_eval_len, setup_prefix_precommitted_params,
-    setup_prefix_slot_field_elements, setup_prefix_slot_id, suffix_opening_layout,
+    setup_prefix_slot_field_elements, suffix_opening_layout,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_response_upper_bound_bytes, terminal_response_z_payload_bytes,
     validate_batched_inputs, validate_public_matrix_matches_seed,
     validate_terminal_response_z_payload, verifier_setup_matrix_capacity_for_schedule,
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitment, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaStage1Proof,
-    AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, Commitment,
-    CommitmentVerifier, CommittedGroup, CompressionRelationAddressGeometry,
-    CompressionRelationWeights, DigitBlockIter, DigitBlocks, DummyProof,
-    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FoldLevelProof,
-    GroupBatchStatement, LevelProofShape, NegativeBinarySupport, NextWitnessBinding,
-    NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
+    AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup,
+    CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
+    CoefficientPackingChallenges, CoefficientPackingGroupSemantics, CoefficientPackingStage2Source,
+    CoefficientPackingStage2Terms, CoefficientPackingVerifierBatchSemantics,
+    CoefficientPackingVerifierGroupSemantics, Commitment, CommitmentVerifier, CommittedGroup,
+    CompressionRelationAddressGeometry, CompressionRelationWeights, DigitBlockIter, DigitBlocks,
+    DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FoldLevelProof,
+    GroupBatchStatement, GroupFoldChallenges, LevelProofShape, NegativeBinarySupport,
+    NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
     PhysicalL2NormProof, PhysicalResponsePlan, PolynomialGroupClaims, PolynomialGroupLayout,
     PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation, RelationAddressGeometry,
     RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
-    RelationRowFamily, RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity,
+    RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,
+    RelationWitnessGeometry, RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
+    RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
+    RingRelationSegmentLengths, RingVec, RingView, ScheduledSetupPrefix, SetupMatrixCapacity,
     SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
     SetupSumcheckProof, SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout,
@@ -144,13 +152,12 @@ pub use proof::{
 };
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
-    detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
-    intermediate_w_ring_element_count_with_counts,
-    intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_input_witness_len,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, FoldScheduleEstimate, NextWitnessBindingPolicy, PlannedFoldSchedule,
-    PrecommittedGroupProfiles, RecursiveFoldParams, RecursiveFoldStep, RootFinalGroupParams,
-    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, TerminalCommittedGroupParams,
+    detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    CommittedSourceEncoding, FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate,
+    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, RecursiveFoldParams,
+    RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldDescriptor,
     TerminalFoldParams, TerminalFoldStep, WitnessPartition,
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
@@ -169,6 +176,13 @@ pub use sis::{
     SisL2TableKey, SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use subring_coefficient_packing::coefficient_packing_partials;
+pub use subring_coefficient_packing::{
+    coefficient_packing_scalar_opening, fold_coefficient_packing_partials,
+    CoefficientPackingFoldProduct, PreparedSubringCoefficientPackingPoint,
+    SubringCoefficientPackingGeometry,
+};
 pub use tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
 pub use trace_weight::{
     build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
@@ -183,7 +197,7 @@ pub use trace_weight::{
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    dyadic_block_ranges, ChunkedWitnessCfg, CompressionWitnessLayerLayout, CompressionWitnessSpan,
-    MultiChunkProfileId, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
-    MAX_WITNESS_CHUNKS,
+    dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
+    CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,
+    WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
 };

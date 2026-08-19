@@ -26,8 +26,6 @@ use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 struct RootShape {
     inner_basis: u32,
     inner_digits: usize,
-    a_input_raw: usize,
-    setup_field_elements: usize,
     next_witness: usize,
 }
 
@@ -41,9 +39,6 @@ fn root_shape<Cfg: CommitmentConfig>(num_vars: usize) -> RootShape {
     RootShape {
         inner_basis: root.log_basis_inner,
         inner_digits: root.num_digits_inner,
-        a_input_raw: root.inner_commit_matrix.raw_input_dimension().unwrap(),
-        setup_field_elements: akita_types::setup_matrix_field_elements_for_schedule(&schedule)
-            .expect("setup field elements"),
         next_witness: schedule.root.output_witness_len,
     }
 }
@@ -84,7 +79,11 @@ fn bound_is_the_only_declared_difference_from_full_width_dense() {
         fp128::DenseBounded::sis_modulus_profile(),
         fp128::Dense::sis_modulus_profile()
     );
-    assert_eq!(fp128::DenseBounded::D, fp128::Dense::D);
+    assert_eq!(
+        fp128::DenseBounded::RING_DIMENSION_SCHEDULE_MODE,
+        fp128::Dense::RING_DIMENSION_SCHEDULE_MODE,
+        "the source bound must not change the A/B/D search domain"
+    );
     assert_eq!(
         fp128::DenseBounded::inner_basis_range(),
         fp128::Dense::inner_basis_range()
@@ -142,15 +141,15 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
     .is_err());
 }
 
-/// The bound must actually pay off where the objective can spend it.
+/// The bound must actually reduce the source-dependent root digit depth.
 ///
-/// The selection objective is setup-first
-/// (`MinSetupMatrixFieldElementsThenProofPayload`), so the bound's return is a
-/// smaller shared setup matrix and a smaller level-1 witness — not a smaller
-/// proof. Asserted as strict inequalities plus exact snapshots so a regression in
-/// either direction is visible.
+/// Each catalog family independently minimizes its setup-first objective, so its
+/// selected setup envelope need not be monotone in the source bound: a bounded
+/// family may spend its lower digit cost on a different A/B/D shape. The direct
+/// consequences pinned by these catalog rows are instead a shallower digit
+/// decomposition and a smaller level-1 witness.
 #[test]
-fn the_bound_shrinks_the_digit_depth_setup_and_next_witness() {
+fn the_bound_shrinks_the_digit_depth_and_next_witness() {
     for num_vars in [24usize, 26] {
         let bounded = root_shape::<fp128::DenseBounded>(num_vars);
         let full = root_shape::<fp128::Dense>(num_vars);
@@ -160,12 +159,6 @@ fn the_bound_shrinks_the_digit_depth_setup_and_next_witness() {
             "nv={num_vars}: bounded digit depth {} must be below full-width {}",
             bounded.inner_digits,
             full.inner_digits
-        );
-        assert!(
-            bounded.setup_field_elements < full.setup_field_elements,
-            "nv={num_vars}: bounded setup {} must be below full-width {}",
-            bounded.setup_field_elements,
-            full.setup_field_elements
         );
         assert!(
             bounded.next_witness < full.next_witness,

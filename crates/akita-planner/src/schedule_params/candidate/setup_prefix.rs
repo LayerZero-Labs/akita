@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct SetupPrefixSearchKey {
+    opening_method: akita_types::OpeningMethod,
     ring_challenge: SparseChallengeConfig,
     log_basis_open: u32,
     n_prefix: usize,
@@ -15,11 +16,19 @@ struct SetupPrefixSearchKey {
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
     entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+    hits: usize,
+    misses: usize,
+}
+
+impl SetupPrefixSearchCache {
+    pub(crate) const fn diagnostics(&self) -> (usize, usize) {
+        (self.hits, self.misses)
+    }
 }
 
 pub(crate) struct SetupPrefixSearchRequest<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) ring_challenge_cfg: &'a SparseChallengeConfig,
+    pub(crate) opening: PlannerOpeningCandidate,
     pub(crate) log_basis_open: u32,
     pub(crate) n_prefix: usize,
     pub(crate) num_chunks: usize,
@@ -45,7 +54,7 @@ struct SetupPrefixSplit {
 
 struct SetupPrefixCandidateContext<'a> {
     policy: &'a PlannerPolicy,
-    ring_challenge_cfg: &'a SparseChallengeConfig,
+    opening: PlannerOpeningCandidate,
     dimensions: CommitmentRingDims,
     log_basis_open: u32,
     n_prefix: usize,
@@ -78,7 +87,7 @@ impl SetupPrefixCandidateContext<'_> {
             split.num_digits_inner,
         )?;
         let modeled_linf_cap = prefix_moment.response_linf_cap(
-            self.ring_challenge_cfg.challenge_l2_sq_max(),
+            self.opening.challenge_config().challenge_l2_sq_max(),
             split.num_live_blocks,
             self.num_chunks,
             num_fold_coeffs,
@@ -87,7 +96,8 @@ impl SetupPrefixCandidateContext<'_> {
         derive_inner_commitment_candidate(InnerCommitmentCandidateRequest {
             policy: self.policy,
             fold_policy: &fold_policy,
-            ring_challenge_cfg: self.ring_challenge_cfg,
+            ring_challenge_cfg: &self.opening.challenge_config(),
+            challenge_dimension: self.opening.challenge_dimension(d_a),
             dimensions: self.dimensions,
             num_claims: 1,
             num_live_ring_elements_per_claim: self.ring_slots,
@@ -138,25 +148,24 @@ impl SetupPrefixCandidateContext<'_> {
         };
         let params = PrecommittedLevelParams {
             layout,
-            log_basis_open: self.log_basis_open,
-            fold_challenge_config: *self.ring_challenge_cfg,
-            num_digits_open: self.num_digits_open,
-            num_digits_fold: inner_candidate.num_digits_fold,
+            opening: akita_types::GroupOpeningPlan {
+                opening_method: self.opening.method(),
+                fold_challenge_config: self.opening.challenge_config(),
+                log_basis_open: self.log_basis_open,
+                num_digits_open: self.num_digits_open,
+                num_digits_fold: inner_candidate.num_digits_fold,
+            },
         };
-        let physical_width = akita_schedules::planner_support::grouped_segment_rings(
+        let physical_width = akita_types::grouped_witness_body_coefficients(
+            &params,
+            self.dimensions,
+            self.policy.claim_ext_degree,
             1,
-            split.num_live_blocks,
             self.num_chunks,
-            split.num_positions_per_block,
-            params.layout.inner_commit_matrix.output_rank(),
-            split.num_digits_inner,
-            self.num_digits_outer,
-            self.num_digits_open,
-            params.num_digits_fold,
         )?;
         let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
         let setup_fields = akita_types::setup_prefix_slot_field_elements(
-            &akita_types::setup_prefix_slot_id(self.n_prefix, params.clone()),
+            &akita_types::scheduled_setup_prefix(self.n_prefix, params.clone()).slot_id(),
         )?;
         let coords = [physical_width, padded_setup_prefix_len(setup_fields)];
         let descriptor = params.canonical_descriptor_bytes();
@@ -198,7 +207,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
 ) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
     let SetupPrefixSearchRequest {
         policy,
-        ring_challenge_cfg,
+        opening,
         log_basis_open,
         n_prefix,
         num_chunks,
@@ -206,7 +215,8 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         outer_ring_dimension,
     } = request;
     let cache_key = SetupPrefixSearchKey {
-        ring_challenge: *ring_challenge_cfg,
+        opening_method: opening.method(),
+        ring_challenge: opening.challenge_config(),
         log_basis_open,
         n_prefix,
         num_chunks,
@@ -214,8 +224,10 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         outer_ring_dimension,
     };
     if let Some(cached) = cache.entries.get(&cache_key) {
+        cache.hits = cache.hits.saturating_add(1);
         return Ok(cached.to_vec());
     }
+    cache.misses = cache.misses.saturating_add(1);
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
         || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
@@ -247,7 +259,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     let mut frontier = Vec::<SetupPrefixFrontierEntry>::new();
     let candidate_context = SetupPrefixCandidateContext {
         policy,
-        ring_challenge_cfg,
+        opening,
         dimensions: CommitmentRingDims {
             inner: inner_ring_dimension,
             outer: outer_ring_dimension,

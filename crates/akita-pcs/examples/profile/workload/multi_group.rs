@@ -45,7 +45,7 @@ where
         .iter()
         .filter_map(|fold| fold.params.incoming_setup_prefix.as_ref())
     {
-        if setup.prefix_slots.get(slot_id).is_some() {
+        if setup.prefix_slots.get(&slot_id.slot_id()).is_some() {
             continue;
         }
         let n_prefix = slot_id.n_prefix()?;
@@ -58,7 +58,7 @@ where
                     &setup.expanded,
                     backend,
                     prepared,
-                    &slot_id.commitment_params,
+                    &slot_id.commitment_params.layout,
                     n_prefix,
                     slot_id.natural_len,
                 )
@@ -253,7 +253,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         for (group_idx, pre_point) in pre_points.iter().enumerate() {
             let polys = vec![make_profile_onehot_poly::<FF>(
                 pre_num_vars,
-                pre_descriptor.inner_commit_matrix.ring_dimension(),
                 0x0bee_fcaf_2100_0000 + group_idx as u64,
             )];
             let openings = polys
@@ -277,12 +276,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             pre_openings.push(openings);
         }
 
-        let main_params = schedule.root.params.final_group.commitment.clone();
         let final_polys = (0..final_num_polys)
             .map(|poly_idx| {
                 make_profile_onehot_poly::<FF>(
                     final_num_vars,
-                    main_params.d_a(),
                     0x0bee_fcaf_2800_0000 + poly_idx as u64,
                 )
             })
@@ -401,6 +398,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         &schedule,
         final_group,
         Cfg::decomposition().field_bits(),
+        Cfg::EXT_DEGREE,
     )
     .expect("runtime schedule report geometry");
     emit_proof_tail_report::<FF, Cfg::ExtField>(

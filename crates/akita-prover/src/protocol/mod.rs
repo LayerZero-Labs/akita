@@ -1,5 +1,6 @@
 //! Prover-side protocol orchestration helpers.
 
+mod coefficient_packing;
 pub mod core;
 pub mod extension_opening_reduction;
 pub mod fold_grind;

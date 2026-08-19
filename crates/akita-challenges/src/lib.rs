@@ -34,5 +34,7 @@ pub use config::{
     D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT, D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     MIN_FOLD_CHALLENGE_ENTROPY_BITS, PRODUCTION_FOLD_CHALLENGE_RING_DIMS,
 };
-pub use fold_draw::{fold_challenge_sample_label, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
+pub use fold_draw::{
+    fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
+};
 pub use sampler::sample_sparse_challenges;

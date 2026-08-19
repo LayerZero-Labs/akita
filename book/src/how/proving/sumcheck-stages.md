@@ -451,11 +451,13 @@ relation. It is not a Boolean sumcheck point.
 
 ### Batch the matrix rows
 
-Suppose the ordinary relation has rows indexed by $i$. These are the
-fold-consistency, $\mathbf A$, $\mathbf B$, and $\mathbf D$ rows; their quotient
-terms are included in the same ordinary component. The protocol samples a
-Boolean MLE point $\tau_1$ of sufficient width for the complete physical row
-domain and defines
+Suppose the ordinary relation has rows indexed by $i$. Its method-independent
+rows are $\mathbf A$, $\mathbf B$, and $\mathbf D$, with their quotient terms.
+For `EvaluationTrace`, it also includes the legacy fold-consistency row and its
+quotient. `SubringCoefficientPacking` omits that legacy row and carries its
+packed consistency constraints once in the method-dependent structured terms
+defined below. The protocol samples a Boolean MLE point $\tau_1$ of sufficient
+width for the complete physical row domain and defines
 
 $$
 \beta_i=\operatorname{eq}(\tau_1,i).
@@ -522,7 +524,7 @@ A(k)=\alpha^k,
 L_{\mathrm{ord}}(j)=m_j^{\mathrm{ord}}.
 $$
 
-The relation weight factors as
+The native matrix relation weight factors as
 
 $$
 R_{\mathrm{ord}}(k,j)=A(k)L_{\mathrm{ord}}(j),
@@ -541,26 +543,29 @@ The Boolean domain is padded with zeros when the live witness length is not a
 power of two.
 
 The production protocol also permits different ring dimensions in different
-parts of the relation. It chooses the largest power-of-two coefficient block
-common to every role and to the outgoing witness. The low address still
+parts of the native relation. It chooses the largest power-of-two coefficient
+block common to every role and to the outgoing witness. The low address still
 selects a coefficient inside that common block. Any remaining high power of
 $\alpha$, together with the matrix entry and its $\beta_i$ row weight, is
 absorbed into the lane weight $L_{\mathrm{ord}}$. Thus the exact factorization
 $R_{\mathrm{ord}}=A\cdot L_{\mathrm{ord}}$ continues to hold without adding
-another sumcheck dimension.
+another sumcheck dimension. Coefficient packing adds ordered structured linear
+terms that are not forced into this native factorization.
 
 ### Raw and compressed relation terms
 
-Raw mode has no additional relation term, so Equation (7) is its complete
-physical relation identity. Its ordinary $\mathbf B$ and $\mathbf D$
-right-hand sides contain the transmitted semantic commitments.
+Raw mode has no payload-compression term $C_{\mathrm{comp}}$. Equation (7) is
+its ordinary relation component, and its $\mathbf B$ and $\mathbf D$
+right-hand sides contain the transmitted semantic commitments. The scheduled
+opening method still contributes $C_{\mathrm{method}}$ below.
 
-Compressed mode retains the ordinary consistency/A/B/D matrix and quotient
-terms, but sets the $\mathbf B$ and $\mathbf D$ right-hand sides to zero. Their
-rows now also contain the source-recomposition terms, and the physical row
-domain additionally contains the $\mathbf F_1$, $\mathbf H_1$, $\mathbf F_2$,
-and $\mathbf H_2$ rows. Thus $R_{\mathrm{ord}}$ remains one component of the
-compressed relation, but it is not a complete relation identity by itself.
+Compressed mode retains the method-selected ordinary relation and its
+quotients, but sets the $\mathbf B$ and $\mathbf D$ right-hand sides to zero.
+Their rows now also contain the source-recomposition terms, and the physical
+row domain additionally contains the $\mathbf F_1$, $\mathbf H_1$,
+$\mathbf F_2$, and $\mathbf H_2$ rows. Thus $R_{\mathrm{ord}}$ remains one
+component of the compressed relation, but it is not a complete relation
+identity by itself.
 
 To derive the missing component directly, lift each compressed physical row in
 its native ring and evaluate it at $\alpha$. Define
@@ -674,41 +679,56 @@ protocol uses $\gamma$ to batch Equation (8) with the relation claim.
 
 ### Add the opening claim consistency
 
-Stage 2 also verifies the incoming opening claim $v_{\mathrm{tr}}$ against the
-committed witness $w$. [Field-to-ring evaluation
-reduction](./field-ring-reduction.md) derives the public trace weight $T(x)$
-and establishes the evaluation-consistency relation
+Stage 2 also verifies the incoming opening claim $v_{\mathrm{open}}$ against
+the committed witness $w$. The schedule selects how the public opening weight
+$T_{\mathrm{open}}(x)$ is prepared. `EvaluationTrace` uses the trace weights
+derived in [Field-to-ring evaluation reduction](./field-ring-reduction.md).
+`SubringCoefficientPacking` uses the direct coefficient-packing weights
+derived in [Root fold and ring switch](./root-fold-ring-switch.md). Both methods
+establish the same linear evaluation-consistency shape
 
 $$
-v_{\mathrm{tr}}=\sum_x w(x)T(x).
+v_{\mathrm{open}}=\sum_x w(x)T_{\mathrm{open}}(x).
 \tag{9}
 $$
 
 Here we focus only on how this relation is fused into Stage 2. Equation (9)
 has the same linear form in $w$ as a row of the ring-switched relation, so the
 protocol treats it as a **virtual row** placed immediately after the physical
-relation rows. If $i_{\mathrm{tr}}$ is that row's index in the padded row
+relation rows. If $i_{\mathrm{open}}$ is that row's index in the padded row
 domain, the shared row challenge $\tau_1$ assigns it the weight
 
 $$
-\beta_{\mathrm{tr}}
+\beta_{\mathrm{open}}
 =
-\operatorname{eq}(\tau_1,i_{\mathrm{tr}}).
+\operatorname{eq}(\tau_1,i_{\mathrm{open}}).
 $$
 
 The virtual row is not inserted into the physical matrix or its
 relation-weight factorization. Only its batching weight
-$\beta_{\mathrm{tr}}$ comes from the row domain. Stage 2 directly fuses
+$\beta_{\mathrm{open}}$ comes from the row domain. Stage 2 directly fuses
 
 $$
-\beta_{\mathrm{tr}}v_{\mathrm{tr}}
+\beta_{\mathrm{open}}v_{\mathrm{open}}
 =
-\sum_x\beta_{\mathrm{tr}}w(x)T(x)
+\sum_x\beta_{\mathrm{open}}w(x)T_{\mathrm{open}}(x)
 $$
 
 into the sumcheck over the flat witness address $x$. In this way, the opening
 claim reuses the same row randomness $\tau_1$ as the ring-switched relation
 without becoming a physical matrix row.
+
+The implementation does not materialize a dense
+$T_{\mathrm{open}}$ table. Define the method-dependent weight
+$C_{\mathrm{method}}(x)$ as follows. For `EvaluationTrace`, it is the compact
+trace opening weight $\beta_{\mathrm{open}}T_{\mathrm{open}}(x)$; its legacy
+fold-consistency row is already in $R_{\mathrm{ord}}$. For
+`SubringCoefficientPacking`, $R_{\mathrm{ord}}$ omits that legacy row and
+$C_{\mathrm{method}}$ is the ordered sum of the zero-target packed E/Q relation
+events, the packing-Z term, and the direct-opening term. Each constraint is
+therefore included exactly once. Stage 2 folds each structured linear term
+under the same challenges and sums their final values. This preserves the
+native relation fast path without building one dense weight table.
 
 ### The fused Stage-2 claim
 
@@ -718,7 +738,7 @@ $$
 C_0^{\mathrm{raw}}
 =
 \gamma s_1+h_{\tau}^{\mathrm{raw}}
-+\beta_{\mathrm{tr}}v_{\mathrm{tr}}.
++\beta_{\mathrm{open}}v_{\mathrm{open}}.
 $$
 
 Stage 2 proves
@@ -730,7 +750,7 @@ C_0^{\mathrm{raw}}
 &\gamma\operatorname{eq}(r_1,x)
   w(x)\bigl(w(x)+1\bigr)\\
 &+w(x)R_{\mathrm{ord}}(x)\\
-&+\beta_{\mathrm{tr}}w(x)T(x)
+&+w(x)C_{\mathrm{method}}(x)
 \bigr].
 \end{aligned}
 \tag{10}
@@ -744,7 +764,7 @@ C_0^{\mathrm{comp}}
 =
 \gamma s_1
 +h_{\tau}^{\mathrm{comp}}
-+\beta_{\mathrm{tr}}v_{\mathrm{tr}},
++\beta_{\mathrm{open}}v_{\mathrm{open}},
 $$
 
 and the sumcheck polynomial gains two terms:
@@ -759,7 +779,7 @@ C_0^{\mathrm{comp}}
 &+w(x)C_{\mathrm{comp}}(x)\\
 &+\rho B_{\mathrm{comp}}(r_1,x)
   w(x)\bigl(w(x)+1\bigr)\\
-&+\beta_{\mathrm{tr}}w(x)T(x)
+&+w(x)C_{\mathrm{method}}(x)
 \bigr].
 \end{aligned}
 \tag{10c}
@@ -813,7 +833,7 @@ C_n^{\mathrm{raw}}={}
 &\gamma\operatorname{eq}(r_1,r_2)
   \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
 &+\widetilde w(r_2)\widetilde R_{\mathrm{ord}}(r_2)\\
-&+\beta_{\mathrm{tr}}\widetilde w(r_2)\widetilde T(r_2).
+&+\widetilde w(r_2)\widetilde C_{\mathrm{method}}(r_2).
 \end{aligned}
 \tag{11}
 $$
@@ -830,7 +850,7 @@ C_n^{\mathrm{comp}}={}
 &+\widetilde w(r_2)\widetilde C_{\mathrm{comp}}(r_2)\\
 &+\rho\widetilde B_{\mathrm{comp}}(r_1,r_2)
   \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
-&+\beta_{\mathrm{tr}}\widetilde w(r_2)\widetilde T(r_2).
+&+\widetilde w(r_2)\widetilde C_{\mathrm{method}}(r_2).
 \end{aligned}
 \tag{11c}
 $$
@@ -838,8 +858,8 @@ $$
 The value $\widetilde w(r_2)$ becomes the next-witness opening claim in both
 modes. The shared range term and the restricted compression-binary term have
 degree at most three in each sumcheck variable. The ordinary, compression, and
-trace linear terms have degree at most two. Therefore Stage 2 keeps the same
-degree-three bound in both modes.
+method-dependent structured terms have degree at most two. Therefore Stage 2
+keeps the same degree-three bound in both modes.
 
 The random objects have separate jobs:
 

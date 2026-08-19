@@ -38,17 +38,17 @@ use akita_types::{
     append_claim_values_to_transcript, basis_weights, checked_table_len,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
-    proof::relation::evaluation_trace_row_weight, recover_ring_subfield_inner_product,
-    relation_claim_from_compressed_rhs_extension, relation_rhs_layout_for,
-    ring_subfield_packed_extension_opening_point, root_input_witness_len,
-    root_tensor_projection_enabled, sample_row_coefficients, tensor_equality_factor_eval_at_point,
+    proof::relation::relation_row_weight, recover_ring_subfield_inner_product,
+    relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
+    root_input_witness_len, sample_row_coefficients, tensor_equality_factor_eval_at_point,
     tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
     AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
     ExtensionOpeningReductionProof, FoldLevelProof, FoldSchedule, NegativeBinarySupport,
     OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint, RecursiveFoldParams,
-    RingMultiplierOpeningPoint, RingVec, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, TerminalCommittedGroupParams, TerminalFoldParams, TerminalLevelProof,
+    RelationWitnessGeometry, RingMultiplierOpeningPoint, RingVec, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
+    TerminalFoldParams, TerminalLevelProof,
 };
 use std::sync::Arc;
 
@@ -80,7 +80,8 @@ pub use prove::{batched_prove, prove};
 use root_fold::prove_root;
 #[allow(unused_imports)]
 pub(crate) use root_group::{
-    PreparedGroupOpening, RootProverGroupMeta, RootProverGroupOpening, RootProverGroupTensor,
+    PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
+    RootProverGroupMeta, RootProverGroupOpening, RootProverGroupTensor,
 };
 pub use suffix::{prove_suffix, SuffixProverState};
 

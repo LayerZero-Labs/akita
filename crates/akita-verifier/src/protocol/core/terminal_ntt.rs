@@ -344,8 +344,24 @@ mod tests {
             .output_rank()
             .checked_mul(params.inner_width())
             .expect("terminal prefix");
-        let matrix = vec![CyclotomicRing::<F, D>::zero(); prefix_len];
-        let setup = verifier_setup(&matrix);
+        let field_len = prefix_len
+            .checked_mul(params.d_a())
+            .expect("terminal setup field length");
+        let setup = AkitaVerifierSetup::from_parts(
+            Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    AkitaSetupDescriptor {
+                        max_num_vars: 1,
+                        max_num_batched_polys: 1,
+                        num_field_elements: field_len,
+                        setup_seed: [9; 32].into(),
+                    },
+                    FlatMatrix::from_flat_data(vec![F::from_i64(0); field_len]),
+                ),
+            ),
+            SetupPrefixVerifierRegistry::new([9; 32].into()),
+        )
+        .expect("matching public-matrix identity");
 
         assert_eq!(setup.verifier_ntt_cache_bytes().expect("empty cache"), 0);
         warm_for_schedule(&setup, &schedule).expect("warm cache");

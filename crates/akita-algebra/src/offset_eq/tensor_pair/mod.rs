@@ -15,6 +15,9 @@ pub enum EqPairTensorWeights<F: FieldCore> {
     Unit,
     /// Coordinate weights in increasing axis order.
     Dense(Arc<[F]>),
+    /// A power-of-two axis whose coordinate weight is the product of one
+    /// `(zero, one)` factor for each coordinate bit.
+    BitProduct(Arc<[[F; 2]]>),
 }
 
 /// One axis in a tensor product of paired equality addresses.
@@ -55,6 +58,66 @@ impl<F: FieldCore> EqPairTensorAxis<F> {
             left_stride,
             right_stride,
             weights: EqPairTensorWeights::Dense(weights),
+        }
+    }
+
+    /// Construct a factored power-of-two axis without materializing its dense
+    /// Cartesian weight table.
+    pub fn bit_product(
+        left_stride: usize,
+        right_stride: usize,
+        bit_factors: impl Into<Arc<[[F; 2]]>>,
+    ) -> Result<Self, AkitaError> {
+        let bit_factors = bit_factors.into();
+        let len = 1usize
+            .checked_shl(u32::try_from(bit_factors.len()).map_err(|_| {
+                AkitaError::InvalidInput("paired tensor bit-product arity overflow".into())
+            })?)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor bit-product length overflow".into())
+            })?;
+        Ok(Self {
+            len,
+            left_stride,
+            right_stride,
+            weights: EqPairTensorWeights::BitProduct(bit_factors),
+        })
+    }
+
+    /// Return one coordinate's factored weight without materializing the axis.
+    #[must_use]
+    pub fn coordinate_weight(&self, coordinate: usize) -> Option<F> {
+        if coordinate >= self.len {
+            return None;
+        }
+        match &self.weights {
+            EqPairTensorWeights::Unit => Some(F::one()),
+            EqPairTensorWeights::Dense(weights) => weights.get(coordinate).copied(),
+            EqPairTensorWeights::BitProduct(bit_factors) => Some(
+                bit_factors
+                    .iter()
+                    .enumerate()
+                    .fold(F::one(), |weight, (bit, factors)| {
+                        weight * factors[(coordinate >> bit) & 1]
+                    }),
+            ),
+        }
+    }
+
+    pub(super) fn supports_bit_recurrence(&self) -> bool {
+        matches!(
+            self.weights,
+            EqPairTensorWeights::Unit | EqPairTensorWeights::BitProduct(_)
+        ) && self.len.is_power_of_two()
+    }
+
+    pub(super) fn bit_factors(&self, bit: usize) -> Option<[F; 2]> {
+        match &self.weights {
+            EqPairTensorWeights::Unit if bit < self.len.trailing_zeros() as usize => {
+                Some([F::one(), F::one()])
+            }
+            EqPairTensorWeights::BitProduct(factors) => factors.get(bit).copied(),
+            _ => None,
         }
     }
 }
@@ -109,6 +172,14 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
                         "paired tensor axis weight length mismatch".into(),
                     ));
                 }
+                EqPairTensorWeights::BitProduct(factors)
+                    if 1usize.checked_shl(u32::try_from(factors.len()).unwrap_or(u32::MAX))
+                        == Some(axis.len) => {}
+                EqPairTensorWeights::BitProduct(_) => {
+                    return Err(AkitaError::InvalidInput(
+                        "paired tensor bit-product length mismatch".into(),
+                    ));
+                }
             }
             if axis.len == 0 {
                 return Err(AkitaError::InvalidInput(
@@ -119,8 +190,8 @@ impl<F: FieldCore> EqPairTensorFamily<F> {
             checked_axis_offset(0, axis.right_stride, axis.len - 1, "right")?;
 
             if axis.len == 1 {
-                if let EqPairTensorWeights::Dense(weights) = axis.weights {
-                    let weight = *weights.first().ok_or(AkitaError::InvalidProof)?;
+                if !matches!(axis.weights, EqPairTensorWeights::Unit) {
+                    let weight = axis.coordinate_weight(0).ok_or(AkitaError::InvalidProof)?;
                     if weight.is_zero() {
                         return Ok(Self {
                             left_offset,

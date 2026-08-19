@@ -21,7 +21,7 @@ fn dense_group_commit_freezes_scalar_s_profile() {
     let evals = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64((3 * index + 7) as u64))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense polynomial");
+    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,

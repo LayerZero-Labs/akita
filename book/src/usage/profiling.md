@@ -29,11 +29,11 @@ normal release link look like a verifier regression.
 The default direct **fp128** one-hot preset is adaptive: generated tables choose
 the first two fold levels and use the D64 suffix domain. Direct dense uses the
 same adaptive policy. At dense `nv=26`, the root roles are A/B/D = 256/64/64,
-and every recursive fold and the terminal use D64. The preset's `Cfg::D = 256`
-records how the flat dense input was first viewed. The stored coefficients do
-not depend on that ring dimension. Each kernel uses the ring dimension in the
-generated schedule. Recursive and multi-chunk companion presets inherit their
-base adaptive policy and resolve their own generated catalog keys.
+and every recursive fold and the terminal use D64. Dense and one-hot root
+sources do not store a nominal ring dimension. Each kernel reads its actual
+dimension from the generated schedule. Recursive and multi-chunk companion
+presets inherit their base adaptive policy and resolve their own generated
+catalog keys.
 Shipped direct tables are `fp128_onehot` and `fp128_dense`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
@@ -156,6 +156,14 @@ The benchmark jobs consume the generated schedule tables committed at each
 revision. They do not regenerate those tables before compiling. The separate
 schedule drift CI job checks committed tables against the generator.
 
+The fold report names the opening method for every group. A coefficient packing
+row reports its challenge subring dimension `s`, packing factor `h`, packed
+partial width, and `Q_pack` width. It also reports the committed source
+encoding, witness chunk count, and whether EOR is present. These fields explain
+why a row can use less setup while taking more prover or verifier time. The
+report compares them with the merge base instead of inferring a method from the
+field tier or A ring dimension.
+
 Committed-fold A-role pricing (every cell folds securely):
 
 | Case | nv | np | Setup mode |
@@ -236,12 +244,9 @@ checked split-tensor contraction primitive as the dense backend. It streams the
 base evaluation table through split equality weights instead of allocating a
 full extension-field copy of the table.
 
-Small-field dense commits begin with the Hachi root tensor projection required
-by the extension-to-ring reduction. Perfetto reports it as
-`dense_tensor_root_projection` inside the commit span, including the table
-length, ring dimension, extension degree, and output-ring count. The projection
-maps independent base-coordinate chunks directly into ψ-packed rings; it does
-not materialize an intermediate extension-field table.
+Dense root commitments always use the canonical coefficient table. Extension
+opening reduction and its tensor-packed witness are now suffix-only operations;
+they do not appear inside the root commit span.
 
 Dense profile witnesses use an index-derived SplitMix64 stream. This keeps the
 input deterministic while allowing every evaluation to be generated in

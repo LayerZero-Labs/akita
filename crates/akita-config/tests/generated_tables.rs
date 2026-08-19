@@ -210,7 +210,7 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
         }
     }
 
-    for expected in [(1, 1), (2, 2), (4, 2), (4, 4), (2, 8), (4, 8), (8, 8)] {
+    for expected in [(1, 1), (2, 2), (4, 2), (2, 4), (2, 8), (8, 4), (8, 8)] {
         assert!(
             observed.contains(&expected),
             "generated schedules must retain S/W={expected:?}; observed {observed:?}"
@@ -235,7 +235,7 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
     let mut mutated = catalog;
     mutated.identity.selection_policy =
-        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload;
+        akita_schedules::SelectionPolicyId::MinEstimatedProofPayload;
     assert_rejected("selection policy", mutated);
 
     let mut mutated = catalog;

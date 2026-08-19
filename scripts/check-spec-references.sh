@@ -100,6 +100,24 @@ dead_patterns=(
   'sole_profile'
   '_precommitted\.rs'
   'api/scheme\.rs'
+  'RootTensorProjectionPoly\b'
+  'RootTensorProjectionView\b'
+  'RootTensorProjectionBatchView\b'
+  'SparseRingPoly\b'
+  'SparseRingView\b'
+  'SparseRingBatchView\b'
+  'root_tensor_projection_enabled\b'
+  'root_tensor_projection_enabled_for_width\b'
+  '\bProveBackendFor\b'
+  'ProjectBackendFor\b'
+  'CommitmentConfig::D\b'
+  'uniform_ring_dimension\b'
+  'setup_prefix_inner_ring_dimension\b'
+  'ProtocolDispatchSlot::UniformPolicy\b'
+  'validate_ring_subfield_role\b'
+  'RootPolyMeta::num_ring_elems\b'
+  'meta_ring_elems\b'
+  'total_ring_elems\b'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
@@ -108,14 +126,14 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 live_specs=(
   specs/setup-layout-repack.md
   specs/setup-offloading-planner.md
-  specs/eor-streamed-prover.md
   specs/packed-sumcheck.md
   specs/planner-incidence-generalization.md
   specs/multi-group-batching.md
   specs/akita-pcs-crate-decomposition.md
   specs/akita-field-refactor.md
-  specs/eor-sumcheck-prover-acceleration.md
   specs/cross-repo-field-microbench.md
+  specs/runtime-ring-cutover.md
+  specs/subring-coefficient-packing.md
 )
 # Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:
 # specs/akita-compute-backend-metal.md

@@ -144,6 +144,19 @@ impl OpeningClaimsLayout {
             .sum()
     }
 
+    /// Collapse this batch into the single group shape used by extension
+    /// opening reduction sizing.
+    ///
+    /// The opening point uses the maximum group-local arity, while the partial
+    /// count uses the checked sum of polynomials across every group.
+    pub fn aggregate_polynomial_group_layout(&self) -> Result<PolynomialGroupLayout, AkitaError> {
+        self.check()?;
+        Ok(PolynomialGroupLayout::new(
+            self.max_num_vars(),
+            self.checked_num_total_polynomials()?,
+        ))
+    }
+
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
         self.groups.iter().try_fold(0usize, |acc, group| {
             acc.checked_add(group.num_polynomials())
@@ -743,6 +756,31 @@ mod tests {
         assert_eq!(
             layout.root_final_group_layout().expect("final group"),
             final_group
+        );
+    }
+
+    #[test]
+    fn aggregate_opening_layout_preserves_grouped_claim_count_for_eor() {
+        let precommitteds = [PolynomialGroupLayout::new(10, 2)];
+        let final_group = PolynomialGroupLayout::new(8, 1);
+        let aggregate = OpeningClaimsLayout::from_root_groups(&precommitteds, final_group)
+            .expect("root layout")
+            .aggregate_polynomial_group_layout()
+            .expect("aggregate layout");
+
+        assert_eq!(aggregate, PolynomialGroupLayout::new(10, 3));
+        let final_only_bytes = crate::extension_opening_reduction_level_bytes(128, 4, final_group)
+            .expect("final-only EOR bytes");
+        let aggregate_bytes = crate::extension_opening_reduction_level_bytes(128, 4, aggregate)
+            .expect("aggregate EOR bytes");
+        assert!(final_only_bytes > 0);
+        let extra_partial_bytes = 2 * 4 * crate::field_bytes(128);
+        let extra_round_bytes =
+            2 * crate::EXTENSION_OPENING_REDUCTION_DEGREE * crate::field_bytes(128);
+        let extra_terminal_claim_bytes = 2 * crate::field_bytes(128);
+        assert_eq!(
+            aggregate_bytes - final_only_bytes,
+            extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes
         );
     }
 

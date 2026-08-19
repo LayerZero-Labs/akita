@@ -117,10 +117,12 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
     layout.outer_commit_matrix = outer_commit_matrix;
     let precommit = PrecommittedLevelParams {
         layout,
-        log_basis_open: precommit_lp.log_basis_open,
-        fold_challenge_config: precommit_lp.fold_challenge_config,
-        num_digits_open: precommit_lp.num_digits_open,
-        num_digits_fold: precommit_lp.num_digits_fold,
+        opening: crate::GroupOpeningPlan::evaluation_trace(
+            precommit_lp.fold_challenge_config,
+            precommit_lp.log_basis_open,
+            precommit_lp.num_digits_open,
+            precommit_lp.num_digits_fold,
+        ),
     };
     let mut grouped = lp;
     grouped.precommitted_groups = vec![precommit];
@@ -146,7 +148,7 @@ fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
     let (params, _) = sample_multi_group_root_params();
     let precommitted = &params.precommitted_groups[0];
 
-    assert_eq!(precommitted.fold_challenge_config.weight(), 41);
+    assert_eq!(precommitted.opening.fold_challenge_config.weight(), 41);
     assert_eq!(precommitted.challenge_l1_mass(), 51);
 }
 

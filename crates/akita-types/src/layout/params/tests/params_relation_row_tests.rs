@@ -1,7 +1,7 @@
 use super::*;
 use crate::proof::relation::{
-    assemble_compressed_relation_rhs, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, RelationRowFamily,
+    assemble_compressed_relation_rhs, relation_rhs_coeff_len, relation_rhs_row_count,
+    RelationRowFamily, RelationWitnessGeometry,
 };
 use crate::WitnessLayout;
 use akita_field::Prime128OffsetA7F7;
@@ -89,9 +89,11 @@ fn multi_group_evaluation_trace_row_matches_quotient_count() {
 fn relation_rhs_row_count_matches_level_params() {
     let lp = laid_out_sample_lp();
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
-    let rhs_layout = relation_rhs_layout_for(&lp, &batch).expect("rhs layout");
+    let joint_geometry =
+        RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch).expect("geometry");
+    let rhs_layout = joint_geometry.rhs_layout();
     assert_eq!(
-        relation_rhs_row_count(&rhs_layout),
+        relation_rhs_row_count(rhs_layout),
         lp.relation_matrix_row_count(batch.num_groups())
             .expect("row count"),
     );
@@ -116,12 +118,13 @@ fn relation_rhs_row_count_matches_level_params() {
             RelationRowFamily::CompressionH { map_index: 1, .. }
         ]
     ));
-    let witness_layout = WitnessLayout::new(&lp, &batch, 1, 2).expect("witness layout");
+    let witness_layout =
+        WitnessLayout::new(&lp, &batch, &joint_geometry, 1, 2).expect("witness layout");
     let relation_geometry = lp
-        .relation_address_geometry(&batch, lp.d_a(), witness_layout.live_coeff_len())
+        .relation_address_geometry(&batch, 1, lp.d_a(), witness_layout.live_coeff_len())
         .expect("A/B/D geometry");
     let compression_geometry = lp
-        .compression_relation_address_geometry(&batch, lp.d_a(), witness_layout.live_coeff_len())
+        .compression_relation_address_geometry(&batch, 1, lp.d_a(), witness_layout.live_coeff_len())
         .expect("F/H geometry");
     assert_eq!(
         relation_geometry.relation_coefficient_block_len(),
@@ -148,14 +151,14 @@ fn relation_rhs_row_count_matches_level_params() {
             .terminal_coefficients()
     ];
     let rhs = assemble_compressed_relation_rhs(
-        &rhs_layout,
+        rhs_layout,
         &[group_terminal.as_slice()],
         &opening_terminal,
     )
     .expect("compressed rhs");
     assert_eq!(
         rhs.coeff_len(),
-        relation_rhs_coeff_len(&rhs_layout).expect("rhs coefficient length")
+        relation_rhs_coeff_len(rhs_layout).expect("rhs coefficient length")
     );
     assert_eq!(
         rhs.coeffs()
@@ -166,9 +169,12 @@ fn relation_rhs_row_count_matches_level_params() {
     );
 
     let (grouped_lp, grouped_batch) = sample_multi_group_root_params();
-    let rhs_layout = relation_rhs_layout_for(&grouped_lp, &grouped_batch).expect("rhs layout");
+    let grouped_geometry =
+        RelationWitnessGeometry::for_evaluation_trace_execution(&grouped_lp, &grouped_batch)
+            .expect("geometry");
+    let rhs_layout = grouped_geometry.rhs_layout();
     assert_eq!(
-        relation_rhs_row_count(&rhs_layout),
+        relation_rhs_row_count(rhs_layout),
         grouped_lp
             .relation_matrix_row_count(grouped_batch.num_groups())
             .expect("row count"),

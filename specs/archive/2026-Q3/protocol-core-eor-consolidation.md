@@ -4,11 +4,14 @@
 |---------------|--------------------------------------------|
 | Author(s)     | Amirhossein Khajehpour                     |
 | Created       | 2026-06-15                                 |
-| Status        | implemented                                |
+| Status        | historical                                 |
 | PR            | #194                                       |
 | Supersedes    |                                            |
 | Superseded-by |                                            |
 | Book-chapter  | how/proving/extension-opening-reduction.md |
+
+> **Historical design record.** The root half of this consolidated path was
+> removed after subring coefficient packing became mandatory at early folds.
 
 ## Summary
 

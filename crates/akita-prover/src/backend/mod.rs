@@ -1,5 +1,6 @@
 //! Polynomial backends and prover-only witness state.
 
+mod coefficient_packing;
 mod dense;
 mod field_reduction;
 pub(crate) mod flat_blocks;
@@ -13,10 +14,7 @@ mod ring_switch;
 pub(crate) mod sparse_ring;
 
 pub use dense::{DenseBatchView, DensePoly, DenseView};
-pub use field_reduction::{
-    tensor_pack_recursive_witness, RootTensorProjectionBatchView, RootTensorProjectionPoly,
-    RootTensorProjectionView,
-};
+pub use field_reduction::tensor_pack_recursive_witness;
 pub use multilinear_polynomial::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
 };
@@ -25,7 +23,7 @@ pub use recursive::{
     RecursiveFoldSource, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
 };
 pub use ring_switch::RingSwitchRelationView;
-pub use sparse_ring::{SparseRingBatchView, SparseRingBlockEntry, SparseRingPoly, SparseRingView};
+pub use sparse_ring::SparseRingBlockEntry;
 
 #[cfg(test)]
 pub(crate) mod test_support;

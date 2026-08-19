@@ -128,7 +128,6 @@ const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(28),
     PolynomialGroupLayout::singleton(30),
     PolynomialGroupLayout::singleton(32),
-    PolynomialGroupLayout::singleton(44),
 ];
 
 const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![

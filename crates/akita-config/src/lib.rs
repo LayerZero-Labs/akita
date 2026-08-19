@@ -10,7 +10,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_schedules::{PlannerPolicy, RingDimensionScheduleMode};
+use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
@@ -26,7 +26,7 @@ use akita_types::{
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
 /// and the generated schedule catalog.
 ///
-/// The companion shares the base's field, ring dimension, decomposition,
+/// The companion shares the base's field, dimension schedule, decomposition,
 /// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
 /// same `(num_vars, num_polynomials)` keys as its sibling; the schedules differ
 /// only because `policy_of` picks up the chunked `ChunkedWitnessCfg`.
@@ -35,7 +35,6 @@ macro_rules! impl_multi_chunk_companion {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
-            const D: usize = <$base as $crate::CommitmentConfig>::D;
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
@@ -46,9 +45,6 @@ macro_rules! impl_multi_chunk_companion {
                 d: usize,
             ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
-            }
-            fn selection_policy() -> akita_schedules::SelectionPolicyId {
-                <$base as $crate::CommitmentConfig>::selection_policy()
             }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
@@ -70,6 +66,9 @@ macro_rules! impl_multi_chunk_companion {
             }
             fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
                 <$base as $crate::CommitmentConfig>::committed_source_class()
+            }
+            fn recursive_setup_planning() -> bool {
+                <$base as $crate::CommitmentConfig>::recursive_setup_planning()
             }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
@@ -96,6 +95,7 @@ pub mod setup_prefix_slots;
 pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
+pub use akita_schedules::RingDimensionScheduleMode;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
@@ -108,7 +108,7 @@ pub use transcript_binding::bind_transcript_instance_descriptor;
 /// Derive the runtime schedule policy from a preset.
 ///
 /// Every validation input is *derived* from the `Cfg` impl, so the `Cfg` impl
-/// stays the one source of truth for each preset's `(D, decomposition,
+/// stays the one source of truth for each preset's `(dimension schedule, decomposition,
 /// sis_modulus_profile, ...)`.
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
@@ -121,8 +121,6 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
-        uniform_ring_dimension: Cfg::D,
-        setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
         ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
@@ -138,12 +136,36 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     }
 }
 
+/// Validate a config's schedule policy and concrete extension-field tower.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when the policy domains, declared
+/// extension degree, or concrete field tower disagree.
+pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError> {
+    Cfg::validate_sis_modulus_profile()?;
+    let policy = policy_of::<Cfg>();
+    akita_schedules::validate_policy(&policy)?;
+    let actual_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE;
+    if Cfg::EXT_DEGREE != actual_degree
+        || policy.claim_ext_degree != actual_degree
+        || policy.chal_ext_degree != actual_degree
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "config extension degree does not match concrete field tower degree {actual_degree}"
+        )));
+    }
+    if !matches!(actual_degree, 1 | 2 | 4 | 8) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "unsupported extension-field degree {actual_degree}"
+        )));
+    }
+    Ok(())
+}
+
 /// Root group's source-specific policy for offline schedule generation.
 pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
-    Cfg::committed_source_class().honest_fold_policy(
-        <Cfg::Field as CanonicalField>::modulus_bits(),
-        Cfg::EXT_DEGREE,
-    )
+    Cfg::committed_source_class().honest_fold_policy(<Cfg::Field as CanonicalField>::modulus_bits())
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -192,14 +214,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         sample_ext_challenge::<Self::Field, Self::ExtField, T>(transcript, label)
     }
 
-    /// Ring degree used by `CyclotomicRing<F, D>`.
-    const D: usize;
-
     /// Uniform or bounded-adaptive ring-dimension schedule policy.
-    const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
-        RingDimensionScheduleMode::UniformDimension {
-            ring_dimension: Self::D,
-        };
+    const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode;
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;
@@ -248,16 +264,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError>;
 
-    /// Default/ceiling A-matrix dimension for setup-prefix commitments.
-    ///
-    /// Uniform schedules use it directly. Adaptive recursive schedules derive
-    /// the actual A dimension from the consuming fold; this value remains part
-    /// of policy/catalog identity. It is not public-matrix identity or a setup
-    /// materialization dimension.
-    fn setup_prefix_inner_ring_dimension() -> usize {
-        Self::D
-    }
-
     /// Inclusive `(min, max)` B/D opening and folded-response basis range.
     #[doc(hidden)]
     fn opening_basis_range() -> (u32, u32);
@@ -268,28 +274,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::opening_basis_range()
     }
 
-    /// Declared committed-source class: what shape a source this config commits
-    /// must have.
-    ///
-    /// This is the **canonical** declaration. It is independent of
-    /// [`akita_types::DecompositionParams::log_commit_bound`], which declares how
-    /// *wide* a coefficient may be; neither may be inferred from the other. The
-    /// runtime commit path admits sources against this, and
-    /// [`honest_fold_policy_of`] is the offline projection of it.
+    /// Declared committed-source class: the canonical source representation.
     fn committed_source_class() -> akita_types::sis::CommittedSourceClass;
 
-    /// This config's complete producer contract: declared class plus declared
-    /// bound, validated.
-    ///
-    /// The one value runtime admission reads. Both halves come from the
-    /// declarations above, so a config cannot present a class to one consumer and
-    /// a different one to another.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] when the declared decomposition or
-    /// class is not representable; see
-    /// [`akita_types::sis::CommittedSourceContract::try_new`].
+    /// This config's validated producer contract: declared class plus bound.
     fn committed_source_contract() -> Result<akita_types::sis::CommittedSourceContract, AkitaError>
     {
         akita_types::sis::CommittedSourceContract::try_new(
@@ -318,17 +306,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Catalog-bound schedule selection objective.
     ///
-    /// Uniform/direct presets minimize proof payload. Recursive setup presets
-    /// minimize the first remaining direct setup footprint before payload.
-    /// Mixed-dimension catalogs may opt into the physical setup-field objective
-    /// explicitly; the policy is part of catalog identity and never inferred
-    /// from a ring dimension.
+    /// Uniform/direct presets minimize proof payload. Adaptive-dimension and
+    /// recursive setup presets minimize the first remaining direct setup
+    /// footprint before payload. The policy is part of catalog identity.
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
-        if Self::recursive_setup_planning() {
-            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload
-        } else {
-            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
-        }
+        akita_schedules::SelectionPolicyId::for_policy(
+            Self::recursive_setup_planning(),
+            Self::RING_DIMENSION_SCHEDULE_MODE,
+        )
     }
 
     /// Optional generated schedule catalog for this preset.
@@ -454,11 +439,15 @@ mod tests {
     #[derive(Clone)]
     struct SingleExtensionConfig;
 
+    #[derive(Clone)]
+    struct WrongDeclaredExtensionDegree;
+
     impl CommitmentConfig for SingleExtensionConfig {
         type Field = Base;
         type ExtField = BaseExt;
 
-        const D: usize = 8;
+        const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
+            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
 
         fn decomposition() -> DecompositionParams {
             DecompositionParams {
@@ -469,10 +458,9 @@ mod tests {
         }
 
         fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-            if d != Self::D {
+            if d != 64 {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "unsupported D={d} for SingleExtensionConfig (expected {})",
-                    Self::D
+                    "unsupported D={d} for SingleExtensionConfig (expected 64)"
                 )));
             }
             Ok(SparseChallengeConfig::pm1_only(1))
@@ -495,6 +483,42 @@ mod tests {
 
         fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
             akita_types::sis::CommittedSourceClass::BalancedSignedDigit
+        }
+    }
+
+    impl CommitmentConfig for WrongDeclaredExtensionDegree {
+        type Field = crate::proof_optimized::fp32::Field;
+        type ExtField = crate::proof_optimized::fp32::ExtensionField;
+
+        const EXT_DEGREE: usize = 2;
+        const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
+            SingleExtensionConfig::RING_DIMENSION_SCHEDULE_MODE;
+
+        fn decomposition() -> DecompositionParams {
+            SingleExtensionConfig::decomposition()
+        }
+
+        fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+            SingleExtensionConfig::ring_challenge_config(d)
+        }
+
+        fn sis_modulus_profile() -> SisModulusProfileId {
+            SingleExtensionConfig::sis_modulus_profile()
+        }
+
+        fn setup_matrix_capacity(
+            max_num_vars: usize,
+            max_num_batched_polys: usize,
+        ) -> Result<SetupMatrixCapacity, AkitaError> {
+            SingleExtensionConfig::setup_matrix_capacity(max_num_vars, max_num_batched_polys)
+        }
+
+        fn opening_basis_range() -> (u32, u32) {
+            SingleExtensionConfig::opening_basis_range()
+        }
+
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            SingleExtensionConfig::committed_source_class()
         }
     }
 
@@ -540,6 +564,15 @@ mod tests {
         let c1 = t1.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         let c2 = t2.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn config_policy_rejects_a_declared_degree_that_disagrees_with_the_tower() {
+        let error = validate_config_policy::<WrongDeclaredExtensionDegree>()
+            .expect_err("declared extension degree must match the concrete tower");
+        assert!(error
+            .to_string()
+            .contains("does not match concrete field tower degree 4"));
     }
 }
 
@@ -634,6 +667,17 @@ mod fp128_policy_tests {
     fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         num_vars_values: &[usize],
     ) {
+        let catalog = Cfg::schedule_catalog().expect("generated schedule catalog");
+        let catalog_max = catalog
+            .entries
+            .iter()
+            .map(|entry| entry.to_runtime_lookup_key().final_group.num_vars())
+            .max()
+            .expect("nonempty generated schedule catalog");
+        assert!(
+            num_vars_values.contains(&catalog_max),
+            "SIS-width spot checks must include catalog maximum nv={catalog_max}"
+        );
         for &num_vars in num_vars_values {
             let group = match crate::honest_fold_policy_of::<Cfg>() {
                 akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
@@ -651,12 +695,15 @@ mod fp128_policy_tests {
     }
 
     /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus each catalog maximum.
-    const CI_DENSE_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44];
+    const CI_DENSE_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 32];
     const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
     fn fp128_onehot_uses_adaptive_schedule_policy() {
-        assert_eq!(<fp128::OneHot as CommitmentConfig>::D, 256);
+        assert!(matches!(
+            fp128::OneHot::RING_DIMENSION_SCHEDULE_MODE,
+            RingDimensionScheduleMode::AdaptiveDimension { .. }
+        ));
         assert!(matches!(
             <fp128::OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
@@ -670,7 +717,10 @@ mod fp128_policy_tests {
 
     #[test]
     fn fp128_dense_uses_adaptive_schedule_policy() {
-        assert_eq!(<fp128::Dense as CommitmentConfig>::D, 256);
+        assert!(matches!(
+            fp128::Dense::RING_DIMENSION_SCHEDULE_MODE,
+            RingDimensionScheduleMode::AdaptiveDimension { .. }
+        ));
         assert!(matches!(
             <fp128::Dense as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE,
             RingDimensionScheduleMode::AdaptiveDimension {
@@ -826,20 +876,13 @@ mod independent_commitment_tests {
         group.validate().expect("group layout");
         let profile =
             fp128::OneHot::profile_without_precommitted_groups(group).expect("independent profile");
-        assert_eq!(
-            profile.inner_commit_matrix.ring_dimension(),
-            256,
-            "the independent commitment uses the scalar row's A dimension"
-        );
-        assert_eq!(
-            profile.outer_commit_matrix.ring_dimension(),
-            64,
-            "the independent commitment uses the scalar row's B dimension"
-        );
-        let root_basis = fp128::OneHot::opening_basis_range().0;
-        assert_eq!(profile.log_basis_inner, root_basis);
-        assert_eq!(profile.log_basis_outer, root_basis);
-        assert_ne!(profile.inner_commit_matrix.output_rank(), 0);
-        assert_ne!(profile.outer_commit_matrix.output_rank(), 0);
+        let scalar_row =
+            fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+                .expect("generated scalar row");
+        assert_eq!(profile, scalar_row.profiles().final_group);
+        assert_eq!(profile.inner_commit_matrix.ring_dimension(), 256);
+        assert_eq!(profile.outer_commit_matrix.ring_dimension(), 64);
+        assert_eq!(profile.log_basis_inner, 3);
+        assert_eq!(profile.log_basis_outer, 3);
     }
 }

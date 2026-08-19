@@ -40,6 +40,13 @@ where
                                 next_params: Option<&CommittedGroupParams>,
                                 binding: akita_types::NextWitnessBindingPolicy|
      -> Result<(), AkitaError> {
+        if matches!(
+            params.opening_method,
+            akita_types::OpeningMethod::SubringCoefficientPacking { .. }
+        ) && fold.extension_opening_reduction().is_some()
+        {
+            return Err(AkitaError::InvalidProof);
+        }
         if fold.opening_payload.coeff_len()
             != params
                 .opening_payload_geometry()?
@@ -328,7 +335,7 @@ where
     validate_schedule_ring_dims(schedule)?;
     ensure_verifier_schedule_fits_setup(setup.expanded.as_ref(), schedule, &opening_batch)?;
     schedule
-        .validate_structure()
+        .validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_proof_against_schedule(proof, schedule).map_err(|error| {
         AkitaError::InvalidInput(format!(

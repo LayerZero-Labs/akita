@@ -65,8 +65,9 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         };
         let natural_len = active_setup_field_len(params, &opening_layout)?;
         let n_prefix = padded_setup_prefix_len(natural_len);
-        setup_prefix_slot_matches(slot_id, natural_len, n_prefix)?;
-        if !ids.insert(slot_id.clone()) {
+        let commitment_id = slot_id.slot_id();
+        setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;
+        if !ids.insert(commitment_id) {
             continue;
         }
     }
@@ -233,28 +234,12 @@ mod tests {
                 one_slot_field_elements >= slot.natural_len,
                 "slot capacity must cover the natural public-matrix prefix"
             );
-            let a_coeff_len = slot
-                .commitment_params
-                .layout
-                .inner_commit_matrix
-                .output_rank()
-                * slot.commitment_params.inner_width()
-                * slot
-                    .commitment_params
-                    .layout
-                    .inner_commit_matrix
-                    .ring_dimension();
-            let b_coeff_len = slot
-                .commitment_params
-                .layout
-                .outer_commit_matrix
-                .output_rank()
-                * slot.commitment_params.outer_width()
-                * slot
-                    .commitment_params
-                    .layout
-                    .outer_commit_matrix
-                    .ring_dimension();
+            let a_coeff_len = slot.commitment_profile.inner_commit_matrix.output_rank()
+                * slot.commitment_profile.inner_commit_matrix.input_width()
+                * slot.commitment_profile.inner_commit_matrix.ring_dimension();
+            let b_coeff_len = slot.commitment_profile.outer_commit_matrix.output_rank()
+                * slot.commitment_profile.outer_commit_matrix.input_width()
+                * slot.commitment_profile.outer_commit_matrix.ring_dimension();
             assert!(one_slot_field_elements >= a_coeff_len);
             assert!(one_slot_field_elements >= b_coeff_len);
             slot_field_elements = slot_field_elements.max(one_slot_field_elements);

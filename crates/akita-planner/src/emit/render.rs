@@ -1,6 +1,7 @@
 //! Generated-file rendering and module wiring orchestration.
 
 use super::*;
+use std::time::Instant;
 
 fn emit_mod_wiring(specs: &[EmitSpec]) -> Result<String, String> {
     let mut declarations = String::new();
@@ -90,7 +91,13 @@ pub fn render_generated_outputs(
     wiring_specs: &[EmitSpec],
     mod_path: Option<&Path>,
 ) -> Result<Vec<GeneratedOutput>, String> {
-    render_generated_outputs_with_validation(specs, wiring_specs, mod_path, |_, _| Ok(()))
+    render_generated_outputs_with_validation(
+        specs,
+        wiring_specs,
+        mod_path,
+        MaterializationDiagnostics::default(),
+        |_, _| Ok(()),
+    )
 }
 
 /// Render every family after validating the exact schedules materialized by
@@ -100,11 +107,49 @@ pub fn render_generated_outputs_with_validation(
     specs: &[EmitSpec],
     wiring_specs: &[EmitSpec],
     mod_path: Option<&Path>,
-    validate: impl Fn(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
+    diagnostics: MaterializationDiagnostics,
+    mut validate: impl FnMut(&EmitSpec, &[MaterializedEntry]) -> Result<(), String>,
 ) -> Result<Vec<GeneratedOutput>, String> {
-    let materialized = materialized_entries_for_specs(specs)?;
+    let materialization_started = diagnostics.row_progress.then(Instant::now);
+    if diagnostics.row_progress {
+        let row_count = specs
+            .iter()
+            .map(|spec| spec.keys.len() + spec.grouped_requests.len())
+            .sum::<usize>();
+        eprintln!(
+            "schedule generation phase: materialize {row_count} rows across {} families",
+            specs.len(),
+        );
+    }
+    let materialized = materialized_entries_for_specs(specs, diagnostics)?;
+    if let Some(started) = materialization_started {
+        eprintln!(
+            "schedule generation phase complete: materialized rows in {:.2?}",
+            started.elapsed(),
+        );
+    }
+    let validation_started = diagnostics.row_progress.then(Instant::now);
+    if diagnostics.row_progress {
+        eprintln!(
+            "schedule generation phase: validate {} materialized families",
+            specs.len(),
+        );
+    }
     for (spec, entries) in specs.iter().zip(&materialized) {
         validate(spec, entries)?;
+    }
+    if let Some(started) = validation_started {
+        eprintln!(
+            "schedule generation phase complete: validated materialized families in {:.2?}",
+            started.elapsed(),
+        );
+    }
+    let rendering_started = diagnostics.row_progress.then(Instant::now);
+    if diagnostics.row_progress {
+        eprintln!(
+            "schedule generation phase: render {} family modules",
+            specs.len(),
+        );
     }
     let mut outputs = specs
         .iter()
@@ -119,6 +164,13 @@ pub fn render_generated_outputs_with_validation(
             destination: mod_path.to_path_buf(),
             body: replace_between_markers(&mod_src, MOD_WIRING_BEGIN, MOD_WIRING_END, &mod_wiring)?,
         });
+    }
+    if let Some(started) = rendering_started {
+        eprintln!(
+            "schedule generation phase complete: rendered {} outputs in {:.2?}",
+            outputs.len(),
+            started.elapsed(),
+        );
     }
     Ok(outputs)
 }
@@ -155,6 +207,61 @@ mod tests {
             fs::read_to_string(&mod_path).expect("read wiring fixture"),
             original
         );
+        fs::remove_dir_all(dir).expect("remove test directory");
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn targeted_family_render_keeps_complete_module_wiring() {
+        use crate::generated_families::{wiring_emit_spec, ALL_GENERATED_FAMILIES};
+
+        let dir = test_dir("targeted-family");
+        fs::create_dir_all(&dir).expect("create test directory");
+        let mod_path = dir.join("mod.rs");
+        fs::write(
+            &mod_path,
+            "// @generated schedule module wiring begin\n\
+             // stale wiring\n\
+             // @generated schedule module wiring end\n",
+        )
+        .expect("write wiring fixture");
+        let selected = ALL_GENERATED_FAMILIES
+            .iter()
+            .find(|family| family.module_name == "fp32_dense")
+            .expect("known selected family");
+        let selected_specs = vec![wiring_emit_spec(selected, dir.clone())
+            .expect("shipped families declare a valid producer contract")];
+        let wiring_specs = ALL_GENERATED_FAMILIES
+            .iter()
+            .map(|family| {
+                wiring_emit_spec(family, dir.clone())
+                    .expect("shipped families declare a valid producer contract")
+            })
+            .collect::<Vec<_>>();
+
+        let outputs = render_generated_outputs(&selected_specs, &wiring_specs, Some(&mod_path))
+            .expect("render targeted output plan");
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|output| {
+                    output
+                        .destination
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect::<Vec<_>>(),
+            vec!["fp32_dense.rs", "mod.rs"],
+        );
+        assert!(!outputs
+            .iter()
+            .any(|output| output.destination.ends_with("fp64_dense.rs")));
+        let wiring = &outputs.last().expect("module wiring output").body;
+        assert!(wiring.contains("pub mod fp32_dense;"));
+        assert!(wiring.contains("pub mod fp64_dense;"));
+
         fs::remove_dir_all(dir).expect("remove test directory");
     }
 }

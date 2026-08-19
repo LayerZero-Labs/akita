@@ -26,12 +26,12 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 type Cfg = fp128::Dense;
 type F = fp128::Field;
-const D: usize = Cfg::D;
+const D: usize = 512;
 type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::OneHot;
-const ONEHOT_D: usize = OneHotCfg::D;
+const ONEHOT_D: usize = 256;
 // `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
@@ -48,6 +48,7 @@ type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
+mod coefficient_packing;
 mod dense_group;
 mod layout;
 mod onehot;
@@ -131,7 +132,7 @@ fn verifier_claims<'a>(
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
     let len = 1usize << num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, &evals).unwrap();
     (poly, evals)
 }
 
@@ -217,7 +218,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
 fn debug_make_onehot_poly(
     num_vars: usize,
-    ring_dimension: usize,
+    _ring_dimension: usize,
     seed: u64,
 ) -> OneHotPoly<OneHotF, u8> {
     let total_field = 1usize << num_vars;
@@ -228,8 +229,7 @@ fn debug_make_onehot_poly(
         .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
         .collect();
 
-    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, ring_dimension, indices)
-        .expect("debug onehot poly")
+    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
 }
 
 fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {

@@ -623,7 +623,7 @@ mod committed_group_tests {
         .is_err());
 
         let mut invalid_slice_count = bytes.clone();
-        let slice_count_offset = 1 + 5 * 8;
+        let slice_count_offset = 1 + 2 * 8 + 3 * 8;
         invalid_slice_count[slice_count_offset..slice_count_offset + 8]
             .copy_from_slice(&3u64.to_le_bytes());
         assert!(CommittedGroup::<F>::deserialize_with_mode(
@@ -634,7 +634,7 @@ mod committed_group_tests {
         )
         .is_err());
 
-        let inner_matrix_role_offset = 1 + 2 * 8 + 3 * 8 + 4 + 8 + 2;
+        let inner_matrix_role_offset = 1 + 2 * 8 + 1 + 3 * 8 + 4 + 8 + 2;
         let mut wrong_matrix_role = bytes;
         wrong_matrix_role[inner_matrix_role_offset] = SisMatrixRole::Outer.tag();
         assert!(CommittedGroup::<F>::deserialize_with_mode(

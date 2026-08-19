@@ -12,7 +12,7 @@ pub type Field = Prime128OffsetA7F7;
 pub struct Dense;
 
 impl Dense {
-    pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
+    pub const A_RING_DIMENSIONS: [usize; 4] = [64, 128, 256, 512];
     pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
     pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
 }
@@ -26,7 +26,7 @@ impl Dense {
 pub struct OneHot;
 
 impl OneHot {
-    pub const A_RING_DIMENSIONS: [usize; 3] = [64, 128, 256];
+    pub const A_RING_DIMENSIONS: [usize; 4] = [64, 128, 256, 512];
     pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
     pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
 }
@@ -112,7 +112,6 @@ impl_proof_optimized_preset!(
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    256,
     128,
     128,
     source = balanced_digits,
@@ -130,7 +129,6 @@ impl_proof_optimized_preset!(
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    256,
     128,
     // One declaration, not two: the macro takes an expression, so the preset is
     // configured from the same constant callers read. A signed bit width of 65 is
@@ -155,7 +153,6 @@ impl_proof_optimized_preset!(
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    256,
     128,
     1,
     source = unit_one_hot,

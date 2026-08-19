@@ -8,6 +8,77 @@ use crate::{
 };
 use akita_field::{AkitaError, FieldCore};
 
+/// Physical coefficient representation authenticated by a commitment.
+///
+/// This is commitment identity, not an opening policy. In particular, changing
+/// [`crate::OpeningMethod`] cannot reinterpret an existing commitment between
+/// these encodings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CommittedSourceEncoding {
+    /// The source's canonical base-field coefficient table.
+    CanonicalCoefficientTable,
+    /// The existing tensor/subfield projection used by extension-field EOR.
+    TensorSubfieldProjection {
+        /// Degree of the extension whose coordinates are packed by the projection.
+        extension_degree: usize,
+    },
+}
+
+impl CommittedSourceEncoding {
+    /// Select the physical source representation when a producer creates a
+    /// commitment for one scheduled consumer.
+    #[must_use]
+    pub fn for_producer(
+        opening_method: crate::OpeningMethod,
+        extension_degree: usize,
+        _ring_dimension: usize,
+        _source_num_vars: usize,
+        is_root: bool,
+    ) -> Self {
+        if !is_root
+            && matches!(opening_method, crate::OpeningMethod::EvaluationTrace)
+            && extension_degree > 1
+        {
+            Self::TensorSubfieldProjection { extension_degree }
+        } else {
+            Self::CanonicalCoefficientTable
+        }
+    }
+
+    pub(crate) fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
+        match self {
+            Self::CanonicalCoefficientTable => bytes.push(0),
+            Self::TensorSubfieldProjection { extension_degree } => {
+                bytes.push(1);
+                push_usize(bytes, extension_degree);
+            }
+        }
+    }
+
+    /// Validate that this encoding can represent coefficients at `ring_dimension`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a tensor projection's extension degree does not
+    /// divide the usable half-ring coefficient capacity.
+    pub fn validate(self, ring_dimension: usize) -> Result<(), AkitaError> {
+        if let Self::TensorSubfieldProjection { extension_degree } = self {
+            let tensor_capacity = ring_dimension / 2;
+            if extension_degree <= 1
+                || !extension_degree.is_power_of_two()
+                || extension_degree > tensor_capacity
+                || !tensor_capacity.is_multiple_of(extension_degree)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "tensor source encoding requires a power-of-two extension degree greater than one dividing half the A ring dimension"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommittedGroupProfile {
@@ -39,7 +110,7 @@ pub struct CommittedGroupProfile {
 
 impl CommittedGroupProfile {
     /// Current committed-profile format.
-    pub const VERSION: u8 = 2;
+    pub const VERSION: u8 = 4;
 
     /// Build and validate frozen group metadata from concrete root commitment parameters.
     ///
@@ -51,6 +122,11 @@ impl CommittedGroupProfile {
         group: PolynomialGroupLayout,
         params: &CommittedGroupParams,
     ) -> Result<Self, AkitaError> {
+        if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
+            return Err(AkitaError::InvalidSetup(
+                "standalone commitment profiles require canonical coefficient sources".into(),
+            ));
+        }
         let profile = Self::from_params_fields(group, params);
         profile.validate_frozen_precommit(
             profile
@@ -377,6 +453,75 @@ impl AkitaScheduleLookupKey {
             layout.validate(field_bits)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_encoding_tests {
+    use super::CommittedSourceEncoding;
+    use crate::OpeningMethod;
+
+    #[test]
+    fn producer_encoding_is_canonical_at_root_and_tensor_only_for_recursive_et() {
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 512, 20, true,),
+            CommittedSourceEncoding::CanonicalCoefficientTable,
+        );
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 512, 8, true,),
+            CommittedSourceEncoding::CanonicalCoefficientTable,
+        );
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(
+                OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension: 64,
+                },
+                4,
+                512,
+                20,
+                true,
+            ),
+            CommittedSourceEncoding::CanonicalCoefficientTable,
+        );
+        assert_eq!(
+            CommittedSourceEncoding::for_producer(OpeningMethod::EvaluationTrace, 4, 64, 1, false,),
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: 4,
+            },
+        );
+
+        let valid_recursive_boundary = CommittedSourceEncoding::for_producer(
+            OpeningMethod::EvaluationTrace,
+            32,
+            64,
+            16,
+            false,
+        );
+        assert_eq!(
+            valid_recursive_boundary,
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: 32,
+            },
+        );
+        valid_recursive_boundary
+            .validate(64)
+            .expect("k=32 fits the half-ring capacity at d_A=64");
+
+        let invalid_recursive_boundary = CommittedSourceEncoding::for_producer(
+            OpeningMethod::EvaluationTrace,
+            64,
+            64,
+            16,
+            false,
+        );
+        assert_eq!(
+            invalid_recursive_boundary,
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: 64,
+            },
+            "recursive EvaluationTrace must not silently change the authenticated encoding",
+        );
+        assert!(invalid_recursive_boundary.validate(64).is_err());
     }
 }
 

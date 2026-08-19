@@ -49,7 +49,11 @@ fn trace_layout(
     let mut lp = lp;
     lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1).unwrap();
+    let relation_geometry =
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+            .unwrap();
+    let witness_layout =
+        WitnessLayout::new(&lp, &opening_batch, &relation_geometry, num_chunks, 1).unwrap();
     let opening_source_len = witness_layout.live_coeff_len() / (1usize << ring_bits);
     let required_col_bits = witness_layout
         .live_coeff_len()

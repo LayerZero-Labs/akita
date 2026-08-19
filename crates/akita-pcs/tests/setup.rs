@@ -108,7 +108,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
     let opening_layout =
@@ -119,10 +119,8 @@ where
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
         .expect("schedule")
         .into_schedule();
-    let root_d = layout.d_a();
-
     let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
-    let poly = DensePoly::<F>::from_field_evals(poly_nv, root_d, &evals).expect("dense poly");
+    let poly = DensePoly::<F>::from_field_evals(poly_nv, &evals).expect("dense poly");
 
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
     let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout, BasisMode::Lagrange);
@@ -227,7 +225,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
 
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
@@ -251,7 +249,7 @@ where
     let indices: Vec<Option<usize>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..k)))
         .collect();
-    let poly = OneHotPoly::<F, usize>::new(k, root_d, indices.clone()).expect("onehot poly");
+    let poly = OneHotPoly::<F, usize>::new(k, indices.clone()).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
@@ -381,20 +379,19 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
     assert!(commit_batch >= 1);
 
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
-    let root_d = layout.d_a();
     let polys: Vec<DensePoly<F>> = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
             let evals: Vec<F> = (0..1usize << poly_nv)
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
                 .collect();
-            DensePoly::<F>::from_field_evals(poly_nv, root_d, &evals).expect("dense poly")
+            DensePoly::<F>::from_field_evals(poly_nv, &evals).expect("dense poly")
         })
         .collect();
 
@@ -471,7 +468,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
     assert!(commit_batch >= 1);
 
     let layout =
@@ -489,8 +486,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             let indices: Vec<Option<usize>> = (0..total_chunks)
                 .map(|_| Some(rng.gen_range(0..k)))
                 .collect();
-            let poly =
-                OneHotPoly::<F, usize>::new(k, root_d, indices.clone()).expect("onehot poly");
+            let poly = OneHotPoly::<F, usize>::new(k, indices.clone()).expect("onehot poly");
             (poly, indices)
         })
         .unzip();

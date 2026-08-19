@@ -36,8 +36,13 @@ class ProfileBenchWorkflowTests(unittest.TestCase):
     def test_generated_schedules_must_match_the_committed_tables(self) -> None:
         ci = (self.repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("scripts/generate-schedule-tables.sh", ci)
+        self.assertIn("git diff --exit-code --", ci)
+        self.assertIn("crates/akita-schedules/src/generated", ci)
         self.assertIn(
-            "git diff --exit-code -- crates/akita-schedules/src/generated", ci
+            "specs/evidence/subring-coefficient-packing/head.tsv", ci
+        )
+        self.assertIn(
+            "specs/evidence/subring-coefficient-packing/comparison.tsv", ci
         )
         self.assertIn('--partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"', ci)
 

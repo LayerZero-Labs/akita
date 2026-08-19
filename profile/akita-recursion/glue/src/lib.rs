@@ -541,8 +541,8 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_config::proof_optimized::fp128;
     use akita_types::{
-        derive_public_matrix_prefix, sample_akita_setup_seed, setup_prefix_slot_id,
-        CommittedGroupProfile, CompressionChainPlan, InnerCommitMatrixParams,
+        derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
+        CommittedGroupProfile, CompressionChainPlan, GroupOpeningPlan, InnerCommitMatrixParams,
         OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
         SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
         SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
@@ -550,7 +550,7 @@ mod tests {
 
     type TestCfg = fp128::OneHot;
     type TestF = fp128::Field;
-    const TEST_D: usize = <TestCfg as CommitmentConfig>::D;
+    const TEST_D: usize = 256;
     const PREFIX_D: usize = 64;
 
     fn blob_prefix() -> Vec<u8> {
@@ -602,10 +602,12 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            log_basis_open: 1,
-            fold_challenge_config: SparseChallengeConfig::pm1_only(0),
-            num_digits_open: 1,
-            num_digits_fold: 1,
+            opening: GroupOpeningPlan::evaluation_trace(
+                SparseChallengeConfig::pm1_only(0),
+                1,
+                1,
+                1,
+            ),
         }
     }
 
@@ -681,7 +683,7 @@ mod tests {
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
-        let id = setup_prefix_slot_id(1, commitment_params);
+        let id = scheduled_setup_prefix(1, commitment_params).slot_id();
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
@@ -730,20 +732,23 @@ mod tests {
 
         let mut huge = canonical.clone();
         huge.root.opening_payload_coeffs = usize::MAX;
-        let budget_error = AkitaJoltInputs::<TestF, TEST_D>::
-            validate_proof_shape_before_allocation::<TestCfg>(row.selection(), &huge, 0)
+        let budget_error =
+            AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<TestCfg>(
+                row.selection(),
+                &huge,
+                0,
+            )
             .expect_err("huge shape must fail against remaining bytes");
         let budget_message = budget_error.to_string();
         assert!(
-            budget_message.contains("remaining proof bytes")
-                || budget_message.contains("overflow"),
+            budget_message.contains("remaining proof bytes") || budget_message.contains("overflow"),
             "unexpected budget error: {budget_message}"
         );
 
         let mut noncanonical = canonical;
         noncanonical.root.opening_payload_coeffs += 1;
-        let identity_error = AkitaJoltInputs::<TestF, TEST_D>::
-            validate_proof_shape_before_allocation::<TestCfg>(
+        let identity_error =
+            AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<TestCfg>(
                 row.selection(),
                 &noncanonical,
                 MAX_JOLT_BLOB_BYTES as usize,

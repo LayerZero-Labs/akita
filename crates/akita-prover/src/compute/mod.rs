@@ -26,7 +26,6 @@ mod backend;
 pub(crate) mod compression;
 mod cpu;
 pub mod delegating_cpu;
-mod dispatch;
 mod kernels;
 mod operation_plans;
 mod plans;
@@ -41,32 +40,31 @@ pub use backend::{
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
-pub(crate) use dispatch::tensor_root_projection;
 pub use kernels::{
     BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
-    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootCommitKernel, SubringCoefficientPackingBatchKernel, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchRelationPlan,
+    RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 pub(crate) use plans::DenseCommitInput;
 pub use plans::RingSwitchRelationRows;
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{
-    centered_reach_of_field_coeffs, CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor,
-    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend,
-    RingSwitchProveBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
+    centered_reach_of_field_coeffs, CommitBackendFor, OpeningProveBackendFor, ProveFlowBackendFor,
+    ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend, RootCommitSource,
     RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly,
     RootTensorSource, TensorBackendFor,
 };
 pub use runtime_capabilities::{
-    RootProveFlowBackend, RuntimeCommitBackendFor, RuntimeCommitSource,
-    RuntimeOpeningProveBackendFor, RuntimeOpeningSource, RuntimeProveBackendFor,
-    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor, RuntimeTensorSource,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RootProveFlowBackend, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
+    RuntimeCommitSource, RuntimeOpeningProveBackendFor, RuntimeOpeningSource,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
+    RuntimeTensorBackendFor, RuntimeTensorSource, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
 pub use stack::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,

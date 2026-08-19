@@ -12,7 +12,6 @@ pub(crate) struct SetupProjectionGroupGeometry {
     pub(crate) a_cols: usize,
     pub(crate) b_rows: usize,
     pub(crate) b_cols: usize,
-    pub(crate) d_active_cols: usize,
 }
 
 /// Checked common-base geometry for the Stage 3 setup projection.
@@ -447,7 +446,6 @@ mod tests {
                     a_cols: 5,
                     b_rows: 3,
                     b_cols: 7,
-                    d_active_cols: 1,
                 },
                 SetupProjectionGroupGeometry {
                     role_dims: CommitmentRingDims {
@@ -459,7 +457,6 @@ mod tests {
                     a_cols: 5,
                     b_rows: 3,
                     b_cols: 7,
-                    d_active_cols: 2,
                 },
             ],
         )

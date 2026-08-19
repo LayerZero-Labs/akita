@@ -1,7 +1,7 @@
 //! Focused geometry helpers for setup-prefix commitments.
 
 use crate::{
-    CompressionChainPlan, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedLevelParams,
+    CommittedGroupProfile, CompressionChainPlan, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use akita_field::AkitaError;
 use akita_serialization::SerializationError;
@@ -49,11 +49,10 @@ pub fn suffix_opening_layout(
 }
 
 pub(super) fn setup_prefix_compression_plan(
-    params: &PrecommittedLevelParams,
+    params: &CommittedGroupProfile,
 ) -> Result<CompressionChainPlan, SerializationError> {
-    let matrix = &params.layout.outer_commit_matrix;
+    let matrix = &params.outer_commit_matrix;
     let source_coefficients = params
-        .layout
         .outer_slice_count
         .complete_source_coefficients(matrix.output_rank(), matrix.ring_dimension())
         .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
@@ -62,4 +61,32 @@ pub(super) fn setup_prefix_compression_plan(
         source_coefficients,
     )
     .map_err(|error| SerializationError::InvalidData(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suffix_eor_shape_uses_larger_prefix_arity_and_both_claims() {
+        let witness_shape = PolynomialGroupLayout::singleton(3);
+        let opening_shape = suffix_opening_layout(8, Some(1024))
+            .expect("suffix opening layout")
+            .aggregate_polynomial_group_layout()
+            .expect("aggregate EOR shape");
+        assert_eq!(opening_shape, PolynomialGroupLayout::new(10, 2));
+
+        let witness_only = crate::extension_opening_reduction_level_bytes(128, 4, witness_shape)
+            .expect("witness-only EOR bytes");
+        let with_prefix = crate::extension_opening_reduction_level_bytes(128, 4, opening_shape)
+            .expect("prefix-consuming EOR bytes");
+        let extra_partial_bytes = 4 * crate::field_bytes(128);
+        let extra_round_bytes =
+            7 * crate::EXTENSION_OPENING_REDUCTION_DEGREE * crate::field_bytes(128);
+        let extra_terminal_claim_bytes = crate::field_bytes(128);
+        assert_eq!(
+            with_prefix - witness_only,
+            extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes
+        );
+    }
 }

@@ -11,7 +11,7 @@ fn map_onehot_k_gt_d() {
     let d = 4;
     let indices: Vec<Option<usize>> = vec![Some(3), Some(10)];
     let num_live_blocks = 2;
-    let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+    let poly = OneHotPoly::<F>::new(k, indices).unwrap();
     let blocks = poly
         .materialize_block_range(d, 4, 0..num_live_blocks)
         .unwrap();
@@ -42,7 +42,7 @@ fn map_onehot_k_eq_d() {
     let d = 4;
     let indices: Vec<Option<usize>> = vec![Some(0), Some(2), Some(3), Some(1)];
     let num_live_blocks = 2;
-    let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+    let poly = OneHotPoly::<F>::new(k, indices).unwrap();
     let blocks = poly
         .materialize_block_range(d, 2, 0..num_live_blocks)
         .unwrap();
@@ -86,7 +86,7 @@ fn map_onehot_k_lt_d() {
         Some(3),
     ];
     let num_live_blocks = 2;
-    let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+    let poly = OneHotPoly::<F>::new(k, indices).unwrap();
     let blocks = poly
         .materialize_block_range(d, 2, 0..num_live_blocks)
         .unwrap();
@@ -127,7 +127,7 @@ fn ranged_mapping_matches_full_mapping_for_both_dimension_orders() {
         let num_positions_per_block = 2;
         let num_rings = indices.len() * k / d;
         let num_blocks = num_rings.div_ceil(num_positions_per_block);
-        let poly = OneHotPoly::<F>::new(k, d, indices).unwrap();
+        let poly = OneHotPoly::<F>::new(k, indices).unwrap();
         let full = poly
             .materialize_block_range(d, num_positions_per_block, 0..num_blocks)
             .unwrap();
@@ -162,7 +162,7 @@ fn ranged_mapping_matches_full_mapping_for_both_dimension_orders() {
 #[test]
 fn empty_final_block_range_is_accepted() {
     type F = Prime24Offset3;
-    let poly = OneHotPoly::<F>::new(4, 8, vec![Some(0usize); 8]).unwrap();
+    let poly = OneHotPoly::<F>::new(4, vec![Some(0usize); 8]).unwrap();
     let num_live_blocks = poly.num_live_blocks_for(8, 8).unwrap();
 
     let blocks = poly
@@ -175,7 +175,7 @@ fn empty_final_block_range_is_accepted() {
 #[test]
 fn ordered_ring_range_beyond_storage_is_empty() {
     type F = Prime24Offset3;
-    let poly = OneHotPoly::<F>::new(4, 4, vec![Some(0usize), Some(1), None, None]).unwrap();
+    let poly = OneHotPoly::<F>::new(4, vec![Some(0usize), Some(1), None, None]).unwrap();
 
     let (_, coefficients) = poly.ring_range_coefficients(4, 10..10).unwrap();
 
@@ -190,24 +190,12 @@ fn flat_blocks_block_panics_on_out_of_range_index() {
 }
 
 #[test]
-fn onehot_poly_rejects_non_divisible_k_d() {
-    // K=3 and D=4: neither divides the other. `OneHotPoly::new` must
-    // refuse to construct. The nicely-matched K/D invariant is what
-    // lets all operation-local views reuse the upstream invariant.
-    type F = Prime24Offset3;
-    const D: usize = 4;
-    let result = OneHotPoly::<F>::new(3, D, vec![Some(0usize), Some(1)]);
-    assert!(result.is_err());
-}
-
-#[test]
 fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
     type F = Prime24Offset3;
     const D: usize = 16;
     const BAD_D: usize = 12;
     let poly = OneHotPoly::<F>::new(
         8,
-        D,
         vec![
             Some(0usize),
             Some(7),
@@ -224,7 +212,7 @@ fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
     let view = RootCommitSource::<F, D>::commit_view(&poly).unwrap();
     assert_eq!(view.indices(), poly.indices());
     assert_eq!(view.onehot_k(), poly.onehot_k());
-    assert_eq!(view.num_vars(), poly.num_vars());
+    assert_eq!(view.num_vars(), poly.num_vars);
     let polys = [&poly];
     let batch = RootOpeningSource::<F, D>::opening_batch(&polys).unwrap();
     assert_eq!(
@@ -232,48 +220,54 @@ fn onehot_view_validates_runtime_dimension_and_exposes_semantics() {
             .views()
             .map(|view| view.num_vars())
             .collect::<Vec<_>>(),
-        vec![poly.num_vars()]
+        vec![poly.num_vars]
     );
 
     assert!(RootCommitSource::<F, BAD_D>::commit_view(&poly).is_err());
     assert!(RootOpeningSource::<F, BAD_D>::opening_view(&poly).is_err());
-    assert!(RootTensorSource::<F, BAD_D>::tensor_view(&poly).is_err());
     assert!(RootOpeningSource::<F, BAD_D>::opening_batch(&[&poly]).is_err());
-    assert!(RootTensorSource::<F, BAD_D>::tensor_batch(&[&poly]).is_err());
 }
 
 #[test]
 fn onehot_poly_materializes_multiple_runtime_layouts() {
     type F = Prime24Offset3;
     let poly = OneHotPoly::<F>::new(
-        32,
-        32,
+        128,
         vec![
             Some(0usize),
             Some(7),
             None,
-            Some(31),
+            Some(63),
             Some(3),
             None,
             Some(12),
             Some(1),
+            None,
+            Some(42),
+            Some(9),
+            None,
+            Some(55),
+            Some(18),
+            None,
+            Some(4),
         ],
     )
     .unwrap();
 
-    let d32_count = poly.num_live_blocks_for(32, 4).unwrap();
-    let d64_count = poly.num_live_blocks_for(64, 2).unwrap();
-    let d32_blocks = poly.materialize_block_range(32, 4, 0..d32_count).unwrap();
-    let d64_blocks = poly.materialize_block_range(64, 2, 0..d64_count).unwrap();
+    for ring_d in [64, 128, 256, 512, 1024, 2048] {
+        let count = poly.num_live_blocks_for(ring_d, 2).unwrap();
+        let blocks = poly.materialize_block_range(ring_d, 2, 0..count).unwrap();
+        assert_eq!(blocks.num_live_blocks(), count);
+    }
 
-    assert_eq!(d32_blocks.num_live_blocks(), 2);
-    assert_eq!(d64_blocks.num_live_blocks(), 2);
+    assert!(poly.num_live_blocks_for(96, 2).is_err());
+    assert!(poly.materialize_block_range(96, 2, 0..1).is_err());
 }
 
 #[test]
 fn onehot_clone_owns_semantic_indices_independently() {
     type F = Prime24Offset3;
-    let poly = OneHotPoly::<F>::new(32, 32, vec![Some(0usize), Some(7), None, Some(31)]).unwrap();
+    let poly = OneHotPoly::<F>::new(32, vec![Some(0usize), Some(7), None, Some(31)]).unwrap();
     let mut cloned = poly.clone();
 
     cloned.indices[0] = None;
@@ -283,93 +277,4 @@ fn onehot_clone_owns_semantic_indices_independently() {
     let original = poly.materialize_block_range(32, 2, 0..2).unwrap();
     let changed = cloned.materialize_block_range(32, 2, 0..2).unwrap();
     assert_ne!(original.block(0), changed.block(0));
-}
-
-#[test]
-fn concurrent_onehot_operations_use_independent_derived_storage() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 32;
-    let poly = OneHotPoly::<F>::new(
-        32,
-        D,
-        vec![
-            Some(0usize),
-            Some(7),
-            None,
-            Some(31),
-            Some(3),
-            None,
-            Some(12),
-            Some(1),
-        ],
-    )
-    .unwrap();
-    let num_blocks = poly.num_live_blocks_for(D, 2).unwrap();
-
-    let (left, right) = std::thread::scope(|scope| {
-        let left = scope.spawn(|| {
-            let blocks = poly.materialize_block_range(D, 2, 0..num_blocks).unwrap();
-            let projection = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-            (blocks, projection)
-        });
-        let right = scope.spawn(|| {
-            let blocks = poly.materialize_block_range(D, 2, 0..num_blocks).unwrap();
-            let projection = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-            (blocks, projection)
-        });
-        (left.join().unwrap(), right.join().unwrap())
-    });
-
-    assert_flat_blocks_eq(&left.0, &right.0);
-    let (
-        RootTensorProjectionPoly::Sparse(left_projection),
-        RootTensorProjectionPoly::Sparse(right_projection),
-    ) = (&left.1, &right.1)
-    else {
-        panic!("one hot tensor projections must remain sparse");
-    };
-    assert!(!std::sync::Arc::ptr_eq(left_projection, right_projection));
-    assert_eq!(
-        RootPolyMeta::num_vars(left_projection.as_ref()),
-        RootPolyMeta::num_vars(right_projection.as_ref())
-    );
-    assert_eq!(
-        left_projection.direct_field_evals().unwrap(),
-        right_projection.direct_field_evals().unwrap()
-    );
-}
-
-#[test]
-fn tensor_root_projection_is_operation_local() {
-    type F = Prime24Offset3;
-    type E = FpExt4<F>;
-    const D: usize = 16;
-
-    let poly = OneHotPoly::<F>::new(
-        8,
-        D,
-        vec![
-            Some(0usize),
-            Some(7),
-            None,
-            Some(3),
-            Some(5),
-            Some(1),
-            None,
-            Some(6),
-        ],
-    )
-    .unwrap();
-
-    let first = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-    let second = poly.tensor_packed_extension_root_poly::<E, D>().unwrap();
-    let (RootTensorProjectionPoly::Sparse(first), RootTensorProjectionPoly::Sparse(second)) =
-        (&first, &second)
-    else {
-        panic!("one hot tensor projections must remain sparse");
-    };
-    assert!(!std::sync::Arc::ptr_eq(first, second));
-    assert_eq!(RootPolyMeta::num_vars(first.as_ref()), poly.num_vars());
-    assert_eq!(RootPolyMeta::num_vars(second.as_ref()), poly.num_vars());
 }

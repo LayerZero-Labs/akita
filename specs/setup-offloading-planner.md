@@ -25,7 +25,7 @@ The public-matrix derivation, setup-capacity unit, and NTT-cache contracts in
 this document are historical where they conflict with
 [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 This document remains authoritative for recursive offloading feasibility,
-contraction, and its distinct first-direct-setup selection objective.
+contraction, and the shared adaptive first-direct-setup selection objective.
 
 The current target is the planner-selected policy in this revision. It
 supersedes the original rollout rule that forced setup offloading at fold
@@ -161,9 +161,8 @@ selected recursive edge has a compatible preprocessed setup-prefix commitment.
   capacities. `OpeningClaimsLayout::root_group_order` determines proof order.
 - **Local minimization remains bounded in PR #318.** Recursive suffix candidate
   generation continues to retain one locally smallest next-witness candidate
-  per basis. Direct/offloaded alternatives and proof-only/setup-first suffixes
-  are retained, but this remediation does not create the future full Pareto
-  frontier.
+  per basis. Direct and offloaded alternatives retain both first-direct and
+  payload projections.
 - **Generated and fallback schedules agree.** A generated row stores the exact
   incoming-prefix topology chosen by dynamic planning, and the canonical row
   walker recomputes every prefix transition and grouped witness length.
@@ -242,17 +241,17 @@ Among feasible complete schedules, the PR #318 policy compares:
 
 ```text
 (
-    first_direct_setup_field_len,
+    first_direct_padded_setup_capacity,
     exact_estimated_proof_bytes,
     total_setup_field_elements,
     canonical_descriptor,
 )
 ```
 
-where `exact_estimated_proof_bytes` includes every Stage 3 payload. The suffix
-frontier retains the first three numeric coordinates. The descriptor is only a
-complete-schedule tie-break. The future Pareto planner may replace this policy,
-but generated catalogs must bind whichever selection policy produced them.
+where `exact_estimated_proof_bytes` includes every Stage 3 payload. Adaptive
+direct and recursive planning share the projected suffix frontier over these
+coordinates. The descriptor is only a complete-schedule tie-break. Generated
+catalogs bind the selection policy that produced them.
 
 The recursive search applies `PlannerPolicy::setup_field_budget` when a host
 sets it to `Some(limit)`. The shipped policy uses `None` because the
@@ -272,18 +271,18 @@ The generated catalog binds:
 
 ```text
 cost model      = ExactPayloadAndSetupEnvelope
-direct policy   = MinEstimatedProofPayload
-recursive policy = MinFirstDirectSetupThenPayload
+uniform direct policy = MinEstimatedProofPayload
+adaptive and recursive policy = MinFirstDirectSetupThenPayload
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
-The selection objective is an explicit catalog-identity input. Recursive setup
-capability and the admitted ring-dimension domain do not infer or rewrite it.
-The recursion adapter selects `MinFirstDirectSetupThenPayload` for genuine
-multi-group planning. Its scalar boundary and standalone precommit planning
-explicitly select `MinEstimatedProofPayload` while disabling recursive setup
-search.
+The selection objective is an explicit catalog-identity input derived from the
+schedule mode. Uniform direct planning selects `MinEstimatedProofPayload`.
+Adaptive dimension or recursive setup planning selects
+`MinFirstDirectSetupThenPayload`. The scalar boundary disables recursive setup
+search but retains the adaptive objective when its dimension domain remains
+adaptive.
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -356,15 +355,15 @@ resolve_generated_catalog_row_for_key(
 ```
 
 The adapter rejects unsupported base configurations before planning a
-multi-group key. Under the current implementation, recursive offloading still
-requires the configured setup-offload ring dimension. Distributed support is
-capability-specific; the shipped W8R2 family is governed by
+multi-group key. Recursive offloading uses the exact setup-prefix A and B
+dimensions chosen for the consuming fold. Distributed support is
+capability-specific. The shipped W8R2 family is governed by
 [`distributed-setup-offloading.md`](distributed-setup-offloading.md).
 
-For example, an unsupported ring dimension is rejected by:
+For example, an unsupported setup-prefix dimension is rejected by:
 
 ```text
-Cfg::D != SETUP_OFFLOAD_D_SETUP
+d_setup is not admitted by the consuming fold's A-role dispatch
 ```
 
 No adapter field specifies an offload count. The planner derives that count by
@@ -684,8 +683,8 @@ The current memo key is:
 (level, current_witness_len, current_lb, incoming_setup_prefix_or_zero)
 ```
 
-Pass `incoming_setup_prefix: Option<usize>` to
-`derive_candidate_level_params`.
+Pass the prefix cache and natural length together as
+`RecursiveSetupPrefix::Search` to `derive_fold_candidates`.
 
 This value is necessary because equal-length main witnesses may arrive with
 different setup-prefix domains and therefore admit different current params.
@@ -694,9 +693,10 @@ slot ID.
 
 ### Locally Minimized Candidate Derivation
 
-Retain the current algorithm: for each `log_basis`,
-`derive_candidate_level_params` scans `block_index_bits` and keeps only the candidate
-with the smallest outgoing witness.
+Retain the current algorithm: for each `log_basis`, `derive_fold_candidates`
+scans `block_index_bits`. `FoldCandidatePolicy::Best` keeps the best
+contracting candidate, while `Frontier` retains every contracting split needed
+by setup-offloading search.
 
 Any `find_schedule` request with `policy.recursive_setup_planning == true`
 uses the edge logic below. This includes a scalar application root: its first
@@ -727,7 +727,7 @@ For each existing `block_index_bits` candidate:
    length only after confirming that the candidate has one group.
 9. Keep only the smallest outgoing witness for this basis.
 
-This work stays inside `derive_candidate_level_params`; no
+This work stays inside `derive_fold_candidates`; no
 `PrimaryLevelCandidate`, `FinalizedLevelCandidate`, or finalization helper is
 introduced.
 
@@ -762,7 +762,7 @@ For a fold-then-fold branch:
    threefold contraction rule, or strict direct-setup reduction fails.
 7. Add the current direct payload, extension-opening reduction, applicable
    Stage 3 payload, and child suffix payload.
-8. Retain setup-first and proof-only choices per successor basis.
+8. Retain first-direct and payload projections per successor basis.
 
 The search remains bounded by the existing recursion cap and local
 one-layout-per-basis minimization. PR #318 does not retain the future full
@@ -1043,8 +1043,8 @@ the candidate score that decides whether and how long to offload.
       full-field prefix inputs, and strictly reduces the padded capacity of the
       first remaining direct setup scan.
 - [x] The selected schedule lexicographically minimizes first direct padded setup
-      capacity and exact estimated proof bytes within the supported setup
-      envelope.
+      capacity, exact estimated proof bytes, total setup, and the canonical
+      descriptor within the supported setup envelope.
 - [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.
 - [x] Exact proof accounting includes every Stage 3 payload before candidate
@@ -1090,7 +1090,7 @@ the candidate score that decides whether and how long to offload.
 - incompatible local candidates are filtered before minimum selection;
 - threefold contraction boundary and strict direct-setup-reduction boundary;
 - exact Stage 3 accounting can change the selected suffix;
-- local minimization and the setup-first/proof-only comparator remain
+- local minimization and the first-direct/payload projections remain
   deterministic and bounded;
 - incompatible offloaded successor rejection preserves the direct alternative;
 - independent prefix-group A/B derivation for incoming prefixes;

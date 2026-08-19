@@ -16,7 +16,7 @@ use akita_field::MulBaseUnreduced;
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize<F, E, T>(
+pub(crate) fn ring_switch_finalize<F, E, T>(
     instance: &RingRelationInstance<F>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
@@ -25,7 +25,9 @@ pub fn ring_switch_finalize<F, E, T>(
     opening_source_len: usize,
     opening_ring_dim: usize,
     gamma: Option<&[E]>,
-) -> Result<RingSwitchOutput<E>, AkitaError>
+    opening_claim_coefficients: &[E],
+    prepared_relation_groups: &[crate::protocol::ring_relation::PreparedRelationGroup<F, E>],
+) -> Result<RingSwitchFinalization<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -43,9 +45,14 @@ where
             .collect::<Vec<_>>();
         &default_gamma
     };
-    let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
-
     let opening_batch = instance.opening_batch();
+    crate::protocol::ring_relation::validate_prepared_relation_groups(
+        prepared_relation_groups,
+        lp,
+        opening_batch,
+        instance,
+    )?;
+    let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let opening_capacity = opening_source_len
         .checked_mul(opening_ring_dim)
@@ -75,6 +82,7 @@ where
     // common coefficients are the low Boolean coordinates.
     let geometry = lp.relation_address_geometry(
         opening_batch,
+        instance.extension_degree(),
         opening_ring_dim,
         witness_layout.live_coeff_len(),
     )?;
@@ -111,18 +119,70 @@ where
         ));
     }
 
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, E::EXT_DEGREE)?;
+    let relation_plan = akita_types::RelationRangeImagePlan::new(
+        relation_geometry,
+        geometry,
+        akita_types::DigitRangePlan::new(1usize << lp.log_basis_open)?,
+        witness_layout.clone(),
+        opening_batch,
+    )?;
+    let prepared_coefficient_packing_points;
+    let opening_points = match prepared_relation_groups
+        .first()
+        .ok_or(AkitaError::InvalidProof)?
+        .kind()
+    {
+        akita_types::OpeningFamily::EvaluationTrace(_) => {
+            akita_types::OpeningFamily::EvaluationTrace(())
+        }
+        akita_types::OpeningFamily::SubringCoefficientPacking(_) => {
+            prepared_coefficient_packing_points = prepared_relation_groups
+                .iter()
+                .enumerate()
+                .map(|(group_index, group)| match group.kind() {
+                    akita_types::OpeningFamily::SubringCoefficientPacking(point) => {
+                        Ok((group_index, point))
+                    }
+                    akita_types::OpeningFamily::EvaluationTrace(_) => Err(
+                        AkitaError::InvalidSetup("ring-switch opening families are mixed".into()),
+                    ),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            akita_types::OpeningFamily::SubringCoefficientPacking(
+                prepared_coefficient_packing_points.as_slice(),
+            )
+        }
+    };
+    let relation_claim_coefficients = match opening_points {
+        akita_types::OpeningFamily::EvaluationTrace(()) => gamma,
+        akita_types::OpeningFamily::SubringCoefficientPacking(_) => {
+            if opening_claim_coefficients.len() != opening_batch.num_total_polynomials() {
+                return Err(AkitaError::InvalidSize {
+                    expected: opening_batch.num_total_polynomials(),
+                    actual: opening_claim_coefficients.len(),
+                });
+            }
+            opening_claim_coefficients
+        }
+    };
+
     let prepare_relation_weight_factorization = || {
         let _span = tracing::info_span!("relation_weight_compilation").entered();
-        let events = build_relation_weight_events(RelationWeightEventInputs {
-            setup: RelationSetupSource::Matrix(setup),
-            instance,
-            alpha,
-            level_params: lp,
-            relation_row_point: &tau1,
-            claim_coefficients: gamma,
-            opening_source_len,
-            opening_ring_dim,
-        })?;
+        let (events, opening_semantics) =
+            build_relation_weight_events(RelationWeightEventInputs {
+                setup: RelationSetupSource::Matrix(setup),
+                instance,
+                alpha,
+                level_params: lp,
+                relation_row_point: &tau1,
+                claim_coefficients: relation_claim_coefficients,
+                opening_source_len,
+                opening_ring_dim,
+                relation_plan: &relation_plan,
+                opening_points,
+            })?;
         let ordinary = events.factor_common_alpha()?;
         let compression = lp
             .payload_mode
@@ -140,7 +200,7 @@ where
                 )
             })
             .transpose()?;
-        Ok::<_, AkitaError>((ordinary, compression))
+        Ok::<_, AkitaError>((ordinary, compression, opening_semantics))
     };
 
     #[cfg(feature = "parallel")]
@@ -165,7 +225,7 @@ where
         (relation_weight_factorization, w_compact)
     };
 
-    let (relation_weight_factorization, compression_relation_weights) =
+    let (relation_weight_factorization, compression_relation_weights, opening_semantics) =
         relation_weight_factorization_result.map_err(|err| {
             AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
         })?;
@@ -178,15 +238,19 @@ where
         ));
     }
 
-    Ok(RingSwitchOutput {
-        w_evals_compact,
-        relation_address_geometry: geometry,
-        relation_weight_factorization,
-        compression_relation_weights,
-        digit_range_equality_low_variable_count,
-        tau0,
-        tau1,
-        b: 1usize << lp.log_basis_open,
-        alpha,
+    Ok(RingSwitchFinalization {
+        output: RingSwitchOutput {
+            w_evals_compact,
+            relation_address_geometry: geometry,
+            relation_weight_factorization,
+            compression_relation_weights,
+            digit_range_equality_low_variable_count,
+            tau0,
+            tau1,
+            b: 1usize << lp.log_basis_open,
+            alpha,
+        },
+        relation_plan,
+        opening_semantics,
     })
 }

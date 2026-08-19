@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -38,18 +39,21 @@ int main(int argc, char **argv) {
     const int dimension = argc == 7 ? std::stoi(argv[4]) : 64;
     const int mag1_count = argc == 7 ? std::stoi(argv[5]) : 31;
     const int mag2_count = argc == 7 ? std::stoi(argv[6]) : 11;
-    if (dimension <= 0 || mag1_count < 0 || mag2_count < 0 ||
+    if (max_moment < 0 || dimension <= 0 || mag1_count < 0 || mag2_count < 0 ||
         mag1_count + mag2_count > dimension || (mod - 1) % (2 * dimension) != 0) {
-        std::cerr << "invalid dimension, shell counts, or modulus\n";
+        std::cerr << "invalid moment, dimension, shell counts, or modulus\n";
         return 2;
     }
 
-    const int side = max_moment + 1;
-    const int area = side * side;
-    const int mag2_stride = area;
-    const int mag1_stride = (mag2_count + 1) * area;
+    const std::size_t side = static_cast<std::size_t>(max_moment) + 1;
+    const std::size_t area = side * side;
+    const std::size_t mag2_stride = area;
+    const std::size_t mag1_stride =
+        (static_cast<std::size_t>(mag2_count) + 1) * area;
     auto offset = [mag1_stride, mag2_stride, side](int a, int b, int r, int s) {
-        return a * mag1_stride + b * mag2_stride + r * side + s;
+        return static_cast<std::size_t>(a) * mag1_stride +
+               static_cast<std::size_t>(b) * mag2_stride +
+               static_cast<std::size_t>(r) * side + static_cast<std::size_t>(s);
     };
 
     const u64 root = mod_pow(primitive, (mod - 1) / (2 * dimension), mod);
@@ -66,7 +70,9 @@ int main(int argc, char **argv) {
     for (int i = max_moment; i > 0; --i)
         inverse_factorial[i - 1] = mod_mul(inverse_factorial[i], i, mod);
 
-    std::vector<u64> dp((mag1_count + 1) * (mag2_count + 1) * area, 0);
+    std::vector<u64> dp((static_cast<std::size_t>(mag1_count) + 1) *
+                            (static_cast<std::size_t>(mag2_count) + 1) * area,
+                        0);
     std::vector<u64> even(area), odd(area), convolution(area);
     dp[offset(0, 0, 0, 0)] = 1;
 

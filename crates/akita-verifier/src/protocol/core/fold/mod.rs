@@ -1,34 +1,47 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
+mod coefficient_packing;
 mod extension_claim;
 mod single_field;
 
 use super::*;
+use crate::stages::stage2::Stage2OpeningSemantics;
 use akita_algebra::offset_eq::EqPairTensorFamily;
-use akita_types::{dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan};
+use akita_types::{
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningFamily,
+    RingRelationGroupOpening,
+};
 
+pub(in crate::protocol::core) use coefficient_packing::{
+    verify_coefficient_packing_root_prefix, verify_coefficient_packing_suffix_prefix,
+};
 pub(in crate::protocol::core) use extension_claim::{
-    verify_extension_claim_root_prefix, verify_extension_claim_suffix_prefix,
-    verify_extension_claim_terminal_suffix,
+    verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix,
 };
 pub(in crate::protocol::core) use single_field::{
     absorb_protocol_opening_points, prepare_single_field_suffix_groups,
-    prepare_single_field_terminal_suffix, verify_single_field_root_prefix,
+    prepare_single_field_terminal_suffix,
 };
 
 /// Common prepared fold prefix produced by the single-field and
 /// extension-claim geometry modules, consumed by root and suffix finishing
 /// logic.
 pub(in crate::protocol::core) struct FoldPrefix<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) trace_eval_target: E,
     pub(in crate::protocol::core) trace_claim_coefficients: Vec<E>,
+    pub(in crate::protocol::core) scalar_openings: Vec<E>,
 }
+
+pub(in crate::protocol::core) type PreparedFoldOpeningPoint<F, E> = OpeningFamily<
+    PreparedOpeningPoint<F, E>,
+    akita_types::PreparedSubringCoefficientPackingPoint<E>,
+>;
 
 /// Fold material fixed before the shared opening payload is absorbed.
 pub(in crate::protocol::core) struct FoldClaimMaterial<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
     pub(in crate::protocol::core) openings: Vec<E>,
     pub(in crate::protocol::core) reduction_final_claims: Option<Vec<E>>,
     pub(in crate::protocol::core) reduction_factors: Option<Vec<E>>,
@@ -46,7 +59,9 @@ where
     E: ExtField<F>,
     T: Transcript<F>,
 {
-    let geometry = relation_rhs_layout_for(lp, opening_shape)?.opening_payload_geometry()?;
+    let geometry = RelationWitnessGeometry::for_level(lp, opening_shape, E::EXT_DEGREE)?
+        .rhs_layout()
+        .opening_payload_geometry()?;
     if opening_payload.coeff_len() != geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidProof);
     }
@@ -90,6 +105,7 @@ where
         row_coefficients,
         trace_eval_target,
         trace_claim_coefficients,
+        scalar_openings: material.openings,
     })
 }
 
@@ -251,9 +267,7 @@ fn verify_stage2<F, E, T>(
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
     setup_claim: Option<E>,
-    evaluation_trace: PreparedEvaluationTrace<E>,
-    evaluation_trace_row_weight: E,
-    evaluation_trace_opening_claim: E,
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -261,40 +275,6 @@ where
     T: Transcript<F>,
 {
     let witness_eval = stage2.next_w_eval();
-    verify_stage2_kernel::<F, E, T>(
-        transcript,
-        setup,
-        stage2,
-        stage1,
-        rs,
-        relation_claim,
-        witness_eval,
-        setup_claim,
-        evaluation_trace,
-        evaluation_trace_row_weight,
-        evaluation_trace_opening_claim,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn verify_stage2_kernel<F, E, T>(
-    transcript: &mut T,
-    setup: &AkitaVerifierSetup<F>,
-    stage2: &AkitaStage2Proof<F, E>,
-    stage1: Stage1Replay<E>,
-    rs: &RingSwitchVerifyOutput<E>,
-    relation_claim: E,
-    witness_eval: E,
-    setup_claim: Option<E>,
-    evaluation_trace: PreparedEvaluationTrace<E>,
-    evaluation_trace_row_weight: E,
-    evaluation_trace_opening_claim: E,
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
         stage1.batching_coeff,
         stage1.range_image_evaluation,
@@ -311,9 +291,7 @@ where
         rs.relation_address_geometry.relation_lane_variable_count(),
         rs.relation_address_geometry
             .relation_coefficient_variable_count(),
-        evaluation_trace,
-        evaluation_trace_row_weight,
-        evaluation_trace_opening_claim,
+        opening_semantics,
         stage1.physical_l2_claim,
         stage1.physical_l2_families,
     )?;
@@ -379,10 +357,13 @@ where
     let commitment_payloads = &prepared.commitment_payloads;
     let prefix = &prepared.prefix;
     let role_dims = prepared.lp.role_dims();
-    let relation_rhs_layout =
-        relation_rhs_layout_for(prepared.lp, &opening_shape).map_err(|error| {
-            AkitaError::InvalidInput(format!("compressed relation layout failed: {error:?}"))
-        })?;
+    let relation_geometry =
+        RelationWitnessGeometry::for_level(prepared.lp, &opening_shape, E::EXT_DEGREE).map_err(
+            |error| {
+                AkitaError::InvalidInput(format!("compressed relation layout failed: {error:?}"))
+            },
+        )?;
+    let relation_rhs_layout = relation_geometry.rhs_layout();
     if commitment_payloads.len() != num_groups {
         return Err(AkitaError::InvalidInput(
             "commitment payload group count mismatch".into(),
@@ -418,7 +399,7 @@ where
     }
     let group_challenges = {
         let _span = tracing::info_span!("fold_derive_stage1_challenges").entered();
-        derive_multi_group_stage1_challenges::<F, T>(
+        derive_multi_group_stage1_challenges::<F, E, T>(
             transcript,
             &opening_shape,
             prepared.lp,
@@ -452,25 +433,40 @@ where
                 .map(|payload| payload.coeffs())
                 .collect::<Vec<_>>();
             assemble_compressed_relation_rhs::<F>(
-                &relation_rhs_layout,
+                relation_rhs_layout,
                 &group_payloads,
                 prepared.opening_payload.coeffs(),
             )?
         } else {
             assemble_relation_rhs::<F>(
-                &relation_rhs_layout,
+                relation_rhs_layout,
                 &prepared.opening_payload,
                 &commitment_rows,
             )?
         };
-        let group_ring_multiplier_points = prefix
-            .prepared_points
-            .iter()
-            .map(|prepared| prepared.ring_multiplier_point.clone())
-            .collect::<Vec<_>>();
+        let group_openings = group_challenges
+            .into_iter()
+            .zip(&prefix.prepared_points)
+            .map(|(challenges, prepared)| match (challenges, prepared) {
+                (
+                    OpeningFamily::EvaluationTrace(challenges),
+                    PreparedFoldOpeningPoint::EvaluationTrace(point),
+                ) => Ok(RingRelationGroupOpening::evaluation_trace(
+                    challenges,
+                    point.ring_multiplier_point.clone(),
+                )),
+                (
+                    OpeningFamily::SubringCoefficientPacking(challenges),
+                    PreparedFoldOpeningPoint::SubringCoefficientPacking(point),
+                ) if point.geometry() == challenges.geometry() => {
+                    Ok(RingRelationGroupOpening::coefficient_packing(challenges))
+                }
+                _ => Err(AkitaError::InvalidProof),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let relation_instance = RingRelationInstance::new(
-            group_challenges,
-            group_ring_multiplier_points,
+            group_openings,
+            E::EXT_DEGREE,
             opening_shape.clone(),
             gamma,
             row_coefficient_rings,
@@ -539,7 +535,7 @@ where
             AkitaError::InvalidInput(format!("compressed ring-switch replay failed: {error:?}"))
         })?;
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
-        &relation_rhs_layout,
+        relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
         relation_instance.rhs(),
@@ -551,11 +547,41 @@ where
     // `eq(tau1, EvaluationTrace_row_index)`.
     let opening_batch = relation_instance.opening_batch();
     let relation_range_image_plan = RelationRangeImagePlan::new(
+        relation_geometry.clone(),
         rs.relation_address_geometry,
         DigitRangePlan::new(rs.b)?,
         rs.relation_matrix_evaluator.witness_layout()?.clone(),
         opening_batch,
     )?;
+    let prepared_packing_points = prefix
+        .prepared_points
+        .iter()
+        .enumerate()
+        .filter_map(|(group_index, point)| match point {
+            PreparedFoldOpeningPoint::SubringCoefficientPacking(point) => {
+                Some((group_index, point))
+            }
+            PreparedFoldOpeningPoint::EvaluationTrace(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let coefficient_packing_batch = if prepared_packing_points.is_empty() {
+        None
+    } else {
+        Some(
+            akita_types::prepare_coefficient_packing_verifier_batch_semantics(
+                akita_types::CoefficientPackingBatchSemanticInputs {
+                    level_params: prepared.lp,
+                    opening_batch,
+                    relation_plan: &relation_range_image_plan,
+                    relation: &relation_instance,
+                    prepared_points: &prepared_packing_points,
+                    alpha: rs.alpha,
+                    tau1: &rs.tau1,
+                    claim_coefficients: &prefix.trace_claim_coefficients,
+                },
+            )?,
+        )
+    };
     let stage1_replay = verify_stage1::<F, E, T>(
         stage1,
         &rs,
@@ -566,9 +592,6 @@ where
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed stage-1 replay failed: {error:?}"))
     })?;
-    let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
-    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
-    ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_domain = rs.relation_address_geometry.digit_witness_domain();
     if trace_domain.live_len() != prepared.w_len {
         return Err(AkitaError::InvalidSize {
@@ -576,31 +599,81 @@ where
             actual: prepared.w_len,
         });
     }
-    let trace_witness_layout = relation_range_image_plan.witness_layout();
-    let trace_preparation_span = tracing::info_span!(
-        "stage2_evaluation_trace_preparation",
-        claims = opening_batch.num_total_polynomials(),
-        groups = opening_batch.num_groups(),
-        chunks = trace_witness_layout.units().len(),
-        coefficient_block_len = rs
-            .relation_address_geometry
-            .relation_coefficient_block_len(),
-    )
-    .entered();
-    let evaluation_trace = prepare_evaluation_trace::<F, E>(&EvaluationTraceInputs {
-        digit_witness_domain: trace_domain,
-        relation_coefficient_block_len: rs
-            .relation_address_geometry
-            .relation_coefficient_block_len(),
-        witness_layout: trace_witness_layout,
-        level_params: prepared.lp,
-        opening_batch,
-        prepared_points: &prefix.prepared_points,
-        claim_coefficients: &prefix.trace_claim_coefficients,
-        basis: prepared.evaluation_trace_basis,
-    })?;
-    drop(trace_preparation_span);
-    let evaluation_trace_opening_claim = evaluation_trace_weight * prefix.trace_eval_target;
+    let opening_semantics = if let Some(batch) = &coefficient_packing_batch {
+        if prefix
+            .prepared_points
+            .iter()
+            .any(|point| matches!(point, PreparedFoldOpeningPoint::EvaluationTrace(_)))
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut authenticated_total = E::zero();
+        let mut group_openings = Vec::with_capacity(batch.groups().len());
+        for semantics in batch.groups() {
+            let claim_range = semantics.group_claim_range();
+            let openings = prefix
+                .scalar_openings
+                .get(claim_range.clone())
+                .ok_or(AkitaError::InvalidProof)?;
+            let coefficients = prefix
+                .trace_claim_coefficients
+                .get(claim_range)
+                .ok_or(AkitaError::InvalidProof)?;
+            let authenticated = openings
+                .iter()
+                .zip(coefficients)
+                .fold(E::zero(), |sum, (&opening, &coefficient)| {
+                    sum + opening * coefficient
+                });
+            authenticated_total += authenticated;
+            group_openings.push((semantics.group_index(), authenticated));
+        }
+        if authenticated_total != prefix.trace_eval_target {
+            return Err(AkitaError::InvalidProof);
+        }
+        Stage2OpeningSemantics::packing(batch, &group_openings)?
+    } else {
+        let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
+        let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
+        ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
+        let trace_witness_layout = relation_range_image_plan.witness_layout();
+        let trace_preparation_span = tracing::info_span!(
+            "stage2_evaluation_trace_preparation",
+            claims = opening_batch.num_total_polynomials(),
+            groups = opening_batch.num_groups(),
+            chunks = trace_witness_layout.units().len(),
+            coefficient_block_len = rs
+                .relation_address_geometry
+                .relation_coefficient_block_len(),
+        )
+        .entered();
+        let evaluation_trace_points = prefix
+            .prepared_points
+            .iter()
+            .map(|point| match point {
+                OpeningFamily::EvaluationTrace(point) => Ok(point.clone()),
+                OpeningFamily::SubringCoefficientPacking(_) => Err(AkitaError::InvalidProof),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let evaluation_trace = prepare_evaluation_trace::<F, E>(&EvaluationTraceInputs {
+            digit_witness_domain: trace_domain,
+            relation_coefficient_block_len: rs
+                .relation_address_geometry
+                .relation_coefficient_block_len(),
+            witness_layout: trace_witness_layout,
+            level_params: prepared.lp,
+            opening_batch,
+            prepared_points: &evaluation_trace_points,
+            claim_coefficients: &prefix.trace_claim_coefficients,
+            basis: prepared.evaluation_trace_basis,
+        })?;
+        drop(trace_preparation_span);
+        Stage2OpeningSemantics::evaluation_trace(
+            evaluation_trace,
+            evaluation_trace_weight,
+            evaluation_trace_weight * prefix.trace_eval_target,
+        )
+    };
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
@@ -610,9 +683,7 @@ where
         &rs,
         relation_claim,
         setup_claim,
-        evaluation_trace,
-        evaluation_trace_weight,
-        evaluation_trace_opening_claim,
+        opening_semantics,
     )
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed stage-2 replay failed: {error:?}"))
