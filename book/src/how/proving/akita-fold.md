@@ -12,12 +12,13 @@ $$
 The current implementation also supports more elaborate physical layouts.
 These include commitment groups, witness chunks, and different ordinary
 $\mathbf A$, $\mathbf B$, and $\mathbf D$ ring dimensions. These extensions do
-not change the four core relations developed below. This page establishes only the
-basic case; advanced layouts are outside its scope. The [advanced relation
-layouts](./advanced-relation-layouts.md) page develops the multi-group case.
+not change the four core relations developed below. This page establishes only
+the basic case; advanced layouts are outside its scope. The [advanced relation
+layouts](./advanced-relation-layouts.md) page develops the multi-group and
+multi-chunk cases.
 The [raw and compressed realizations](./akita-fold-realizations.md) use the same
-semantic relations;
-the compression realization introduces its own smaller ring dimensions.
+semantic relations; the compression realization introduces its own smaller
+ring dimensions.
 
 The four equations below are the semantic source relations. The current
 implementation realizes the $\mathbf B$ and $\mathbf D$ commitment relations

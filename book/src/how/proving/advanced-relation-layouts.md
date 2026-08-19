@@ -3,13 +3,27 @@
 The [semantic relations in an Akita fold](./akita-fold.md) start with one
 commitment group, one witness chunk, and one common ring dimension, while the
 [realizations page](./akita-fold-realizations.md) turns those relations into
-physical rows. This page develops the multi-group extension. It preserves the
-four semantic relation families and explains how group-local rows and witness
-segments combine with one level-owned D relation.
+physical rows. This page develops the multi-group and multi-chunk extensions,
+changing one layout axis at a time. Both preserve the four semantic relation
+families while changing how their witnesses and matrix columns are organized.
 
 The physical opening-commitment relation remains distinct from the
-field-valued evaluation trace. The canonical pages for chunks and mixed ring
-dimensions are linked in [Related layouts](#related-layouts).
+field-valued evaluation trace. The canonical page for mixed ring dimensions is
+linked in [Related layouts](#related-layouts).
+
+## Contents
+
+- [Multiple commitment groups](#multiple-commitment-groups)
+  - [Why multiple commitment groups](#why-multiple-commitment-groups)
+  - [Group-local folded responses and relations](#group-local-folded-responses-and-relations)
+  - [The shared opening-commitment relation](#the-shared-opening-commitment-relation)
+  - [Semantic relations and witness layout](#semantic-relations-and-witness-layout)
+  - [Return to the single-group recursion](#return-to-the-single-group-recursion)
+- [Multiple witness chunks](#multiple-witness-chunks)
+  - [Block ownership and partial folded responses](#block-ownership-and-partial-folded-responses)
+  - [Semantic relations and chunked witness layout](#semantic-relations-and-chunked-witness-layout)
+  - [Raw realization and recursive transition](#raw-realization-and-recursive-transition)
+- [Related layouts](#related-layouts)
 
 ## Multiple commitment groups
 
@@ -185,13 +199,136 @@ responses or relation rows. If setup offloading is active, the next fold may
 also receive an independent setup-prefix group; that extra group does not
 preserve or recreate the original root grouping.
 
+## Multiple witness chunks
+
+To isolate the chunk axis, return to one commitment group and one common ring
+dimension, but split its live blocks among $C$ witness chunks. Chunking does
+not introduce new opening points, fold challenges, relation rows, or public
+targets. It changes the semantic witness and the corresponding relation
+columns so that each ownership unit covers a disjoint block range.
+
+### Block ownership and partial folded responses
+
+For $B$ live blocks, chunk $c$, where $0\le c<C$, owns the exact range
+
+$$
+I_c
+=
+\left[
+\left\lfloor\frac{cB}{C}\right\rfloor,
+\left\lfloor\frac{(c+1)B}{C}\right\rfloor
+\right).
+$$
+
+These ranges partition $[0,B)$ without padding. The current implementation
+requires $C$ to be a power of two. If $C>B$, some ranges are empty.
+
+Restrict the original block-indexed opening digits and outer-commitment digits
+to $I_c$, giving $\hat{\mathbf e}_c$ and
+$\hat{\mathbf t}_c$. The same restriction of the group's fold challenges
+produces a partial folded response
+
+$$
+\boxed{
+\mathbf z_c
+=
+\sum_{b\in I_c}c_b\mathbf s_b,
+\qquad
+\mathbf z
+=
+\sum_{c=0}^{C-1}\mathbf z_c.
+}
+$$
+
+Every $\mathbf z_c$ lives in the full folded-response space even though it
+uses only one block range. Thus each chunk has a full-size
+$\hat{\mathbf z}_c$ digit segment, while the
+$\hat{\mathbf e}_c$ and $\hat{\mathbf t}_c$ segments partition the original
+block-indexed data. An empty chunk retains its full-size
+$\hat{\mathbf z}_c$ segment, filled with zero, and has empty opening and
+outer-commitment segments.
+
+### Semantic relations and chunked witness layout
+
+Let $\mathbf M_c$ denote the columns of the basic relation assigned to chunk
+$c$. Its opening and outer-commitment columns are restricted to $I_c$,
+while its consistency and $\mathbf A$ rows reconstruct that chunk's partial
+response $\mathbf z_c$. The relation is the horizontal combination
+
+$$
+\boxed{
+\begin{bmatrix}
+\mathbf M_0&\mathbf M_1&\cdots&\mathbf M_{C-1}
+\end{bmatrix}
+\begin{bmatrix}
+\mathbf w_0\\
+\mathbf w_1\\
+\vdots\\
+\mathbf w_{C-1}
+\end{bmatrix}
+=
+\mathbf y,
+\qquad
+\mathbf w_c
+=
+[\hat{\mathbf z}_c\mid\hat{\mathbf e}_c\mid\hat{\mathbf t}_c].
+}
+$$
+
+The row families and public target remain those of the basic single-group
+relation:
+
+$$
+[\mathrm{consistency}\mid\mathbf A\mid\mathbf B\mid\mathbf D],
+\qquad
+\mathbf y
+=
+[0\mid\mathbf 0_{\mathbf A}\mid\mathbf u\mid\mathbf v_D].
+$$
+
+For example, the $\mathbf B$ and $\mathbf D$ targets are unchanged because
+their chunk-restricted column contributions sum to the original commitments.
+Likewise, linearity and $\sum_c\mathbf z_c=\mathbf z$ recover the original
+consistency and $\mathbf A$ equations. Chunking therefore preserves the
+algebraic statement, but it does not leave the matrix and witness literally
+unchanged: both acquire chunk-indexed column segments.
+
+### Raw realization and recursive transition
+
+In raw mode the complete flat witness is chunk-major:
+
+$$
+\boxed{
+\mathbf w_{\mathrm{raw}}
+=
+\big\Vert_{c=0}^{C-1}
+[\hat{\mathbf z}_c\mid\hat{\mathbf e}_c\mid\hat{\mathbf t}_c]
+\;\Vert\;
+\hat{\mathbf r}_{\mathrm{ord}}.
+}
+$$
+
+The quotient tail is shared across all chunks. Each quotient belongs to one
+complete semantic row after that row's contributions from every chunk have
+been added; there is no quotient copy per chunk. Compressed mode keeps the same
+chunked semantic body and likewise has one shared quotient-and-compression
+suffix, whose construction is already covered by the
+[realizations page](./akita-fold-realizations.md#compressed-realization).
+
+The chunks are columns of one relation and coordinates of one committed
+witness, not independent proof executions. Ring switching and Stage 2 reduce
+that witness to one opening claim for the next fold. The configured chunked
+layout is active only for its selected leading fold levels; later levels return
+to the ordinary single-chunk layout.
+
 ## Related layouts
 
-This page owns the multi-group relation layout. The other layout axes have
-canonical explanations elsewhere:
+This page owns the semantic multi-group and multi-chunk relation layouts. More
+detailed address geometry and the remaining layout axis are explained
+elsewhere:
 
 - [Chunks and fold challenges](./opening-points-layout.md#chunks-and-fold-challenges)
-  defines exact chunk ranges and opening-point coordinates.
+  records the exact chunk ranges and opening-point coordinates.
 - [Canonical walk](../verifying/matrix_evaluation.md#canonical-walk) defines
   chunk-major witness order and the shared quotient and compression suffix.
 - [Setup roles and mixed rings](../verifying/matrix_evaluation.md#setup-roles-and-mixed-rings)
