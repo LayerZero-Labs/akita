@@ -61,6 +61,5 @@
 
 - [Roadmap](./roadmap/roadmap.md)
   - [Verifier offloading](./roadmap/verifier-offloading.md)
-  - [Modulus switching](./roadmap/modulus-switching.md)
   - [Zero-knowledge](./roadmap/zero-knowledge.md)
   - [Compute backends (GPU/Metal)](./roadmap/compute-backends.md)

@@ -63,7 +63,7 @@ rejects any byte difference from the tracked files.
 ## Lineage
 
 Akita keeps the earlier implementation lineage explicit while giving the improved scheme its own name.
-This is also the line where planned protocol improvements over the original design live: faster verifier-oriented reductions via matrix-claim delegation, smaller large-field proofs via modulus switching and field-size lowering, and efficient zero-knowledge techniques under the Whiteout design direction.
+This is also the line where planned protocol improvements over the original design live: faster verifier-oriented reductions via matrix-claim delegation, smaller large-field proofs via field-size lowering, and efficient zero-knowledge techniques under the Whiteout design direction.
 
 ## Contributing
 
