@@ -1,20 +1,37 @@
-# Review of `parameter-struct-consolidation.md`
+# Review of `parameter-struct-consolidation.md` (draft 1)
 
-> **Status: historical.** This reviews **draft 1** of the specification, against
-> `main` at `74c17ba4f`. The specification has since been rewritten twice: draft 3
-> against `f37d07089`, and draft 4 against `main` at `8e552d2ac`. Keep this
-> document for the reasoning; do not use its line numbers.
+| Field | Value |
+|---|---|
+| Author(s) | — |
+| Created | 2026-08-12 |
+| Status | historical |
+| PR | |
+| Supersedes | |
+| Superseded-by | |
+| Book-chapter | book/src/how/configuration.md |
+
+> **Read this as a record of reasoning, not as a review of the live spec.**
 >
-> - The six `parameter-struct-consolidation.md#L…` references below point into
->   **draft 1's** text and no longer resolve to the passages they describe.
-> - The `crates/…` references were accurate at `74c17ba4f`. Most have moved. §15.1
->   and §15.2 of the current specification list what changed and where.
-> - All seven blocking findings below are answered in §1 of the current
->   specification, which maps each one to the structural change that resolves it.
->   Findings 1 and 6 were resolved by the codebase itself before draft 3 (see §0.5
->   and §0.1).
+> This reviewed **draft 1** of
+> [`parameter-struct-consolidation.md`](../../parameter-struct-consolidation.md),
+> against `main` at `74c17ba4f`. That draft was rejected, and the spec has since
+> been rewritten three times — most recently against `main` at `8e552d2ac`.
+>
+> - **The verdict below does not apply to the current spec.** All seven blocking
+>   findings are resolved in it. Two of them — the recursive type cycle and the
+>   `LevelParamsLike` elimination — were resolved by the codebase itself before
+>   the rewrite; the rest are answered by the design's structure, and its
+>   "Alternatives Considered" section records why draft 1's `CommitKind` enum was
+>   dropped.
+> - **Do not use the line numbers.** The six
+>   `parameter-struct-consolidation.md#L…` references point into draft 1's text.
+>   The `crates/…` references were accurate at `74c17ba4f` and have mostly moved.
+> - The still-useful part is the reasoning: why a `kind + Option` model does not
+>   make invalid states impossible, why static tables constrain `Copy` and const
+>   construction, and why frozen wire data, executable level parameters, and
+>   terminal parameters want separate types. The current spec adopts all three.
 
-## Verdict
+## Verdict (draft 1 — superseded)
 
 Do not approve the specification as written.
 
