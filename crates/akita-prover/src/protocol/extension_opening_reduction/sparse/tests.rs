@@ -173,6 +173,43 @@ fn fused_term_matches_unfused_reference() {
 }
 
 #[test]
+fn shared_dense_factor_matches_owned_round_by_round() {
+    use akita_field::{FpExt4, Prime32Offset99};
+    type TE = FpExt4<Prime32Offset99>;
+
+    let mut rng = StdRng::seed_from_u64(0x5a4e_d0fa);
+    let witness = (0..32).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
+    let factor = (0..32).map(|_| TE::random(&mut rng)).collect::<Vec<_>>();
+    let coeff = TE::random(&mut rng);
+    let mut shared = ExtensionOpeningReductionTerm::new_with_shared_factor(
+        witness.clone(),
+        std::sync::Arc::new(factor.clone()),
+        coeff,
+    )
+    .expect("shared term");
+    let mut owned = ExtensionOpeningReductionTerm::new(witness, factor, coeff).expect("owned term");
+
+    for round in 0..5 {
+        let (mut shared_constant, mut shared_quadratic) = (TE::zero(), TE::zero());
+        shared.accumulate_into(&mut shared_constant, &mut shared_quadratic);
+        let (mut owned_constant, mut owned_quadratic) = (TE::zero(), TE::zero());
+        owned.accumulate_into(&mut owned_constant, &mut owned_quadratic);
+        assert_eq!(
+            (shared_constant, shared_quadratic),
+            (owned_constant, owned_quadratic),
+            "round {round}"
+        );
+        let challenge = TE::random(&mut rng);
+        shared.ingest_challenge(challenge);
+        owned.ingest_challenge(challenge);
+    }
+    assert_eq!(
+        shared.final_witness_and_factor_evals(),
+        owned.final_witness_and_factor_evals()
+    );
+}
+
+#[test]
 fn cylindrical_term_matches_materialized_high_variable_extension() {
     use akita_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
