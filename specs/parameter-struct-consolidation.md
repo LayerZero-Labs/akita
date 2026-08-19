@@ -41,7 +41,7 @@ role fields, and no borrowed view types**. Every distinct trust boundary keeps
 its own Rust type. The reduction comes from deleting duplication, not from
 merging boundaries.
 
-## 0. What changed under this draft since draft 2
+## 0. What changed in the code since drafts 2 and 3
 
 Draft 2 was written against `main` at `74c17ba4f`. Draft 3 was written against
 `f37d07089`, a tip of `quang/subring-coefficient-carrier-spec`. The base is now
