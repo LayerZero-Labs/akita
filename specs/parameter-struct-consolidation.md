@@ -7,13 +7,13 @@
 |---------------|------------------------------------------------------------|
 | Author(s)     | —                                                          |
 | Created       | 2026-08-12                                                 |
-| Revised       | 2026-08-17 (draft 3: restacked on subring packing + L2)     |
+| Revised       | 2026-08-19 (draft 4: rebased onto `main` after #394 landed) |
 | Status        | draft                                                      |
 | PR            | —                                                          |
-| Supersedes    | Draft 1 (rejected), draft 2 (written against `main` @ `74c17ba4f`) |
+| Supersedes    | Draft 1 (rejected), draft 2 (`main` @ `74c17ba4f`), draft 3 (`f37d07089`) |
 | Superseded-by |                                                            |
 | Book-chapter  | book/src/how/configuration.md                              |
-| Base commit   | `f37d07089` (`quang/subring-coefficient-carrier-spec`)     |
+| Base commit   | `8e552d2ac` (`main`)                                       |
 
 ## Summary
 
@@ -43,15 +43,21 @@ merging boundaries.
 
 ## 0. What changed under this draft since draft 2
 
-Draft 2 was written against `main` at `74c17ba4f`. The base is now
-`f37d07089`, which adds 55 commits: selective L2 folds (#369), tiered
-commitments as dyadic B slicing (#388), and the whole subring-coefficient-packing
-line. Six of those changes bear directly on this plan. **Read this section before
-§5.** The rest of the document is already restated in terms of the new code.
+Draft 2 was written against `main` at `74c17ba4f`. Draft 3 was written against
+`f37d07089`, a tip of `quang/subring-coefficient-carrier-spec`. The base is now
+`main` at `8e552d2ac`, which contains the same work plus two more merged PRs.
+§0.1 to §0.6 describe what the packing line changed and still hold. §0.7 to §0.11
+describe what changed after draft 3 and are new. **Read this whole section before
+§5.** Every `file:line` reference in the rest of the document is restated against
+`8e552d2ac`.
+
+Selective L2 folds (#369), tiered commitments as dyadic B slicing (#388), and the
+subring-coefficient-packing line are the changes §0.1 to §0.6 cover. Six of them
+bear directly on this plan.
 
 **0.1 The profile/policy split already landed, and it validates the thesis.**
 `PrecommittedLevelParams` is no longer five flat fields. It is now
-[precommitted.rs:144](../crates/akita-types/src/layout/params/precommitted.rs#L144):
+[precommitted.rs:165](../crates/akita-types/src/layout/params/precommitted.rs#L165):
 
 ```rust
 pub struct PrecommittedLevelParams {
@@ -60,7 +66,7 @@ pub struct PrecommittedLevelParams {
 }
 ```
 
-`GroupOpeningPlan` ([precommitted.rs:91](../crates/akita-types/src/layout/params/precommitted.rs#L91))
+`GroupOpeningPlan` ([precommitted.rs:112](../crates/akita-types/src/layout/params/precommitted.rs#L112))
 holds `opening_method`, `fold_challenge_config`, `log_basis_open`,
 `num_digits_open`, and `num_digits_fold`. That is exactly draft 2's `GroupParams`
 minus `setup_natural_len`. Commit `f8c06ad1d` ("separate opening policy from
@@ -70,7 +76,7 @@ an established pattern in the tree rather than a proposal.
 
 **0.2 The A role diverged from B and D. `CommitMatrix<R>` over three roles is dead.**
 `InnerCommitMatrixParams` is now hand-written
-([ajtai_key.rs:429](../crates/akita-types/src/sis/ajtai_key.rs#L429)) and carries
+([ajtai_key.rs:430](../crates/akita-types/src/sis/ajtai_key.rs#L430)) and carries
 `InnerCommitSecurityRoute` ([physical_l2.rs:155](../crates/akita-types/src/sis/physical_l2.rs#L155)),
 which is `Linf(SisTableKey)` or `L2 { table_key: SisL2TableKey, response_l2_sq_cap, norm_proof_shape }`.
 `sis_table_key()` and `coeff_linf_bound()` now return `Option`. The 3-role macro
@@ -85,7 +91,7 @@ is the single B-width authority. Both are already single-owner, so they need no
 consolidation. They do change the profile's field list, its bytes, and its size.
 
 **0.4 The D segment width is now opening-method dependent.**
-`opening_d_segment_width` ([precommitted.rs:49](../crates/akita-types/src/layout/params/precommitted.rs#L49))
+`opening_d_segment_width` ([precommitted.rs:79](../crates/akita-types/src/layout/params/precommitted.rs#L79))
 branches on `OpeningMethod`, and packing routes through
 `SubringCoefficientPackingGeometry`. The D **matrix** is still fold-owned and the
 D **digits** are still group-owned, so §2's root-cause analysis is unchanged. The
@@ -111,14 +117,92 @@ this split, so §6's cycle proof is now history rather than a live constraint.
 
 **0.6 New validation and new borrowed views arrived.**
 `FoldSchedule::validate_nonterminal_opening_execution`
-([schedule.rs:516](../crates/akita-types/src/schedule.rs#L516)) is a second
+([schedule.rs:518](../crates/akita-types/src/schedule.rs#L518)) is a second
 structural boundary that admits opening methods per level. It works through
-`OpeningExecutionGroup<'a>` ([schedule.rs:742](../crates/akita-types/src/schedule.rs#L742)),
+`OpeningExecutionGroup<'a>` ([schedule.rs:586](../crates/akita-types/src/schedule.rs#L586)),
 and two more borrowed views appeared for descriptor encoding:
 `FoldScheduleDescriptorStep<'a>` ([schedule.rs:327](../crates/akita-types/src/schedule.rs#L327))
 and `TerminalFoldDescriptor<'a>` ([schedule.rs:336](../crates/akita-types/src/schedule.rs#L336)).
 So the borrowed-view count went from 1 to 4 while this spec sat unmerged. §12.4
 deals with all four.
+
+**0.7 The packing line landed as one squash commit, so draft 3's base is gone.**
+Draft 3's base `f37d07089` was a branch tip carrying 53 commits of the packing
+line. `main` absorbed all of it as `8e552d2ac` ("feat(protocol)!: add subring
+coefficient packing (#394)"), and the squashed content is **not** identical to the
+branch tip: 251 files differ between `f37d07089` and `main`. Nothing in this
+document may be checked against `f37d07089` any more. Every claim below is stated
+against `main`.
+
+**0.8 Descriptor encoding moved out of `schedule.rs` into its own module.**
+`crates/akita-types/src/schedule/descriptor.rs` is new and holds 228 lines: both
+`FoldSchedule::append_descriptor_bytes` variants, `append_root_fold_descriptor_bytes`,
+`append_recursive_fold_descriptor_bytes`, the `TerminalFoldStep` and
+`TerminalFoldDescriptor` encoders, and the `WitnessPartitionDescriptor` helper
+pair. `schedule.rs` lost 224 lines and now holds the type declarations and the
+validators only.
+
+This is a location change, not a behaviour change: the byte order is identical.
+It affects three things in this plan. The `FoldSchedule` leading descriptor byte
+that §10.2 bumps is now written at
+[descriptor.rs:38](../crates/akita-types/src/schedule/descriptor.rs#L38) and
+[:72](../crates/akita-types/src/schedule/descriptor.rs#L72), not in `schedule.rs`.
+The `TerminalFoldDescriptor` tag byte `3` is at
+[descriptor.rs:196](../crates/akita-types/src/schedule/descriptor.rs#L196). And
+step 5b's edits to the fold encoders are confined to one new file, which makes the
+byte break easier to review than draft 3 assumed. The struct **declarations** for
+the two descriptor views stay in `schedule.rs` at `:327` and `:336`, so §12.4's
+deletion targets are unchanged.
+
+**0.9 Bounded committed dense sources (#407) pinned the A digit depth per level.**
+`DecompositionParams::log_commit_bound` is now a declarable schedule-generation
+input rather than a value that presets only ever set to `1` or the field width.
+The bound enters the protocol at exactly one place: the A-role digit depth
+`ceil(log_commit_bound / log_basis_inner)`.
+
+Two consequences for this plan.
+
+First, `audit_committed_params` gained a check that the stored `num_digits_inner`
+equals the depth the declared committed-source bound demands at this level's
+selected A basis, with the root distinguished from recursive levels
+([audit.rs:216-230](../crates/akita-schedules/src/audit.rs#L216-L230)). §9 carries
+it as a new row. It is **not** a mirror audit in the sense of §3 fault 1, and it
+must not be deleted: `num_digits_inner` has one owner today, and the check pins
+that owner against a policy-derived formula. It is also **level-aware**, so
+`GadgetDigits::validate(field_bits)` (§5.1) cannot subsume it — see the note in
+§5.1.
+
+Second, there is a **thirteenth** generated catalog family, `fp128_dense_bounded`,
+behind the `fp128-dense-bounded` feature
+([generated/mod.rs:348](../crates/akita-schedules/src/generated/mod.rs#L348)).
+Draft 3 said "12 generated tables" throughout. The number is 13 everywhere,
+including §6's static-constructibility argument, §11.3's regeneration step, and
+§14's fixture coverage.
+
+**0.10 Transcript and verifier hardening (#403) constrains the byte break.**
+#403 validates canonical schedules and proof shapes **before allocation**,
+enforces exactly one transcript backend with v2 domain separation, and rejects
+trailing top-level bytes. None of it changes a parameter type. It changes the
+cost of getting §10.2 wrong: a descriptor-order mistake now surfaces as a
+pre-allocation shape rejection rather than a late mismatch, which is better, and
+§14's rejection tests must be run under each transcript backend the CI matrix
+selects explicitly, not only the default one.
+
+**0.11 Two new items on the params surface, both out of scope.**
+`OpeningFamily<Trace, Packing>`
+([precommitted.rs:32](../crates/akita-types/src/layout/params/precommitted.rs#L32))
+is a two-variant generic carrier that preserves the `OpeningMethod` distinction
+while each protocol stage supplies its own payloads. It holds no commitment
+geometry and has no mirror, so it is not consolidated; §2.1 lists it as out of
+scope so the inventory stays honest.
+`OpeningMethod::physical_coefficient_width`
+([precommitted.rs:53](../crates/akita-types/src/layout/params/precommitted.rs#L53))
+factored the width computation out of `opening_d_segment_width`. It is the sizing
+authority §0.4 describes, now reachable directly.
+
+Separately, `SetupProjectionGroupGeometry` **lost** its `d_active_cols` field; the
+value is computed at the use site instead. The `d_active_cols` composite on
+`plan/types.rs` is untouched, so §12.3's "the two composites stay" still holds.
 
 ## 1. How this draft answers the original review
 
@@ -131,7 +215,7 @@ resolved by structure, not by argument.
 | 2 | The setup-prefix source of truth is reversed | Neither field wins. Both are deleted and replaced by one field on the consuming fold's group list (§5.4). This satisfies the spec rule that the successor edge is canonical **and** the ~31 call sites that need the prefix to be group 0. |
 | 3 | `kind + Option` does not make invalid states impossible | Agreed, and dropped. There is no kind enum and no optional role field in this draft. Section 8 gives the full invalid-state analysis. |
 | 4 | A unified `FoldStep` weakens the typed topology | The `FoldStage` enum and `Option<output_witness_len>` are dropped. `FoldSchedule` keeps three named fields with distinct types, so all four invalid states the review listed stay unrepresentable (§8). |
-| 5 | Step 6 reintroduces the duplication it claims to remove | Root precommitted groups had two owners; they now have three (§3, fault 1). After this change they have one: `FoldParams::groups`. The equality audits at `audit.rs:488`, `:490`, `:505`, `:506`, `:507` are deleted, not preserved. |
+| 5 | Step 6 reintroduces the duplication it claims to remove | Root precommitted groups had two owners; they now have three (§3, fault 1). After this change they have one: `FoldParams::groups`. The equality audits at `audit.rs:502`, `:504`, `:519`, `:520`, `:521` are deleted, not preserved. |
 | 6 | `LevelParamsLike` is not eliminated | Draft 1 unified the wrong three types. The trait bridges `CommittedGroupParams` and `PrecommittedLevelParams`. §5.3 makes those one type, which is what actually removes the trait. §12 gives the consumer map. |
 | 7 | Terminal projection validation is lost | §9 names a new home for every check in `try_from_expanded_group`, including the minimum-retention heuristic and the new L2-route rejection. Terminal parameters keep a distinct Rust type, so no ordinary fold can reach a terminal-only function. |
 
@@ -151,7 +235,7 @@ geometry, the A role, and the B role.
 Read the D-matrix column. Only one row owns a D matrix, and that matrix is
 shared across every group in the fold. The D matrix is a property of the
 **fold**, not of a group. The code already says this at
-[precommitted.rs:372-376](../crates/akita-types/src/layout/params/precommitted.rs#L372-L376):
+[precommitted.rs:396-397](../crates/akita-types/src/layout/params/precommitted.rs#L396-L397):
 
 > Group metadata owns its A/B dimensions. The D role is batch-shared, so the
 > caller supplies the consuming level's opening dimension.
@@ -169,32 +253,41 @@ one `opening` field. §5.3 gives the final group the same two fields.
 
 ### 2.1 Inventory
 
+The table has 24 rows, which is where the headline "24 types" comes from. Two
+rows name more than one type — the three fold-step wrappers, and the two
+L-infinity matrix aliases — and two rows are not consolidated types at all: the
+`LevelParamsLike` trait, and `CommittedGroupBatchProfile`, which is out of scope.
+So the row count and the type count are not the same number. **The count this
+document commits to is the row count**: 24 inventory entries become the 10 named
+in §5, with `FoldSchedule` excluded on both sides. Draft 3 wrote "24 types and one
+trait", which double-counts the trait row; the arithmetic is otherwise the same.
+
 | Type | Location | Owner or mirror | Surface | Validation boundary | `Copy` / const needed | Fate |
 |---|---|---|---|---|---|---|
 | `CommittedGroupProfile` | `schedule/profiles.rs:84` | owner | public wire + descriptor + generated static | `validate`, `validate_root_geometry`, `validate_frozen_precommit`, wire deserialize | **both** | kept, restructured (§5.2) |
 | `CommittedGroupParams` | `layout/params.rs:87` | owner, plus 1 mirror field (`setup_prefix`) | descriptor + runtime | `validate_commitment_request`, expansion re-audit | neither | split into `FoldParams` + `GroupParams` |
-| `PrecommittedLevelParams` | `layout/params/precommitted.rs:144` | owner | descriptor + runtime | `admit`, `validate` | neither | becomes `GroupParams` (§5.3) |
-| `GroupOpeningPlan` | `layout/params/precommitted.rs:91` | owner | descriptor + runtime + generated static | through `PrecommittedLevelParams::validate` | **both** | kept verbatim as `GroupParams::opening` |
+| `PrecommittedLevelParams` | `layout/params/precommitted.rs:165` | owner | descriptor + runtime | `admit`, `validate` | neither | becomes `GroupParams` (§5.3) |
+| `GroupOpeningPlan` | `layout/params/precommitted.rs:112` | owner | descriptor + runtime + generated static | through `PrecommittedLevelParams::validate` | **both** | kept verbatim as `GroupParams::opening` |
 | `OpeningMethod` | `layout/params/precommitted.rs:17` | owner | descriptor + runtime + generated static | `validate_level_opening_execution` | **both** | kept, unchanged |
 | `CommittedSourceEncoding` | `schedule/profiles.rs:17` | owner, plus 1 hard-coded copy | descriptor + runtime | `validate`, `validate_level_opening_execution` | **both** | kept; moves to `FoldParams` (§5.4, §7.2) |
 | `ScheduledSetupPrefix` | `proof/setup_prefix.rs:46` | owner | descriptor + runtime | `validate_structure` | neither | deleted, merged into `GroupParams` |
 | `SetupPrefixSlotId` | `proof/setup_prefix.rs:37` | owner | registry key + wire | `Valid::check` | neither | **kept**; derived by `GroupParams::slot_id()` |
 | `TerminalCommittedGroupParams` | `schedule.rs:108` | owner | descriptor + generated | `try_from_expanded_group` | neither | merged into `TerminalFoldParams` |
 | `RootFinalGroupParams` | `schedule.rs:61` | pass-through (1 field) | runtime | none | neither | deleted |
-| `RootPrecommittedGroupParams` | `schedule.rs:66` | mirror (`descriptor` = `commitment.layout`) | runtime | `audit.rs:505`, `:506` | neither | deleted |
+| `RootPrecommittedGroupParams` | `schedule.rs:66` | mirror (`descriptor` = `commitment.layout`) | runtime | `audit.rs:519`, `:520` | neither | deleted |
 | `RootFoldParams` | `schedule.rs:72` | 4 mirrors | descriptor + runtime | `audit.rs:488`, `:489`, `:490` | neither | merged into `FoldParams` |
-| `RecursiveFoldParams` | `schedule.rs:81` | 4 mirrors | descriptor + runtime | `audit.rs:536`, `schedule.rs:440` | neither | merged into `FoldParams` |
+| `RecursiveFoldParams` | `schedule.rs:81` | 4 mirrors | descriptor + runtime | `audit.rs:550`, `schedule.rs:440` | neither | merged into `FoldParams` |
 | `TerminalFoldParams` | `schedule.rs:291` | owner | descriptor + runtime | `audit_terminal` | neither | kept as the merged terminal type |
 | `RootFoldStep` / `RecursiveFoldStep` / `TerminalFoldStep` | `schedule.rs:298`, `:305`, `:312` | wrappers | descriptor + runtime | `validate_structure` | neither | merged into their params types |
 | `WitnessPartition` | `schedule.rs:46` | lossy mirror of `ChunkedWitnessCfg` | descriptor + runtime | none | neither | deleted |
-| `InnerCommitMatrixParams` | `sis/ajtai_key.rs:429` | owner | wire + descriptor + generated static | `try_new`, `validate` SIS re-audit | **both** | kept hand-written (§0.2, §5.1) |
+| `InnerCommitMatrixParams` | `sis/ajtai_key.rs:430` | owner | wire + descriptor + generated static | `try_new`, `validate` SIS re-audit | **both** | kept hand-written (§0.2, §5.1) |
 | `OuterCommitMatrixParams` / `OpenCommitMatrixParams` | `sis/ajtai_key.rs:923`, `:928` | owners, 2 macro copies | wire + descriptor + generated static | `try_new`, `validate` SIS re-audit | **both** | one generic + 2 aliases (§5.1) |
-| `LevelParamsLike` (trait, 22 methods) | `layout/params/precommitted.rs:410` | symptom | runtime | none | n/a | deleted (§12) |
-| `CommitmentGeometry<'a>` | `akita-prover/src/api/commitment.rs:123` | borrowed mirror (10 fields) | runtime | `validate_commitment_geometry` | n/a | deleted (§12.4) |
+| `LevelParamsLike` (trait, 22 methods) | `layout/params/precommitted.rs:431` | symptom | runtime | none | n/a | deleted (§12) |
+| `CommitmentGeometry<'a>` | `akita-prover/src/api/commitment.rs:125` | borrowed mirror (10 fields) | runtime | `validate_commitment_geometry` | n/a | deleted (§12.4) |
 | `FoldScheduleDescriptorStep<'a>` | `schedule.rs:327` | borrowed view | descriptor | none | n/a | deleted (§12.4) |
 | `TerminalFoldDescriptor<'a>` | `schedule.rs:336` | borrowed view | descriptor | none | n/a | deleted (§12.4) |
-| `OpeningExecutionGroup<'a>` | `schedule.rs:742` | borrowed view | runtime | none | n/a | deleted (§12.4) |
-| `CommittedGroupBatchProfile` | `schedule/profiles.rs:530` | owner, overlaps `AkitaScheduleLookupKey` | runtime | none | neither | out of scope; see §15.3 |
+| `OpeningExecutionGroup<'a>` | `schedule.rs:586` | borrowed view | runtime | none | n/a | deleted (§12.4) |
+| `CommittedGroupBatchProfile` | `schedule/profiles.rs:530` | owner, overlaps `AkitaScheduleLookupKey` | runtime | none | neither | out of scope; see §15.4 |
 
 Out of scope, unchanged: `DecompositionParams`, `SparseChallengeConfig`,
 `PlannerPolicy`, `SisSecurityPolicyId`, `SisModulusProfileId`, `SisTableKey`,
@@ -203,8 +296,9 @@ Out of scope, unchanged: `DecompositionParams`, `SparseChallengeConfig`,
 `SubringCoefficientPackingGeometry`, `AkitaInstanceDescriptor`,
 `AkitaSetupDescriptor`, `PolynomialGroupLayout`, `ChunkedWitnessCfg`,
 `TerminalResponseShape`, `AkitaScheduleLookupKey`, `PrecommittedGroupProfiles`,
-and the SIS estimator configs. These hold policy or computed values, not
-duplicated commitment geometry.
+`OpeningFamily<Trace, Packing>` (§0.11), and the SIS estimator configs. These
+hold policy, computed values, or a stage-generic payload carrier — not duplicated
+commitment geometry.
 
 ## 3. The five faults, with evidence
 
@@ -213,12 +307,12 @@ six. The new code added four more.
 
 | Copy | Audit that keeps it honest |
 |---|---|
-| `RootFoldParams::precommitted_groups.len()` vs the lookup key | [audit.rs:488](../crates/akita-schedules/src/audit.rs#L488) |
-| `RootFoldParams::open_commit_matrix` | [audit.rs:489](../crates/akita-schedules/src/audit.rs#L489) |
-| `CommittedGroupParams::precommitted_groups.len()` | [audit.rs:490](../crates/akita-schedules/src/audit.rs#L490) |
-| `RootPrecommittedGroupParams::descriptor` | [audit.rs:505](../crates/akita-schedules/src/audit.rs#L505), [:506](../crates/akita-schedules/src/audit.rs#L506) |
-| `RootPrecommittedGroupParams::commitment` | [audit.rs:507](../crates/akita-schedules/src/audit.rs#L507) |
-| `RecursiveFoldParams::open_commit_matrix` | [audit.rs:536](../crates/akita-schedules/src/audit.rs#L536) |
+| `RootFoldParams::precommitted_groups.len()` vs the lookup key | [audit.rs:502](../crates/akita-schedules/src/audit.rs#L502) |
+| `RootFoldParams::open_commit_matrix` | [audit.rs:503](../crates/akita-schedules/src/audit.rs#L503) |
+| `CommittedGroupParams::precommitted_groups.len()` | [audit.rs:504](../crates/akita-schedules/src/audit.rs#L504) |
+| `RootPrecommittedGroupParams::descriptor` | [audit.rs:519](../crates/akita-schedules/src/audit.rs#L519), [:520](../crates/akita-schedules/src/audit.rs#L520) |
+| `RootPrecommittedGroupParams::commitment` | [audit.rs:521](../crates/akita-schedules/src/audit.rs#L521) |
+| `RecursiveFoldParams::open_commit_matrix` | [audit.rs:550](../crates/akita-schedules/src/audit.rs#L550) |
 | `CommittedGroupParams::setup_prefix` | [schedule.rs:440](../crates/akita-types/src/schedule.rs#L440) |
 | `GeneratedSetupPrefixInput::opening.log_basis_open` | [expand.rs:96](../crates/akita-schedules/src/generated/expand.rs#L96) |
 | `GeneratedSetupPrefixInput::opening.fold_challenge_config` | [expand.rs:95](../crates/akita-schedules/src/generated/expand.rs#L95) |
@@ -249,16 +343,21 @@ Nothing links an encoder to its struct, so a new field is silently unbound.
 **Fault 4 — a trait hides fault 5.** `LevelParamsLike` has 22 methods and 2
 implementations. One of its methods is a lie by construction: the
 `PrecommittedLevelParams` impl of `source_encoding` returns a hard-coded
-`CanonicalCoefficientTable` ([precommitted.rs:525-527](../crates/akita-types/src/layout/params/precommitted.rs#L525-L527))
+`CanonicalCoefficientTable` ([precommitted.rs:546-547](../crates/akita-types/src/layout/params/precommitted.rs#L546-L547))
 rather than reading stored state, because a precommitted group has nowhere to
 store it. §7.2 fixes the underlying ownership question.
 
 Draft 2 also claimed `num_live_ring_elements_per_claim` and `b_col_len` were
 dead accessors. **That is no longer true.** The packing work gave
-`num_live_ring_elements_per_claim` four non-test call sites, including
-[coefficient_packing_relation.rs:823](../crates/akita-types/src/proof/coefficient_packing_relation.rs#L823)
-and [ring_relation.rs:161](../crates/akita-prover/src/protocol/ring_relation.rs#L161).
-`b_col_len` has two. Neither accessor may be dropped; both become field reads.
+`num_live_ring_elements_per_claim` three non-test call sites — all three of them:
+[coefficient_packing_relation.rs:275](../crates/akita-types/src/proof/coefficient_packing_relation.rs#L275),
+[ring_relation.rs:166](../crates/akita-prover/src/protocol/ring_relation.rs#L166),
+and [coefficient_packing.rs:37](../crates/akita-verifier/src/protocol/core/fold/coefficient_packing.rs#L37).
+`b_col_len` has two, at
+[setup_prefix.rs:1071](../crates/akita-types/src/proof/setup_prefix.rs#L1071) and
+[prepare.rs:502](../crates/akita-types/src/setup_contribution/plan/prepare.rs#L502).
+Neither accessor may be dropped; both become field reads. Draft 3 said "four" for
+the first accessor while §12.2 said "~3"; three is correct.
 
 **Fault 5 — the fold's final group is not a group.** See §2. This is the root
 cause. It still produces a real defect:
@@ -322,10 +421,15 @@ pub struct GadgetDigits {
 }
 
 impl GadgetDigits {
-    pub const fn new(log_basis: u32, num_digits: usize) -> Self;
     /// A `SignedDigitKernel` exists for `log_basis`, and `num_digits` is in
     /// `(0, compute_num_digits_field_width(field_bits, log_basis)]`.
+    ///
+    /// This is a **bound**, not an exact depth. Since #407 the A role's exact
+    /// depth is `ceil(log_commit_bound / log_basis_inner)`, which is level-aware
+    /// and strictly below the field-width bound for a bounded source. The exact
+    /// check stays where it is today, in `audit_committed_params` (§0.9, §9).
     pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError>;
+    pub const fn new(log_basis: u32, num_digits: usize) -> Self;
 }
 
 /// Sealed role marker for the two table-keyed roles. Downstream crates cannot
@@ -343,7 +447,7 @@ pub struct LinfCommitMatrix<R: LinfMatrixRole> {
 }
 
 /// Kept permanently. These names document the protocol role at every signature
-/// and at all 58 generated static-table call sites.
+/// and at all 60 generated static-table call sites.
 pub type OuterCommitMatrixParams = LinfCommitMatrix<Outer>;
 pub type OpenCommitMatrixParams  = LinfCommitMatrix<Open>;
 
@@ -605,10 +709,10 @@ struct. No type reachable from it names `GroupParams` or `FoldParams`.
 from a `GroupParams` adds no edge. Every type is finite-sized without `Box`.
 **No allocation is added anywhere.**
 
-**Static constructibility.** The 12 generated tables embed **29**
-`CommittedGroupProfile` struct literals and **58** `new_unchecked` calls in
+**Static constructibility.** The 13 generated tables embed **30**
+`CommittedGroupProfile` struct literals and **60** `new_unchecked` calls in
 `static` position, for example
-[fp128_onehot.rs:88](../crates/akita-schedules/src/generated/fp128_onehot.rs#L88).
+[fp128_onehot.rs:93](../crates/akita-schedules/src/generated/fp128_onehot.rs#L93).
 These types therefore must stay `Copy`, `'static`, and const-constructible.
 This draft keeps that:
 
@@ -645,17 +749,17 @@ Every field that has two or more owners today gets exactly one owner.
 
 | Field | Owners today | Single owner after | Deleted mirror(s) |
 |---|---|---|---|
-| Shared D matrix | `CommittedGroupParams::open_commit_matrix`, `RootFoldParams::open_commit_matrix`, `RecursiveFoldParams::open_commit_matrix` | `FoldParams::open_matrix` | 2 fields, audits `:489`, `:536` |
+| Shared D matrix | `CommittedGroupParams::open_commit_matrix`, `RootFoldParams::open_commit_matrix`, `RecursiveFoldParams::open_commit_matrix` | `FoldParams::open_matrix` | 2 fields, audits `:503`, `:550` |
 | Fold challenge family | `CommittedGroupParams::fold_challenge_config`, `GroupOpeningPlan::fold_challenge_config`, `RootFoldParams::sparse_challenge_config`, `RecursiveFoldParams::sparse_challenge_config` | `GroupParams::opening.fold_challenge_config`, per group | 2 fields, no audit existed |
 | Witness chunking | `CommittedGroupParams::witness_chunk`, `RootFoldParams::witness_partition`, `RecursiveFoldParams::witness_partition` | `FoldParams::witness_chunk` | 2 fields + `WitnessPartition` type, no audit existed |
-| Precommitted groups | `CommittedGroupParams::precommitted_groups`, `RootFoldParams::precommitted_groups`, the lookup key's `precommitteds` | `FoldParams::groups` | 1 field, audits `:488`, `:490` |
-| Frozen group descriptor | `RootPrecommittedGroupParams::descriptor`, `…::commitment.layout` | `GroupParams::profile` | 1 field, audits `:505`, `:506`, `:507` |
+| Precommitted groups | `CommittedGroupParams::precommitted_groups`, `RootFoldParams::precommitted_groups`, the lookup key's `precommitteds` | `FoldParams::groups` | 1 field, audits `:502`, `:504` |
+| Frozen group descriptor | `RootPrecommittedGroupParams::descriptor`, `…::commitment.layout` | `GroupParams::profile` | 1 field, audits `:519`, `:520`, `:521` |
 | Setup prefix | `CommittedGroupParams::setup_prefix`, `RecursiveFoldParams::incoming_setup_prefix` | `FoldParams::groups[0].setup_natural_len` | 2 fields + `ScheduledSetupPrefix` type, check `schedule.rs:440` |
 | Setup-prefix opening plan | `GeneratedSetupPrefixInput::opening`, re-derived by expansion | derived only | 1 field, audits `expand.rs:95`, `:96`, `:116` |
 | Final group geometry and roles | `CommittedGroupParams` flat fields, and a copy in `CommittedGroupProfile::from_params_fields` | `FoldParams::groups.last()` | `RootFinalGroupParams`, the `from_params_fields` copy |
 | Source encoding | `CommittedGroupParams::source_encoding`, hard-coded in the `PrecommittedLevelParams` trait arm | `FoldParams::source_encoding` (§7.2) | 1 hard-coded arm |
 | Block index bit widths | duplicated formula in `CommittedGroupParams` and both `LevelParamsLike` impls | `BlockGeometry` methods | 2 duplicate formulas |
-| Opening basis dominance check | `PrecommittedLevelParams::admit:215` **and** `validate:321` | `GroupParams::validate` | 1 duplicate check |
+| Opening basis dominance check | `PrecommittedLevelParams::admit:236` **and** `validate:342` | `GroupParams::validate` | 1 duplicate check |
 | Certified terminal response cap | `certified_response_linf_cap` and `terminal_response_linf_limit_for_params`, which **disagree** | one function (§16) | 1 divergent copy |
 
 ### 7.1 On the setup prefix, specifically
@@ -727,7 +831,7 @@ Two remedies exist. This plan takes the cheaper one.
 - **Not taken: move `source_encoding` onto `CommittedGroupProfile`.** This is
   arguably more honest, and it would let the rejection live at the
   standalone-commit boundary where it belongs. It costs a profile version bump
-  from 4 to 5, new profile bytes, a new `key_digest` for all 12 catalogs, and it
+  from 4 to 5, new profile bytes, a new `key_digest` for all 13 catalogs, and it
   breaks the §10.2 byte-preservation property that the rest of this plan leans
   on. Record it as a follow-up, not as part of this change.
 
@@ -768,7 +872,7 @@ and an ordered list between them. No role is inferred from an array index,
 because `FoldSchedule` names the three positions. The properties that separate a
 root from a recursive fold — the root payload must be compressed, the root
 consumes no prefix, a recursive fold has at most one prefix group, the root A
-route must be `Linf` ([audit.rs:474-482](../crates/akita-schedules/src/audit.rs#L474-L482)) —
+route must be `Linf` ([audit.rs:488-496](../crates/akita-schedules/src/audit.rs#L488-L496)) —
 are validated constraints. Three of the four are validated constraints today as
 well.
 
@@ -790,20 +894,21 @@ Every check that exists today has a named destination. No check is dropped.
 |---|---|---|
 | version equality; both matrix `validate`s; power-of-two A/B dims with `d_b \| d_a`; digit kernel exists; depth within field width; nonzero outer basis and depth; slice-count admissibility; `field_bits` agreement; exact A width; exact B width via `CommitmentSliceGeometry` | `CommittedGroupProfile::validate` (`profiles.rs:189`) | `CommittedGroupProfile::validate(field_bits)`, unchanged, plus geometry below |
 | `N · d_a == 2^num_vars`; `M` power of two; `B == ceil(N / M)` | `validate_root_geometry` (`profiles.rs:262`) | `M`/`B` go to `BlockGeometry::validate`; `N · d_a == 2^num_vars` stays on `CommittedGroupProfile::validate` |
-| conjunction of the two above | `validate_frozen_precommit` (`profiles.rs:301`) | **kept.** Draft 2 said "deleted". That was wrong: it is the entry point for the `CommittedGroup<F>` wire deserialize (`proof/commitment.rs:459`) and for `PrecommittedLevelParams::admit` |
+| conjunction of the two above | `validate_frozen_precommit` (`profiles.rs:301`) | **kept.** Draft 2 said "deleted". That was wrong: it is the entry point for the `CommittedGroup<F>` wire deserialize (`proof/commitment.rs:207` and `:459` — two sites, not one) and for `PrecommittedLevelParams::admit` |
 | standalone commitments require a canonical source encoding | `CommittedGroupProfile::try_from_params:125` | `validate_frozen_precommit`, so an in-fold final-group profile can carry a tensor projection (§7.2) |
 | digit kernel and depth-within-field-width | `CommittedGroupProfile::validate` and `expand.rs`, twice | `GadgetDigits::validate(field_bits)`, one place |
-| opening basis dominates the frozen outer basis | `PrecommittedLevelParams::admit:215` **and** `validate:321` | `GroupParams::validate`, once |
-| A and B bounds cover the certified opening basis; frozen B bound covers its own basis; outer digit depth matches its frozen basis; modulus-profile agreement; A is not an L2 route | `PrecommittedLevelParams::admit:184-259` | `GroupParams::admit`, unchanged |
-| fold-challenge family validates for the A ring or the packing subring | `PrecommittedLevelParams::validate:301-312` | `GroupParams::validate`, unchanged |
+| **exact** A digit depth equals `ceil(log_commit_bound / log_basis_inner)`, with the root distinguished from recursive levels | `audit_committed_params` (`audit.rs:216-230`), added by #407 | **kept, unchanged**, in `akita-schedules`; reads `groups.last()`. Not a mirror audit: `num_digits_inner` already has one owner. `GadgetDigits::validate` gives only the field-width bound and cannot replace this (§0.9, §5.1) |
+| opening basis dominates the frozen outer basis | `PrecommittedLevelParams::admit:236` **and** `validate:342` | `GroupParams::validate`, once |
+| A and B bounds cover the certified opening basis; frozen B bound covers its own basis; outer digit depth matches its frozen basis; modulus-profile agreement; A is not an L2 route | `PrecommittedLevelParams::admit:205-280` | `GroupParams::admit`, unchanged |
+| fold-challenge family validates for the A ring or the packing subring | `PrecommittedLevelParams::validate:322-333` | `GroupParams::validate`, unchanged |
 | `natural_len != 0`; `natural_len <= n_prefix`; `d_setup() != 0`; `n_prefix % d_setup() == 0`; prefix slice-count admissibility | `FoldSchedule::validate_structure:445-466` | `GroupParams::validate`, which owns the field |
 | setup-prefix mirror agreement | `validate_structure:440` | **deleted** — there is no mirror |
 | root payload is compressed | `validate_structure:372` | unchanged |
-| root A route must be `Linf` | `audit.rs:474` | unchanged; reads `groups.last()` |
+| root A route must be `Linf` | `audit.rs:488` | unchanged; reads `groups.last()` |
 | payload-phase cutover policy per recursive fold | `validate_structure:375-401` | unchanged; reads `setup_prefix()` |
 | witness-length chaining; stage-2 successor capacity | `validate_structure:396-499` | unchanged |
 | terminal lengths and response length nonzero | `validate_structure:502-506` | unchanged |
-| opening-method family per absolute level; one family per fold; source-encoding/method compatibility | `validate_level_opening_execution:747` | the per-fold parts move to `FoldParams::validate`; the per-level parts stay on `FoldSchedule`. Iterate `groups`, not a rebuilt list (§7.1) |
+| opening-method family per absolute level; one family per fold; source-encoding/method compatibility | `validate_level_opening_execution:591` | the per-fold parts move to `FoldParams::validate`; the per-level parts stay on `FoldSchedule`. Iterate `groups`, not a rebuilt list (§7.1) |
 | `groups` is non-empty | n/a (flat fields) | **new** in `FoldParams::validate` |
 | root names no setup prefix | implied by the type | **new** in `validate_structure` |
 | at most one prefix group per fold, at index 0 | not enforced | **new** in `FoldParams::validate` |
@@ -812,8 +917,8 @@ Every check that exists today has a named destination. No check is dropped.
 | A-role check on the inner matrix; L2 route rejected | `terminal_response_linf_limit_for_params:405` | `TerminalFoldParams::certified_response_linf_cap` |
 | `i16::MAX` representation clamp | `certified_response_linf_cap:235` only | same single function, after §16 resolves the divergence |
 | wire: version; tag well-formedness; role identity; SIS rank re-audit; geometry; slice-count source coefficients; untrusted-coefficient allocation cap; payload consistency | `CommittedGroup<F>` deserialize (`proof/commitment.rs:443-489`) | unchanged. The wire form is byte-identical and constructs `CommittedGroupProfile` only |
-| mirror equality audits | `audit.rs:488`, `:489`, `:490`, `:505`, `:506`, `:507`, `:536`; `schedule.rs:440`; `expand.rs:95`, `:96`, `:116` | **deleted** — single owners |
-| shared-D width; shared-D basis; terminal audit | `audit.rs:206`, `:242`, `audit_terminal` | kept; read `FoldParams::groups` |
+| mirror equality audits | `audit.rs:502`, `:503`, `:504`, `:519`, `:520`, `:521`, `:550`; `schedule.rs:440`; `expand.rs:95`, `:96`, `:116` | **deleted** — single owners |
+| shared-D width; shared-D basis; terminal audit | `audit.rs:206`, `:256`, `audit_terminal` | kept; read `FoldParams::groups` |
 | generated expansion re-audits rank against the SIS table | `expand.rs`, 3 parallel paths | one `expand_group`, same checks (§11) |
 
 The original review asked whether a wire boundary must prove it built the frozen
@@ -826,7 +931,7 @@ appear there. There is no case to reject because there is no enum.
 ### 10.1 Why byte preservation is impossible above the profile
 
 The three encoders order the same fields three different ways today. Recomputed
-against `f37d07089`.
+against `8e552d2ac`.
 
 | Position | `CommittedGroupParams` (`params.rs:614`) | `CommittedGroupProfile` (`profiles.rs:172`) | `TerminalCommittedGroupParams` (`schedule.rs:278`) |
 |---|---|---|---|
@@ -866,7 +971,7 @@ byte-neutral everywhere. The profile's `(basis, depth, matrix)` grouping matches
 - `BlockGeometry` bytes. The `N, M, B` triple is contiguous in all three
   encoders today, so an atomic geometry encoder is byte-neutral everywhere.
 - `RoleParams<M>` bytes as `basis, depth, matrix`.
-- `GroupOpeningPlan` bytes. Its encoder (`precommitted.rs:130`) already exists
+- `GroupOpeningPlan` bytes. Its encoder (`precommitted.rs:151`) already exists
   and is unchanged.
 - **`CommittedGroupProfile` bytes and wire form.** Its declared field order in
   §5.2 reproduces today's order exactly. `version` stays `4`.
@@ -884,7 +989,7 @@ Note that `key_digest` is **not** the `key_digest(keys: &[PolynomialGroupLayout]
 function at [catalog_identity.rs:546](../crates/akita-schedules/src/catalog_identity.rs#L546),
 which hashes lookup keys only. The `GeneratedScheduleCatalogIdentity::key_digest`
 field is set from `entries_key_digest` at
-[catalog_identity.rs:229](../crates/akita-schedules/src/catalog_identity.rs#L229).
+[catalog_identity.rs:230](../crates/akita-schedules/src/catalog_identity.rs#L230).
 Draft 2 conflated the two.
 
 **Changed once, deliberately:** `GroupParams`, `FoldParams`,
@@ -894,14 +999,25 @@ layout, so their bytes cannot. Required with the break:
 | Constant | Location | Today | After |
 |---|---|---|---|
 | `AKITA_INSTANCE_DESCRIPTOR_VERSION` | `instance_descriptor/mod.rs:37` | `1` | `2` |
-| `SCHEDULE_ROW_DOMAIN_V2` | `schedule_selection.rs:16` | `b"akita/schedule-row/v2"` | `…/v3`, renamed to `_V3` |
-| `FoldSchedule` leading descriptor byte | `schedule.rs:612`, `:646` | `1` | `2` |
+| `SCHEDULE_ROW_DOMAIN_V2` | `akita-types/src/schedule_selection.rs:16` | `b"akita/schedule-row/v2"` | `…/v3`, renamed to `_V3` |
+| `FoldSchedule` leading descriptor byte | `schedule/descriptor.rs:38`, `:72` | `1` | `2` |
+| `TerminalFoldDescriptor` tag byte | `schedule/descriptor.rs:196` | `3` | `3`, unchanged |
 | `CommittedGroupProfile::VERSION` | `schedule/profiles.rs:113` | `4` | `4`, unchanged |
 | `SETUP_PREFIX_CONTENT_TAG` | `proof/setup_prefix.rs:25` | `b"SPF4"` | unchanged, still inside the slot-id encoding |
 
+`SCHEDULE_ROW_DOMAIN_V2` lives in **`akita-types`**, not `akita-config`. Both
+crates have a `schedule_selection.rs`; draft 3 named the file without the crate
+and the wrong one is the obvious guess.
+
+The two `FoldSchedule` descriptor-byte sites moved out of `schedule.rs` into the
+new `schedule/descriptor.rs` module (§0.8). The byte order did not change.
+
 `protocol_epoch` is `AKITA_INSTANCE_DESCRIPTOR_VERSION`, and every generated
-table embeds it, so all 12 tables regenerate. Old proof bytes stop verifying.
-`AGENTS.md` allows this; §14 requires the rejection tests.
+table embeds it, so all 13 tables regenerate. Old proof bytes stop verifying.
+`AGENTS.md` allows this; §14 requires the rejection tests. Under #403 (§0.10) a
+descriptor-order error now fails as a pre-allocation canonical-schedule rejection,
+so run the §14 rejection tests against every transcript backend the CI matrix
+selects explicitly.
 
 ### 10.3 One encoding rule replaces 21 encoders
 
@@ -1020,7 +1136,7 @@ so the stored plan carries no information and costs three audits. `GeneratedGrou
 keeps only `opening_method` and `num_digits_fold`, which is what the root and
 recursive rows store today; `log_basis_open`, `num_digits_open` and
 `fold_challenge_config` stay derived per fold. **Confirm before step 6** that no
-prefix in any of the 12 committed tables pins a `log_basis_open` that the
+prefix in any of the 13 committed tables pins a `log_basis_open` that the
 consuming fold's shared basis does not already supply; the audit at
 `expand.rs:96` proves this for the current tables, but it must be re-proven after
 regeneration.
@@ -1037,7 +1153,8 @@ second authority.
 
 ### 11.2 `expand.rs`: three copies become one
 
-`expand.rs` is 1027 lines, about 914 of them non-test. Roughly 650 of those are
+`expand.rs` is 1027 lines, 935 of them non-test (`mod tests` starts at `:936`).
+The three function lengths below are exact, and they sum to 652. Roughly 650 of those are
 three near-parallel copies of one algorithm:
 `GeneratedSetupPrefixInput::expand_to_precommitted_group`
 ([expand.rs:69](../crates/akita-schedules/src/generated/expand.rs#L69), 57 lines),
@@ -1060,13 +1177,13 @@ real differences become parameters:
 - the D segment width, which now branches on `OpeningMethod` through
   `opening_d_segment_width` (§0.4). This is a call, not a fourth copy.
 
-The terminal path (`expand.rs:755`, ~159 lines) stays separate. It has no B or D
+The terminal path (`expand.rs:755`, 159 lines) stays separate. It has no B or D
 matrices, it installs the L2 route when `response_l2_sq_cap` is present, and it
 adds its own response-contract check.
 
 ### 11.3 Regeneration and identity
 
-The emitter in [emit/mod.rs](../crates/akita-planner/src/emit/mod.rs) is 1114
+The emitter in [emit/mod.rs](../crates/akita-planner/src/emit/mod.rs) is 993
 lines of string templating with no type-level link to the schema. The only thing
 preventing drift is one CI step:
 
@@ -1077,17 +1194,17 @@ git diff --exit-code -- crates/akita-schedules/src/generated
 
 Every step that changes a struct must change the matching `emit_*` in the same
 commit and commit the regenerated tables. `emit_profile_matrix`
-([emit/mod.rs:350](../crates/akita-planner/src/emit/mod.rs#L350)) formats enums
+([emit/mod.rs:440](../crates/akita-planner/src/emit/mod.rs#L440)) formats enums
 with `{:?}`, so it depends on `Debug` output being valid Rust; renaming a variant
 silently changes emitted code. Keeping the two matrix aliases (§5.1) means that
 function needs no change at all.
 
 Merging four group emitters into one deletes `emit_committed_group`
-([:375](../crates/akita-planner/src/emit/mod.rs#L375)),
-`emit_setup_prefix` ([:423](../crates/akita-planner/src/emit/mod.rs#L423)),
-`emit_group_opening_plan` ([:435](../crates/akita-planner/src/emit/mod.rs#L435)),
-`emit_open_matrix` ([:387](../crates/akita-planner/src/emit/mod.rs#L387)) and
-`emit_partition` ([:394](../crates/akita-planner/src/emit/mod.rs#L394)).
+([:465](../crates/akita-planner/src/emit/mod.rs#L465)),
+`emit_setup_prefix` ([:513](../crates/akita-planner/src/emit/mod.rs#L513)),
+`emit_group_opening_plan` ([:525](../crates/akita-planner/src/emit/mod.rs#L525)),
+`emit_open_matrix` ([:477](../crates/akita-planner/src/emit/mod.rs#L477)) and
+`emit_partition` ([:484](../crates/akita-planner/src/emit/mod.rs#L484)).
 
 Identity effects, precisely:
 
@@ -1098,7 +1215,7 @@ Identity effects, precisely:
   ([catalog_identity.rs:600](../crates/akita-schedules/src/catalog_identity.rs#L600)).
   Sequence that with the step-5 epoch bump so the digest moves exactly once.
 - `protocol_epoch` moves from `1` to `2` at the byte break, which invalidates
-  all 12 committed tables at once. Regenerate them in that same step.
+  all 13 committed tables at once. Regenerate them in that same step.
 - Catalog sort order is unchanged, because it is keyed on profile bytes.
 
 ## 12. Removing `LevelParamsLike`
@@ -1116,19 +1233,21 @@ pub fn group_params<'a>(&'a self, opening_batch: &OpeningClaimsLayout, group_ind
 
 This says "the final group is the fold itself; any other group is a
 `PrecommittedLevelParams`; the caller must not care which." That is the
-erasure point. About 14 non-test signatures name the trait directly, five of
-them as `&dyn LevelParamsLike` behind a struct field
-([tail_segments.rs:69](../crates/akita-types/src/proof/tail_segments.rs#L69),
-[fold_grind.rs:133](../crates/akita-prover/src/protocol/fold_grind.rs#L133),
+erasure point. About 14 non-test signatures name the trait directly, **four** of
+them as `&dyn LevelParamsLike` behind a struct field:
+[tail_segments.rs:69](../crates/akita-types/src/proof/tail_segments.rs#L69),
+[fold_grind.rs:134](../crates/akita-prover/src/protocol/fold_grind.rs#L134)
+(`FoldGrindGroup`, whose sibling `group` field is now generic over `G`),
 [coeffs.rs:23](../crates/akita-prover/src/protocol/ring_switch/coeffs.rs#L23),
-[schedule.rs:743](../crates/akita-types/src/schedule.rs#L743), and
-`OpeningExecutionGroup`).
+and [schedule.rs:587](../crates/akita-types/src/schedule.rs#L587), which **is**
+`OpeningExecutionGroup`'s field. Draft 3 said five and listed `schedule.rs:743`
+and `OpeningExecutionGroup` as separate entries; they are the same field.
 
 After §5.4, `groups[i]` is a concrete `GroupParams`. The trait object, the
 `opening_batch` argument, and the index remapping all disappear.
 `group_params(i)` becomes `groups.get(i)`. One `&dyn` field becomes a
 `&GroupParams`, which also removes the `!Sync` obstacle noted at
-[relation_weights.rs:697](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L697).
+[relation_weights.rs:697](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L424).
 
 ### 12.2 Method destinations
 
@@ -1136,29 +1255,55 @@ Call-site counts are approximate: they are name-based and include inherent
 methods of the same name on other types. Use them for effort sizing, not as a
 contract.
 
-| Trait method | Approx. call sites | Destination |
+Draft 3 gave these counts without saying how they were produced, so nobody could
+tell drift from a different counting rule. They are reproducible, on `8e552d2ac`,
+with:
+
+```bash
+grep -rno "\.<name>(" crates/ --include='*.rs' \
+  | grep -v "/generated/\|/tests/\|/test/\|tests\.rs\|_tests\.rs" | wc -l
+```
+
+That is, method-call syntax only, excluding the generated tables and every test
+module. Keep this rule when the numbers are next refreshed.
+
+| Trait method | Call sites | Destination |
 |---|---|---|
-| `num_live_blocks` | ~119 | `group.profile.blocks.live_blocks` |
-| `num_positions_per_block` | ~46 | `group.profile.blocks.positions_per_block` |
-| `num_digits_fold` | ~28 | `group.opening.num_digits_fold` |
-| `num_digits_open` | ~23 | `group.opening.num_digits_open` |
-| `num_digits_inner` | ~22 | `group.profile.inner.digits.num_digits` |
-| `a_rows_len` | ~20 | `group.profile.inner.matrix.output_rank()` |
-| `inner_commit_matrix_params` | ~19 | `&group.profile.inner.matrix` |
-| `log_basis_open` | ~19 | `group.opening.log_basis_open` |
-| `opening_method` | ~18 | `group.opening.opening_method` |
-| `position_index_bits` / `block_index_bits` | ~16 each | `BlockGeometry` methods — one definition instead of three copies |
-| `num_digits_outer` | ~13 | `group.profile.outer.digits.num_digits` |
-| `log_basis_inner` | ~13 | `group.profile.inner.digits.log_basis` |
-| `fold_challenge_config` | ~11 | `group.opening.fold_challenge_config` |
-| `log_basis_outer` | ~8 | `group.profile.outer.digits.log_basis` |
-| `logical_b_rows_len` | ~7 | `group.profile.outer_slice_count.logical_output_rows(...)` |
-| `outer_slice_count` | ~6 | `group.profile.outer_slice_count` |
-| `a_col_len` | ~5 | `group.profile.inner.matrix.input_width()` |
-| `b_rows_len` | ~5 | `group.profile.outer.matrix.output_rank()` |
-| `num_live_ring_elements_per_claim` | ~3 non-test (**not zero**, see §3) | `group.profile.blocks.live_ring_elements_per_claim` |
-| `source_encoding` | ~3 | `fold.source_encoding_of(index)` (§7.2) |
-| `b_col_len` | ~2 | `group.profile.outer.matrix.input_width()` |
+| `num_live_blocks` | 129 | `group.profile.blocks.live_blocks` |
+| `num_positions_per_block` | 49 | `group.profile.blocks.positions_per_block` |
+| `num_digits_fold` | 35 | `group.opening.num_digits_fold` |
+| `num_digits_inner` | 26 | `group.profile.inner.digits.num_digits` |
+| `num_digits_open` | 22 | `group.opening.num_digits_open` |
+| `a_rows_len` | 20 | `group.profile.inner.matrix.output_rank()` |
+| `log_basis_open` | 20 | `group.opening.log_basis_open` |
+| `inner_commit_matrix_params` | 18 | `&group.profile.inner.matrix` |
+| `opening_method` | 17 | `group.opening.opening_method` |
+| `position_index_bits` / `block_index_bits` | 16 / 15 | `BlockGeometry` methods — one definition instead of three copies |
+| `num_digits_outer` | 13 | `group.profile.outer.digits.num_digits` |
+| `log_basis_inner` | 13 | `group.profile.inner.digits.log_basis` |
+| `fold_challenge_config` | 9 | `group.opening.fold_challenge_config` |
+| `log_basis_outer` | 8 | `group.profile.outer.digits.log_basis` |
+| `logical_b_rows_len` | 7 | `group.profile.outer_slice_count.logical_output_rows(...)` |
+| `outer_slice_count` | 6 | `group.profile.outer_slice_count` |
+| `a_col_len` | 5 | `group.profile.inner.matrix.input_width()` |
+| `b_rows_len` | 5 | `group.profile.outer.matrix.output_rank()` |
+| `num_live_ring_elements_per_claim` | 3 (**not zero**, see §3) | `group.profile.blocks.live_ring_elements_per_claim` |
+| `source_encoding` | 3 | `fold.source_encoding_of(index)` (§7.2) |
+| `b_col_len` | 2 | `group.profile.outer.matrix.input_width()` |
+
+Eleven of the 21 rows are unchanged from draft 3. Five grew: `num_live_blocks`
+119→129, `num_digits_fold` 28→35, `num_digits_inner` 22→26,
+`num_positions_per_block` 46→49, and `log_basis_open` 19→20. Five fell by one or
+two: `fold_challenge_config` 11→9, `num_digits_open` 23→22,
+`inner_commit_matrix_params` 19→18, `opening_method` 18→17, and
+`block_index_bits` 16→15.
+
+The net is upward, and it is concentrated in the four largest rows — the block
+geometry and the digit counts. That is the same direction the rest of this
+document reports: the duplication this plan removes is still accumulating, and
+the accessors that §5 turns into plain field reads are the ones growing fastest.
+Adding the generated tables and tests back roughly doubles the two largest rows,
+which is why the rule above excludes them.
 
 ### 12.3 Also deleted with it
 
@@ -1167,7 +1312,7 @@ contract.
   `precommitted_group_count`, `precommitted_group_params`,
   `precommitted_group_iter`, `has_precommitted_groups`, `group_role_dims`,
   `group_role_dims_geometry`. All become list operations.
-- The 9 single-method wrapper functions in
+- The 10 single-method wrapper functions in
   [setup_contribution/plan/types.rs:140-238](../crates/akita-types/src/setup_contribution/plan/types.rs#L140-L238).
   Each re-exposes exactly one trait method, and `n_a_for`/`n_a` are
   byte-identical bodies. The two composites `t_vector_width` and `d_active_cols`
@@ -1188,10 +1333,10 @@ disposition.
 
 | Type | Fields | Construction sites | Disposition |
 |---|---|---|---|
-| `CommitmentGeometry<'a>` (`akita-prover/src/api/commitment.rs:123`) | 10, of which 9 are a strict subset of `CommittedGroupProfile` | 1 (`commitment.rs:545`) | **Delete.** Draft 2 said its consumers fabricate a fake `opening` dimension. That is no longer true — it has no opening field at all. Its 9 payload fields are exactly a `CommittedGroupProfile` minus `version`, `group`, and `N`. Replace it with `&CommittedGroupProfile` plus the `context: &'static str` label as a separate argument. |
-| `FoldScheduleDescriptorStep<'a>` (`schedule.rs:327`) | 4 | planner candidate encoding | **Delete.** It exists so the planner can encode a candidate without building a `FoldSchedule`. Its `params`, `payload_mode`, and two lengths are all fields of `FoldParams` after §5.4, so the planner encodes a `&FoldParams` directly. |
-| `TerminalFoldDescriptor<'a>` (`schedule.rs:336`) | 4 | terminal descriptor encoding | **Delete.** Its four borrowed fields are exactly `TerminalFoldParams` after the §5.5 merge. |
-| `OpeningExecutionGroup<'a>` (`schedule.rs:742`) | 2 | 3 | **Delete.** It pairs a `&dyn LevelParamsLike` with an expected source encoding. After §5.4 the loop iterates `&GroupParams` and asks the fold for the encoding (§7.2). |
+| `CommitmentGeometry<'a>` (`akita-prover/src/api/commitment.rs:125`) | 10, of which 9 are a strict subset of `CommittedGroupProfile` | **2** (`commitment.rs:236` and `:635`, both via the `From<&CommittedGroupParams>` impl at `:138`) | **Delete.** Draft 2 said its consumers fabricate a fake `opening` dimension. That is no longer true — it has no opening field at all. Its 9 payload fields are exactly a `CommittedGroupProfile` minus `version`, `group`, and `N`. Replace it with `&CommittedGroupProfile` plus the `context: &'static str` label as a separate argument. Draft 3 said one site at `:545`; there are two, and both go through the `From` impl, so deleting the impl catches both. |
+| `FoldScheduleDescriptorStep<'a>` (`schedule.rs:327`) | 4 | planner candidate encoding, consumed in `schedule/descriptor.rs` (§0.8) | **Delete.** It exists so the planner can encode a candidate without building a `FoldSchedule`. Its `params`, `payload_mode`, and two lengths are all fields of `FoldParams` after §5.4, so the planner encodes a `&FoldParams` directly. |
+| `TerminalFoldDescriptor<'a>` (`schedule.rs:336`) | 4 | terminal descriptor encoding, now in `schedule/descriptor.rs` (§0.8) | **Delete.** Its four borrowed fields are exactly `TerminalFoldParams` after the §5.5 merge. |
+| `OpeningExecutionGroup<'a>` (`schedule.rs:586`) | 2 | 3 | **Delete.** It pairs a `&dyn LevelParamsLike` with an expected source encoding. After §5.4 the loop iterates `&GroupParams` and asks the fold for the encoding (§7.2). |
 
 ### 12.5 The cost
 
@@ -1230,7 +1375,10 @@ small independent cleanup, not part of this plan.
 `GroupParams` derives `PartialEq`. Today `PrecommittedLevelParams` derives it too,
 so this is a no-op.
 
-**Size.** Measured on `f37d07089`, debug profile, aarch64-darwin.
+**Size.** Re-measured on `8e552d2ac`, debug profile, aarch64-darwin, with
+`core::mem::size_of`. Every value in the "Today" column is confirmed: it is
+unchanged from draft 3's measurement on `f37d07089`, which is expected, because
+every struct declaration in this table is byte-identical across the two bases.
 
 | Type | Today | Expected after | Why |
 |---|---|---|---|
@@ -1251,10 +1399,20 @@ so this is a no-op.
 | `GeneratedRootFold` / `GeneratedRecursiveFold` | 120 / 480 | ~80 | one `GeneratedFold`; the group array moves behind a slice |
 | `GeneratedFoldScheduleEntry` | 288 | ~200 | one fold type |
 | `GeneratedInnerCommitMatrix` / `Outer` / `Open` | 8 / 8 / 8 | 8 | one `GeneratedMatrix` |
+| `SetupPrefixSlotId` | 304 | 304 | kept; derived, not stored (§0.5) |
+| `GeneratedBlockGeometry` | 24 | 24 | kept (§11.1) |
+| `GeneratedTerminalFold` | 144 | 144 | kept (§11.1) |
+| `GeneratedWitnessPartition` | 8 | — | deleted (§11.1) |
+
+The last four rows are new in draft 4; draft 3 measured the other 25 but omitted
+these, and `SetupPrefixSlotId` in particular is worth stating because §5.3 makes
+it derived rather than stored, which removes 304 bytes per prefix from the
+schedule without changing the type.
 
 No `Box` and no `Arc` appear anywhere, so the allocation count is unchanged.
 `FoldParams` allocates one `Vec` where `CommittedGroupParams` already allocated
-one. §14 makes the measured table a gate, since the "after" column is estimated.
+one. §14 keeps the measured table a gate, because the "after" column is still
+estimated — only the "Today" column is measured.
 
 `RecursiveFoldStep` at 1312 bytes is the largest parameter value in the tree and
 it is stored in a `Vec`, so `FoldSchedule` currently carries about 1.3 KiB per
@@ -1277,15 +1435,19 @@ before any type changes, and re-run it after every step.
 
 **Golden byte fixtures**, committed to the repository:
 
-- Descriptor bytes for every entry of all 12 generated catalogs, at every level:
+- Descriptor bytes for every entry of all 13 generated catalogs, at every level:
   profile, opening plan, group, fold, schedule.
 - `ScheduleRowDigest` for every catalog row.
 - `key_digest` and the full `CatalogIdentityExpectation` per family.
 - Coverage of single-group roots, multi-group roots, setup-prefix schedules,
   chunked and non-chunked schedules, recursive folds, terminal folds, **B-sliced
-  groups (`outer_slice_count > 1`)**, **subring-packing folds**, and **terminal
-  L2 routes**. The last three did not exist when draft 2 was written and are the
-  paths most likely to break silently.
+  groups (`outer_slice_count > 1`)**, **subring-packing folds**, **terminal
+  L2 routes**, and **bounded committed dense sources (`fp128_dense_bounded`,
+  feature `fp128-dense-bounded`)**. The last four did not exist when draft 2 was
+  written and are the paths most likely to break silently. The bounded family also
+  covers the grouped `fp128_onehot` row that pairs a bounded dense precommit with
+  a one-hot final group, which is the only row where two groups in one fold carry
+  different A digit depths.
 - `CommittedGroup<F>` wire fixtures, serialized and deserialized, for each of
   the above.
 
@@ -1324,24 +1486,89 @@ separately.
 - an empty `groups` list;
 - a coefficient count above `MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS`;
 - a terminal matrix that retains less than half of the unconstrained target;
-- an instance descriptor with `protocol_epoch` of 1 after the bump.
+- an instance descriptor with `protocol_epoch` of 1 after the bump;
+- **an A digit depth that is not `ceil(log_commit_bound / log_basis_inner)` for
+  its level**, in both directions, on a bounded and on a full-width row (§0.9).
+  This one is easy to lose: it lives in `akita-schedules`, not in the type-level
+  `validate` this plan consolidates;
+- **a commitment whose source coefficients exceed the declared
+  `log_commit_bound`**, which `commit` rejects since #407. State the test against
+  `decompose_centering_threshold` and
+  `checked_balanced_digit_representable_bounds`, not against a naive range check —
+  the saturating reach is a conservative lower bound and the sign rule is not
+  centering at `q/2`, so a naive check rejects valid full-width dense commitments.
 
 **Measurement gate.** A committed test printing `size_of` for every type in §5
 and every type in §11, before and after. Compare against §13. Also record
-generated-table byte size and the `partition_point` lookup cost.
+generated-table byte size and the `partition_point` lookup cost. §13's "Today"
+column was measured on `f37d07089`; every struct declaration in it is
+byte-identical on `8e552d2ac`, but re-measure on `main` before trusting the
+"after" estimates.
 
 **Existing suites.** `cargo test -p akita-config --features all-schedules
 --test generated_tables` and the full CI matrix in `.github/workflows/ci.yml`
-must pass at every step, including the table drift gate.
+must pass at every step, including the table drift gate. Under #403 (§0.10) the
+matrix now selects transcript backends explicitly and runs pure Blake and Keccak
+semantic suites; the byte break in step 5 must be validated under each, not only
+under the default backend.
 
 ## 15. Corrections
 
-### 15.1 To draft 2, from the new code
+### 15.1 To draft 3, from `main`
+
+Draft 3 was accurate against `f37d07089`. These claims are now false. Every one
+is already fixed in place above; they are listed here so a reviewer who read
+draft 3 knows what moved.
+
+**Counts.**
+
+| Draft 3 said | Correct on `8e552d2ac` |
+|---|---|
+| 12 generated tables / catalogs | **13** — `fp128_dense_bounded` was added by #407 |
+| 29 `CommittedGroupProfile` struct literals | **30** |
+| 58 `new_unchecked` calls in `static` position | **60** |
+| `num_live_ring_elements_per_claim` has "four" non-test call sites (§3) | **3**, which is what §12.2 already said |
+| 9 single-method wrappers in `plan/types.rs:140-238` | **10** |
+| `CommitmentGeometry` has 1 construction site | **2**, both through the `From` impl |
+| `validate_frozen_precommit` is the wire entry point at `proof/commitment.rs:459` | two sites there, `:207` and `:459` |
+| five `&dyn LevelParamsLike` struct fields | **4**; `schedule.rs:743` and `OpeningExecutionGroup` were the same field, counted twice |
+| `emit/mod.rs` is 1114 lines | **993** |
+| `expand.rs` has "about 914" non-test lines | **935**; the three function lengths were exact and still are, summing to 652 |
+| §12.2's 21 call-site counts | 11 unchanged, 5 grew, 5 fell — see §12.2, which now records the counting rule so drift is distinguishable from a different method |
+| "24 types and one trait" | 24 inventory **rows**, which is the number the plan commits to — see §2.1 |
+
+**Locations.** `emit/mod.rs` was rewritten, so all six `emit_*` references moved
+by about +90 lines. `audit.rs` shifted uniformly **+14** after line 216, where
+#407 inserted the A-depth audit. `precommitted.rs` shifted **+21** after line 100,
+where `OpeningFamily` and `physical_coefficient_width` were inserted, except
+`opening_d_segment_width`, which moved +30. All descriptor **encoders** left
+`schedule.rs` for `schedule/descriptor.rs` (§0.8), which pulled
+`OpeningExecutionGroup` from `:742` to `:586` and
+`validate_level_opening_execution` from `:747` to `:591`; the descriptor **view
+struct declarations** stayed at `:327` and `:336`.
+
+**Substance.** `SCHEDULE_ROW_DOMAIN_V2` is in `akita-types`, not `akita-config`.
+The `FoldSchedule` descriptor byte is no longer in `schedule.rs`. §9 was missing
+the #407 A-depth audit entirely, and §5.1 implied `GadgetDigits::validate` could
+own the A depth, which it cannot — that check is level-aware.
+
+**Unchanged and re-verified:** all 25 sizes in §13, **re-measured** on
+`8e552d2ac` rather than carried over, plus 4 new rows; the `LevelParamsLike`
+method count (22); `expand.rs` at 1027 lines with its four expansion entry points
+at `:69`, `:159`, `:513`, `:755` and all four function lengths exact (57, 354,
+241, 159); the 15 generated mirror types; the 21 parameter-surface byte encoders;
+all of §10.1's three encoder locations; `CommittedGroupProfile` at
+`profiles.rs:84` with 12 flat fields; `CommittedGroupParams` at `params.rs:87`;
+the two-field byte-identical generated matrix structs (§11.1); the
+`typed-schedule-topology-cutover.md` references at `:100` and `:105`; and the
+whole of `catalog_identity.rs`.
+
+### 15.2 To draft 2, from the packing line
 
 Draft 2 was accurate against `74c17ba4f`. Six of its claims are now false.
 
 - **"18 types and one trait", "six mirror audits", "3 macro copies", "11 byte
-  encoders", "18 trait methods".** The real numbers on `f37d07089` are 24 types,
+  encoders", "18 trait methods".** The real numbers on `8e552d2ac` are 24 types,
   10 mirror audits, 2 macro copies, 21 parameter-surface byte encoders, and 22
   trait methods.
 - **§5.1's `CommitMatrix<R>` over three roles.** The A role left the macro when
@@ -1358,14 +1585,14 @@ Draft 2 was accurate against `74c17ba4f`. Six of its claims are now false.
   (§10.2, §11.3). Draft 2 also cited the wrong function and line.
 - **"`CommittedGroupProfile::VERSION` is 2", "240 bytes", "10 flat fields", "24
   profile literals", "48 `new_unchecked` calls", "`SETUP_PREFIX_CONTENT_TAG` is
-  `b"SPF1"`".** Now 4, 288, 12, 29, 58, and `b"SPF4"`.
+  `b"SPF1"`".** Now 4, 288, 12, 30, 60, and `b"SPF4"`.
 - **"`validate_frozen_precommit` is deleted."** It is the wire deserialize's
   entry point and must stay (§9).
 
 Every `file:line` reference in draft 2 moved. All of them are restated here
-against `f37d07089`.
+against `8e552d2ac`.
 
-### 15.2 To draft 1 and the original review
+### 15.3 To draft 1 and the original review
 
 Draft 1:
 
@@ -1403,7 +1630,7 @@ The review:
   types, which after §5.4 hold identical fields. §8 accounts for the exact
   guarantee that trades.
 
-### 15.3 Deliberately out of scope
+### 15.4 Deliberately out of scope
 
 Three overlaps surfaced during this review and are **not** part of this plan.
 Each deserves its own change.
@@ -1421,7 +1648,7 @@ Each deserves its own change.
 ## 16. Prerequisite: resolve the certified-response divergence
 
 Two functions compute the certified terminal response cap and disagree. Both
-still exist on `f37d07089`, and the argument list of one of them changed in a way
+still exist on `8e552d2ac`, and the argument list of one of them changed in a way
 that makes the divergence easier to trigger, not harder.
 
 | | `certified_response_linf_cap` | `terminal_response_linf_limit_for_params` |
@@ -1464,13 +1691,13 @@ Steps 1 to 4 change no bytes and no call sites. Step 5 is the cutover.
 | Step | Work | Bytes | Tables |
 |---|---|---|---|
 | 0 | §16 prerequisite: one certified-response function | none | none |
-| 1 | Golden fixture harness (§14), including the B-slicing, packing, and L2 cases | none | none |
+| 1 | Golden fixture harness (§14), including the B-slicing, packing, L2, and bounded-dense cases, across all 13 catalogs and each explicitly selected transcript backend | none | none |
 | 2 | `BlockGeometry` and `GadgetDigits`, with `validate` and the index-bit methods. Use the atomic geometry encoder where the triple is already contiguous; keep field-level digit encoding in the two encoders that interleave. | **identical** | none |
 | 3 | `LinfCommitMatrix<R>` with a sealed `LinfMatrixRole`; delete the 2-role macro; keep the two aliases. `InnerCommitMatrixParams` untouched. | **identical** | none |
 | 4 | `RoleParams<M>`; restructure `CommittedGroupProfile` to `version, group, blocks, outer_slice_count, inner, outer`. Update the emitter for nesting. | **identical**, verified by step 1 | regenerate; `key_digest` unchanged |
 | 5a | `GroupParams` from `PrecommittedLevelParams`: rename `layout` to `profile`, add `setup_natural_len`, add `slot_id()`. Absorb `ScheduledSetupPrefix`. Derive `SetupPrefixSlotId` instead of storing it. | break | regenerate |
-| 5b | `FoldParams` with the uniform `groups` list; D matrix and `source_encoding` to the fold; merge `RootFoldParams`, `RecursiveFoldParams`, `RootFinalGroupParams`, `RootPrecommittedGroupParams`, `RootFoldStep`, `RecursiveFoldStep`; delete `WitnessPartition`; delete the 8 schedule-side mirror audits and the `validate_structure` mirror check; fold the per-fold parts of `validate_level_opening_execution` into `FoldParams::validate` and settle the prefix ordering (§7.1); add the 3 new checks. Bump the §10.2 constants here. | break | regenerate |
-| 5c | Delete `LevelParamsLike`, `group_params` and its geometry twin, the 9 wrappers, `CommitInnerPlan::from_profile`, and all four borrowed views (§12.4). | none | none |
+| 5b | `FoldParams` with the uniform `groups` list; D matrix and `source_encoding` to the fold; merge `RootFoldParams`, `RecursiveFoldParams`, `RootFinalGroupParams`, `RootPrecommittedGroupParams`, `RootFoldStep`, `RecursiveFoldStep`; delete `WitnessPartition`; delete the 8 schedule-side mirror audits and the `validate_structure` mirror check; fold the per-fold parts of `validate_level_opening_execution` into `FoldParams::validate` and settle the prefix ordering (§7.1); add the 3 new checks. Rewrite the two fold encoders in `schedule/descriptor.rs` (§0.8) — they are all in one file now. Keep the #407 A-depth audit (§9). Bump the §10.2 constants here. | break | regenerate |
+| 5c | Delete `LevelParamsLike`, `group_params` and its geometry twin, the 10 wrappers, `CommitInnerPlan::from_profile`, the `From<&CommittedGroupParams> for CommitmentGeometry` impl, and all four borrowed views (§12.4). | none | none |
 | 5d | `TerminalFoldParams` merging 3 types; move the 6 fallible steps into `admit`; drop the config argument from `certified_response_linf_cap` and `validate_terminal_linf_cap`. | break | regenerate |
 | 6 | Generated schema 15 → 8; drop the stored prefix `GroupOpeningPlan` and its 3 audits; one `expand_group`; update the emitter and delete 5 `emit_*` helpers. | none beyond step 5 | regenerate; `key_digest` moves once |
 
@@ -1480,7 +1707,7 @@ them into four commits for review, and keep the tree compiling at each commit.
 
 ## 18. Result
 
-| Item | Today (`f37d07089`) | After |
+| Item | Today (`8e552d2ac`) | After |
 |---|---|---|
 | Parameter types in scope | 24 | **10** |
 | Traits over parameter types | 1 (`LevelParamsLike`, 22 methods) | **0** |
