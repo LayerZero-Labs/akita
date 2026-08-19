@@ -9,12 +9,14 @@ $$
 R=F[X]/(X^D+1).
 $$
 
-The current implementation also supports more elaborate physical layouts —
-commitment groups, witness chunks, and different ordinary $\mathbf A$,
-$\mathbf B$, and $\mathbf D$ ring dimensions — but those extensions do not
-change the four core relations developed below. This page establishes only the
-basic case; advanced layouts are outside its scope. The [raw and compressed
-realizations](./akita-fold-realizations.md) use the same semantic relations;
+The current implementation also supports more elaborate physical layouts.
+These include commitment groups, witness chunks, and different ordinary
+$\mathbf A$, $\mathbf B$, and $\mathbf D$ ring dimensions. These extensions do
+not change the four core relations developed below. This page establishes only the
+basic case; advanced layouts are outside its scope. The [advanced relation
+layouts](./advanced-relation-layouts.md) page develops the multi-group case.
+The [raw and compressed realizations](./akita-fold-realizations.md) use the same
+semantic relations;
 the compression realization introduces its own smaller ring dimensions.
 
 The four equations below are the semantic source relations. The current
