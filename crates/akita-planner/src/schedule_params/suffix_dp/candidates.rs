@@ -527,6 +527,66 @@ impl<'a> CandidateDomain<'a> {
 
         Ok(GeneratedCandidates { terminal, folds })
     }
+
+    /// Visit one bounded root work batch at a time.
+    ///
+    /// Wide grouped roots can have a large Cartesian product of canonical
+    /// precommit opening multisets. Keeping every resulting level parameter in
+    /// one vector makes peak memory proportional to that full product. Root
+    /// frontiers are global across visits, so emitting one `(inner basis,
+    /// opening work)` batch at a time preserves the exact search domain while
+    /// bounding temporary storage.
+    pub(super) fn visit_root_batches(
+        &self,
+        ctx: &SuffixCtx<'_>,
+        open_lb: u32,
+        mut visit: impl FnMut(GeneratedCandidates) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        let root_key = self.root_level_key.ok_or_else(|| {
+            AkitaError::InvalidSetup("root batch visitor requires a root lookup key".into())
+        })?;
+        let final_policy = ctx.root_honest_fold_policy.ok_or_else(|| {
+            AkitaError::InvalidSetup("root batch is missing its honest fold policy".into())
+        })?;
+        for inner_lb in self.inner_basis_range.clone() {
+            for work in &self.opening_work {
+                let dimension_candidates = root_level_candidates_for_basis(
+                    root_key,
+                    final_policy,
+                    ctx.precommitted_honest_fold_policies,
+                    ctx.policy,
+                    work.dimensions,
+                    work.opening,
+                    &work.precommitted_openings,
+                    inner_lb,
+                    open_lb,
+                    !ctx.allow_noncontractive_root,
+                )?;
+                let mut terminal = Vec::new();
+                let mut folds = Vec::new();
+                for (params, next_witness_len) in dimension_candidates {
+                    if work.purpose.allows_terminal() {
+                        terminal.push(RawLevelCandidate {
+                            params: params.clone(),
+                            next_witness_len,
+                            opening_reduction_bytes: work.opening_reduction_bytes,
+                        });
+                    }
+                    if work.purpose.allows_fold() {
+                        folds.push(RawLevelCandidate {
+                            params,
+                            next_witness_len,
+                            opening_reduction_bytes: work.opening_reduction_bytes,
+                        });
+                    }
+                }
+                if !terminal.is_empty() || !folds.is_empty() {
+                    visit(GeneratedCandidates { terminal, folds })?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
