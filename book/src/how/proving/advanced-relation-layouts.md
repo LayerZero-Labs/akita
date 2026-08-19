@@ -3,13 +3,16 @@
 The [semantic relations in an Akita fold](./akita-fold.md) start with one
 commitment group, one witness chunk, and one common ring dimension, while the
 [realizations page](./akita-fold-realizations.md) turns those relations into
-physical rows. This page develops the multi-group extension. It preserves the
-four semantic relation families and explains how group-local rows and witness
-segments combine with one level-owned D relation.
+physical rows. This page develops the multi-group and multi-chunk extensions
+as two independent axes. Both preserve the four semantic relation families.
+Multiple groups add group-local rows around one level-owned D relation, whereas
+multiple chunks divide one group's witness columns across block ranges without
+duplicating those rows.
 
 The physical opening-commitment relation remains distinct from the
-field-valued evaluation trace. The canonical pages for chunks and mixed ring
-dimensions are linked in [Related layouts](#related-layouts).
+field-valued evaluation trace. This page derives the algebraic chunk layout;
+the canonical pages for exact chunk addresses, their physical order, and mixed
+ring dimensions are linked in [Related layouts](#related-layouts).
 
 ## Multiple commitment groups
 
@@ -185,10 +188,417 @@ responses or relation rows. If setup offloading is active, the next fold may
 also receive an independent setup-prefix group; that extra group does not
 preserve or recreate the original root grouping.
 
+## Multiple witness chunks
+
+### Why multiple witness chunks
+
+The basic fold immediately reduces all live blocks to one folded response
+
+$$
+\mathbf z
+=
+\sum_b c_b\mathbf s_b.
+$$
+
+This is algebraically compact, but it creates a synchronization point when the
+source blocks are distributed across GPU workgroups, devices, or machines.
+Each worker already owns a contiguous block range together with the semantic
+inner rows retained in the commitment hint. Forming one outgoing
+$\mathbf z$ would require the workers to reduce their full-width responses
+before that response could enter the next witness.
+
+A multi-chunk fold retains those local responses instead. A worker can derive
+its opening digits and folded-response digits from the same local blocks and
+contribute one unit
+
+$$
+[\hat{\mathbf z}^{(j)}
+ \mid\hat{\mathbf e}^{(j)}
+ \mid\hat{\mathbf t}^{(j)}]
+$$
+
+to the outgoing witness. The smaller outer- and opening-commitment images can
+still be combined across chunks. Linearity then lets the relation sum all
+chunk contributions in the original rows. Thus multi-chunking changes the
+witness columns, not the semantic row families or their public targets.
+
+The protocol defines chunks as witness block ranges, not as trusted parties or
+a required execution schedule. An implementation may map a chunk to one GPU
+workgroup, device, or machine. The current prover also retains the aggregate
+$\mathbf z$ internally where useful; the protocol-level change is that the
+committed witness carries the local responses rather than one global response.
+
+This locality has a cost. The $\hat{\mathbf e}$ and
+$\hat{\mathbf t}$ segments are partitioned across chunks and do not grow in
+total, but every chunk carries a full-width $\hat{\mathbf z}^{(j)}$ segment.
+For $C$ chunks, the live ordinary witness therefore gains
+$(C-1)|\hat{\mathbf z}|$ coordinates relative to the single-chunk layout.
+
+### Chunk ranges and commitment-side data
+
+To isolate the chunk axis, assume one commitment group, one polynomial claim,
+one common ring
+
+$$
+R=F[X]/(X^D+1),
+$$
+
+the `EvaluationTrace` opening method, and one unsliced $\mathbf B$ matrix. Let
+$N_{\mathrm{blk}}$ be the exact number of live blocks and let $C\ge 1$ be the
+chunk count. The implemented multi-chunk path requires $C$ to be a supported
+power of two; $C=1$ is the basic layout. Chunk $j$ owns
+
+$$
+\mathcal I_j
+=
+\left\{
+b:
+\left\lfloor\frac{jN_{\mathrm{blk}}}{C}\right\rfloor
+\le b <
+\left\lfloor\frac{(j+1)N_{\mathrm{blk}}}{C}\right\rfloor
+\right\}.
+$$
+
+These ranges partition the exact live-block prefix without padding. The
+transcript still samples one challenge $c_b$ for every global live block; it
+does not sample an independent challenge family for each chunk.
+
+Before the opening query, the incoming commitment has already fixed the
+commitment-side data. For every $b\in\mathcal I_j$, the commitment computation
+formed
+
+$$
+t_{b,\rho}
+=
+\sum_{p,a}A_{\rho,(p,a)}s_{b,p,a},
+\qquad
+t_{b,\rho}
+=
+\sum_hG_h^{\mathrm{out}}\hat t_{b,\rho,h}.
+$$
+
+The commitment hint retains the recomposed inner rows $\mathbf t_b$, not a
+materialized $\hat{\mathbf t}$. During the current fold, the prover decomposes
+the rows belonging to $\mathcal I_j$ to recover the chunk segment
+$\hat{\mathbf t}^{(j)}$.
+
+Let $\mathbf B^{(j)}$ denote the columns of $\mathbf B$ belonging to that
+segment. The chunk-local outer image
+
+$$
+\mathbf u^{(j)}
+=
+\mathbf B^{(j)}\hat{\mathbf t}^{(j)}
+$$
+
+is an algebraic partial contribution, not a separate payload. The semantic
+commitment is
+
+$$
+\boxed{
+\mathbf u
+=
+\sum_{j=0}^{C-1}\mathbf u^{(j)}
+=
+\sum_{j=0}^{C-1}
+\mathbf B^{(j)}\hat{\mathbf t}^{(j)}.
+}
+$$
+
+In compressed mode, this aggregate $\mathbf u$ is the hidden source of one
+$\mathbf F$ chain. Multi-chunking does not create one compression payload per
+chunk.
+
+### Chunk-local partial evaluations and folded responses
+
+The opening point supplies the same position weights $Q_p$ as in the basic
+derivation. For every block $b\in\mathcal I_j$, chunk $j$ computes
+
+$$
+F_{p,b}
+=
+\sum_aG_a^{\mathrm{in}}s_{b,p,a},
+\qquad
+E_b
+=
+\sum_pQ_pF_{p,b},
+$$
+
+and decomposes the result as
+
+$$
+E_b
+=
+\sum_hG_h^{\mathrm{open}}\hat e_{b,h}.
+$$
+
+Collect these digits into $\hat{\mathbf e}^{(j)}$. If
+$\mathbf D^{(j)}$ denotes the corresponding columns of the opening-commitment
+matrix, then
+
+$$
+\mathbf v_D^{(j)}
+=
+\mathbf D^{(j)}\hat{\mathbf e}^{(j)},
+\qquad
+\boxed{
+\mathbf v_D
+=
+\sum_{j=0}^{C-1}\mathbf v_D^{(j)}.
+}
+$$
+
+Like $\mathbf u^{(j)}$, the partial value $\mathbf v_D^{(j)}$ is not a public
+payload. Raw mode exposes the aggregate $\mathbf v_D$; compressed mode uses it
+as the hidden source of one $\mathbf H$ chain. The payload binding
+$\mathbf u$ and $\mathbf v_D$ is fixed before the fold challenges are sampled.
+
+Chunk $j$ then folds only its own source blocks:
+
+$$
+\boxed{
+z_{p,a}^{(j)}
+=
+\sum_{b\in\mathcal I_j}c_bs_{b,p,a}.
+}
+$$
+
+Each $\mathbf z^{(j)}$ has the same full ambient width as the single response
+$\mathbf z$. It is a partial sum over blocks, not a width slice. Decompose it
+with the ordinary fold gadget:
+
+$$
+z_{p,a}^{(j)}
+=
+\sum_fG_f^{\mathrm{fold}}\hat z_{p,a,f}^{(j)}.
+$$
+
+The aggregate response remains the derived value
+
+$$
+\mathbf z
+=
+\sum_{j=0}^{C-1}\mathbf z^{(j)},
+$$
+
+but it is not an additional coordinate of the chunked committed witness. If a
+chunk range is empty, its E and T segments are empty and the honest prover puts
+zero in its full-width Z segment.
+
+### From chunk-local identities to the proved relations
+
+For an honestly constructed chunk, the same linear derivation as in the basic
+case can be performed over its local block range. Evaluation within each block
+and then folding gives
+
+$$
+\begin{aligned}
+\sum_{b\in\mathcal I_j}c_bE_b
+&=
+\sum_{b\in\mathcal I_j,p,a}
+c_bQ_pG_a^{\mathrm{in}}s_{b,p,a}
+\\
+&=
+\sum_{p,a}Q_pG_a^{\mathrm{in}}z_{p,a}^{(j)}.
+\end{aligned}
+$$
+
+Likewise, applying $\mathbf A$ before or after the local fold gives
+
+$$
+\sum_{b\in\mathcal I_j}c_b\mathbf t_b
+=
+\mathbf A\mathbf z^{(j)}.
+$$
+
+Substituting the opening, outer, and folded-response digit decompositions gives
+the two chunk-local identities
+
+$$
+\sum_{b\in\mathcal I_j,h}
+c_bG_h^{\mathrm{open}}\hat e_{b,h}
+=
+\sum_{p,a,f}
+Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}
+\hat z_{p,a,f}^{(j)},
+$$
+
+and, for every row $\rho$ of $\mathbf A$,
+
+$$
+\sum_{b\in\mathcal I_j,h}
+c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
+=
+\sum_{p,a,f}
+A_{\rho,(p,a)}G_f^{\mathrm{fold}}
+\hat z_{p,a,f}^{(j)}.
+$$
+
+These local identities explain how an honest distributed prover constructs
+each witness unit. The protocol does not add a separate consistency row or set
+of $\mathbf A$ rows for every chunk. Instead, it proves their aggregate in the
+same rows as the basic relation. The fold-evaluation consistency relation is
+
+$$
+\boxed{
+\sum_{j=0}^{C-1}
+\sum_{b\in\mathcal I_j,h}
+c_bG_h^{\mathrm{open}}\hat e_{b,h}
+=
+\sum_{j=0}^{C-1}
+\sum_{p,a,f}
+Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}
+\hat z_{p,a,f}^{(j)}.
+}
+$$
+
+For every row $\rho$ of $\mathbf A$, inner-commitment consistency is
+
+$$
+\boxed{
+\sum_{j=0}^{C-1}
+\sum_{b\in\mathcal I_j,h}
+c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
+=
+\sum_{j=0}^{C-1}
+\sum_{p,a,f}
+A_{\rho,(p,a)}G_f^{\mathrm{fold}}
+\hat z_{p,a,f}^{(j)}.
+}
+$$
+
+The other two families are the aggregate commitment relations already defined
+above:
+
+$$
+\boxed{
+\sum_{j=0}^{C-1}
+\mathbf B^{(j)}\hat{\mathbf t}^{(j)}
+=
+\mathbf u,
+}
+$$
+
+$$
+\boxed{
+\sum_{j=0}^{C-1}
+\mathbf D^{(j)}\hat{\mathbf e}^{(j)}
+=
+\mathbf v_D.
+}
+$$
+
+Thus the multi-chunk construction preserves one consistency row, the original
+$\mathbf A$, $\mathbf B$, and $\mathbf D$ row families, and the original
+semantic target. It does not claim that each chunk-local identity is proved
+independently; chunks are column ranges inside one prover's aggregate relation.
+
+### Logical witness and physical realization
+
+Define one logical witness unit per chunk by
+
+$$
+\mathbf w^{(j)}
+=
+[\hat{\mathbf z}^{(j)}
+ \mid\hat{\mathbf e}^{(j)}
+ \mid\hat{\mathbf t}^{(j)}].
+$$
+
+The complete ordinary witness prefix is
+
+$$
+\mathbf w_{0,\mathrm{chunk}}
+=
+\big\Vert_{j=0}^{C-1}\mathbf w^{(j)}.
+$$
+
+Let $\mathbf M^{(j)}$ be the full-height relation column block acting on
+$\mathbf w^{(j)}$. The $\hat{\mathbf e}^{(j)}$ and
+$\hat{\mathbf t}^{(j)}$ columns restrict the original block-indexed
+coefficients to $\mathcal I_j$, while the same folded-response operators act
+on every full-width $\hat{\mathbf z}^{(j)}$ segment. The complete matrix is the
+horizontal concatenation
+
+$$
+\mathbf M_{\mathrm{chunk}}
+=
+[\mathbf M^{(0)}\mid\cdots\mid\mathbf M^{(C-1)}],
+$$
+
+and its semantic statement is
+
+$$
+\boxed{
+\mathbf M_{\mathrm{chunk}}\mathbf w_{0,\mathrm{chunk}}
+=
+\sum_{j=0}^{C-1}\mathbf M^{(j)}\mathbf w^{(j)}
+=
+\mathbf y,
+}
+$$
+
+with the same raw target as the basic relation:
+
+$$
+\mathbf y
+=
+[0\mid\mathbf 0_{\mathbf A}\mid\mathbf u\mid\mathbf v_D].
+$$
+
+Raw mode appends one ordinary quotient family after all chunk units:
+
+$$
+\boxed{
+\mathbf w_{\mathrm{raw}}
+=
+\mathbf w_{0,\mathrm{chunk}}
+\;\Vert\;
+\hat{\mathbf r}_{\mathrm{ord}}.
+}
+$$
+
+There is one quotient polynomial per physical row, not one per chunk. Under
+this section's common-ring assumption, row $i$ satisfies
+
+$$
+\sum_{j=0}^{C-1}
+\widetilde{\mathbf M}^{(j)}_i(X)
+\widetilde{\mathbf w}^{(j)}(X)
+-
+\widetilde y_i(X)
+=
+(X^D+1)r_i(X).
+$$
+
+Compressed mode keeps the same chunked ordinary prefix and shared ordinary
+quotients. It then adds the single $\mathbf F$ chain for the aggregate
+$\mathbf u$ and the single $\mathbf H$ chain for the aggregate
+$\mathbf v_D$, using the physical order defined on the realizations and
+opening-layout pages. Neither compression chain is replicated per chunk.
+
+Finally, chunking does not turn the scalar evaluation claim into a physical
+ring row. For the one `EvaluationTrace` claim in this section, the virtual
+relation is simply distributed over the chunk-local E segments:
+
+$$
+v_{\mathrm{tr}}
+=
+\sum_{j=0}^{C-1}
+\sum_{b\in\mathcal I_j,h,\ell}
+\hat e_{b,h,\ell}B_bG_h^{\mathrm{open}}J_\ell.
+$$
+
+It remains one field-valued Stage-2 relation with no ring-switch quotient. When
+$C=1$, the sole range contains every live block, the single local response is
+$\mathbf z$, and every equation and witness layout above reduces to the basic
+single-chunk construction.
+
 ## Related layouts
 
-This page owns the multi-group relation layout. The other layout axes have
-canonical explanations elsewhere:
+This page owns the multi-group relation layout and the single-group
+multi-chunk relation derivation. Exact physical geometry and the other layout
+axes have canonical explanations elsewhere:
 
 - [Chunks and fold challenges](./opening-points-layout.md#chunks-and-fold-challenges)
   defines exact chunk ranges and opening-point coordinates.
