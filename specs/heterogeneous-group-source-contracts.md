@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-07-30 |
 | Revised | 2026-08-11 |
-| Status | active |
+| Status | implemented |
 | PR | [#338](https://github.com/LayerZero-Labs/akita/pull/338), [#355](https://github.com/LayerZero-Labs/akita/pull/355) |
 | Supersedes | Earlier source-provider and fold-admission revisions of this specification |
 | Superseded-by | |

@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-08-06 |
 | Revised | 2026-08-14 |
-| Status | active |
+| Status | implemented |
 | PR | [#369](https://github.com/LayerZero-Labs/akita/pull/369) |
 | Supersedes | The physical A role embedding factor in `archive/2026-Q3/weak-binding-norm-fix.md` |
 | Superseded-by | |
@@ -1427,9 +1427,10 @@ Durable user-facing explanations live in:
 * `book/src/how/configuration.md` for planner models, eligibility, and fallback.
 * `book/src/usage/profiling.md` for the compact and detailed reports.
 
-This specification remains active while PR 369 is open. Mark it implemented
-when the PR merges. It can then be archived after the durable text is confirmed
-in the book.
+PR 369 is merged and the acceptance criteria are complete, so this
+specification is implemented. Retain it in the root as the current load-bearing
+security sizing source until the durable text and deferred alternatives are
+fully folded into the Book.
 
 ## References
 

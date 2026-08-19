@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao; Codex assistant |
 | Created | 2026-07-31 |
 | Revised | 2026-07-31 |
-| Status | active |
+| Status | implemented |
 | PR | #337 |
 | Supersedes | Projected-digit and outgoing-witness storage rules in `archive/2026-Q3/digit-innermost-layout.md`, the deleted mixed-ring experiment, `archive/2026-Q3/distributed-setup-offloading.md`, and `archive/2026-Q3/relation-range-image-sumcheck.md` |
 | Superseded-by | |
