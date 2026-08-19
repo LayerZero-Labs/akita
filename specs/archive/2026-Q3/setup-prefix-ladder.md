@@ -179,7 +179,7 @@ the implemented subset.
 ## References
 
 - `STACK.md`, slice 02B (`setup-prefix-ladder`) and 02D (`setup-offload-gating`)
-- `specs/setup-product-sumcheck.md`
+- `specs/archive/2026-Q3/setup-product-sumcheck.md`
 - `specs/setup-offloading-planner.md`
 - `crates/akita-types/src/proof/setup_prefix.rs`
 - `crates/akita-prover/src/api/setup_prefix.rs`

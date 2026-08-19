@@ -75,7 +75,6 @@
         "book/src/how/proving/**",
         "book/src/how/recursion.md",
         "specs/packed-sumcheck.md",
-        "specs/setup-product-sumcheck.md",
         "specs/archive/2026-Q3/terminal-fold-cutover.md",
         "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]

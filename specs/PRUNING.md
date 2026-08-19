@@ -89,12 +89,11 @@ The root live set is deliberately small and is synchronized with
 9. `runtime-ring-cutover.md`
 10. `selective-l2-fold-security-sizing.md`
 11. `setup-offloading-planner.md`
-12. `setup-product-sumcheck.md`
-13. `sis-quantum128-scalar-n-table.md`
-14. `structured-e-term.md`
-15. `subring-coefficient-packing.md`
+12. `sis-quantum128-scalar-n-table.md`
+13. `structured-e-term.md`
+14. `subring-coefficient-packing.md`
 
-All 15 live specifications must pass the default dead-symbol scan. A record
+All 14 live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 
@@ -210,7 +209,7 @@ replaced by the Book or newer live specifications:
 - `recursive-mixed-ring-dimension-performance.md`
 
 The historical CPU-heavy Metal cutover was archived separately from the active
-Metal-track spec. The root now contains the 15 live records listed above, plus
+Metal-track spec. The root now contains the 14 live records listed above, plus
 policy and support files.
 
 ### Root policy and support files

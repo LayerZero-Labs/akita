@@ -10,12 +10,12 @@
 
 ## Summary
 
-> **Coordination gate.** EOR packing may proceed. Stage 1 packing must target the canonical
-> scalar implementation in PR #312. Stage 2 packing is blocked until the stacked
-> relation/range-image rewrite in
-> [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md) lands. Packing must
-> target the resulting flat, address-major scalar buffers and may not preserve or extend
-> the current x/y/prefix architecture.
+> **Current coordination.** EOR packing may proceed. Stage 1 packing must target
+> the canonical scalar implementation shipped in PR #312. The stacked
+> relation and range-image rewrite is also shipped in PR #337, so Stage 2 is no
+> longer waiting on that prerequisite. Packing must target the resulting flat,
+> address-major scalar buffers and may not preserve or extend the old x/y/prefix
+> architecture.
 
 Akita's sum-check and extension-opening-reduction (EOR) prover hot loops run on
 **scalar extension-field arithmetic** today: `Vec<E>` with `E = RingSubfieldFp4<Fp32>`,
@@ -289,18 +289,19 @@ The one-hot root EOR path described here was removed when L0/L1 folds became
 coefficient-packing-only. The following notes record the old experiment and are
 not part of the current implementation plan. The old one-hot EOR univariate plateau
 (`eor-streamed-prover.md`, 1.25 s) was a sparse
-`O(d_ext)`-per-query loop over a `2^24` support. It is **not excluded** — it can benefit
-from SIMD, but the kernels are arch-sensitive and are designed in a later slice:
+`O(d_ext)`-per-query loop over a `2^24` support. It is excluded from this
+implementation plan. The kernels are arch-sensitive, so the notes below remain
+historical context only:
 - **Factor fold** of a materialized (`SparseFactor::Dense`) residual is a dense `Vec<E>`
   fold → **packs exactly like the dense path** (no gather). Free once D1/D2 land.
 - **`factor_pair`'s `O(d_ext)` dot** over `suffix_tables[t][suffix_index]` is a tiny dense
   dot product — vectorizable per query, and **batchable across `WIDTH` support entries**
   if their suffix indices are gathered.
-- **Materialized-factor accumulate** (`m = 0` region, flat factor + O(1) reads) can pack
+- **Materialized-factor accumulate** (`m = 0` region, flat factor + O(1) reads) could pack
   `WIDTH` support entries by **gathering** their factor values, then packed-multiplying.
   Gather is the catch: AVX-512 has fast gather, AVX2's is slow, NEON has none — so the
-  one-hot packed accumulate is **arch-gated** and may stay scalar on NEON. Work this out
-  in Slice 4 against measured numbers; do not block the dense pilot on it.
+  one-hot packed accumulate was **arch-gated** and could stay scalar on NEON. It remains
+  historical context only and is not part of the current packed-sumcheck plan.
 
 ## Pilot: recursive suffix/terminal EOR
 

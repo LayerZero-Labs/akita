@@ -56,6 +56,11 @@ recursive folds use the same digit-innermost order.
 05 tables, benchmarks, cleanup
 ```
 
+The 03B product sum-check milestone and the 04 planner-selected setup
+offloading milestone are shipped. Rows 03B and 04 remain in this document as
+the implementation history. The remaining broader verifier-offloading work is
+tracked in the Book roadmap and row 05.
+
 `02C` is intentionally independent of the packed setup layout at the math
 level. It may be developed in parallel from `main`, but its review PR should be
 rebased onto `01` before integration so proof structs and transcript labels do
@@ -76,8 +81,8 @@ not encode one person's ownership.
 | 02C | `recursive-carried-openings` | 01 for review; can prototype from `main` | Replace singleton recursive carry state with a carried-opening claim list and root-style incidence at the recursive boundary. Use a common padded field domain first. | Existing singleton recursion is the size-one incidence case; a witness-plus-dummy-setup carried batch verifies end to end. |
 | 02D | `setup-offload-gating` | 01 | Add the policy surface for `D_setup`, `N_min`, eligible levels, selected prefix length, and direct fallback. | The prover/verifier agree on eligibility and selected prefix without changing proof semantics yet. |
 | 03A | `setup-weight-evaluator` | 02A | Implement succinct verifier evaluation of `omega_S(rho_lambda, rho_y)` with canonical digit-innermost D/B/A views and compact mixed-ring projection factors. | Evaluator matches materialized `omega_S` at random points without scanning `S`. |
-| 03B | `setup-product-sumcheck` | 02A | Add the setup product-sumcheck skeleton over the selected prefix. First implement it as a post-Stage-2 Stage 3 closed against a local/materialized setup opening oracle. | Product-sumcheck checks `<S_{<=N}, omega_S>` against the materialized oracle and binds `sigma_S`, `rho`, `alpha`, `tau_1`, and `r_x`; no extra witness claim is left unresolved. |
-| 04 | `setup-claim-offloading` | integration of 02B, 02C, 02D, 03A, 03B | Replace the direct setup scan with delegated setup claims when eligible. Carry `(rho_lambda, rho_y, s_rho)` into the next recursive fold and batch it with the folded-witness opening. | Eligible root/L1 proofs verify without local setup scan; ineligible or terminal-without-next-fold cases use direct fallback. |
+| 03B | `setup-product-sumcheck` | 02A | Shipped in PR #147 and reorganized by later protocol refactors. The current Stage 3 implementation is documented in the Book. | Complete. The setup product sum-check checks the deferred setup contribution and closes against the selected setup-prefix opening. |
+| 04 | `setup-claim-offloading` | integration of 02B, 02C, 02D, 03A, 03B | Shipped in PRs #301 and #318, with later setup-prefix follow-ups. The planner selects direct or offloaded successors under the current recursive config. | Complete for the shipped planner-selected path. Direct, unsupported, and terminal cases retain their fallback behavior. Broader verifier-offloading work remains in the Book roadmap. |
 | 05 | `setup-offload-tables-tests` | 04 | Regenerate tables if needed, add broad benchmarks/regression tests, and remove temporary comparison or oracle helpers. | End-to-end proof size and verifier-time breakdowns reflect setup offloading under representative batched workloads. |
 
 ## Parallel Work Slices

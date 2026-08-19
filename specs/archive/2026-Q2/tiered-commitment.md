@@ -1067,5 +1067,5 @@ small-`B'`→decompose→`F`. Apply `effective_commit_rows` across the
   [`crates/akita-types/src/proof/relation.rs`](crates/akita-types/src/proof/relation.rs),
   [`crates/akita-verifier/src/protocol/ring_switch.rs`](crates/akita-verifier/src/protocol/ring_switch.rs),
   [`crates/akita-verifier/src/protocol/batched.rs`](crates/akita-verifier/src/protocol/batched.rs).
-- Prior art: `book/src/how/verifying/matrix_evaluation.md`, `specs/setup-product-sumcheck.md`,
+- Prior art: `book/src/how/verifying/matrix_evaluation.md`, `specs/archive/2026-Q3/setup-product-sumcheck.md`,
   `specs/setup-layout-repack.md`.

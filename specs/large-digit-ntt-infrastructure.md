@@ -4,13 +4,15 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-07-21 |
-| Status | active |
+| Status | implemented |
 | Branch | `codex/ntt-architecture` |
 | PR | [#358](https://github.com/LayerZero-Labs/akita/pull/358) |
 | Supersedes | the 2026-07 large-basis extension notes in `archive/2026-Q3/crt-ntt-accumulation-safety.md` |
 | Superseded-by | |
 | Book-chapter | book/src/foundations/ntt-crt.md |
 | Compatibility | internal API cutover and stricter terminal-proof validation; no proof or setup wire change |
+
+> **Shipped record.** The implementation landed in PR [#358](https://github.com/LayerZero-Labs/akita/pull/358). The planner search follow-up landed in PR [#355](https://github.com/LayerZero-Labs/akita/pull/355). This record remains in the root because the exact signed-digit and terminal NTT contract is still load-bearing.
 
 ## Summary
 
@@ -518,18 +520,10 @@ Implementation criteria completed on the current branch:
       and accumulation width across the production i8/L8 path and unified i16
       L8/L10/L11 paths, without a protocol fixture.
 
-Final merge evidence still required:
-
-- [ ] Run complete generated-schedule drift checks and confirm this PR changes
-      capability tests but not catalog policy/output.
-- [x] Run every locally available cheap repository preflight check on the final
-      documentation head; record unavailable tools explicitly.
-- [x] Complete the three CI feature-matrix Clippy configurations on the final
-      implementation tree.
-- [ ] Complete focused, broader, no-panic, and relevant portability checks on
-      the final refactored head.
-- [ ] Update the spec header to the PR number and `implemented` only when every
-      required criterion is complete.
+The implementation and merge-gate evidence are complete. PR #358 passed the
+generated-schedule drift check, focused and full test suites, the no-panic and
+portability checks, the CI feature matrix, and the documentation guardrails.
+The header records the merged implementation as `implemented`.
 
 ### Testing Strategy
 
@@ -701,7 +695,7 @@ No future optimization may bake one common ring degree into the abstraction,
 make the tail unconditional, expose CPU storage through backend traits, or
 weaken the verifier no-panic boundary.
 
-### Validation status
+### Validation record
 
 - Formatting, focused algebra/prover/verifier/config tests, `single_poly_e2e`,
   documentation guardrails, and generated all-schedules drift completed during
@@ -718,8 +712,8 @@ weaken the verifier no-panic boundary.
 - `cargo machete --with-metadata` was attempted but could not run because
   `cargo-machete` is not installed in the local environment.
 - This documentation pass does not rerun the full test suite.
-- Full generated-schedule drift, broader tests, and portability remain
-  merge-gate evidence rather than claims of this documentation pass.
+- The merged PR supplied the full generated-schedule drift, broader test,
+  no-panic, and portability evidence listed above.
 
 All live commands used as final evidence must be polled to a real exit code.
 
@@ -773,7 +767,9 @@ optimization surface without serving a supported schedule.
 
 ## Documentation and Follow-Up
 
-This spec is the canonical in-flight design record for the PR. Before merge:
+This spec is the retained implementation record for the merged PR. The Book is
+the narrative source for readers, while this file keeps the exact arithmetic
+and terminal verification contract used by the implementation.
 
 - keep `book/src/foundations/gadget-decomposition.md` authoritative for the
   digit-width mapping;
@@ -785,14 +781,16 @@ This spec is the canonical in-flight design record for the PR. Before merge:
   `scripts/gen_crt_capacity_profile.py`;
 - remove the superseded 2026-07 extension narrative from
   `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md`, leaving a pointer to this spec;
-- update this header with the PR number and final status; and
-- after the durable content is fully folded into the book, archive this spec
-  according to `specs/PRUNING.md`.
+- keep the merged PR and Book references above as the implementation history;
+  and
+- archive this record after the exact contract is no longer needed as a
+  load-bearing reference, according to `specs/PRUNING.md`.
 
-The planner follow-up must consume the same signed interval and exact-capacity
-primitive, remove artificial inner-basis caps, regenerate catalogs from the
-canonical generator, and report the L10/L11 schedule/security/performance
-tradeoff. It must not reproduce the capacity formula in planner-local code.
+The planner follow-up is complete. The proof-optimized configuration now
+searches inner bases through L10 for Q32 and L11 for Q64 and Q128, while the
+planner validates recursive balanced bases through the signed-i16 limit. The
+planner and NTT implementation share the signed-digit capacity contract rather
+than keeping a separate planner-local approximation.
 
 ## Reviewer Map
 

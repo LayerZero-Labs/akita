@@ -4,9 +4,16 @@
 |-------------|--------------------------------|
 | Author(s)   |                                |
 | Created     | 2026-06-02                     |
-| Status      | proposed                       |
-| PR          |                                |
+| Status      | archived                       |
+| PR          | #147; refactored by #287, #311, and #337 |
+| Superseded-by | book/src/how/proving/sumcheck-stages.md and book/src/how/verifying/setup_contribution.md |
 | Book-chapter | book/src/how/proving/sumcheck-stages.md |
+
+> **Archived implementation record.** The Stage 3 setup product sumcheck
+> shipped in PR [#147](https://github.com/LayerZero-Labs/akita/pull/147) and
+> was reorganized by later protocol refactors. Current behavior is documented
+> in the Book and implemented by `AkitaStage3Prover` and
+> `SetupSumcheckVerifier`. This record is retained for its design history.
 
 > **Harness supersession (PR #311).** Setup-contribution mode is now owned by
 > the config-selected schedule, not a caller argument. The singleton Jolt
@@ -17,19 +24,14 @@
 
 ## Summary
 
-In `SetupContributionMode::Direct`, each fold level's verifier proves the setup
-contribution `<S_{<=N}, setup_index_weight_S>` by scanning the expanded setup matrix inline.
-That scan dominates the per-level verifier cost and, inside the Jolt zkVM, is
-the single largest non-deserialization cost. This spec covers the
-`SetupContributionMode::Recursive` path, where each **non-terminal** fold level
-instead delegates the setup contribution to a **setup-product sumcheck** — the
-Stage-3 `SetupSumcheckProver` / `SetupSumcheckVerifier` pair — so the verifier
-replays a sumcheck and evaluates the setup-weight vector without materializing
-it. The current verifier still builds dense equality tables and scans the
-selected setup prefix locally; it becomes truly sublinear in the setup prefix
-only once the prefix opening is carried into a later fold. This spec also adds
-the missing end-to-end test coverage and a runnable example for this mode, both
-of which previously only existed for `Direct`.
+In direct mode, each fold level's verifier proves the setup contribution
+`<S_{<=N}, setup_index_weight_S>` by scanning the required public setup prefix.
+In the config-selected recursive path, each non-terminal fold level delegates
+the setup contribution to a Stage 3 setup product sumcheck. The verifier
+replays that sumcheck, evaluates the setup weight vector without materializing
+it, and closes the result against the selected setup-prefix opening. This
+record also introduced the end-to-end test coverage and profiling harness that
+exercise the recursive path.
 
 ## Intent
 
@@ -103,18 +105,22 @@ Key abstractions and surfaces:
 
 ## Evaluation
 
-### Acceptance Criteria
+### Historical acceptance record
 
-- [ ] `SetupSumcheckProver` lives in `akita-prover`; `akita-sumcheck` no longer
+The original acceptance criteria were completed by the shipped implementation
+and its later protocol refactors. The current implementation names are used
+below so this archived record does not look like an open task.
+
+- [x] `AkitaStage3Prover` lives in `akita-prover`; `akita-sumcheck` no longer
       exposes a general `factored_product` module.
-- [ ] `SetupSumcheckVerifier` lives in `akita-verifier::stages::stage3` with a
+- [x] `SetupSumcheckVerifier` lives in `akita-verifier::stages::stage3` with a
       `new` + `verify` split.
-- [ ] `recursive_setup_e2e` tests pass: recursive round-trip at folding arities
-      and cross-mode rejection.
-- [ ] `cargo run --release -p akita-pcs --example profile` with
+- [x] `recursive_setup_e2e` covers recursive round-trip behavior and cross-mode
+      rejection.
+- [x] `cargo run --release -p akita-pcs --example profile` with
       `AKITA_SETUP_MODE=recursive` (and `direct` for comparison) exercises the
       recursive setup-contribution path with per-mode proof-size reporting.
-- [ ] `cargo fmt`, `cargo clippy --all -- -D warnings`, and `cargo test` are
+- [x] `cargo fmt`, `cargo clippy --all -- -D warnings`, and `cargo test` were
       green.
 
 ### Testing Strategy

@@ -4,10 +4,10 @@
 |---------------|--------------------------------------------|
 | Author(s)     | Amirhossein Khajehpour, Quang Dao          |
 | Created       | 2026-07-10                                 |
-| Status        | active                                     |
+| Status        | implemented                                |
 | PR            | #301; revised by #318                      |
 | Supersedes    | Fixed two-level rollout in this document   |
-| Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection policy remains active |
+| Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection remains the current policy |
 | Book-chapter  | book/src/roadmap/verifier-offloading.md    |
 
 > **Commit-API update (2026-08-10).** The public commitment flow is one
@@ -35,20 +35,22 @@ for review history only. It is not a current schedule invariant, generated-row
 validation rule, or verifier acceptance condition.
 
 This revision is intentionally narrower than the future multi-objective
-planner. It specifies the remediation that can land with PR #318: exact
+planner. It records the remediation shipped by PR #318: exact
 recursive proof accounting, explicit direct/offloaded alternatives, a minimum
 recursive-witness contraction, and a verifier-first schedule comparator. It
 does not add mixed ring dimensions, independent role bases, commitment slicing,
-or a full Pareto frontier.
+or a full Pareto frontier. The planner policy and generated schedule contract
+are shipped. The Book roadmap tracks broader verifier-offloading work outside
+this record.
 
 ## Summary
 
-Recursive setup contribution currently runs Stage 3 and can select a committed
-setup prefix, but the planner neither decides which folds should offload nor
-guarantees that the next fold can prove the resulting prefix opening. Recursive
-suffix planning also assumes one commitment group, while complete offloading
-requires the successor to prove two openings together: its newly committed
-folded witness and the setup-prefix commitment selected by the preceding fold.
+Recursive setup contribution runs Stage 3 and can select a committed setup
+prefix. The planner decides which folds should offload and guarantees that a
+selected successor can prove the resulting prefix opening. Recursive suffix
+planning uses the two-group representation when the successor carries both its
+newly committed folded witness and the setup-prefix commitment selected by the
+preceding fold.
 
 This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
 generated `CommittedGroupProfile` and the independent-commit flow specified in
@@ -1245,7 +1247,7 @@ batch APIs can combine it with the witness claim.
 
 ## Documentation
 
-When implementation lands, fold durable behavior into:
+The implementation is shipped. Durable behavior is folded into:
 
 - `book/src/roadmap/verifier-offloading.md`;
 - `book/src/how/configuration.md`;
@@ -1261,7 +1263,7 @@ Update the statuses of related specs when their deferred work is completed.
 - `specs/archive/2026-Q3/setup-layout-repack.md`
 - `specs/archive/2026-Q3/setup-prefix-ladder.md`
 - `specs/archive/2026-Q3/group-local-opening-points.md`
-- `specs/setup-product-sumcheck.md`
+- `book/src/how/proving/sumcheck-stages.md`
 - `specs/archive/2026-Q3/multi-group-batching.md`
 - `specs/heterogeneous-group-source-contracts.md`
 - `crates/akita-types/src/proof/setup_prefix.rs`
