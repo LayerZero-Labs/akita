@@ -4,7 +4,13 @@ use crate::protocol::ring_relation::CompressionWitnessMaterialization;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{AkitaCommitmentHint, CommitmentRingDims, DigitBlocks, RingRole, RingVec};
+use akita_types::{
+    AkitaCommitmentHint, CoefficientPackingFoldProduct, CommitmentRingDims, DigitBlocks,
+    OpeningFamily, RingRole, RingVec,
+};
+
+/// Method-typed folded opening retained for quotient construction.
+pub(crate) type GroupFoldedOpening<F> = OpeningFamily<RingVec<F>, CoefficientPackingFoldProduct<F>>;
 
 /// One distributed fold window's centered coefficients and signed extrema.
 pub(crate) struct CenteredFoldChunk {
@@ -146,7 +152,7 @@ pub struct RingRelationGroupWitness<F: FieldCore> {
     pub z_folded_rings: DecomposeFoldWitness<F>,
     pub(crate) z_folded_coefficients: FoldChunkCoefficients,
     pub e_hat: DigitBlocks,
-    pub e_folded: RingVec<F>,
+    pub(crate) folded_opening: GroupFoldedOpening<F>,
     pub hint: AkitaCommitmentHint<F>,
     role_dims: CommitmentRingDims,
 }
@@ -165,7 +171,26 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
             z_folded_rings,
             z_folded_coefficients,
             e_hat,
-            e_folded,
+            folded_opening: OpeningFamily::EvaluationTrace(e_folded),
+            hint,
+            role_dims,
+        }
+    }
+
+    /// Construct one coefficient-packing group witness from checked physical coordinates.
+    pub(crate) fn from_coefficient_packing_parts(
+        z_folded_rings: DecomposeFoldWitness<F>,
+        z_folded_coefficients: FoldChunkCoefficients,
+        e_hat: DigitBlocks,
+        product: CoefficientPackingFoldProduct<F>,
+        hint: AkitaCommitmentHint<F>,
+        role_dims: CommitmentRingDims,
+    ) -> Self {
+        Self {
+            z_folded_rings,
+            z_folded_coefficients,
+            e_hat,
+            folded_opening: OpeningFamily::SubringCoefficientPacking(product),
             hint,
             role_dims,
         }
@@ -187,11 +212,13 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
         match role {
             RingRole::Inner => {
                 self.z_folded_rings.ensure_ring_dim::<D>()?;
-                if !self.e_folded.can_decode_vec(D) {
-                    return Err(AkitaError::InvalidSize {
-                        expected: D,
-                        actual: self.e_folded.coeff_len(),
-                    });
+                if let OpeningFamily::EvaluationTrace(e_folded) = &self.folded_opening {
+                    if !e_folded.can_decode_vec(D) {
+                        return Err(AkitaError::InvalidSize {
+                            expected: D,
+                            actual: e_folded.coeff_len(),
+                        });
+                    }
                 }
                 self.z_folded_coefficients.ensure_ring_dim::<D>()?;
             }
@@ -232,7 +259,12 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
     /// Borrow folded `e` rows after [`Self::ensure_role_dim`].
     pub fn e_folded_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         self.ensure_role_dim::<D>(RingRole::Inner)?;
-        Ok(self.e_folded.as_ring_slice_trusted::<D>())
+        match &self.folded_opening {
+            OpeningFamily::EvaluationTrace(e_folded) => e_folded.as_ring_slice::<D>(),
+            OpeningFamily::SubringCoefficientPacking(_) => Err(AkitaError::InvalidSetup(
+                "coefficient-packing folded opening is not an A-ring vector".into(),
+            )),
+        }
     }
 }
 
@@ -246,34 +278,6 @@ pub struct RingRelationWitness<F: FieldCore> {
 }
 
 impl<F: FieldCore> RingRelationWitness<F> {
-    /// Construct from D-free fold outputs under schedule-derived role dimensions.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_flat_parts(
-        z_folded_rings: DecomposeFoldWitness<F>,
-        z_folded_coefficients: FoldChunkCoefficients,
-        fold_grind_nonce: u32,
-        e_hat: DigitBlocks,
-        e_folded: RingVec<F>,
-        hint: AkitaCommitmentHint<F>,
-        role_dims: CommitmentRingDims,
-        d_quotients: RingVec<F>,
-        compression: Option<CompressionWitnessMaterialization<F>>,
-    ) -> Self {
-        Self {
-            fold_grind_nonce,
-            groups: vec![RingRelationGroupWitness::from_parts(
-                z_folded_rings,
-                z_folded_coefficients,
-                e_hat,
-                e_folded,
-                hint,
-                role_dims,
-            )],
-            d_quotients,
-            compression,
-        }
-    }
-
     /// Construct from already-grouped witnesses.
     pub(crate) fn from_groups(
         fold_grind_nonce: u32,

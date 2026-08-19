@@ -18,10 +18,10 @@ use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
-    dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix, GroupBatchStatement,
-    LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    canonical_base_field_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
+    AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
+    GroupBatchStatement, LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -43,14 +43,14 @@ pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 // fall through to the offline DP planner on table miss via the default
 // `resolve_catalog_row_for_key` fallback.
 pub(super) type OneHotCfg = fp128::OneHot;
-pub(super) const ONEHOT_D: usize = OneHotCfg::D;
+pub(super) const ONEHOT_D: usize = 256;
 // `fp128::OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
 // ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
 // per ring element.
 pub(super) const ONEHOT_K: usize = 256;
 
 pub(super) type DenseCfg = fp128::Dense;
-pub(super) const DENSE_D: usize = DenseCfg::D;
+pub(super) const DENSE_D: usize = 256;
 
 static INIT_RAYON: Once = Once::new();
 
@@ -262,22 +262,11 @@ where
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
 }
 
-pub(super) fn opening_from_poly<'a, const D: usize, P>(
-    poly: &'a P,
-    point: &[F],
-    layout: &(impl LevelParamsLike + ?Sized),
-) -> F
-where
-    P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
-    CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, F, D>,
-{
-    opening_from_poly_with_basis::<D, P>(poly, point, layout, BasisMode::Lagrange)
-}
-
 pub(super) fn opening_from_poly_for_layout<'a, P>(
     poly: &'a P,
     point: &[F],
     layout: &(impl LevelParamsLike + ?Sized),
+    basis_mode: BasisMode,
 ) -> F
 where
     P: RootOpeningSource<F, 64>
@@ -285,15 +274,19 @@ where
         + RootOpeningSource<F, 128>
         + RootPolyShape<F, 128>
         + RootOpeningSource<F, 256>
-        + RootPolyShape<F, 256>,
+        + RootPolyShape<F, 256>
+        + RootOpeningSource<F, 512>
+        + RootPolyShape<F, 512>,
     CpuBackend: OpeningFoldKernel<<P as RootOpeningSource<F, 64>>::OpeningView<'a>, F, 64>
         + OpeningFoldKernel<<P as RootOpeningSource<F, 128>>::OpeningView<'a>, F, 128>
-        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>,
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 256>>::OpeningView<'a>, F, 256>
+        + OpeningFoldKernel<<P as RootOpeningSource<F, 512>>::OpeningView<'a>, F, 512>,
 {
     match layout.inner_commit_matrix_params().ring_dimension() {
-        64 => opening_from_poly::<64, _>(poly, point, layout),
-        128 => opening_from_poly::<128, _>(poly, point, layout),
-        256 => opening_from_poly::<256, _>(poly, point, layout),
+        64 => opening_from_poly_with_basis::<64, _>(poly, point, layout, basis_mode),
+        128 => opening_from_poly_with_basis::<128, _>(poly, point, layout, basis_mode),
+        256 => opening_from_poly_with_basis::<256, _>(poly, point, layout, basis_mode),
+        512 => opening_from_poly_with_basis::<512, _>(poly, point, layout, basis_mode),
         dimension => panic!("unsupported test opening ring dimension D={dimension}"),
     }
 }
@@ -355,12 +348,12 @@ pub(super) fn make_onehot_poly(num_vars: usize, seed: u64) -> OneHotPoly<F, u8> 
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(ONEHOT_K, ONEHOT_D, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(ONEHOT_K, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
     let evals = dense_field_evals(nv, seed);
-    DensePoly::<F>::from_field_evals(nv, DENSE_D, &evals).expect("dense poly")
+    DensePoly::<F>::from_field_evals(nv, &evals).expect("dense poly")
 }
 
 fn splitmix64_next(state: &mut u64) -> u64 {
@@ -380,6 +373,48 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
         out.push(F::from_canonical_u128_reduced(v as u128));
     }
     out
+}
+
+/// Signed `u64` evaluations: every centered magnitude is a full `u64`, on both
+/// signs.
+///
+/// This is the workload `fp128::DenseBounded` exists for, and it is deliberately
+/// *wider* than [`dense_field_evals`]: that generator draws `u64` magnitudes but
+/// only on the positive side, whereas a bounded source has to survive
+/// `-u64::MAX` too. Both endpoints are forced into every draw sequence by
+/// [`u64_magnitude_endpoints`], so a fixture can never drift into staying
+/// comfortably small.
+///
+/// A `u64` magnitude needs `log_commit_bound = 65`, not `64`: the bound is a
+/// *signed* bit width, so `k` means `[-2^(k-1), 2^(k-1) - 1]` and covering
+/// `u64::MAX = 2^64 - 1` takes one sign bit plus 64 magnitude bits.
+pub(super) fn u64_dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
+    let n = 1usize << nv;
+    let mut out = Vec::with_capacity(n);
+    let mut state = seed;
+    for index in 0..n {
+        // Seed the first few slots with the exact endpoints so the fixture always
+        // exercises them, then fill the rest with full-width draws.
+        if let Some(value) = u64_magnitude_endpoints().get(index) {
+            out.push(*value);
+            continue;
+        }
+        let draw = splitmix64_next(&mut state);
+        let magnitude = F::from_canonical_u128_reduced(u128::from(draw));
+        out.push(if draw & 1 == 0 { magnitude } else { -magnitude });
+    }
+    out
+}
+
+/// The centered endpoints a `u64` workload reaches: `±u64::MAX` and `±1`.
+///
+/// A bounded schedule must accept all of these. `-u64::MAX` is the interesting
+/// one — it is the widest *negative* centered magnitude, and balanced digits
+/// reach further negative than positive, so a guard stated only on the positive
+/// side would miss it.
+pub(super) fn u64_magnitude_endpoints() -> [F; 4] {
+    let max = F::from_canonical_u128_reduced(u128::from(u64::MAX));
+    [max, -max, F::one(), -F::one()]
 }
 
 pub(super) fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
@@ -413,25 +448,25 @@ pub(super) fn first_stage3_proof_mut(
         .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
 }
 
-fn first_setup_prefix_slot(schedule: &FoldSchedule) -> &SetupPrefixSlotId {
+fn first_setup_prefix_slot(schedule: &FoldSchedule) -> SetupPrefixSlotId {
     schedule
         .recursive_folds
         .iter()
         .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
         .expect("recursive profile must carry a setup prefix")
+        .slot_id()
 }
 
 fn verifier_setup_with_alternate_full_prefix(
     setup: &AkitaProverSetup<F>,
     verifier_setup: &AkitaVerifierSetup<F>,
     slot_id: &SetupPrefixSlotId,
-) -> AkitaVerifierSetup<F> {
+) -> Option<AkitaVerifierSetup<F>> {
     let natural_len = slot_id.natural_len;
     let n_prefix = slot_id.n_prefix().expect("prefix length");
-    assert!(
-        natural_len < n_prefix,
-        "adversarial fixture requires a non-empty setup tail"
-    );
+    if natural_len == n_prefix {
+        return None;
+    }
 
     let original = setup.expanded.shared_matrix().as_field_slice();
     let mut altered = original.to_vec();
@@ -467,7 +502,7 @@ fn verifier_setup_with_alternate_full_prefix(
                 &altered_setup.expanded,
                 &backend,
                 &prepared,
-                &slot_id.commitment_params,
+                &slot_id.commitment_profile,
                 n_prefix,
                 natural_len,
             )
@@ -486,8 +521,10 @@ fn verifier_setup_with_alternate_full_prefix(
             .insert(replacement)
             .expect("insert verifier slot");
     }
-    AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
-        .expect("alternate verifier setup")
+    Some(
+        AkitaVerifierSetup::from_parts(verifier_setup.expanded.clone(), prefix_slots)
+            .expect("alternate verifier setup"),
+    )
 }
 
 /// Multi-group recursive roundtrip: two user precommitted groups plus one final group.
@@ -653,6 +690,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         );
 
         let shape = proof.shape();
+        assert_eq!(
+            shape,
+            canonical_base_field_proof_shape(&schedule).expect("canonical schedule proof shape"),
+            "a produced proof must have the verifier's canonical schedule-derived shape"
+        );
         let mut bytes = Vec::new();
         proof
             .serialize_compressed(&mut bytes)
@@ -696,23 +738,24 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         )
         .expect("generated-profile recursive verify");
 
-        let alternate_verifier_setup = verifier_setup_with_alternate_full_prefix(
+        if let Some(alternate_verifier_setup) = verifier_setup_with_alternate_full_prefix(
             &setup,
             &verifier_setup,
-            first_setup_prefix_slot(&schedule),
-        );
-        let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let alternate_result = Recursive::<BaseCfg>::batched_verify(
-            &proof,
-            &alternate_verifier_setup,
-            &mut alternate_transcript,
-            verify_claims(final_openings.clone()),
-            BasisMode::Lagrange,
-        );
-        assert!(
-            alternate_result.is_err(),
-            "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
-        );
+            &first_setup_prefix_slot(&schedule),
+        ) {
+            let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
+            let alternate_result = Recursive::<BaseCfg>::batched_verify(
+                &proof,
+                &alternate_verifier_setup,
+                &mut alternate_transcript,
+                verify_claims(final_openings.clone()),
+                BasisMode::Lagrange,
+            );
+            assert!(
+                alternate_result.is_err(),
+                "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
+            );
+        }
 
         let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
             let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
@@ -772,18 +815,13 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     });
 }
 
-pub(super) fn make_onehot_poly_with_d_and_k(
-    nv: usize,
-    d: usize,
-    k: usize,
-    seed: u64,
-) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly_with_k(nv: usize, k: usize, seed: u64) -> OneHotPoly<F, u8> {
     let total_chunks = (1usize << nv) / k;
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..k) as u8))
         .collect();
-    OneHotPoly::<F, u8>::new(k, d, indices).expect("onehot poly")
+    OneHotPoly::<F, u8>::new(k, indices).expect("onehot poly")
 }
 
 #[cfg(feature = "logging-transcript")]
@@ -829,8 +867,39 @@ pub(super) fn first_label_index_after(
         .map(|offset| start + offset)
 }
 
+/// Assert that every public claim-batching squeeze belongs to a fold whose
+/// complete opening payload was already absorbed.
 #[cfg(feature = "logging-transcript")]
-fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
+pub(super) fn assert_claim_batching_follows_opening_payload(
+    events: &[akita_transcript::TranscriptEvent],
+) -> usize {
+    let mut payload_bound = false;
+    let mut batching_squeezes = 0usize;
+    for event in events {
+        let Some(label) = event_label(event) else {
+            continue;
+        };
+        if label == akita_transcript::labels::ABSORB_OPENING_PAYLOAD {
+            payload_bound = true;
+        } else if is_label_or_extension_limb(label, akita_transcript::labels::CHALLENGE_EVAL_BATCH)
+        {
+            assert!(
+                payload_bound,
+                "public claim-batching challenge preceded its fold opening payload"
+            );
+            batching_squeezes += 1;
+        } else if is_label_or_extension_limb(
+            label,
+            akita_transcript::labels::CHALLENGE_SPARSE_CHALLENGE,
+        ) {
+            payload_bound = false;
+        }
+    }
+    batching_squeezes
+}
+
+#[cfg(feature = "logging-transcript")]
+pub(super) fn is_label_or_extension_limb(candidate: &[u8], base: &[u8]) -> bool {
     candidate == base || akita_transcript::is_ext_limb_label(candidate, base)
 }
 

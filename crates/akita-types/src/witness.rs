@@ -9,16 +9,66 @@ use std::ops::Range;
 
 use akita_field::AkitaError;
 
-use crate::proof::relation::relation_rhs_layout_for;
 use crate::{
     CommitmentRingDims, CommittedGroupParams, CompressionMapPlan, LevelParamsLike,
-    OpeningClaimsLayout, RelationRowFamily, COMPRESSION_MAP_COUNT,
+    OpeningClaimsLayout, RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
+    COMPRESSION_MAP_COUNT,
 };
 
 mod chunk_partition;
 mod scalar_len;
 
 pub use chunk_partition::dyadic_block_ranges;
+
+/// Exact physical coefficient count of the grouped `[Z | E | T]` witness body.
+///
+/// This excludes relation quotients, compression layers, and alignment. It is
+/// the shared sizing authority for runtime witness layout and planner
+/// contraction/scoring decisions.
+pub fn grouped_witness_body_coefficients(
+    params: &dyn LevelParamsLike,
+    role_dims: CommitmentRingDims,
+    extension_degree: usize,
+    num_claims: usize,
+    num_chunks: usize,
+) -> Result<usize, AkitaError> {
+    role_dims.validate_role_projection()?;
+    if params.inner_commit_matrix_params().ring_dimension() != role_dims.d_a() {
+        return Err(AkitaError::InvalidSetup(
+            "grouped witness body role dimensions disagree with its parameters".into(),
+        ));
+    }
+    if num_claims == 0
+        || params.num_live_blocks() == 0
+        || params.num_positions_per_block() == 0
+        || params.num_digits_open() == 0
+        || params.num_digits_inner() == 0
+        || params.num_digits_outer() == 0
+        || params.num_digits_fold() == 0
+        || params.a_rows_len() == 0
+    {
+        return Err(AkitaError::InvalidSetup(
+            "witness group has malformed dimensions".into(),
+        ));
+    }
+    let opening_geometry = crate::proof::relation::opening_row_geometry(params, extension_degree)?;
+    let mut total = 0usize;
+    for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
+        let (z_len, e_len, t_len) = witness_unit_lengths(
+            params,
+            role_dims,
+            opening_geometry,
+            num_claims,
+            block_range.len(),
+        )?;
+        total = total
+            .checked_add(z_len)
+            .and_then(|len| len.checked_add(e_len))
+            .and_then(|len| len.checked_add(t_len))
+            .ok_or_else(|| AkitaError::InvalidSetup("grouped witness body overflow".into()))?;
+    }
+    Ok(total)
+}
 
 /// One physical `[z_hat | e_hat | t_hat]` group-and-chunk unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +79,7 @@ pub struct WitnessUnitLayout {
     num_live_blocks: usize,
     z_range: Range<usize>,
     e_range: Range<usize>,
+    e_geometry: RelationRowGeometry,
     t_range: Range<usize>,
 }
 
@@ -64,12 +115,13 @@ pub struct CompressionWitnessLayerLayout {
 /// One native relation-quotient row in the shared R tail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessQuotientRowLayout {
-    ring_dim: usize,
+    geometry: RelationRowGeometry,
     range: Range<usize>,
 }
 
 impl WitnessUnitLayout {
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_for_test(
         group_index: usize,
         chunk_index: usize,
@@ -77,6 +129,7 @@ impl WitnessUnitLayout {
         num_live_blocks: usize,
         z_range: Range<usize>,
         e_range: Range<usize>,
+        e_geometry: RelationRowGeometry,
         t_range: Range<usize>,
     ) -> Self {
         Self {
@@ -86,6 +139,7 @@ impl WitnessUnitLayout {
             num_live_blocks,
             z_range,
             e_range,
+            e_geometry,
             t_range,
         }
     }
@@ -118,6 +172,11 @@ impl WitnessUnitLayout {
         self.e_range.clone()
     }
 
+    #[must_use]
+    pub const fn e_geometry(&self) -> RelationRowGeometry {
+        self.e_geometry
+    }
+
     pub fn t_range(&self) -> Range<usize> {
         self.t_range.clone()
     }
@@ -125,7 +184,6 @@ impl WitnessUnitLayout {
     #[allow(clippy::too_many_arguments)]
     pub fn e_coefficient_index(
         &self,
-        source_ring_dim: usize,
         role_ring_dim: usize,
         num_claims: usize,
         depth_open: usize,
@@ -141,7 +199,7 @@ impl WitnessUnitLayout {
             depth_open,
             "witness E shape overflow",
         )?
-        .checked_mul(source_ring_dim)
+        .checked_mul(self.e_geometry.physical_coefficient_width())
         .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?;
         if self.e_range.len() != expected_len {
             return Err(AkitaError::InvalidSetup(
@@ -162,7 +220,7 @@ impl WitnessUnitLayout {
         projected_coefficient_index(
             &self.e_range,
             "witness E",
-            source_ring_dim,
+            self.e_geometry.physical_coefficient_width(),
             role_ring_dim,
             num_claims
                 .checked_mul(self.num_live_blocks)
@@ -285,12 +343,13 @@ impl WitnessUnitLayout {
 
 impl WitnessQuotientRowLayout {
     #[cfg(test)]
-    pub(crate) fn new_for_test(ring_dim: usize, range: Range<usize>) -> Self {
-        Self { ring_dim, range }
+    pub(crate) fn new_for_test(geometry: RelationRowGeometry, range: Range<usize>) -> Self {
+        Self { geometry, range }
     }
 
-    pub fn ring_dim(&self) -> usize {
-        self.ring_dim
+    #[must_use]
+    pub const fn geometry(&self) -> RelationRowGeometry {
+        self.geometry
     }
 
     pub fn range(&self) -> Range<usize> {
@@ -379,11 +438,63 @@ impl WitnessLayout {
         }
     }
 
+    pub(crate) fn validate_internal_ranges(&self) -> Result<(), AkitaError> {
+        if self.quotient_depth == 0 || self.r_range.end != self.live_coeff_len() {
+            return Err(AkitaError::InvalidSetup(
+                "witness layout has malformed quotient geometry".into(),
+            ));
+        }
+        let mut previous_row_end = None;
+        for row in &self.r_rows {
+            let expected_len = self
+                .quotient_depth
+                .checked_mul(row.geometry.physical_coefficient_width())
+                .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
+            if row.range.len() != expected_len
+                || previous_row_end.is_some_and(|end| row.range.start < end)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "witness quotient rows are not canonically ordered".into(),
+                ));
+            }
+            previous_row_end = Some(row.range.end);
+        }
+
+        let mut ranges = Vec::new();
+        for unit in &self.units {
+            ranges.extend([unit.z_range(), unit.e_range(), unit.t_range()]);
+        }
+        ranges.extend(self.r_rows.iter().map(WitnessQuotientRowLayout::range));
+        for layer in &self.compression_layers {
+            ranges.extend(layer.f_spans.iter().map(|(_, span)| span.range()));
+            ranges.push(layer.h_span.range());
+        }
+        ranges.extend(self.compression_alignment_ranges.iter().cloned());
+        ranges.retain(|range| !range.is_empty());
+        ranges.sort_unstable_by_key(|range| range.start);
+        let mut cursor = 0usize;
+        for range in ranges {
+            if range.start != cursor || range.end > self.live_coeff_len() {
+                return Err(AkitaError::InvalidSetup(
+                    "witness ranges do not form one exact live partition".into(),
+                ));
+            }
+            cursor = range.end;
+        }
+        if cursor != self.live_coeff_len() || self.r_range.start > self.r_range.end {
+            return Err(AkitaError::InvalidSetup(
+                "witness ranges do not cover the declared live prefix".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Resolve exact chunk-major coefficient ranges from the canonical level
     /// parameters and opening claims layout.
     pub fn new(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
+        relation_geometry: &RelationWitnessGeometry,
         num_chunks: usize,
         quotient_depth: usize,
     ) -> Result<Self, AkitaError> {
@@ -398,7 +509,16 @@ impl WitnessLayout {
                 "witness chunk count exceeds verifier cap".into(),
             ));
         }
-        lp.validate_opening_batch(opening_batch)?;
+        let expected_relation_geometry = RelationWitnessGeometry::for_level(
+            lp,
+            opening_batch,
+            relation_geometry.extension_degree(),
+        )?;
+        if &expected_relation_geometry != relation_geometry {
+            return Err(AkitaError::InvalidSetup(
+                "witness layout received relation geometry for different level parameters".into(),
+            ));
+        }
         let relation_group_order = opening_batch.root_group_order()?;
 
         let mut units = Vec::with_capacity(
@@ -410,9 +530,10 @@ impl WitnessLayout {
         let group_geometry = relation_group_order
             .iter()
             .map(|&group_index| {
-                let params = lp.group_params(opening_batch, group_index)?;
+                let params = lp.group_params_geometry(opening_batch, group_index)?;
                 let group = opening_batch.group_layout(group_index)?;
-                let role_dims = lp.group_role_dims(opening_batch, group_index)?;
+                let role_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
+                let opening_geometry = relation_geometry.group_opening_geometry(group_index)?;
                 let num_claims = group.num_polynomials();
                 let depth_witness = params.num_digits_inner();
                 let depth_commit = params.num_digits_outer();
@@ -436,6 +557,7 @@ impl WitnessLayout {
                     group_index,
                     params,
                     role_dims,
+                    opening_geometry,
                     num_claims,
                     chunk_block_ranges,
                 ))
@@ -445,8 +567,14 @@ impl WitnessLayout {
         // Chunk is the outer physical key. Within each chunk, groups are laid
         // out in relation order, and each unit is `[Z | E | T]`.
         for chunk_index in 0..num_chunks {
-            for &(group_index, params, role_dims, num_claims, ref chunk_block_ranges) in
-                &group_geometry
+            for &(
+                group_index,
+                params,
+                role_dims,
+                opening_geometry,
+                num_claims,
+                ref chunk_block_ranges,
+            ) in &group_geometry
             {
                 let global_block_range = chunk_block_ranges
                     .get(chunk_index)
@@ -454,8 +582,13 @@ impl WitnessLayout {
                     .clone();
                 let global_block_start = global_block_range.start;
                 let chunk_num_live_blocks = global_block_range.len();
-                let (z_len, e_len, t_len) =
-                    witness_unit_lengths(params, role_dims, num_claims, chunk_num_live_blocks)?;
+                let (z_len, e_len, t_len) = witness_unit_lengths(
+                    params,
+                    role_dims,
+                    opening_geometry,
+                    num_claims,
+                    chunk_num_live_blocks,
+                )?;
                 let z_range = checked_range(cursor, z_len, "witness Z range overflow")?;
                 let e_range = checked_range(z_range.end, e_len, "witness E range overflow")?;
                 let t_range = checked_range(e_range.end, t_len, "witness T range overflow")?;
@@ -467,11 +600,12 @@ impl WitnessLayout {
                     num_live_blocks: chunk_num_live_blocks,
                     z_range,
                     e_range,
+                    e_geometry: opening_geometry,
                     t_range,
                 });
             }
         }
-        let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+        let relation_layout = relation_geometry.rhs_layout();
         let row_families = relation_layout.row_families()?;
         let r_start = cursor;
         let first_compression_row = row_families
@@ -485,13 +619,13 @@ impl WitnessLayout {
             .unwrap_or(row_families.len());
         let mut r_rows = vec![None; row_families.len()];
         for (row_index, row) in row_families[..first_compression_row].iter().enumerate() {
-            let ring_dim = row.ring_dim();
+            let geometry = row.geometry();
             let len = quotient_depth
-                .checked_mul(ring_dim)
+                .checked_mul(geometry.physical_coefficient_width())
                 .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
             let range = checked_range(cursor, len, "witness R range overflow")?;
             cursor = range.end;
-            r_rows[row_index] = Some(WitnessQuotientRowLayout { ring_dim, range });
+            r_rows[row_index] = Some(WitnessQuotientRowLayout { geometry, range });
         }
         if !lp.payload_mode.is_compressed() {
             let r_rows = r_rows
@@ -514,12 +648,7 @@ impl WitnessLayout {
                 quotient_depth,
             });
         }
-        let relation_coefficient_block = relation_layout
-            .groups
-            .iter()
-            .map(|group| group.role_dims.common_relation_coeff_count())
-            .min()
-            .ok_or_else(|| AkitaError::InvalidSetup("relation groups are empty".into()))?;
+        let relation_coefficient_block = relation_geometry.relation_coefficient_block_len()?;
         let mut compression_alignment_ranges = Vec::with_capacity(COMPRESSION_MAP_COUNT + 1);
         let aligned_compression_start = checked_align_up(
             cursor,
@@ -583,12 +712,12 @@ impl WitnessLayout {
                 let row = *row_families.get(row_index).ok_or_else(|| {
                     AkitaError::InvalidSetup("compression F quotient row is missing".into())
                 })?;
-                let (group_index, ring_dim) = match row {
+                let (group_index, geometry) = match row {
                     RelationRowFamily::CompressionF {
                         group_index,
                         map_index: row_map_index,
-                        ring_dim,
-                    } if row_map_index == map_index => (group_index, ring_dim),
+                        geometry,
+                    } if row_map_index == map_index => (group_index, geometry),
                     _ => {
                         return Err(AkitaError::InvalidSetup(
                             "compression F quotient order disagrees with relation rows".into(),
@@ -597,13 +726,15 @@ impl WitnessLayout {
                 };
                 let range = checked_range(
                     cursor,
-                    quotient_depth.checked_mul(ring_dim).ok_or_else(|| {
-                        AkitaError::InvalidSetup("compression quotient width overflow".into())
-                    })?,
+                    quotient_depth
+                        .checked_mul(geometry.physical_coefficient_width())
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("compression quotient width overflow".into())
+                        })?,
                     "compression quotient range overflow",
                 )?;
                 cursor = range.end;
-                r_rows[row_index] = Some(WitnessQuotientRowLayout { ring_dim, range });
+                r_rows[row_index] = Some(WitnessQuotientRowLayout { geometry, range });
                 f_quotient_rows.push((group_index, row_index));
             }
             let h_quotient_row = first_compression_row
@@ -614,11 +745,11 @@ impl WitnessLayout {
             let h_row = *row_families.get(h_quotient_row).ok_or_else(|| {
                 AkitaError::InvalidSetup("compression H quotient row is missing".into())
             })?;
-            let h_ring_dim = match h_row {
+            let h_geometry = match h_row {
                 RelationRowFamily::CompressionH {
                     map_index: row_map_index,
-                    ring_dim,
-                } if row_map_index == map_index => ring_dim,
+                    geometry,
+                } if row_map_index == map_index => geometry,
                 _ => {
                     return Err(AkitaError::InvalidSetup(
                         "compression H quotient order disagrees with relation rows".into(),
@@ -627,14 +758,16 @@ impl WitnessLayout {
             };
             let h_quotient_range = checked_range(
                 cursor,
-                quotient_depth.checked_mul(h_ring_dim).ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression quotient width overflow".into())
-                })?,
+                quotient_depth
+                    .checked_mul(h_geometry.physical_coefficient_width())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression quotient width overflow".into())
+                    })?,
                 "compression quotient range overflow",
             )?;
             cursor = h_quotient_range.end;
             r_rows[h_quotient_row] = Some(WitnessQuotientRowLayout {
-                ring_dim: h_ring_dim,
+                geometry: h_geometry,
                 range: h_quotient_range,
             });
             compression_layers.push(CompressionWitnessLayerLayout {
@@ -656,7 +789,7 @@ impl WitnessLayout {
         let successor_a_alignment = if num_groups > 1 {
             group_geometry
                 .iter()
-                .map(|(_, _, role_dims, _, _)| role_dims.d_a())
+                .map(|(_, _, role_dims, _, _, _)| role_dims.d_a())
                 .max()
                 .ok_or_else(|| AkitaError::InvalidSetup("witness groups are empty".into()))?
         } else {
@@ -860,19 +993,23 @@ impl WitnessLayout {
         &self,
         relation_row: usize,
         quotient_digit: usize,
-        coefficient: usize,
+        coordinate_plane: usize,
+        modulus_coefficient: usize,
     ) -> Result<usize, AkitaError> {
         let row = self.r_rows.get(relation_row).ok_or_else(|| {
             AkitaError::InvalidInput("witness R semantic index out of range".into())
         })?;
-        if quotient_digit >= self.quotient_depth || coefficient >= row.ring_dim {
+        if quotient_digit >= self.quotient_depth {
             return Err(AkitaError::InvalidInput(
                 "witness R semantic index out of range".into(),
             ));
         }
+        let physical_coefficient = row
+            .geometry
+            .physical_coefficient_index(coordinate_plane, modulus_coefficient)?;
         let local = quotient_digit
-            .checked_mul(row.ring_dim)
-            .and_then(|base| base.checked_add(coefficient))
+            .checked_mul(row.geometry.physical_coefficient_width())
+            .and_then(|base| base.checked_add(physical_coefficient))
             .ok_or_else(|| AkitaError::InvalidSetup("witness R index overflow".into()))?;
         checked_range_index(&row.range, local, "witness R")
     }
@@ -907,6 +1044,7 @@ fn checked_align_up(value: usize, alignment: usize, context: &str) -> Result<usi
 fn witness_unit_lengths(
     params: &dyn LevelParamsLike,
     role_dims: CommitmentRingDims,
+    opening_geometry: RelationRowGeometry,
     num_claims: usize,
     chunk_num_live_blocks: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
@@ -924,7 +1062,7 @@ fn witness_unit_lengths(
         params.num_digits_open(),
         "witness E width overflow",
     )?
-    .checked_mul(role_dims.d_a())
+    .checked_mul(opening_geometry.physical_coefficient_width())
     .ok_or_else(|| AkitaError::InvalidSetup("witness E width overflow".into()))?;
     let t_len = num_claims
         .checked_mul(chunk_num_live_blocks)
@@ -1011,13 +1149,19 @@ fn checked_range_index(
 }
 
 fn checked_owned_block(unit: &WitnessUnitLayout, global_block: usize) -> Result<usize, AkitaError> {
+    let ownership_error = || {
+        AkitaError::InvalidInput(format!(
+            "witness fold block {global_block} is not owned by group {} chunk {} range {:?}",
+            unit.group_index,
+            unit.chunk_index,
+            unit.global_block_range()
+        ))
+    };
     let local = global_block
         .checked_sub(unit.global_block_start)
-        .ok_or_else(|| AkitaError::InvalidInput("witness fold is not owned by unit".into()))?;
+        .ok_or_else(&ownership_error)?;
     if local >= unit.num_live_blocks {
-        return Err(AkitaError::InvalidInput(
-            "witness fold is not owned by unit".into(),
-        ));
+        return Err(ownership_error());
     }
     Ok(local)
 }
@@ -1222,223 +1366,5 @@ impl ChunkedWitnessCfg {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::SisModulusProfileId;
-
-    #[test]
-    fn default_is_single_chunk() {
-        let cfg = ChunkedWitnessCfg::default();
-        assert_eq!(cfg, ChunkedWitnessCfg::default_non_chunked());
-        assert_eq!(cfg.num_chunks, 1);
-        assert_eq!(cfg.num_activated_levels, 0);
-        assert!(!cfg.uses_multi_chunk());
-        cfg.validate().expect("default config is valid");
-    }
-
-    #[test]
-    fn d64_production_uses_multi_chunk() {
-        let cfg = ChunkedWitnessCfg::d64_production();
-        assert_eq!(cfg, MultiChunkProfileId::PRODUCTION.cfg());
-        assert_eq!(cfg.num_chunks, 8);
-        assert_eq!(cfg.num_activated_levels, 2);
-        assert!(cfg.uses_multi_chunk());
-        cfg.validate().expect("d64_production is valid");
-    }
-
-    #[test]
-    fn multi_chunk_profile_grid_roundtrip() {
-        for (index, profile) in MultiChunkProfileId::ALL.into_iter().enumerate() {
-            assert_eq!(profile.index(), index);
-            assert_eq!(MultiChunkProfileId::from_index(index), profile);
-            let cfg = ChunkedWitnessCfg::from_profile(profile);
-            assert_eq!(cfg.profile_id(), Some(profile));
-            cfg.validate().expect("grid profile is valid");
-        }
-    }
-
-    fn test_layout(
-        num_chunks: usize,
-    ) -> (CommittedGroupParams, OpeningClaimsLayout, WitnessLayout) {
-        let mut lp = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q32Offset99,
-            32,
-            2,
-            1,
-            1,
-            1,
-            akita_challenges::SparseChallengeConfig::pm1_only(1),
-        )
-        .with_decomp(4, 25, 1, 2, 2)
-        .expect("test params");
-        lp.num_digits_fold = 3;
-        let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
-        let layout =
-            WitnessLayout::new(&lp, &opening_batch, num_chunks, 2).expect("witness layout");
-        (lp, opening_batch, layout)
-    }
-
-    #[test]
-    fn layout_indexing_matches_digit_innermost_semantics() {
-        let (lp, opening_batch, layout) = test_layout(2);
-        let unit = layout.unit(0, 1).expect("unit");
-        let depth_fold = lp.num_digits_fold();
-        assert_ne!(
-            lp.num_digits_inner, lp.num_digits_outer,
-            "fixture must distinguish witness and commitment depths"
-        );
-        assert_eq!(unit.global_block_range(), 3..7);
-        let dims = lp.role_dims();
-        assert_eq!(
-            unit.e_coefficient_index(dims.d_a(), dims.d_d(), 2, 2, 1, 6, 0, 1, 0)
-                .expect("e"),
-            unit.e_range().start + 15 * dims.d_a()
-        );
-        assert_eq!(
-            unit.t_coefficient_index(dims.d_a(), dims.d_b(), 2, 1, 2, 0, 5, 0, 0, 1, 0,)
-                .expect("t"),
-            unit.t_range().start + 5 * dims.d_a()
-        );
-        assert_eq!(
-            unit.z_coefficient_index(dims.d_a(), 4, 1, depth_fold, 1, 0, 0, 0)
-                .expect("z"),
-            unit.z_range().start + depth_fold * dims.d_a()
-        );
-        assert_eq!(
-            layout.r_coefficient_index(2, 1, 0).expect("r"),
-            layout.r_rows()[2].range().start + layout.r_rows()[2].ring_dim()
-        );
-        assert_eq!(opening_batch.num_total_polynomials(), 2);
-    }
-
-    #[test]
-    fn balanced_chunks_are_exact_and_contiguous() {
-        let (_, _, layout) = test_layout(2);
-        let mut units = layout.units_for_group(0).expect("units");
-        let first = units.next().expect("first unit");
-        let second = units.next().expect("second unit");
-        assert!(units.next().is_none());
-        assert_eq!(first.global_block_range(), 0..3);
-        assert_eq!(second.global_block_range(), 3..7);
-        assert_eq!(first.t_range().end, second.z_range().start);
-        let support = layout.negative_binary_support_intervals();
-        assert_eq!(support.len(), COMPRESSION_MAP_COUNT);
-        assert_eq!(second.t_range().end, layout.r_range().start);
-        assert!(support[0].start < support[0].end);
-        assert!(support[0].end < support[1].start);
-        assert!(support[1].end <= layout.live_coeff_len());
-        assert_eq!(layout.r_range().end, layout.live_coeff_len());
-        assert_eq!(layout.compression_layers().len(), COMPRESSION_MAP_COUNT);
-        for (map_index, layer) in layout.compression_layers().iter().enumerate() {
-            assert_eq!(layer.map_index(), map_index);
-            assert_eq!(layer.f_spans().len(), 1);
-            let (group_index, span) = &layer.f_spans()[0];
-            assert_eq!(*group_index, 0);
-            assert_eq!(span.range().len(), span.map().padded_digit_count());
-            assert_eq!(support[map_index].start, span.range().start);
-            assert_eq!(support[map_index].end, layer.h_span().range().end);
-            assert_eq!(
-                layout
-                    .f_compression_coefficient_index(0, map_index, 1, 2)
-                    .expect("F address"),
-                span.range().start + span.map().ring_dimension() + 2
-            );
-            assert_eq!(
-                layout
-                    .h_compression_coefficient_index(map_index, 1, 2)
-                    .expect("H address"),
-                layer.h_span().range().start + layer.h_span().map().ring_dimension() + 2
-            );
-            let f_quotient = &layout.r_rows()[layer.f_quotient_rows()[0].1];
-            let h_quotient = &layout.r_rows()[layer.h_quotient_row()];
-            assert_eq!(layer.f_quotient_rows()[0].0, 0);
-            assert_eq!(f_quotient.range().start, layer.h_span().range().end);
-            assert_eq!(h_quotient.range().start, f_quotient.range().end);
-        }
-        assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 7);
-    }
-
-    #[test]
-    fn layout_rejects_out_of_range_semantic_indices() {
-        let (lp, _, layout) = test_layout(2);
-        let unit = layout.unit(0, 0).expect("unit");
-        let depth_fold = lp.num_digits_fold();
-        let dims = lp.role_dims();
-        assert!(unit
-            .e_coefficient_index(dims.d_a(), dims.d_d(), 2, 2, 2, 0, 0, 0, 0)
-            .is_err());
-        assert!(unit
-            .t_coefficient_index(dims.d_a(), dims.d_b(), 2, 1, 2, 0, 0, 1, 0, 0, 0)
-            .is_err());
-        assert!(unit
-            .z_coefficient_index(dims.d_a(), 4, 1, depth_fold, 4, 0, 0, 0)
-            .is_err());
-        assert!(layout
-            .r_coefficient_index(layout.r_rows().len(), 0, 0)
-            .is_err());
-    }
-
-    #[test]
-    fn layout_rejects_mismatched_shapes() {
-        let (lp, _, layout) = test_layout(2);
-        let unit = layout.unit(0, 0).expect("unit");
-        let dims = lp.role_dims();
-        assert!(unit
-            .e_coefficient_index(dims.d_a(), dims.d_d(), 1, 2, 0, 0, 0, 0, 0)
-            .is_err());
-        assert!(unit
-            .t_coefficient_index(dims.d_a(), dims.d_b(), 2, 2, 2, 0, 0, 0, 0, 0, 0,)
-            .is_err());
-        assert!(unit
-            .z_coefficient_index(dims.d_a(), 1, 1, 1, 0, 0, 0, 0)
-            .is_err());
-    }
-
-    #[test]
-    fn validate_rejects_invalid_configs() {
-        assert!(ChunkedWitnessCfg {
-            num_chunks: 0,
-            num_activated_levels: 0,
-        }
-        .validate()
-        .is_err());
-        assert!(ChunkedWitnessCfg {
-            num_chunks: 6,
-            num_activated_levels: 2,
-        }
-        .validate()
-        .is_err());
-        assert!(ChunkedWitnessCfg {
-            num_chunks: 1,
-            num_activated_levels: 2,
-        }
-        .validate()
-        .is_err());
-        assert!(ChunkedWitnessCfg {
-            num_chunks: 8,
-            num_activated_levels: 0,
-        }
-        .validate()
-        .is_err());
-        assert!(ChunkedWitnessCfg {
-            num_chunks: 128,
-            num_activated_levels: 1,
-        }
-        .validate()
-        .is_err());
-        ChunkedWitnessCfg {
-            num_chunks: MAX_WITNESS_CHUNKS,
-            num_activated_levels: 1,
-        }
-        .validate()
-        .expect("max chunk count is valid");
-        for n in [2usize, 4, 8, 16] {
-            ChunkedWitnessCfg {
-                num_chunks: n,
-                num_activated_levels: 1,
-            }
-            .validate()
-            .expect("power-of-two chunk counts validate");
-        }
-    }
-}
+#[path = "witness_tests.rs"]
+mod tests;

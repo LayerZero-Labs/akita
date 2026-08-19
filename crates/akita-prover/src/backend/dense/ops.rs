@@ -1,28 +1,21 @@
-//! Dense polynomial opening, tensor, and fold operations.
+//! Dense polynomial opening and fold operations.
 //!
 //! Storage is D-free; every ring-shaped operation takes the ring dimension as
 //! a method const generic and views the flat coefficients at kernel entry.
 
-use super::poly::{DenseColumnSource, DensePoly};
+use super::poly::DensePoly;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
     cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
     DecomposeParams,
 };
-use crate::backend::RootTensorProjectionPoly;
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
-use akita_algebra::{CyclotomicRing, SplitEqEvals};
+use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
-use akita_types::{
-    psi_embed, tensor_column_partials_split_fold, FpExtEncoding, SubfieldMultiplierOpeningPoint,
-    SubfieldParams,
-};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_types::SubfieldMultiplierOpeningPoint;
 
 impl<F> DensePoly<F>
 where
@@ -101,159 +94,6 @@ where
                 &live_block_weights,
             ),
         )
-    }
-
-    pub(crate) fn tensor_extension_column_partials<E, const D: usize>(
-        &self,
-        logical_point: &[E],
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        let (split_bits, width) = self.tensor_shape::<E, D>(Some(logical_point))?;
-        let split = SplitEqEvals::new(&logical_point[split_bits..])?;
-        let source = DenseColumnSource {
-            flat: &self.field_coeffs()[..self.live_coeff_len()?],
-            width,
-        };
-        Ok(tensor_column_partials_split_fold::<F, E, _>(
-            &split, width, &source,
-        ))
-    }
-
-    pub(crate) fn tensor_extension_column_partials_batch<E, const D: usize>(
-        polys: &[&Self],
-        logical_point: &[E],
-    ) -> Result<Vec<Vec<E>>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        let Some(first) = polys.first() else {
-            return Ok(Vec::new());
-        };
-        let (split_bits, width) = first.tensor_shape::<E, D>(Some(logical_point))?;
-        // The Dao-Thaler / Gruen split of the tail equality table is
-        // point-dependent only, so it is built once and shared across the batch.
-        let split = SplitEqEvals::new(&logical_point[split_bits..])?;
-        polys
-            .iter()
-            .map(|poly| {
-                poly.tensor_shape::<E, D>(Some(logical_point))?;
-                let source = DenseColumnSource {
-                    flat: &poly.field_coeffs()[..poly.live_coeff_len()?],
-                    width,
-                };
-                Ok(tensor_column_partials_split_fold::<F, E, _>(
-                    &split, width, &source,
-                ))
-            })
-            .collect()
-    }
-
-    pub(crate) fn tensor_packed_extension_evals<E, const D: usize>(
-        &self,
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        let (_split_bits, width) = self.tensor_shape::<E, D>(None)?;
-        let live_len = self.live_coeff_len()?;
-        let flat = &self.field_coeffs()[..live_len];
-        // Width-aligned runs never crossed a ring boundary in the old
-        // ring-typed walk, so the flat chunking packs identical values.
-        let mut evals = Vec::with_capacity(live_len / width);
-        for coeffs in flat.chunks_exact(width) {
-            evals.push(E::from_base_slice(coeffs));
-        }
-        Ok(evals)
-    }
-
-    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
-        &self,
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        Ok(None)
-    }
-
-    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
-        polys: &[&Self],
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        if polys.len() != coeffs.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: polys.len(),
-                actual: coeffs.len(),
-            });
-        }
-        let mut witnesses = Vec::with_capacity(polys.len());
-        for poly in polys {
-            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
-                return Ok(None);
-            };
-            witnesses.push(witness);
-        }
-        Ok(Some(SparseExtensionOpeningWitness::linear_combination(
-            coeffs.iter().copied().zip(witnesses.iter()),
-        )?))
-    }
-
-    pub(crate) fn tensor_packed_extension_poly<E, const D: usize>(
-        &self,
-    ) -> Result<DensePoly<F>, AkitaError>
-    where
-        F: CanonicalField + FromPrimitiveInt,
-        E: FpExtEncoding<F>,
-    {
-        self.tensor_shape::<E, D>(None)?;
-        let source_rings = self.ring_coeffs::<D>()?;
-        let _span = tracing::info_span!(
-            "dense_tensor_root_projection",
-            table_len = self.live_coeff_len()?,
-            ring_dimension = D,
-            extension_degree = E::EXT_DEGREE,
-            output_rings = source_rings.len(),
-        )
-        .entered();
-        macro_rules! project {
-            ($k:expr) => {{
-                let params = SubfieldParams::<D, $k>::new()?;
-                cfg_iter!(source_rings)
-                    .map(|ring| {
-                        psi_embed::<F, D, $k>(params, ring.coefficients())
-                            .map(|projected| *projected.coefficients())
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            }};
-        }
-        let coefficient_rows = match E::EXT_DEGREE {
-            1 => project!(1),
-            2 => project!(2),
-            4 => project!(4),
-            8 => project!(8),
-            degree => {
-                return Err(AkitaError::InvalidInput(format!(
-                    "unsupported root tensor-projection extension degree {degree}"
-                )))
-            }
-        };
-        let projected = coefficient_rows.into_flattened();
-        let projected_num_vars = self.num_vars.max(D.trailing_zeros() as usize);
-        DensePoly::from_field_evals(projected_num_vars, D, projected)
-    }
-
-    pub(crate) fn tensor_packed_extension_root_poly<E, const D: usize>(
-        &self,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        F: CanonicalField + FromPrimitiveInt,
-        E: FpExtEncoding<F>,
-    {
-        Ok(self.tensor_packed_extension_poly::<E, D>()?.into())
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]

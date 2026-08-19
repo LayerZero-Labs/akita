@@ -2,11 +2,10 @@ use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
     prewarm_ntt_requirements, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    NttExecutionRequirements, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
-    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
-    SuffixTensorProveBackend,
+    NttExecutionRequirements, RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
+    SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
-use crate::RootTensorProjectionPoly;
 use crate::SelectedProverOpeningData;
 use akita_config::{
     effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
@@ -60,19 +59,21 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
+    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     C: ComputeBackendSetup<Cfg::Field>
         + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-        + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
-        + SuffixOpeningProveBackend<Cfg::Field>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-        + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
@@ -91,6 +92,7 @@ where
     let resolved = Cfg::resolve_schedule_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
     let schedule = resolved.schedule();
+    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
@@ -165,19 +167,21 @@ where
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O, TS>,
+    P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     C: ComputeBackendSetup<Cfg::Field>
         + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + 'a,
     O: ComputeBackendSetup<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-        + RuntimeOpeningProveBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>>
-        + SuffixOpeningProveBackend<Cfg::Field>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + SuffixOpeningProveBackend<Cfg::Field>
         + DigitRowsComputeBackend<Cfg::Field>
         + 'a,
     TS: ComputeBackendSetup<Cfg::Field>
         + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
-        + RuntimeTensorBackendFor<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, Cfg::ExtField>
         + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
         + 'a,
     R: ComputeBackendSetup<Cfg::Field>
@@ -189,6 +193,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
+    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let root_params = &schedule.root.params.final_group.commitment;
     {
         // Every public group commitment is the fixed terminal F payload. The
@@ -201,7 +206,12 @@ where
                 "root commitment group count does not match opening batch".to_string(),
             ));
         }
-        let relation_layout = relation_rhs_layout_for(root_params, &opening_batch)?;
+        let relation_geometry = RelationWitnessGeometry::for_level(
+            root_params,
+            &opening_batch,
+            Cfg::ExtField::EXT_DEGREE,
+        )?;
+        let relation_layout = relation_geometry.rhs_layout();
         for (group_index, commitment) in commitments.iter().enumerate() {
             let plan = relation_layout.compression_plan_for_group(group_index)?;
             if commitment.rows().coeff_len() != plan.terminal_coefficients() {

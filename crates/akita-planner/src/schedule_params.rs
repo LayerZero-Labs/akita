@@ -11,10 +11,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_s_block_ring_count, decomposed_w_ring_count, num_digits_for_linf_cap,
-    num_digits_inner_for_bound, num_digits_open, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy,
-    HonestFoldPolicySpec, HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
+    num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, InnerCommitMatrixParams, OpenCommitMatrixParams,
     OuterCommitMatrixParams,
 };
 use akita_types::{
@@ -38,21 +38,17 @@ mod suffix_dp;
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
-    materialize_candidate_schedule, stage3_payload_bytes_for_successor, CandidateFoldStep,
-    CandidateTerminalResponse,
+    materialize_candidate_schedule, CandidateFoldStep, CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
-#[cfg(test)]
-pub(crate) use candidate::derive_linf_candidate_level_params;
 pub(crate) use candidate::{
-    derive_ab_commitment_candidate, derive_candidate_level_params,
-    derive_candidate_level_params_split_frontier, recursive_split_search_domain,
-    AbCommitmentCandidateRequest, SetupPrefixSearchCache,
+    derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
+    derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
+    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveSetupPrefix,
+    SetupPrefixSearchCache, SplitBoundPolicy,
 };
-pub(crate) use objective::select_complete_candidate;
-pub(crate) use setup_score::{
-    level_setup_field_elements, terminal_setup_field_elements, MixedScore,
-};
+pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
+pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 pub(crate) fn root_inner_basis_source(
@@ -67,7 +63,19 @@ pub(crate) fn root_inner_basis_source(
     }
 }
 
-fn dimension_candidates(
+pub(crate) fn precommitted_groups_support_opening_dimension<'a>(
+    profiles: impl IntoIterator<Item = &'a CommittedGroupProfile>,
+    opening_ring_dimension: usize,
+) -> bool {
+    profiles.into_iter().all(|profile| {
+        profile
+            .inner_commit_matrix
+            .ring_dimension()
+            .is_multiple_of(opening_ring_dimension)
+    })
+}
+
+pub(crate) fn dimension_candidates(
     policy: &PlannerPolicy,
     level: usize,
     ceiling: CommitmentRingDims,
@@ -123,6 +131,35 @@ fn dimension_candidates(
         }
     };
     Ok(candidates)
+}
+
+pub(crate) fn initial_dimension_ceiling(
+    policy: &PlannerPolicy,
+) -> Result<CommitmentRingDims, AkitaError> {
+    match policy.ring_dimension_schedule_mode {
+        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
+            Ok(CommitmentRingDims::uniform(ring_dimension))
+        }
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+            ..
+        } => Ok(CommitmentRingDims {
+            inner: potential_a_dimensions
+                .last()
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("adaptive A domain is empty".into()))?,
+            outer: potential_b_dimensions
+                .last()
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("adaptive B domain is empty".into()))?,
+            opening: potential_d_dimensions
+                .last()
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("adaptive D domain is empty".into()))?,
+        }),
+    }
 }
 
 fn suffix_dimension_ceiling(
@@ -211,6 +248,28 @@ struct CandidateFoldNode {
     tail: Option<Arc<CandidateFoldNode>>,
 }
 
+struct CandidateFoldIter<'a> {
+    next: Option<&'a CandidateFoldNode>,
+    remaining: usize,
+}
+
+impl<'a> Iterator for CandidateFoldIter<'a> {
+    type Item = &'a CandidateFoldStep;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.next?;
+        self.next = node.tail.as_deref();
+        self.remaining -= 1;
+        Some(&node.step)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for CandidateFoldIter<'_> {}
+
 impl CandidateFoldChain {
     pub(crate) fn is_empty(&self) -> bool {
         self.head.is_none()
@@ -222,6 +281,13 @@ impl CandidateFoldChain {
 
     pub(crate) fn first(&self) -> Option<&CandidateFoldStep> {
         self.head.as_deref().map(|node| &node.step)
+    }
+
+    fn iter(&self) -> impl ExactSizeIterator<Item = &CandidateFoldStep> {
+        CandidateFoldIter {
+            next: self.head.as_deref(),
+            remaining: self.len,
+        }
     }
 
     pub(crate) fn prepend(&self, step: CandidateFoldStep) -> Self {
@@ -296,44 +362,58 @@ impl ScheduleCandidate {
 
 pub(crate) fn candidate_schedule_descriptor_bytes(
     choice: &ScheduleCandidate,
+    diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<Vec<u8>, AkitaError> {
-    if choice.folds.is_empty() {
-        return Ok(akita_types::TerminalFoldStep {
-            params: akita_types::TerminalFoldParams {
-                witness: choice.terminal.params.clone(),
-                sparse_challenge_config: choice.terminal.sparse_challenge_config,
-                response_shape: choice.terminal.response_shape.clone(),
-            },
-            input_witness_len: choice.terminal.input_witness_len,
+    let started = diagnostics.map(|_| std::time::Instant::now());
+    let result = (|| {
+        if choice.folds.is_empty() {
+            return Ok(akita_types::TerminalFoldDescriptor {
+                witness: &choice.terminal.params,
+                sparse_challenge_config: &choice.terminal.sparse_challenge_config,
+                response_shape: &choice.terminal.response_shape,
+                input_witness_len: choice.terminal.input_witness_len,
+            }
+            .canonical_descriptor_bytes());
         }
-        .canonical_descriptor_bytes());
+        let carrier_prefix_len = choice.folds.len().min(2);
+        let mut bytes = Vec::new();
+        bytes.push(carrier_prefix_len as u8);
+        bytes.extend(
+            choice
+                .folds
+                .iter()
+                .take(carrier_prefix_len)
+                .map(|fold| fold.params.payload_mode.tag()),
+        );
+        let descriptor_steps = choice.folds.iter().enumerate().map(|(index, fold)| {
+            akita_types::FoldScheduleDescriptorStep {
+                params: &fold.params,
+                payload_mode: if index < carrier_prefix_len {
+                    akita_types::CommitmentPayloadMode::Compressed
+                } else {
+                    fold.params.payload_mode
+                },
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            }
+        });
+        let terminal = akita_types::TerminalFoldDescriptor {
+            witness: &choice.terminal.params,
+            sparse_challenge_config: &choice.terminal.sparse_challenge_config,
+            response_shape: &choice.terminal.response_shape,
+            input_witness_len: choice.terminal.input_witness_len,
+        };
+        akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
+            &mut bytes,
+            descriptor_steps,
+            terminal,
+        )?;
+        Ok(bytes)
+    })();
+    if let (Some(diagnostics), Some(started)) = (diagnostics, started) {
+        diagnostics.record_descriptor(started.elapsed());
     }
-    let mut folds = choice.folds.to_vec();
-    let carrier_prefix_len = folds.len().min(2);
-    let carrier_payload_modes = folds
-        .iter()
-        .take(carrier_prefix_len)
-        .map(|fold| fold.params.payload_mode)
-        .collect::<Vec<_>>();
-    for fold in folds.iter_mut().take(carrier_prefix_len) {
-        Arc::make_mut(&mut fold.params).payload_mode =
-            akita_types::CommitmentPayloadMode::Compressed;
-    }
-    let mut bytes = materialize_candidate_schedule(
-        choice.total_bytes,
-        choice.setup_field_elements,
-        choice.first_direct_setup_field_len.map(NonZeroUsize::get),
-        folds,
-        choice.terminal.as_ref().clone(),
-    )?
-    .schedule
-    .canonical_descriptor_bytes();
-    let mut prefix = Vec::with_capacity(carrier_prefix_len + 1);
-    prefix.push(carrier_prefix_len as u8);
-    prefix.extend(carrier_payload_modes.into_iter().map(|mode| mode.tag()));
-    prefix.append(&mut bytes);
-    let bytes = prefix;
-    Ok(bytes)
+    result
 }
 
 /// Stage-1 sparse-challenge closure shared by the planner entry points.
@@ -356,15 +436,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     }
     let mut best: Option<((usize, usize), CommittedGroupParams)> = None;
     for params in candidates {
-        let setup_score = match policy.selection_policy {
-            crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-                level_setup_field_elements(&params)?
-            }
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
-                padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
-            }
-            crate::SelectionPolicyId::MinEstimatedProofPayload => unreachable!(),
-        };
+        let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
         let score = (setup_score, params.outer_slice_count.get());
         if best
             .as_ref()

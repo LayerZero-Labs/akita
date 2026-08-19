@@ -12,9 +12,11 @@ same time. Read the chapters in this order:
 1. [Matrix evaluation at a point](./verifying/matrix_evaluation.md)
    defines the physical rows and columns.
 2. [The Stage 2 fused check](./verifying/stage2.md) shows how the relation,
-   range image, and opening trace share one final witness evaluation.
-3. [Evaluation trace](./verifying/evaluation_trace.md) explains how opening
-   claims bind to the `E` digits without a prover-sized verifier table.
+   range image, and schedule-selected opening method share one final witness
+   evaluation.
+3. [Evaluation trace](./verifying/evaluation_trace.md) explains the trace-based
+   opening method. [Root fold and ring switch](./proving/root-fold-ring-switch.md)
+   explains subring coefficient packing.
 4. [Setup contribution and Stage 3](./verifying/setup_contribution.md) explains
    direct setup evaluation and recursive setup offloading.
 5. [The distributed relation verifier](./verifying/distributed-relation-verifier.md)
@@ -47,13 +49,13 @@ ring switch: sample alpha, tau0, and tau1
         |
         +--> prepare relation matrix evaluator
         +--> prepare compression weights
-        +--> prepare evaluation trace
+        +--> prepare scheduled opening terms
         |
         v
 Stage 1: digit range product
         |
         v
-Stage 2: range image + relation + evaluation trace
+Stage 2: range image + relation + opening claim
         |
         v
 Stage 3: setup product when the setup claim is deferred
@@ -103,8 +105,12 @@ Root replay reads each commitment group's point directly from
 `PolynomialGroupClaims`.
 The verifier prepares the per-group relation and extension-opening factors from
 that complete point, without reconstructing a common point.
-When EOR is required, the groups enter one batched reduction but retain their
-own public points and native arities.
+When EOR is required, the verifier samples an early coefficient vector and
+replays one ordinary sumcheck for the combined opening claims. The proof keeps
+the individual terminal claims. The verifier checks their early combination
+against the sumcheck terminal value and absorbs them. It then absorbs the
+complete opening payload before sampling the independent application
+coefficients that bind those terminal claims to the committed witness.
 
 At a recursive boundary, Stage 2 supplies the next-witness claim
 `(stage2_point, stage2_next_w_eval)`.

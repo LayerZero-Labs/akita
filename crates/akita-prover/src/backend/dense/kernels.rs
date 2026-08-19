@@ -1,20 +1,16 @@
 //! CpuBackend kernels over dense polynomial views.
 
-use super::poly::DensePoly;
 use super::views::{DenseBatchView, DenseView};
-use crate::backend::RootTensorProjectionPoly;
+use crate::backend::coefficient_packing::partials_from_position_source;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
-    RootCommitKernel, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootCommitKernel, RootPolyMeta, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
-use akita_types::FpExtEncoding;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 
 impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
@@ -115,71 +111,49 @@ where
     }
 }
 
-impl<F, E, const D: usize> TensorProjectionKernel<DenseView<'_, F, D>, F, E, D> for CpuBackend
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F>,
-{
-    fn column_partials(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseView<'_, F, D>,
-        logical_point: &[E],
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        source
-            .poly
-            .tensor_extension_column_partials::<E, D>(logical_point)
-    }
-
-    fn packed_witness(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        Ok(TensorPackedWitness::Dense(
-            source.poly.tensor_packed_extension_evals::<E, D>()?,
-        ))
-    }
-
-    fn root_projection(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseView<'_, F, D>,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        E: FpExtEncoding<F>,
-    {
-        source.poly.tensor_packed_extension_root_poly::<E, D>()
-    }
-}
-
-impl<F, E, const D: usize> TensorProjectionBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
+impl<F, E, const D: usize> SubringCoefficientPackingBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
 {
-    fn column_partials_batch(
+    fn coefficient_packing_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: DenseBatchView<'_, F, D>,
-        logical_point: &[E],
-    ) -> Result<Vec<Vec<E>>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        DensePoly::tensor_extension_column_partials_batch::<E, D>(source.polys, logical_point)
-    }
-
-    fn sparse_linear_combination(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: DenseBatchView<'_, F, D>,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        DensePoly::tensor_packed_extension_sparse_linear_combination(source.polys, coeffs)
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                let rings = poly.ring_coeffs::<D>()?;
+                // Dense roots authenticate the complete Boolean hypercube, so
+                // every stored ring is live. Exact-prefix storage is reserved
+                // for recursive witness views.
+                if rings.len() != plan.point.num_live_positions() {
+                    return Err(AkitaError::InvalidSize {
+                        expected: plan.point.num_live_positions(),
+                        actual: rings.len(),
+                    });
+                }
+                let coordinates = partials_from_position_source::<F, E, F, D>(
+                    plan,
+                    RootPolyMeta::<F>::num_vars(*poly),
+                    |position| {
+                        rings
+                            .get(position)
+                            .map(|ring| ring.coefficients())
+                            .ok_or(AkitaError::InvalidProof)
+                    },
+                    |_, _, coefficient| coefficient,
+                )?;
+                SubringCoefficientPackingPartials::new(
+                    plan.point.geometry(),
+                    plan.point.num_live_blocks(),
+                    coordinates,
+                )
+            })
+            .collect()
     }
 }

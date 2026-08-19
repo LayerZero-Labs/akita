@@ -57,8 +57,6 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
 /// hundred scalar shapes.
 const MAX_VERIFIER_SETUP_SCHEDULE_SCANS: usize = 1 << 14;
 
-const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
-
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
@@ -176,7 +174,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<SetupMatrixCapacity, AkitaError> {
-    let layouts = setup_capacity_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
+    let layouts = setup_capacity_scan_layouts(max_num_vars, max_num_batched_polys)?;
     let mut scan = SetupCapacityScan::new();
     for layout in &layouts {
         let Ok(schedule) = Cfg::resolve_catalog_row_for_opening(layout) else {
@@ -254,12 +252,15 @@ fn validate_setup_capacity_metadata(
     Ok(())
 }
 
-fn setup_capacity_scan_layouts<Cfg: CommitmentConfig>(
+/// Single-group opening layouts a setup-capacity request can reach.
+///
+/// Grouped rows are priced from the generated catalog directly by the caller,
+/// both for their standalone precommits and for the grouped root they feed.
+fn setup_capacity_scan_layouts(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
     let mut layouts = Vec::new();
-    let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1;
 
     let mut push_layout = |layout| {
         if layouts.len() >= MAX_VERIFIER_SETUP_SCHEDULE_SCANS {
@@ -274,43 +275,11 @@ fn setup_capacity_scan_layouts<Cfg: CommitmentConfig>(
 
     for main_num_vars in 1..=max_num_vars {
         for main_num_polys in 1..=max_num_batched_polys {
-            let main_groups = vec![PolynomialGroupLayout::new(main_num_vars, main_num_polys)];
-            for main_group in main_groups {
-                if main_group.validate().is_err() {
-                    continue;
-                }
-                push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
-                if !supports_multi_group_root {
-                    continue;
-                }
-                for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
-                    for precommitted_num_polynomials in 1..=max_num_batched_polys {
-                        let Some(precommitted_polynomials) =
-                            num_precommitted.checked_mul(precommitted_num_polynomials)
-                        else {
-                            continue;
-                        };
-                        let Some(total_polynomials) =
-                            main_num_polys.checked_add(precommitted_polynomials)
-                        else {
-                            continue;
-                        };
-                        if total_polynomials > max_num_batched_polys {
-                            break;
-                        }
-                        let precommitted_group =
-                            PolynomialGroupLayout::new(max_num_vars, precommitted_num_polynomials);
-                        if precommitted_group.validate().is_err() {
-                            continue;
-                        }
-                        let precommitted_groups = vec![precommitted_group; num_precommitted];
-                        push_layout(OpeningClaimsLayout::from_root_groups(
-                            &precommitted_groups,
-                            main_group,
-                        )?)?;
-                    }
-                }
+            let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
+            if main_group.validate().is_err() {
+                continue;
             }
+            push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
         }
     }
 
@@ -402,20 +371,6 @@ fn ensure_required_setup_field_elements(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    (@selection_policy default) => {
-        fn selection_policy() -> akita_schedules::SelectionPolicyId {
-            akita_schedules::SelectionPolicyId::for_policy(
-                Self::recursive_setup_planning(),
-                Self::RING_DIMENSION_SCHEDULE_MODE,
-            )
-        }
-    };
-    (@selection_policy $selection_policy:expr) => {
-        fn selection_policy() -> akita_schedules::SelectionPolicyId {
-            $selection_policy
-        }
-    };
-    (@schedule_catalog none) => {};
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
             #[cfg(feature = $feat)]
@@ -428,44 +383,31 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    (@ring_dimension_schedule_mode) => {};
     (@ring_dimension_schedule_mode $mode:expr) => {
         const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode = $mode;
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none, default);
+    (@committed_source_class unit_one_hot) => {
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            akita_types::sis::CommittedSourceClass::UnitOneHot {
+                source_chunk_size: STANDARD_ONEHOT_CHUNK_SIZE,
+            }
+        }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, default);
+    (@committed_source_class balanced_digits) => {
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            akita_types::sis::CommittedSourceClass::BalancedSignedDigit
+        }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy);
-    };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
-    };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr, ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, selection_policy = $selection_policy, ring_dimension_schedule_mode = $mode);
-    };
-    (@options default) => {
-        impl_proof_optimized_preset!(@selection_policy default);
-    };
-    (@options selection_policy = $selection_policy:expr) => {
-        impl_proof_optimized_preset!(@selection_policy $selection_policy);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
     };
     (@options ring_dimension_schedule_mode = $mode:expr) => {
         impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
-        impl_proof_optimized_preset!(@selection_policy default);
     };
-    (@options selection_policy = $selection_policy:expr, ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
-        impl_proof_optimized_preset!(@selection_policy $selection_policy);
-    };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none, $($options:tt)*) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, table, $feat:literal, $family_name:literal, $table:ident, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
-            const D: usize = $d;
             impl_proof_optimized_preset!(@options $($options)*);
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -513,100 +455,7 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-                let legacy_witness = $fold_norms;
-                if $log_commit_bound == 1 {
-                    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::new(
-                            $field_bits,
-                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
-                            STANDARD_ONEHOT_CHUNK_SIZE,
-                        ),
-                    )
-                } else {
-                    akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
-                            $field_bits,
-                            legacy_witness,
-                        ),
-                    )
-                }
-            }
-
-            impl_proof_optimized_preset!(@schedule_catalog none);
-        }
-    };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident, $($options:tt)*) => {
-        impl $crate::CommitmentConfig for $cfg {
-            type Field = $field;
-            type ExtField = $ext_field;
-            const D: usize = $d;
-            impl_proof_optimized_preset!(@options $($options)*);
-
-            fn decomposition() -> akita_types::DecompositionParams {
-                akita_types::DecompositionParams {
-                    log_basis: 3,
-                    log_commit_bound: $log_commit_bound,
-                    log_open_bound: if $log_commit_bound < $field_bits {
-                        Some($field_bits)
-                    } else {
-                        None
-                    },
-                }
-            }
-
-            fn ring_challenge_config(
-                d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
-            }
-
-            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-                $family
-            }
-
-            fn setup_matrix_capacity(
-                max_num_vars: usize,
-                max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
-                    max_num_vars,
-                    max_num_batched_polys,
-                )
-            }
-
-            fn opening_basis_range() -> (u32, u32) {
-                (
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MIN,
-                    $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
-                )
-            }
-
-            fn inner_basis_range() -> (u32, u32) {
-                $crate::proof_optimized::proof_optimized_inner_basis_range(
-                    Self::sis_modulus_profile(),
-                )
-            }
-
-            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-                let legacy_witness = $fold_norms;
-                if $log_commit_bound == 1 {
-                    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-                        akita_types::sis::UnitOneHotFoldPolicy::new(
-                            $field_bits,
-                            <$ext_field as akita_field::ExtField<$field>>::EXT_DEGREE,
-                            STANDARD_ONEHOT_CHUNK_SIZE,
-                        ),
-                    )
-                } else {
-                    akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                        akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
-                            $field_bits,
-                            legacy_witness,
-                        ),
-                    )
-                }
-            }
+            impl_proof_optimized_preset!(@committed_source_class $source);
 
             impl_proof_optimized_preset!(@schedule_catalog ($feat, $family_name, $table));
         }

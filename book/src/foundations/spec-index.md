@@ -10,10 +10,11 @@ chapter it feeds. Keep this in sync with `specs/PRUNING.md` and the archive inde
 The active design frontier (keep as live specs):
 `flat-public-matrix-and-exact-ntt-cache`, `role-native-projected-digit-layout`,
 `setup-layout-repack`,
-`setup-offloading-planner`, `eor-streamed-prover`, `packed-sumcheck`,
+`setup-offloading-planner`, `packed-sumcheck`,
 `planner-incidence-generalization`,
 `akita-field-refactor`, `akita-compute-backend-metal` (Metal tail),
-`large-digit-ntt-infrastructure`.
+`large-digit-ntt-infrastructure`, and
+[`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md).
 
 The approved SIS security-policy frontier is
 `sis-quantum128-scalar-n-table`: a scalar, role-driven table using one ADPS16
@@ -34,6 +35,9 @@ NTT lifecycle rules live in the optimization and commitment API chapters. The
 [`profile-bench-coverage-matrix`](../../../specs/archive/2026-Q3/profile-bench-coverage-matrix.md),
 whose current benchmark contract now lives in the profiling chapter, is also
 archived.
+The historical root-EOR, field-geometry, and polynomial-backend records are
+also archived under `specs/archive/2026-Q3`; current suffix and terminal EOR
+behavior lives in the extension-opening-reduction chapter.
 
 ## Sources to fold in
 

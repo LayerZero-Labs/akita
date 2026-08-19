@@ -1,6 +1,6 @@
 use super::*;
 use crate::ext::lift::{
-    canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
+    canonical_extension_basis, solve_frobenius_moore, validate_canonical_frobenius_thetas,
     ExtField, FrobeniusExtField,
 };
 use crate::Fp64;
@@ -213,7 +213,7 @@ fn frobenius_fp_ext2_is_conjugation() {
 #[test]
 fn canonical_moore_thetas_solve_fp_ext2() {
     validate_canonical_frobenius_thetas::<F, E2>(2).unwrap();
-    let thetas = canonical_frobenius_thetas::<F, E2>(2).unwrap();
+    let thetas = canonical_extension_basis::<F, E2>(2).unwrap();
     let z = [
         E2::new(F::from_u64(3), F::from_u64(5)),
         E2::new(F::from_u64(7), F::from_u64(11)),
@@ -236,7 +236,7 @@ fn canonical_moore_thetas_solve_fp_ext2() {
 
 #[test]
 fn canonical_ring_subfield_thetas_are_the_packing_basis() {
-    let thetas = canonical_frobenius_thetas::<F, R4>(4).unwrap();
+    let thetas = canonical_extension_basis::<F, R4>(4).unwrap();
     assert_eq!(
         thetas[0],
         R4::new([F::one(), F::zero(), F::zero(), F::zero()])
@@ -258,7 +258,7 @@ fn canonical_ring_subfield_thetas_are_the_packing_basis() {
 
 #[test]
 fn canonical_fp_ext8_thetas_are_the_packing_basis() {
-    let thetas = canonical_frobenius_thetas::<F, R8>(8).unwrap();
+    let thetas = canonical_extension_basis::<F, R8>(8).unwrap();
     for (idx, theta) in thetas.iter().enumerate().take(8) {
         assert_eq!(
             *theta,

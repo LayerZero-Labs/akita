@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -40,14 +41,15 @@ int main(int argc, char **argv) {
     const int n = std::stoi(argv[3]);
     const int d = argc == 6 ? std::stoi(argv[4]) : 128;
     const int w = argc == 6 ? std::stoi(argv[5]) : 31;
-    if (d <= 0 || w < 0 || w > d || (mod - 1) % (2 * d) != 0) {
-        std::cerr << "invalid dimension, weight, or modulus\n";
+    if (n < 0 || d <= 0 || w < 0 || w > d || (mod - 1) % (2 * d) != 0) {
+        std::cerr << "invalid moment, dimension, weight, or modulus\n";
         return 2;
     }
-    const int side = n + 1;
-    const int area = side * side;
+    const std::size_t side = static_cast<std::size_t>(n) + 1;
+    const std::size_t area = side * side;
     auto at = [side, area](int k, int a, int b) {
-        return k * area + a * side + b;
+        return static_cast<std::size_t>(k) * area +
+               static_cast<std::size_t>(a) * side + static_cast<std::size_t>(b);
     };
 
     const u64 root = mod_pow(primitive, (mod - 1) / (2 * d), mod);
@@ -61,7 +63,7 @@ int main(int argc, char **argv) {
     invfact[n] = mod_pow(fact[n], mod - 2, mod);
     for (int i = n; i > 0; --i) invfact[i - 1] = mod_mul(invfact[i], i, mod);
 
-    std::vector<u64> dp((w + 1) * area, 0);
+    std::vector<u64> dp((static_cast<std::size_t>(w) + 1) * area, 0);
     std::vector<u64> even(area), odd(area), conv(area);
     dp[at(0, 0, 0)] = 1;
 

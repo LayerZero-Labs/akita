@@ -171,14 +171,14 @@ where
 /// # Errors
 ///
 /// Returns an error if `width > E::EXT_DEGREE`.
-pub fn canonical_frobenius_thetas<F, E>(width: usize) -> Result<Vec<E>, AkitaError>
+pub fn canonical_extension_basis<F, E>(width: usize) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
     if width > E::EXT_DEGREE {
         return Err(AkitaError::InvalidInput(format!(
-            "Frobenius theta width {width} exceeds extension degree {}",
+            "canonical extension basis width {width} exceeds extension degree {}",
             E::EXT_DEGREE
         )));
     }
@@ -272,7 +272,7 @@ where
     F: PseudoMersenneField,
     E: FrobeniusExtField<F>,
 {
-    let thetas = canonical_frobenius_thetas::<F, E>(width)?;
+    let thetas = canonical_extension_basis::<F, E>(width)?;
     let rhs = (0..width)
         .map(|idx| E::lift_base(F::from_u64((idx + 1) as u64)))
         .collect::<Vec<_>>();

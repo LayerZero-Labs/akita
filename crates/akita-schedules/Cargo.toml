@@ -16,7 +16,15 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = []
+default = ["transcript-blake2b"]
+transcript-blake2b = [
+  "akita-challenges/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-challenges/transcript-keccak",
+  "akita-types/transcript-keccak",
+]
 all-schedules = [
   "schedules-default",
   "fp128-onehot-recursive",
@@ -25,6 +33,7 @@ all-schedules = [
   "fp128-onehot-multi-chunk-w2r2",
   "fp128-onehot-multi-chunk-w4r2",
   "fp128-dense-multi-chunk",
+  "fp128-dense-bounded",
 ]
 schedules-default = [
   "fp128-onehot",
@@ -42,6 +51,7 @@ fp128-onehot-multi-chunk = []
 fp128-onehot-multi-chunk-w2r2 = []
 fp128-onehot-multi-chunk-w4r2 = []
 fp128-dense-multi-chunk = []
+fp128-dense-bounded = []
 
 fp32-dense = []
 fp32-onehot = []
@@ -49,9 +59,9 @@ fp64-dense = []
 fp64-onehot = []
 
 [dependencies]
-akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-types = { version = "0.1.0", path = "../akita-types" }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 
 [lints]
 workspace = true

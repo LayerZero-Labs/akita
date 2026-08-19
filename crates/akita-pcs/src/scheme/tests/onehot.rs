@@ -505,9 +505,16 @@ where
             TestCfg::chunked_witness_cfg().num_chunks,
             "root fold must retain the configured chunk count"
         );
+        let relation_geometry =
+            akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+                root_commitment,
+                &opening_layout,
+            )
+            .expect("evaluation-trace relation geometry");
         let witness_layout = akita_types::WitnessLayout::new(
             root_commitment,
             &opening_layout,
+            &relation_geometry,
             root.params.witness_partition.num_chunks(),
             akita_types::r_decomp_levels::<OneHotF>(root_commitment.log_basis_open),
         )

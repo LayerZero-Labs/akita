@@ -14,11 +14,12 @@
 use std::any::TypeId;
 use std::sync::{Arc, Mutex, OnceLock};
 
+pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_schedules::GeneratedScheduleTable;
-use akita_types::sis::HonestFoldPolicySpec;
+use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
 };
@@ -100,13 +101,11 @@ impl GenerationPreplans {
     }
 }
 
-type GroupBatchKeys = Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>;
-type GroupBatchKeyGenerator = fn(&GenerationPreplans) -> Result<GroupBatchKeys, AkitaError>;
+type GroupedGenerationRequests = Vec<GroupedGenerationRequest>;
+type GroupedRequestGenerator =
+    fn(&GenerationPreplans) -> Result<GroupedGenerationRequests, AkitaError>;
 type ExplicitPrecommittedGroupGenerator =
-    fn(
-        &GenerationPreplans,
-        PolynomialGroupLayout,
-    ) -> Result<(CommittedGroupProfile, HonestFoldPolicySpec), AkitaError>;
+    fn(&GenerationPreplans, PolynomialGroupLayout) -> Result<PrecommittedProducer, AkitaError>;
 
 macro_rules! onehot_keys {
     ($(($num_vars:expr, $num_polynomials:expr)),* $(,)?) => {
@@ -129,7 +128,6 @@ const FP128_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(28),
     PolynomialGroupLayout::singleton(30),
     PolynomialGroupLayout::singleton(32),
-    PolynomialGroupLayout::singleton(44),
 ];
 
 const FP128_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
@@ -166,6 +164,18 @@ const FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS: &[PolynomialGroupLayout] = onehot_keys
 const FP128_DENSE_MULTI_CHUNK_KEYS: &[PolynomialGroupLayout] =
     &[PolynomialGroupLayout::singleton(16)];
 
+/// Bounded dense keys.
+///
+/// 14 is the producer for the bounded precommit descriptor embedded in the
+/// `fp128_onehot` grouped catalog (see [`bounded_dense_onehot_catalog_key`]); 24
+/// and 26 are the sizes where the bound's setup and next-witness savings are
+/// measured against the matching `fp128_dense` rows.
+const FP128_DENSE_BOUNDED_KEYS: &[PolynomialGroupLayout] = &[
+    PolynomialGroupLayout::singleton(14),
+    PolynomialGroupLayout::singleton(24),
+    PolynomialGroupLayout::singleton(26),
+];
+
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
@@ -177,7 +187,7 @@ const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
 const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
     // Produces the frozen profile for the precommit half of
-    // `fp64_dense_group_batch_keys`, which needs 16: at 14 or 15 the prover and
+    // `fp64_dense_grouped_requests`, which needs 16: at 14 or 15 the prover and
     // the planned schedule disagree on the fold-level-1 witness length.
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
@@ -207,17 +217,18 @@ pub struct GeneratedFamily {
     /// (`find_schedule(&single_key, &[], &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any generated table.
-    pub regen_group_batch:
-        fn(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>) -> Result<FoldSchedule, AkitaError>,
+    pub regen_group_batch: fn(GroupedGenerationRequest) -> Result<FoldSchedule, AkitaError>,
     /// Grouped-root keys enumerated for this generated family.
-    pub group_batch_keys: GroupBatchKeyGenerator,
+    pub grouped_requests: GroupedRequestGenerator,
     /// Strict table-backed runtime resolution. A missing row is unsupported.
     pub resolve_catalog_row_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
     /// The generated catalog linked for this family, when its feature is active.
     pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
+    /// The family config's declared producer contract (class plus bound).
+    pub source_contract: fn() -> Result<CommittedSourceContract, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    /// Build one caller-requested precommit descriptor and its honest fold policy.
+    /// Build one caller requested canonical precommit producer record.
     pub explicit_precommitted_group: ExplicitPrecommittedGroupGenerator,
 }
 
@@ -286,10 +297,12 @@ fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
 fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
-    key: AkitaScheduleLookupKey,
-    precommitted_honest_fold_policies: Vec<HonestFoldPolicySpec>,
+    request: GroupedGenerationRequest,
 ) -> Result<FoldSchedule, AkitaError> {
-    plan_regen::<Cfg>(&key, &precommitted_honest_fold_policies)
+    // Planning consumes the offline sizing projection; the record owns it beside
+    // the descriptor so the two can never drift apart by index.
+    let policies = request.fold_policies();
+    plan_regen::<Cfg>(&request.key(), &policies)
 }
 
 fn resolve_catalog_row_for_key<Cfg: CommitmentConfig>(
@@ -306,60 +319,56 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
     policy_of::<Cfg>()
 }
 
-fn sorted_group_batch_keys(
-    mut keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
-) -> Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)> {
-    keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
-    keys
+fn sorted_grouped_requests(mut requests: GroupedGenerationRequests) -> GroupedGenerationRequests {
+    requests.sort_by(|left, right| runtime_schedule_key_cmp(&left.key(), &right.key()));
+    requests
 }
 
-fn no_group_batch_keys(
+fn no_grouped_requests(
     _preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+) -> Result<GroupedGenerationRequests, AkitaError> {
     Ok(Vec::new())
 }
 
-fn fp128_onehot_group_batch_keys(
+fn fp128_onehot_grouped_requests(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+) -> Result<GroupedGenerationRequests, AkitaError> {
     let mut keys = recursive_onehot_profile_keys::<fp128::OneHot>(preplans)?;
     keys.push(heterogeneous_onehot_catalog_key(preplans)?);
+    keys.push(bounded_dense_onehot_catalog_key(preplans)?);
     keys.extend(onehot_group_batch_test_keys::<fp128::OneHot>(preplans)?);
     // Single-poly pre + single-poly final: the `fp128 × OneHot × pre` matrix
     // cell. Every other combined OneHot row is heterogeneous or multi-poly.
-    keys.extend(single_pre_group_batch_keys::<fp128::OneHot>(
+    keys.extend(single_pre_grouped_requests::<fp128::OneHot>(
         preplans,
         PolynomialGroupLayout::new(14, 1),
         PolynomialGroupLayout::new(16, 1),
     )?);
-    keys.extend(single_pre_group_batch_keys::<fp128::OneHot>(
+    keys.extend(single_pre_grouped_requests::<fp128::OneHot>(
         preplans,
         PolynomialGroupLayout::new(14, 1),
         PolynomialGroupLayout::new(20, 1),
     )?);
-    Ok(sorted_group_batch_keys(keys))
+    Ok(sorted_grouped_requests(keys))
 }
 
-fn fp128_onehot_multichunk_group_batch_keys(
+fn fp128_onehot_multichunk_grouped_requests(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    Ok(sorted_group_batch_keys(recursive_onehot_profile_keys::<
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    Ok(sorted_grouped_requests(recursive_onehot_profile_keys::<
         fp128::OneHotMultiChunk,
     >(preplans)?))
 }
 
-fn fp128_onehot_multichunk_w2r2_group_batch_keys(
+fn fp128_onehot_multichunk_w2r2_grouped_requests(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+) -> Result<GroupedGenerationRequests, AkitaError> {
     type Cfg = fp128::OneHotMultiChunkW2R2;
     let group = PolynomialGroupLayout::new(14, 1);
     let precommitted = planned_profile_without_precommitted_groups::<Cfg>(preplans, group)?;
-    Ok(vec![(
-        AkitaScheduleLookupKey {
-            final_group: group,
-            precommitteds: vec![precommitted],
-        },
-        vec![honest_fold_policy_of::<Cfg>()],
+    Ok(vec![GroupedGenerationRequest::new(
+        group,
+        vec![PrecommittedProducer::from_config::<Cfg>(precommitted)?],
     )])
 }
 
@@ -371,27 +380,24 @@ fn fp128_onehot_multichunk_w2r2_group_batch_keys(
 /// at the final size can resolve each half but not the combination, so this
 /// fills that gap. Both sizes are existing production sizes for the family —
 /// no key here introduces a new polynomial size or ring dimension.
-fn single_pre_group_batch_keys<Cfg: CommitmentConfig + 'static>(
+fn single_pre_grouped_requests<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     pre_group: PolynomialGroupLayout,
     final_group: PolynomialGroupLayout,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+) -> Result<GroupedGenerationRequests, AkitaError> {
     let precommitted = planned_profile_without_precommitted_groups::<Cfg>(preplans, pre_group)?;
-    Ok(vec![(
-        AkitaScheduleLookupKey {
-            final_group,
-            precommitteds: vec![precommitted],
-        },
-        vec![honest_fold_policy_of::<Cfg>()],
+    Ok(vec![GroupedGenerationRequest::new(
+        final_group,
+        vec![PrecommittedProducer::from_config::<Cfg>(precommitted)?],
     )])
 }
 
 /// Shipped fp32 precommit-plus-final workload exercised by the extension-field
 /// multi-group PCS end-to-end test.
-fn fp32_onehot_group_batch_keys(
+fn fp32_onehot_grouped_requests(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    single_pre_group_batch_keys::<fp32::OneHot>(
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    single_pre_grouped_requests::<fp32::OneHot>(
         preplans,
         PolynomialGroupLayout::new(14, 1),
         PolynomialGroupLayout::new(20, 1),
@@ -399,13 +405,13 @@ fn fp32_onehot_group_batch_keys(
 }
 
 /// Precommit-plus-final row backing the `fp32 × Dense × pre` matrix cell.
-fn fp32_dense_group_batch_keys(
+fn fp32_dense_grouped_requests(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+) -> Result<GroupedGenerationRequests, AkitaError> {
     // The precommit half is 20 rather than 14: `fp32::Dense` has no schedule
     // with at least two folds below 20, so 14 cannot produce the row this
     // group's frozen profile is read from.
-    single_pre_group_batch_keys::<fp32::Dense>(
+    single_pre_grouped_requests::<fp32::Dense>(
         preplans,
         PolynomialGroupLayout::new(20, 1),
         PolynomialGroupLayout::new(20, 1),
@@ -418,10 +424,10 @@ fn fp32_dense_group_batch_keys(
 /// pre-group the fp64 dense prover and the planned schedule disagree on the
 /// fold-level-1 witness length, so only the 16-variable pre-group yields a
 /// schedule the prover can actually execute.
-fn fp64_dense_group_batch_keys(
+fn fp64_dense_grouped_requests(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    single_pre_group_batch_keys::<fp64::Dense>(
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    single_pre_grouped_requests::<fp64::Dense>(
         preplans,
         PolynomialGroupLayout::new(16, 1),
         PolynomialGroupLayout::new(20, 1),
@@ -429,10 +435,10 @@ fn fp64_dense_group_batch_keys(
 }
 
 /// Precommit-plus-final row backing the `fp128 × Dense × sc × pre` matrix cell.
-fn fp128_dense_group_batch_keys(
+fn fp128_dense_grouped_requests(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
-    single_pre_group_batch_keys::<fp128::Dense>(
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    single_pre_grouped_requests::<fp128::Dense>(
         preplans,
         PolynomialGroupLayout::new(14, 1),
         PolynomialGroupLayout::new(16, 1),
@@ -441,44 +447,64 @@ fn fp128_dense_group_batch_keys(
 
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+) -> Result<GroupedGenerationRequests, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
         planned_profile_without_precommitted_groups::<BaseCfg>(preplans, precommitted_group)?;
-    Ok(vec![(
-        AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(32, 2),
-            precommitteds: vec![precommitted, precommitted],
-        },
+    Ok(vec![GroupedGenerationRequest::new(
+        PolynomialGroupLayout::new(32, 2),
         vec![
-            honest_fold_policy_of::<BaseCfg>(),
-            honest_fold_policy_of::<BaseCfg>(),
+            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
+            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
         ],
     )])
 }
 
 fn heterogeneous_onehot_catalog_key(
     preplans: &GenerationPreplans,
-) -> Result<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>), AkitaError> {
+) -> Result<GroupedGenerationRequest, AkitaError> {
     let onehot_group = PolynomialGroupLayout::new(14, 1);
     let dense_group = PolynomialGroupLayout::new(15, 2);
-    let onehot_policy = honest_fold_policy_of::<fp128::OneHot>();
-    let dense_policy = honest_fold_policy_of::<fp128::Dense>();
     let onehot =
         planned_profile_without_precommitted_groups::<fp128::OneHot>(preplans, onehot_group)?;
     let dense = planned_profile_without_precommitted_groups::<fp128::Dense>(preplans, dense_group)?;
-    Ok((
-        AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(16, 1),
-            precommitteds: vec![onehot, dense],
-        },
-        vec![onehot_policy, dense_policy],
+    Ok(GroupedGenerationRequest::new(
+        PolynomialGroupLayout::new(16, 1),
+        vec![
+            PrecommittedProducer::from_config::<fp128::OneHot>(onehot)?,
+            PrecommittedProducer::from_config::<fp128::Dense>(dense)?,
+        ],
+    ))
+}
+
+/// Grouped-root key pairing a **bounded** dense precommit with a one-hot final
+/// group.
+///
+/// This is the mixed-bound cell: the precommitted group is frozen by
+/// `fp128::DenseBounded` (`log_commit_bound = 65` inside the 128-bit field) while the
+/// root is planned under `fp128::OneHot` (`log_commit_bound = 1`). It exercises
+/// the fact that a precommitted group carries its own committed-source bound in
+/// its frozen `inner_commit_matrix` and does not have to agree with the planning
+/// config's bound — only the shared full-width opening geometry has to line up.
+fn bounded_dense_onehot_catalog_key(
+    preplans: &GenerationPreplans,
+) -> Result<GroupedGenerationRequest, AkitaError> {
+    let bounded_dense_group = PolynomialGroupLayout::new(14, 1);
+    let bounded_dense = planned_profile_without_precommitted_groups::<fp128::DenseBounded>(
+        preplans,
+        bounded_dense_group,
+    )?;
+    Ok(GroupedGenerationRequest::new(
+        PolynomialGroupLayout::new(16, 1),
+        vec![PrecommittedProducer::from_config::<fp128::DenseBounded>(
+            bounded_dense,
+        )?],
     ))
 }
 
 fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
-) -> Result<Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>, AkitaError> {
+) -> Result<GroupedGenerationRequests, AkitaError> {
     let singleton_pre = planned_profile_without_precommitted_groups::<BaseCfg>(
         preplans,
         PolynomialGroupLayout::new(14, 1),
@@ -487,36 +513,19 @@ fn onehot_group_batch_test_keys<BaseCfg: CommitmentConfig + 'static>(
         preplans,
         PolynomialGroupLayout::new(14, 2),
     )?;
-    let policy = honest_fold_policy_of::<BaseCfg>();
+    let singleton = PrecommittedProducer::from_config::<BaseCfg>(singleton_pre)?;
+    let pair = PrecommittedProducer::from_config::<BaseCfg>(pair_pre)?;
     Ok(vec![
-        (
-            AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::new(20, 2),
-                precommitteds: vec![singleton_pre],
-            },
-            vec![policy],
+        GroupedGenerationRequest::new(PolynomialGroupLayout::new(20, 2), vec![singleton]),
+        GroupedGenerationRequest::new(
+            PolynomialGroupLayout::new(20, 4),
+            vec![singleton, singleton],
         ),
-        (
-            AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::new(20, 4),
-                precommitteds: vec![singleton_pre, singleton_pre],
-            },
-            vec![policy, policy],
+        GroupedGenerationRequest::new(
+            PolynomialGroupLayout::new(20, 4),
+            vec![singleton, singleton, singleton],
         ),
-        (
-            AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::new(20, 4),
-                precommitteds: vec![singleton_pre, singleton_pre, singleton_pre],
-            },
-            vec![policy, policy, policy],
-        ),
-        (
-            AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::new(20, 1),
-                precommitteds: vec![pair_pre],
-            },
-            vec![policy],
-        ),
+        GroupedGenerationRequest::new(PolynomialGroupLayout::new(20, 1), vec![pair]),
     ])
 }
 
@@ -530,10 +539,11 @@ macro_rules! family_row {
             scalar_plan_source: TypeId::of::<$cfg>,
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
-            group_batch_keys: $group_keys,
+            grouped_requests: $group_keys,
             resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
+            source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             explicit_precommitted_group: explicit_precommitted_group::<$cfg>,
         }
@@ -549,10 +559,11 @@ macro_rules! family_row {
             scalar_plan_source: TypeId::of::<$cfg>,
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
-            group_batch_keys: $group_keys,
+            grouped_requests: $group_keys,
             resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
             schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
+            source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
             explicit_precommitted_group: explicit_precommitted_group::<$base_cfg>,
         }
@@ -560,22 +571,33 @@ macro_rules! family_row {
 }
 
 /// Minimal [`EmitSpec`] for refreshing `generated/mod.rs` wiring only.
-pub fn wiring_emit_spec(family: &GeneratedFamily, output_dir: std::path::PathBuf) -> EmitSpec {
-    EmitSpec {
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when the family declares a producer
+/// contract it cannot honour. A wiring refresh does not emit a banner, but the
+/// spec still owns one field per family fact, so the failure surfaces here rather
+/// than being papered over with a placeholder.
+pub fn wiring_emit_spec(
+    family: &GeneratedFamily,
+    output_dir: std::path::PathBuf,
+) -> Result<EmitSpec, AkitaError> {
+    Ok(EmitSpec {
         module_name: family.module_name,
         const_name: family.const_name,
         family_name: family.module_name,
         schedule_feature: family.schedule_feature,
         policy: (family.policy)(),
+        source_contract: (family.source_contract)()?,
         keys: Vec::new(),
-        group_batch_keys: Vec::new(),
+        grouped_requests: Vec::new(),
         preplanned_scalar: Vec::new(),
         output_dir,
         regen: family.regen,
         regen_group_batch: family.regen_group_batch,
         ring_challenge_config: family.ring_challenge_config,
         generator_command: "",
-    }
+    })
 }
 
 /// Adapt one [`GeneratedFamily`] into an [`EmitSpec`] for the planner emitter.
@@ -586,15 +608,16 @@ pub fn emit_spec_for_family(
     generator_command: &'static str,
 ) -> Result<EmitSpec, AkitaError> {
     let policy = (family.policy)();
-    let group_batch_keys = (family.group_batch_keys)(preplans)?;
+    let grouped_requests = (family.grouped_requests)(preplans)?;
     Ok(EmitSpec {
         module_name: family.module_name,
         const_name: family.const_name,
         family_name: family.module_name,
         schedule_feature: family.schedule_feature,
         policy,
+        source_contract: (family.source_contract)()?,
         keys: emitted_scalar_keys(family)?,
-        group_batch_keys,
+        grouped_requests,
         preplanned_scalar: Vec::new(),
         output_dir,
         regen: family.regen,
@@ -607,11 +630,10 @@ pub fn emit_spec_for_family(
 fn explicit_precommitted_group<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
-) -> Result<(CommittedGroupProfile, HonestFoldPolicySpec), AkitaError> {
-    Ok((
-        planned_profile_without_precommitted_groups::<Cfg>(preplans, group)?,
-        honest_fold_policy_of::<Cfg>(),
-    ))
+) -> Result<PrecommittedProducer, AkitaError> {
+    PrecommittedProducer::from_config::<Cfg>(planned_profile_without_precommitted_groups::<Cfg>(
+        preplans, group,
+    )?)
 }
 
 /// Every `Cfg` that has a generated schedule table.
@@ -626,7 +648,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-onehot",
         FP128_ONEHOT_KEYS,
         fp128::OneHot,
-        fp128_onehot_group_batch_keys
+        fp128_onehot_grouped_requests
     ),
     family_row!(
         recursive,
@@ -654,7 +676,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-dense",
         FP128_DENSE_KEYS,
         fp128::Dense,
-        fp128_dense_group_batch_keys
+        fp128_dense_grouped_requests
     ),
     family_row!(
         "fp128_onehot_multi_chunk",
@@ -662,7 +684,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-onehot-multi-chunk",
         FP128_ONEHOT_MULTI_CHUNK_KEYS,
         fp128::OneHotMultiChunk,
-        fp128_onehot_multichunk_group_batch_keys
+        fp128_onehot_multichunk_grouped_requests
     ),
     family_row!(
         "fp128_onehot_multi_chunk_w2r2",
@@ -670,7 +692,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-onehot-multi-chunk-w2r2",
         FP128_ONEHOT_MULTI_CHUNK_W2R2_KEYS,
         fp128::OneHotMultiChunkW2R2,
-        fp128_onehot_multichunk_w2r2_group_batch_keys
+        fp128_onehot_multichunk_w2r2_grouped_requests
     ),
     family_row!(
         "fp128_onehot_multi_chunk_w4r2",
@@ -678,7 +700,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-onehot-multi-chunk-w4r2",
         FP128_ONEHOT_MULTI_CHUNK_W4R2_KEYS,
         fp128::OneHotMultiChunkW4R2,
-        no_group_batch_keys
+        no_grouped_requests
     ),
     family_row!(
         "fp128_dense_multi_chunk",
@@ -686,7 +708,15 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp128-dense-multi-chunk",
         FP128_DENSE_MULTI_CHUNK_KEYS,
         fp128::DenseMultiChunk,
-        no_group_batch_keys
+        no_grouped_requests
+    ),
+    family_row!(
+        "fp128_dense_bounded",
+        "FP128_DENSE_BOUNDED_SCHEDULES",
+        "fp128-dense-bounded",
+        FP128_DENSE_BOUNDED_KEYS,
+        fp128::DenseBounded,
+        no_grouped_requests
     ),
     family_row!(
         "fp64_dense",
@@ -694,7 +724,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp64-dense",
         FP64_DENSE_KEYS,
         fp64::Dense,
-        fp64_dense_group_batch_keys
+        fp64_dense_grouped_requests
     ),
     family_row!(
         "fp64_onehot",
@@ -702,7 +732,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp64-onehot",
         FP64_ONEHOT_KEYS,
         fp64::OneHot,
-        no_group_batch_keys
+        no_grouped_requests
     ),
     family_row!(
         "fp32_dense",
@@ -710,7 +740,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp32-dense",
         FP32_DENSE_KEYS,
         fp32::Dense,
-        fp32_dense_group_batch_keys
+        fp32_dense_grouped_requests
     ),
     family_row!(
         "fp32_onehot",
@@ -718,7 +748,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         "fp32-onehot",
         FP32_ONEHOT_KEYS,
         fp32::OneHot,
-        fp32_onehot_group_batch_keys
+        fp32_onehot_grouped_requests
     ),
 ];
 
@@ -755,7 +785,8 @@ mod tests {
             .iter()
             .find(|family| family.module_name == "fp128_onehot")
             .expect("known family");
-        let mut spec = wiring_emit_spec(family, std::path::PathBuf::new());
+        let mut spec = wiring_emit_spec(family, std::path::PathBuf::new())
+            .expect("shipped families declare a valid producer contract");
         spec.keys = vec![key];
         preplans.attach_to_spec(family, &mut spec);
         assert_eq!(spec.preplanned_scalar, vec![(key, first)]);

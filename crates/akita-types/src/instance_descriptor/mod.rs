@@ -458,11 +458,12 @@ impl AkitaDeserialize for ProtocolFeatureSet {
 
 impl Valid for SetupSection {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.decomposition.log_basis == 0 {
-            return Err(SerializationError::InvalidData(
-                "descriptor log_basis must be non-zero".to_string(),
-            ));
-        }
+        // Covers `log_basis`, the field width, and the committed source bound
+        // (`1 <= log_commit_bound <= field_bits`) in one place, so a bounded
+        // source cannot arrive with a bound the digit math cannot represent.
+        self.decomposition
+            .validate()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         if self.fold_linf != FoldLinfProtocolBinding::CURRENT {
             return Err(SerializationError::InvalidData(
                 "descriptor fold_linf binding does not match active protocol cutover".to_string(),

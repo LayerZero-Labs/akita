@@ -9,7 +9,7 @@ use akita_field::{FieldCore, FromPrimitiveInt};
 use crate::{
     CommitmentRingDims, CommittedGroupParams, DigitRangePlan, FlatBooleanDomain,
     InnerCommitSecurityRoute, OpeningClaimsLayout, PhysicalL2NormProofShape,
-    RelationAddressGeometry, WitnessLayout,
+    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry, WitnessLayout,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -380,6 +380,7 @@ impl RelationRangeImageGroupPlan {
 /// compact/folded tables remain prover state and are intentionally not represented here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationRangeImagePlan {
+    relation_witness_geometry: RelationWitnessGeometry,
     relation_address_geometry: RelationAddressGeometry,
     digit_range_plan: DigitRangePlan,
     witness_layout: WitnessLayout,
@@ -395,12 +396,25 @@ impl RelationRangeImagePlan {
     /// not exactly encode the compact semantic witness layout, or witness groups/chunks
     /// do not follow the authenticated opening order.
     pub fn new(
+        relation_witness_geometry: RelationWitnessGeometry,
         relation_address_geometry: RelationAddressGeometry,
         digit_range_plan: DigitRangePlan,
         witness_layout: WitnessLayout,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<Self, AkitaError> {
         opening_batch.check()?;
+        witness_layout.validate_internal_ranges()?;
+
+        let expected_address_geometry = RelationAddressGeometry::for_relation(
+            &relation_witness_geometry,
+            relation_address_geometry.outgoing_witness_ring_dimension(),
+            witness_layout.live_coeff_len(),
+        )?;
+        if relation_address_geometry != expected_address_geometry {
+            return Err(AkitaError::InvalidSetup(
+                "relation address geometry disagrees with relation rows".into(),
+            ));
+        }
 
         let digit_witness_domain = relation_address_geometry.digit_witness_domain();
         let expected_live_len = witness_layout.live_coeff_len();
@@ -468,6 +482,13 @@ impl RelationRangeImagePlan {
                 let z_range = unit.z_range();
                 let e_range = unit.e_range();
                 let t_range = unit.t_range();
+                if unit.e_geometry()
+                    != relation_witness_geometry.group_opening_geometry(group_index)?
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "witness E geometry disagrees with its relation group".into(),
+                    ));
+                }
                 if z_range.start != witness_cursor
                     || z_range.end != e_range.start
                     || e_range.end != t_range.start
@@ -497,8 +518,21 @@ impl RelationRangeImagePlan {
                 "witness layout does not end in one shared quotient range".into(),
             ));
         }
+        let row_geometries = relation_witness_geometry.rhs_layout().row_geometries()?;
+        if witness_layout.r_rows().len() != row_geometries.len()
+            || witness_layout
+                .r_rows()
+                .iter()
+                .zip(row_geometries)
+                .any(|(row, geometry)| row.geometry() != geometry)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "witness quotient rows disagree with relation geometry".into(),
+            ));
+        }
 
         Ok(Self {
+            relation_witness_geometry,
             relation_address_geometry,
             digit_range_plan,
             witness_layout,
@@ -510,6 +544,12 @@ impl RelationRangeImagePlan {
     #[must_use]
     pub fn relation_address_geometry(&self) -> RelationAddressGeometry {
         self.relation_address_geometry
+    }
+
+    /// Canonical row and opening-coefficient geometry.
+    #[must_use]
+    pub const fn relation_witness_geometry(&self) -> &RelationWitnessGeometry {
+        &self.relation_witness_geometry
     }
 
     /// Complete coefficient-domain authority shared with Stage 1.
@@ -541,17 +581,83 @@ impl RelationRangeImagePlan {
     pub fn groups(&self) -> &[RelationRangeImageGroupPlan] {
         &self.groups
     }
+
+    /// Canonical consistency-row index for one authenticated opening group.
+    pub fn consistency_row_index(&self, group_index: usize) -> Result<usize, AkitaError> {
+        self.relation_witness_geometry
+            .rhs_layout()
+            .row_families()?
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    RelationRowFamily::Consistency {
+                        group_index: row_group_index,
+                        ..
+                    } if *row_group_index == group_index
+                )
+            })
+            .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Canonical trailing scalar-opening row after every physical relation row.
+    pub fn scalar_opening_row_index(&self) -> Result<usize, AkitaError> {
+        Ok(self
+            .relation_witness_geometry
+            .rhs_layout()
+            .row_families()?
+            .len())
+    }
+
+    /// Exact Boolean width of the authenticated relation-row point.
+    pub fn relation_row_index_num_vars(&self) -> Result<usize, AkitaError> {
+        let row_count = self
+            .scalar_opening_row_index()?
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation-row count overflow".into()))?;
+        let padded = row_count
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidSetup("relation-row index width overflow".into()))?;
+        Ok(padded.trailing_zeros() as usize)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        dyadic_block_ranges, PolynomialGroupLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
+        dyadic_block_ranges, CommitmentSliceCount, PolynomialGroupLayout, RelationGroupRows,
+        RelationRhsLayout, RelationRowGeometry, WitnessQuotientRowLayout, WitnessUnitLayout,
     };
+
+    fn test_relation_geometry(
+        opening_batch: &OpeningClaimsLayout,
+        role_dims: CommitmentRingDims,
+    ) -> RelationWitnessGeometry {
+        let opening_geometry = RelationRowGeometry::native(role_dims.d_a()).unwrap();
+        let groups = opening_batch
+            .root_group_order()
+            .unwrap()
+            .into_iter()
+            .map(|group_index| RelationGroupRows {
+                group_index,
+                role_dims,
+                opening_geometry,
+                opening_method: crate::OpeningMethod::EvaluationTrace,
+                n_a: 1,
+                physical_b_rows: 1,
+                outer_slice_count: CommitmentSliceCount::ONE,
+            })
+            .collect();
+        RelationWitnessGeometry::from_parts(
+            1,
+            RelationRhsLayout::new_for_test(role_dims.d_d(), 1, groups),
+        )
+    }
 
     fn test_layout(
         opening_batch: &OpeningClaimsLayout,
+        relation_geometry: &RelationWitnessGeometry,
         chunks_per_group: usize,
         source_ring_dimension: usize,
     ) -> WitnessLayout {
@@ -585,18 +691,25 @@ mod tests {
                     blocks.len(),
                     z_range,
                     e_range,
+                    relation_geometry
+                        .group_opening_geometry(group_index)
+                        .unwrap(),
                     t_range,
                 ));
             }
         }
-        WitnessLayout::new_for_test(
-            units,
-            vec![WitnessQuotientRowLayout::new_for_test(
-                source_ring_dimension,
-                cursor..cursor + source_ring_dimension,
-            )],
-            1,
-        )
+        let quotient_rows = relation_geometry
+            .rhs_layout()
+            .row_geometries()
+            .unwrap()
+            .into_iter()
+            .map(|geometry| {
+                let range = cursor..cursor + geometry.physical_coefficient_width();
+                cursor = range.end;
+                WitnessQuotientRowLayout::new_for_test(geometry, range)
+            })
+            .collect();
+        WitnessLayout::new_for_test(units, quotient_rows, 1)
     }
 
     fn plan_for(
@@ -614,14 +727,21 @@ mod tests {
                 .collect(),
         )
         .unwrap();
-        let witness_layout = test_layout(&opening_batch, chunks_per_group, role_dims.d_a());
-        let geometry = RelationAddressGeometry::new(
-            role_dims,
+        let relation_geometry = test_relation_geometry(&opening_batch, role_dims);
+        let witness_layout = test_layout(
+            &opening_batch,
+            &relation_geometry,
+            chunks_per_group,
+            role_dims.d_a(),
+        );
+        let geometry = RelationAddressGeometry::for_relation(
+            &relation_geometry,
             opening_ring_dimension,
             witness_layout.live_coeff_len(),
         )
         .unwrap();
         RelationRangeImagePlan::new(
+            relation_geometry,
             geometry,
             DigitRangePlan::new(basis).unwrap(),
             witness_layout,
@@ -695,12 +815,15 @@ mod tests {
     #[test]
     fn plan_rejects_domain_and_physical_order_disagreement() {
         let opening_batch = OpeningClaimsLayout::from_group_sizes(3, &[1, 1]).unwrap();
-        let witness_layout = test_layout(&opening_batch, 1, 64);
+        let relation_geometry =
+            test_relation_geometry(&opening_batch, CommitmentRingDims::uniform(64));
+        let witness_layout = test_layout(&opening_batch, &relation_geometry, 1, 64);
         let live_len = witness_layout.live_coeff_len();
         let short_geometry =
             RelationAddressGeometry::new(CommitmentRingDims::uniform(64), 64, live_len - 64)
                 .unwrap();
         assert!(RelationRangeImagePlan::new(
+            relation_geometry.clone(),
             short_geometry,
             DigitRangePlan::new(8).unwrap(),
             witness_layout.clone(),
@@ -718,7 +841,86 @@ mod tests {
         let geometry =
             RelationAddressGeometry::new(CommitmentRingDims::uniform(64), 64, live_len).unwrap();
         assert!(RelationRangeImagePlan::new(
+            relation_geometry,
             geometry,
+            DigitRangePlan::new(8).unwrap(),
+            malformed,
+            &opening_batch,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn plan_rejects_equal_length_geometry_permutations() {
+        let opening_batch = OpeningClaimsLayout::from_group_sizes(3, &[1]).unwrap();
+        let relation_geometry =
+            test_relation_geometry(&opening_batch, CommitmentRingDims::uniform(64));
+        let witness_layout = test_layout(&opening_batch, &relation_geometry, 1, 64);
+        let address_geometry = RelationAddressGeometry::for_relation(
+            &relation_geometry,
+            64,
+            witness_layout.live_coeff_len(),
+        )
+        .unwrap();
+
+        let mut wrong_rows = witness_layout.r_rows().to_vec();
+        wrong_rows[0] = WitnessQuotientRowLayout::new_for_test(
+            RelationRowGeometry::new(32, 2).unwrap(),
+            wrong_rows[0].range(),
+        );
+        let malformed = WitnessLayout::new_for_test(
+            witness_layout.units().to_vec(),
+            wrong_rows,
+            witness_layout.quotient_depth(),
+        );
+        assert!(RelationRangeImagePlan::new(
+            relation_geometry.clone(),
+            address_geometry,
+            DigitRangePlan::new(8).unwrap(),
+            malformed,
+            &opening_batch,
+        )
+        .is_err());
+
+        let mut duplicated_rows = witness_layout.r_rows().to_vec();
+        duplicated_rows[1] = WitnessQuotientRowLayout::new_for_test(
+            duplicated_rows[1].geometry(),
+            duplicated_rows[0].range(),
+        );
+        let malformed = WitnessLayout::new_for_test(
+            witness_layout.units().to_vec(),
+            duplicated_rows,
+            witness_layout.quotient_depth(),
+        );
+        assert!(RelationRangeImagePlan::new(
+            relation_geometry.clone(),
+            address_geometry,
+            DigitRangePlan::new(8).unwrap(),
+            malformed,
+            &opening_batch,
+        )
+        .is_err());
+
+        let mut wrong_units = witness_layout.units().to_vec();
+        let unit = &wrong_units[0];
+        wrong_units[0] = WitnessUnitLayout::new_for_test(
+            unit.group_index(),
+            unit.chunk_index(),
+            unit.global_block_start(),
+            unit.num_live_blocks(),
+            unit.z_range(),
+            unit.e_range(),
+            RelationRowGeometry::new(32, 2).unwrap(),
+            unit.t_range(),
+        );
+        let malformed = WitnessLayout::new_for_test(
+            wrong_units,
+            witness_layout.r_rows().to_vec(),
+            witness_layout.quotient_depth(),
+        );
+        assert!(RelationRangeImagePlan::new(
+            relation_geometry,
+            address_geometry,
             DigitRangePlan::new(8).unwrap(),
             malformed,
             &opening_batch,

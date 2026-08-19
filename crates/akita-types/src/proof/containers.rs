@@ -259,7 +259,7 @@ impl<F: FieldCore> RingVec<F> {
     /// Debug-asserts `ring_dim == D` (or compact mode with divisible length).
     /// Release builds perform no shape checks.
     #[inline]
-    pub fn as_ring_slice_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
+    fn as_ring_slice_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
         debug_assert!(D > 0);
         debug_assert!(self.ring_dim == 0 || self.ring_dim == D);
         debug_assert!(self.coeffs.len().is_multiple_of(D));
@@ -275,7 +275,7 @@ impl<F: FieldCore> RingVec<F> {
 
     /// Hot-path borrow of a single ring element after construction fixed `D`.
     #[inline]
-    pub fn as_single_ring_trusted<const D: usize>(&self) -> &CyclotomicRing<F, D> {
+    fn as_single_ring_trusted<const D: usize>(&self) -> &CyclotomicRing<F, D> {
         debug_assert_eq!(self.coeffs.len(), D);
         debug_assert!(self.ring_dim == 0 || self.ring_dim == D);
         // SAFETY: one `D`-sized coefficient block is one ring element.
@@ -307,6 +307,9 @@ impl<F: FieldCore> RingVec<F> {
     /// well-formed for ring dimension `D`, or if it contains more than one
     /// element.
     pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, AkitaError> {
+        if D == 0 {
+            return Err(AkitaError::InvalidProof);
+        }
         if self.ring_dim == D && self.coeffs.len() == D {
             return Ok(self.as_single_ring_trusted::<D>());
         }

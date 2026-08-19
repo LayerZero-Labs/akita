@@ -52,6 +52,11 @@ or generated catalog structure:
 scripts/generate-schedule-tables.sh
 ```
 
+For a faster planner iteration loop, pass one or more generated family module
+names, for example `scripts/generate-schedule-tables.sh fp32_dense`. This writes
+only the selected family rows while preserving the complete shared module
+wiring. Run the unfiltered command before committing planner changes.
+
 The dedicated all-schedules drift job regenerates the complete catalog and
 rejects any byte difference from the tracked files.
 

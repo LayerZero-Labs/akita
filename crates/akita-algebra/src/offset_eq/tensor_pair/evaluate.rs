@@ -45,18 +45,31 @@ pub fn eval_boolean_pair_tensor_families<
         if family.scalar.is_zero() {
             continue;
         }
+        if let Some(value) = try_eval_aligned_family::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+            left_challenges,
+            right_challenges,
+            family,
+            &mut work,
+        )? {
+            acc += value;
+            continue;
+        }
         let recurrence_axes = family
             .axes
             .iter()
             .enumerate()
             .filter(|(_, axis)| {
-                matches!(axis.weights, EqPairTensorWeights::Unit)
-                    && axis.len.is_power_of_two()
-                    && (axis.left_stride != 0 || axis.right_stride != 0)
+                axis.supports_bit_recurrence() && (axis.left_stride != 0 || axis.right_stride != 0)
             })
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        if recurrence_axes.len() >= 2 {
+        let has_factored_weights = recurrence_axes.iter().any(|&axis_index| {
+            family
+                .axes
+                .get(axis_index)
+                .is_some_and(|axis| matches!(axis.weights, EqPairTensorWeights::BitProduct(_)))
+        });
+        if recurrence_axes.len() >= 2 || has_factored_weights {
             let recurrence_geometry = recurrence_axes
                 .iter()
                 .map(|&axis_index| {
@@ -67,10 +80,20 @@ pub fn eval_boolean_pair_tensor_families<
                     Ok((axis_index, axis.len, axis.left_stride, axis.right_stride))
                 })
                 .collect::<Result<Vec<_>, AkitaError>>()?;
-            multi_axis_batches
-                .entry(recurrence_geometry)
-                .or_default()
-                .push(family);
+            if has_factored_weights {
+                acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+                    left_challenges,
+                    right_challenges,
+                    &[family],
+                    &recurrence_geometry,
+                    &mut work,
+                )?;
+            } else {
+                multi_axis_batches
+                    .entry(recurrence_geometry)
+                    .or_default()
+                    .push(family);
+            }
             continue;
         }
         let stream_axis = family
@@ -97,7 +120,7 @@ pub fn eval_boolean_pair_tensor_families<
         )?;
     }
     for (recurrence_geometry, families) in multi_axis_batches {
-        acc += eval_multi_axis_unit_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
+        acc += eval_multi_axis_families::<F, LEFT_MONOMIAL, RIGHT_MONOMIAL>(
             left_challenges,
             right_challenges,
             &families,
@@ -124,11 +147,153 @@ pub fn eval_boolean_pair_tensor_families<
     Ok(acc)
 }
 
-fn eval_multi_axis_unit_families<
-    F: FieldCore,
-    const LEFT_MONOMIAL: bool,
-    const RIGHT_MONOMIAL: bool,
->(
+fn try_eval_aligned_family<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+    left_challenges: &[F],
+    right_challenges: &[F],
+    family: &EqPairTensorFamily<F>,
+    work: &mut usize,
+) -> Result<Option<F>, AkitaError> {
+    let mut left_mask = 0usize;
+    let mut right_mask = 0usize;
+    for axis in &family.axes {
+        if !axis.len.is_power_of_two()
+            || (axis.left_stride != 0 && !axis.left_stride.is_power_of_two())
+            || (axis.right_stride != 0 && !axis.right_stride.is_power_of_two())
+        {
+            return Ok(None);
+        }
+        let axis_bits = axis.len.trailing_zeros() as usize;
+        for (stride, challenges, occupied) in [
+            (axis.left_stride, left_challenges, &mut left_mask),
+            (axis.right_stride, right_challenges, &mut right_mask),
+        ] {
+            if stride == 0 || axis_bits == 0 {
+                continue;
+            }
+            let start = stride.trailing_zeros() as usize;
+            let end = start.checked_add(axis_bits).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor bit range overflow".into())
+            })?;
+            if end > challenges.len() {
+                return Ok(None);
+            }
+            let low = 1usize.checked_shl(start as u32).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor bit mask overflow".into())
+            })?;
+            let high = 1usize.checked_shl(end as u32).ok_or_else(|| {
+                AkitaError::InvalidInput("paired tensor bit mask overflow".into())
+            })?;
+            let mask = high - low;
+            if *occupied & mask != 0 {
+                return Ok(None);
+            }
+            *occupied |= mask;
+        }
+    }
+    let left_domain = 1usize
+        .checked_shl(left_challenges.len() as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor left domain overflow".into()))?;
+    let right_domain = 1usize
+        .checked_shl(right_challenges.len() as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("paired tensor right domain overflow".into()))?;
+    if family.left_offset >= left_domain
+        || family.right_offset >= right_domain
+        || family.left_offset & left_mask != 0
+        || family.right_offset & right_mask != 0
+    {
+        return Ok(None);
+    }
+
+    let mut value = family.scalar;
+    charge_work(work, left_challenges.len())?;
+    for (bit, &challenge) in left_challenges.iter().enumerate() {
+        if left_mask & (1usize << bit) == 0 {
+            value *= basis_bit_factor::<F, LEFT_MONOMIAL>(
+                Some(challenge),
+                (family.left_offset >> bit) & 1,
+            )
+            .ok_or(AkitaError::InvalidProof)?;
+        }
+    }
+    charge_work(work, right_challenges.len())?;
+    for (bit, &challenge) in right_challenges.iter().enumerate() {
+        if right_mask & (1usize << bit) == 0 {
+            value *= basis_bit_factor::<F, RIGHT_MONOMIAL>(
+                Some(challenge),
+                (family.right_offset >> bit) & 1,
+            )
+            .ok_or(AkitaError::InvalidProof)?;
+        }
+    }
+
+    for axis in &family.axes {
+        let axis_bits = axis.len.trailing_zeros() as usize;
+        let mut axis_value = F::one();
+        match &axis.weights {
+            EqPairTensorWeights::Unit | EqPairTensorWeights::BitProduct(_) => {
+                for coordinate_bit in 0..axis_bits {
+                    charge_work(work, 2)?;
+                    let factors = axis
+                        .bit_factors(coordinate_bit)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let mut bit_sum = F::zero();
+                    for (coordinate, weight) in factors.into_iter().enumerate() {
+                        let mut term = weight;
+                        if axis.left_stride != 0 {
+                            let bit = axis.left_stride.trailing_zeros() as usize + coordinate_bit;
+                            term *= basis_bit_factor::<F, LEFT_MONOMIAL>(
+                                left_challenges.get(bit).copied(),
+                                coordinate,
+                            )
+                            .ok_or(AkitaError::InvalidProof)?;
+                        }
+                        if axis.right_stride != 0 {
+                            let bit = axis.right_stride.trailing_zeros() as usize + coordinate_bit;
+                            term *= basis_bit_factor::<F, RIGHT_MONOMIAL>(
+                                right_challenges.get(bit).copied(),
+                                coordinate,
+                            )
+                            .ok_or(AkitaError::InvalidProof)?;
+                        }
+                        bit_sum += term;
+                    }
+                    axis_value *= bit_sum;
+                }
+            }
+            EqPairTensorWeights::Dense(weights) => {
+                charge_work(work, axis.len)?;
+                axis_value = F::zero();
+                for (coordinate, &weight) in weights.iter().enumerate() {
+                    let mut term = weight;
+                    for coordinate_bit in 0..axis_bits {
+                        let coordinate_value = (coordinate >> coordinate_bit) & 1;
+                        if axis.left_stride != 0 {
+                            let bit = axis.left_stride.trailing_zeros() as usize + coordinate_bit;
+                            term *= basis_bit_factor::<F, LEFT_MONOMIAL>(
+                                left_challenges.get(bit).copied(),
+                                coordinate_value,
+                            )
+                            .ok_or(AkitaError::InvalidProof)?;
+                        }
+                        if axis.right_stride != 0 {
+                            let bit = axis.right_stride.trailing_zeros() as usize + coordinate_bit;
+                            term *= basis_bit_factor::<F, RIGHT_MONOMIAL>(
+                                right_challenges.get(bit).copied(),
+                                coordinate_value,
+                            )
+                            .ok_or(AkitaError::InvalidProof)?;
+                        }
+                    }
+                    axis_value += term;
+                }
+            }
+        }
+        value *= axis_value;
+    }
+    Ok(Some(value))
+}
+
+fn eval_multi_axis_families<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     families: &[&EqPairTensorFamily<F>],
@@ -153,8 +318,26 @@ fn eval_multi_axis_unit_families<
         )?;
     }
     let bit_count = left_challenges.len().max(right_challenges.len());
-    let mut introductions = vec![Vec::<(usize, usize)>::new(); bit_count];
-    for &(_, axis_len, left_stride, right_stride) in recurrence_geometry {
+    let mut introductions = vec![Vec::<BitIntroduction<F>>::new(); bit_count];
+    let mut forced_zero_weight = F::one();
+    let first_family = families.first().ok_or(AkitaError::InvalidProof)?;
+    for &(axis_index, axis_len, left_stride, right_stride) in recurrence_geometry {
+        let axis = first_family
+            .axes
+            .get(axis_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if axis.len != axis_len
+            || axis.left_stride != left_stride
+            || axis.right_stride != right_stride
+            || families.iter().any(|family| {
+                family
+                    .axes
+                    .get(axis_index)
+                    .is_none_or(|candidate| candidate != axis)
+            })
+        {
+            return Err(AkitaError::InvalidProof);
+        }
         for coordinate_bit in 0..axis_len.trailing_zeros() as usize {
             let coordinate = 1usize.checked_shl(coordinate_bit as u32).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor coordinate bit overflow".into())
@@ -173,17 +356,33 @@ fn eval_multi_axis_unit_families<
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("paired tensor unit axis is constant".into())
                 })?;
+            let factors = axis
+                .bit_factors(coordinate_bit)
+                .ok_or(AkitaError::InvalidProof)?;
             if let Some(at_bit) = introductions.get_mut(start_bit) {
-                at_bit.push((left >> start_bit, right >> start_bit));
+                at_bit.push(BitIntroduction {
+                    left: left >> start_bit,
+                    right: right >> start_bit,
+                    factors,
+                });
             } else {
                 // Both nonzero shifted strides start beyond every equality bit.
                 // The coordinate-one branch is therefore out of domain on both
-                // sides and contributes zero.
+                // sides and contributes zero. The forced coordinate-zero
+                // branch still carries its factored axis weight.
                 debug_assert!(
                     (left == 0 || left >= 1usize << left_challenges.len())
                         && (right == 0 || right >= 1usize << right_challenges.len())
                 );
+                forced_zero_weight *= factors[0];
             }
+        }
+    }
+
+    if forced_zero_weight != F::one() {
+        charge_work(work, seeds.len())?;
+        for seed in &mut seeds {
+            seed.weight *= forced_zero_weight;
         }
     }
 
@@ -194,7 +393,7 @@ fn eval_multi_axis_unit_families<
             .collect(),
     )?;
     for bit in 0..bit_count {
-        let choices = unit_axis_choices::<F>(
+        let choices = bit_axis_choices::<F>(
             introductions.get(bit).ok_or(AkitaError::InvalidProof)?,
             work,
         )?;
@@ -312,12 +511,9 @@ fn collect_residual_seeds<F: FieldCore>(
         .get(axis_index)
         .ok_or(AkitaError::InvalidProof)?;
     for coordinate in 0..axis.len {
-        let axis_weight = match &axis.weights {
-            EqPairTensorWeights::Unit => F::one(),
-            EqPairTensorWeights::Dense(weights) => {
-                *weights.get(coordinate).ok_or(AkitaError::InvalidProof)?
-            }
-        };
+        let axis_weight = axis
+            .coordinate_weight(coordinate)
+            .ok_or(AkitaError::InvalidProof)?;
         if axis_weight.is_zero() {
             continue;
         }
@@ -342,25 +538,51 @@ fn collect_residual_seeds<F: FieldCore>(
     Ok(())
 }
 
-fn unit_axis_choices<F: FieldCore>(
-    introductions: &[(usize, usize)],
+#[derive(Clone, Copy)]
+struct BitIntroduction<F: FieldCore> {
+    left: usize,
+    right: usize,
+    factors: [F; 2],
+}
+
+fn bit_axis_choices<F: FieldCore>(
+    introductions: &[BitIntroduction<F>],
     work: &mut usize,
 ) -> Result<Vec<(usize, usize, F)>, AkitaError> {
     let mut choices = BTreeMap::<(usize, usize), F>::from([((0, 0), F::one())]);
-    for &(left, right) in introductions {
-        charge_work(work, choices.len())?;
+    for &BitIntroduction {
+        left,
+        right,
+        factors,
+    } in introductions
+    {
+        charge_work(
+            work,
+            choices
+                .len()
+                .checked_mul(2)
+                .ok_or_else(|| AkitaError::InvalidInput("paired tensor choice overflow".into()))?,
+        )?;
         let previous = choices
             .iter()
             .map(|(&key, &weight)| (key, weight))
             .collect::<Vec<_>>();
+        choices.clear();
         for ((left_sum, right_sum), weight) in previous {
+            let zero_weight = weight * factors[0];
+            if !zero_weight.is_zero() {
+                *choices.entry((left_sum, right_sum)).or_insert(F::zero()) += zero_weight;
+            }
             let next_left = left_sum.checked_add(left).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor left choice overflow".into())
             })?;
             let next_right = right_sum.checked_add(right).ok_or_else(|| {
                 AkitaError::InvalidInput("paired tensor right choice overflow".into())
             })?;
-            *choices.entry((next_left, next_right)).or_insert(F::zero()) += weight;
+            let one_weight = weight * factors[1];
+            if !one_weight.is_zero() {
+                *choices.entry((next_left, next_right)).or_insert(F::zero()) += one_weight;
+            }
         }
     }
     Ok(choices
@@ -438,12 +660,9 @@ fn collect_tensor_family_seeds<F: FieldCore>(
         .get(axis_index)
         .ok_or(AkitaError::InvalidProof)?;
     for coordinate in 0..axis.len {
-        let axis_weight = match &axis.weights {
-            EqPairTensorWeights::Unit => F::one(),
-            EqPairTensorWeights::Dense(weights) => {
-                *weights.get(coordinate).ok_or(AkitaError::InvalidProof)?
-            }
-        };
+        let axis_weight = axis
+            .coordinate_weight(coordinate)
+            .ok_or(AkitaError::InvalidProof)?;
         if axis_weight.is_zero() {
             continue;
         }

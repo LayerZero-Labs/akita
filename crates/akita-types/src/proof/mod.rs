@@ -8,11 +8,14 @@
 //! Proof, commitment, setup, and claim data shapes.
 
 pub mod batch;
+mod coefficient_packing_relation;
 pub mod commitment;
 pub mod compression_relation_weights;
+mod fold_challenges;
 pub mod relation;
 pub mod relation_address;
 pub mod relation_range_image;
+mod relation_weight_event;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
@@ -37,15 +40,22 @@ mod wire;
 pub const MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS: usize = 1 << 26;
 
 pub use crate::opening_claims::{
-    derive_public_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    sample_row_coefficients, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    root_tensor_projection_enabled_for_width, validate_batched_inputs, PreparedOpeningPoint,
+    ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
     RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
+};
+pub use coefficient_packing_relation::{
+    prepare_coefficient_packing_batch_semantics,
+    prepare_coefficient_packing_verifier_batch_semantics, CoefficientPackingBatchSemanticInputs,
+    CoefficientPackingBatchSemantics, CoefficientPackingCompactFactors,
+    CoefficientPackingGroupSemantics, CoefficientPackingStage2Segment,
+    CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
+    CoefficientPackingVerifierBatchSemantics, CoefficientPackingVerifierGroupSemantics,
 };
 pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
@@ -56,6 +66,7 @@ pub use compression_relation_weights::{
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
 };
+pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
@@ -64,19 +75,21 @@ pub use levels::{
 };
 pub use relation::{
     assemble_compressed_relation_rhs, assemble_relation_rhs,
-    compression_relation_claim_from_rhs_extension, evaluation_trace_row_weight,
-    generate_relation_rhs, relation_claim_from_compressed_rhs_extension,
-    relation_claim_from_layout_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
-    relation_rhs_row_count, RelationGroupRows, RelationRhsLayout, RelationRowFamily,
+    compression_relation_claim_from_rhs_extension, generate_relation_rhs,
+    relation_claim_from_compressed_rhs_extension, relation_claim_from_layout_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
+    relation_rhs_row_count, relation_row_weight, RelationGroupRows, RelationRhsLayout,
+    RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
 };
 pub use relation_address::{CompressionRelationAddressGeometry, RelationAddressGeometry};
 pub use relation_range_image::{
     reconstruct_l2_sq_from_gram, PhysicalResponsePlan, RelationRangeImageGroupPlan,
     RelationRangeImagePlan,
 };
+pub use relation_weight_event::{RelationWeightContribution, RelationWeightEvent};
 pub use ring_relation::{
-    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
+    ring_relation_segment_lengths, CoefficientPackingChallenges, RingRelationGroupOpening,
+    RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
@@ -92,15 +105,17 @@ pub use setup_envelope::{
     verifier_setup_matrix_capacity_for_schedule,
 };
 pub use setup_prefix::{
-    active_setup_field_len, padded_setup_prefix_len, setup_prefix_coverage_eval_len,
-    setup_prefix_precommitted_params, setup_prefix_slot_id, suffix_opening_layout,
-    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SETUP_PREFIX_CONTENT_TAG,
+    active_setup_field_len, padded_setup_prefix_len, scheduled_setup_prefix,
+    setup_prefix_coverage_eval_len, setup_prefix_precommitted_params, suffix_opening_layout,
+    ScheduledSetupPrefix, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
-    AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
-    NextWitnessBindingShape, PhysicalL2NormProofWireShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    canonical_base_field_proof_shape, AkitaBatchedProofShape, AkitaStage1StageShape,
+    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBindingShape,
+    PhysicalL2NormProofWireShape, SetupProductSumcheckShape, TerminalLevelProofShape,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,

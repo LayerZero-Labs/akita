@@ -12,7 +12,7 @@ from typing import Any
 
 
 DEFAULT_PATTERN = (
-    r"eor|root_extension|extension_opening|SparseExtensionOpening|"
+    r"eor|extension_opening|SparseExtensionOpening|"
     r"dense_extension_reduction|fused_fold"
 )
 

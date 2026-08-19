@@ -122,10 +122,84 @@ model error. The planner freezes the resulting cap into the schedule. The
 verifier enforces that exact cap. A model error can make proving fail more
 often, but it cannot make the verifier accept a response above the cap.
 
+### The accepted committed-source space
+
+A committed level stores `num_digits_inner` balanced base-`2^log_basis_inner`
+digits per source coefficient. `CommittedSourceContract::accepted_bounds`
+computes the accepted centered interval for a balanced signed digit source. It
+intersects what those digits can represent with the declared
+`DecompositionParams::log_commit_bound` that the schedule was priced for.
+
+The source class and numeric bound are independent. The class selects either the
+unit one-hot structural contract or the balanced signed digit contract. The bound
+selects the digit depth for either class. A balanced signed digit source may use
+any valid bound, including `1` and the field width. A unit one-hot source remains
+unit one-hot at any valid bound.
+
+The intersection matters because the depth rounds up, so the representable
+envelope is strictly wider than the declaration — by 256x at some shipped
+geometries. The declaration is the binding side, because the planner prices a
+bounded source's final digit plane at only the range its bound leaves.
+
+A smaller bound is a smaller accepted witness space, not a weaker commitment. The
+A-role collision bounds above are computed from the same digit envelope the
+verifier admits, so a bounded family is priced for exactly what it accepts. The
+unit one-hot class has a separate structural admission check. The declared bound
+is inside `DecompositionParams`, which is hashed into the generated catalog
+identity and serialized into the instance descriptor, so a proof cannot be
+replayed against a family with a different bound.
+
+The obligation the smaller space creates is on the *producer*, and it has two
+halves. Committing above the representable envelope would bind a truncation,
+because the decomposition keeps only the scheduled digits. Committing above the
+declared bound would instead inflate the level-1 witness past the L2 response caps
+frozen into the recursion suffix, because those caps were priced from the
+declaration. `commit` rejects both. See
+[Bounded committed sources](./configuration.md#bounded-committed-sources).
+
 The fold nonce does not incur a fixed 12-bit soundness loss. Every nonce trial
 is another random-oracle query, so the Fiat-Shamir reduction charges it through
 the adversary's total query budget. See
 [Polynomial commitments and binding](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
+
+## Subring coefficient packing
+
+For the coefficient layout, the three ring domains, and the exact reason the
+partial evaluation is shorter, first read
+[Subring coefficient packing](./proving/root-fold-ring-switch.md#subring-coefficient-packing).
+This section focuses on transcript binding and soundness.
+
+Before sampling a packing challenge, the prover binds every coordinate of the
+partial opening through the D payload or its compressed H payload. The
+transcript also binds the method, challenge subring dimension, challenge
+family, group order, claim count, and block count. After challenge folding, the
+prover binds `Q_pack` and the next witness before sampling `alpha`.
+
+Packing challenge generation divides the canonical claim and block order into
+fixed batches of 128 challenges. Each batch uses a SHAKE256 stream derived from
+the transcript seed, a packing batch domain, and the batch index. The prover
+and verifier therefore get the same challenge order for every worker count.
+Evaluation trace challenge generation keeps its existing single stream.
+
+The production primes satisfy the fixed LS18 congruence and shortness
+condition used for unit pairwise challenge differences. This fact belongs to
+the field and challenge security review. It is not planner metadata and does
+not require a per-schedule certificate.
+
+The implementation derives the complete claim and block challenge vector from
+one transcript seed. A fork of that query generally changes the whole vector,
+so it does not directly provide the coordinatewise forks used by the original
+extraction sketch. The security proof remains open. It must either prove a
+full-vector extraction theorem for the implemented distribution, including the
+matrix-invertibility probability and forking loss, or the challenge derivation
+must change to support coordinatewise forks.
+
+The packed consistency equation still gives one polynomial identity in `E[Y]`.
+After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
+conditional polynomial-check error is `(2s-1)/|E|`. This root bound does not
+close the extraction gap. See the active
+[subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
+for the open acceptance criteria.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have
@@ -145,3 +219,7 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
+- `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
+  `crates/akita-prover/src/api/commitment.rs`
+  (`ensure_sources_fit_accepted_interval`) own the declared
+  committed-source bound and the producer-side range check.

@@ -11,19 +11,17 @@ use super::backend::{
 use super::cpu::CpuBackend;
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel, RootCommitKernel,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use super::operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchRelationPlan,
+    RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use super::plans::RingSwitchRelationRows;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-};
-use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField};
+use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
 macro_rules! delegate_compute_backend_setup {
@@ -211,18 +209,6 @@ macro_rules! delegate_tensor_kernels {
             ) -> Result<super::kernels::TensorPackedWitness<E>, AkitaError> {
                 CpuBackend::DEFAULT.packed_witness(prepared, source)
             }
-
-            fn root_projection(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                source: S,
-            ) -> Result<crate::backend::RootTensorProjectionPoly<F>, AkitaError>
-            where
-                F: FromPrimitiveInt,
-                E: FpExtEncoding<F>,
-            {
-                CpuBackend::DEFAULT.root_projection(prepared, source)
-            }
         }
 
         impl<S, F, E, const D: usize> TensorProjectionBatchKernel<S, F, E, D> for $ty
@@ -255,6 +241,26 @@ macro_rules! delegate_tensor_kernels {
                 AkitaError,
             > {
                 CpuBackend::DEFAULT.sparse_linear_combination(prepared, source, coeffs)
+            }
+        }
+    };
+}
+
+macro_rules! delegate_coefficient_packing {
+    ($ty:ty) => {
+        impl<S, F, E, const D: usize> SubringCoefficientPackingBatchKernel<S, F, E, D> for $ty
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            CpuBackend: SubringCoefficientPackingBatchKernel<S, F, E, D>,
+        {
+            fn coefficient_packing_partials_batch(
+                &self,
+                prepared: Option<&Self::PreparedSetup>,
+                source: S,
+                plan: SubringCoefficientPackingPlan<'_, E>,
+            ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+                CpuBackend::DEFAULT.coefficient_packing_partials_batch(prepared, source, plan)
             }
         }
     };
@@ -319,6 +325,7 @@ delegate_compute_backend_setup!(OpeningCluster);
 delegate_compression!(OpeningCluster);
 delegate_digit_rows!(OpeningCluster);
 delegate_opening_kernels!(OpeningCluster);
+delegate_coefficient_packing!(OpeningCluster);
 
 /// Delegating tensor-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]
@@ -326,6 +333,7 @@ pub struct TensorCluster;
 
 delegate_compute_backend_setup!(TensorCluster);
 delegate_tensor_kernels!(TensorCluster);
+delegate_coefficient_packing!(TensorCluster);
 
 /// Delegating ring-switch-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]

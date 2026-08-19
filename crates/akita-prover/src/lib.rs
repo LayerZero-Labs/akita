@@ -24,8 +24,8 @@ pub use api::{
 
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
-    RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly, SparseRingBlockEntry,
-    SparseRingPoly, SuffixWitnessBatchView, SuffixWitnessView,
+    RecursiveFoldSource, RecursiveWitnessFlat, SparseRingBlockEntry, SuffixWitnessBatchView,
+    SuffixWitnessView,
 };
 pub use compute::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome,
@@ -33,13 +33,12 @@ pub use compute::{
     CyclicRowsComputeBackend, DigitRowsComputeBackend, LevelProveStacks, NttCacheOwnerId,
     NttExecutionRequirements, NttOperationCluster, OpeningCluster, OpeningProveBackendFor,
     OperationCtx, PlannedNttCacheOwnerMetric, PreparedCrtNttProfile, PreparedNttCacheMetric,
-    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
+    ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
     ReleaseRootNttAfterFold, RingSwitchCluster, RingSwitchProveBackend, RingSwitchRelationRows,
-    RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootProveBackend, RootProvePoly, RootTensorSource, RoutedNttRequirement,
-    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeOpeningProveBackendFor,
-    RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
-    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend,
+    RootProvePoly, RootTensorSource, RoutedNttRequirement, RuntimeCommitBackendFor,
+    RuntimeCommitSource, RuntimeOpeningProveBackendFor, RuntimeRecursiveWitnessProveBackend,
+    RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor, TensorCluster,
     TieredProveStacks, UniformProverStack,
 };
@@ -181,9 +180,11 @@ impl<F: FieldCore> DecomposeFoldWitness<F> {
     }
 
     /// Borrow folded ring rows after [`Self::ensure_ring_dim`].
-    pub fn z_folded_rings_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
-        debug_assert_eq!(self.ring_dim, D);
-        self.z_folded_rings.as_ring_slice_trusted::<D>()
+    pub fn z_folded_rings_trusted<const D: usize>(
+        &self,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.z_folded_rings.as_ring_slice::<D>()
     }
 
     /// Borrow the centered coefficients as row-major flat storage (D-free).
@@ -307,7 +308,7 @@ impl<F: FieldCore> CommitInnerWitness<F> {
             .checked_add(rows_per_block)
             .ok_or_else(|| AkitaError::InvalidSetup("inner row end overflow".into()))?;
         self.inner_rows
-            .as_ring_slice_trusted::<D>()
+            .as_ring_slice::<D>()?
             .get(start..end)
             .ok_or_else(|| AkitaError::InvalidInput("inner row block is out of range".into()))
     }

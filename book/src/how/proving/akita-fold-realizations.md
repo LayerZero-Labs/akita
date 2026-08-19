@@ -25,7 +25,7 @@ Stage 2.
   - [The two-map commitment chains](#the-two-map-commitment-chains)
   - [Additional physical relations and witness](#additional-physical-relations-and-witness)
 - [Lift the physical ring relations before sumcheck](#lift-the-physical-ring-relations-before-sumcheck)
-- [The scalar opening claim is a virtual row](#the-scalar-opening-claim-is-a-virtual-row)
+- [The scalar opening claim is a method-dependent virtual row](#the-scalar-opening-claim-is-a-method-dependent-virtual-row)
 - [Code reference](#code-reference)
 
 ## From semantic relations to physical realizations
@@ -743,26 +743,30 @@ field even though they originated in different cyclotomic rings. Equation
 explains how $\tau_1$ batches its physical rows and how the resulting relation
 is proved over the flat witness address.
 
-## The scalar opening claim is a virtual row
+## The scalar opening claim is a method-dependent virtual row
 
 Two different statements involve $\hat e$, and they should not be conflated:
 
 | Statement | Form | Physical ring row? | Ring-switch quotient? |
 |---|---|---:|---:|
 | opening commitment | $\mathbf D\hat{\mathbf e}=\mathbf v_D$ | yes | yes |
-| evaluation correctness | $\sum_xw(x)T(x)=v_{\mathrm{tr}}$ | no | no |
+| evaluation correctness | $\sum_xw(x)T_{\mathrm{open}}(x)=v_{\mathrm{open}}$ | no | no |
 
-The second statement is derived in [Field-to-ring evaluation
+The scheduled opening method prepares the second statement. `EvaluationTrace`
+uses the trace weight derived in [Field-to-ring evaluation
 reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-claim).
-It is already a linear equation over the field coefficients of the committed
-witness. Akita therefore treats it as an `EvaluationTrace` virtual row after
-the physical rows. It reuses the same row-batching challenge $\tau_1$, but it
-is absent from the physical ring-row layout, its public right-hand side, and
-the quotient polynomials $r_i$.
+`SubringCoefficientPacking` uses a direct-opening structured term. The direct
+scalar opening in either method reuses the same row-batching challenge
+$\tau_1$, but it is absent from the physical ring-row layout, its public
+right-hand side, and the quotient polynomials $r_i$. Coefficient packing also
+changes the physical consistency relation by adding packed E/Q relation events
+and a packing-Z term; those method-specific constraints are separate from the
+direct scalar opening.
 
 [Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck)
-continues from Equation (24) and fuses the physical relation, the virtual
-evaluation row, and the range-image binding into one Stage-2 sumcheck.
+continues from Equation (24) and fuses the physical relation, the
+method-selected opening terms, and the range-image binding into one Stage-2
+sumcheck.
 
 ## Code reference
 
@@ -820,8 +824,8 @@ page.
    contributions, and
    [`NegativeBinarySupport`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/compression_relation_weights.rs)
    restricts the separate $w(w+1)=0$ check to the compression-digit spans.
-   `EvaluationTrace` remains a separate $\tau_1$-weighted virtual row after
-   every physical row.
+   The scheduled opening method contributes separate $\tau_1$-weighted Stage-2
+   terms after the payload-mode relation terms.
 
 The mode split can be summarized as follows:
 
@@ -859,7 +863,7 @@ compressed: assemble_compressed_relation_rhs(p_F, p_H)
           ordinary evaluator
           + optional compression evaluator
           + optional {-1, 0} support evaluator
-          + EvaluationTrace virtual row
+          + method-selected opening terms
                          |
                          v
                        Stage 2
@@ -886,11 +890,12 @@ its witness:
 | `v()` in compressed verifier replay | empty; the verifier uses $p_H$ rather than reconstructing $\mathbf v_D$ |
 
 Full opening points are not owned by `RingRelationInstance`. They are prepared
-separately for the evaluation trace. For example, the verifier consumes them
-through its
+separately by the scheduled opening method. The verifier consumes evaluation
+trace points through
 [`evaluation_trace.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/evaluation_trace.rs)
-path. Only the ring-multiplier projections needed by the physical consistency
-relation remain in this instance.
+and coefficient-packing points through its compact packing relation path. Only
+the projections needed by the physical consistency relation remain in this
+instance.
 
 ### Prover witness: `RingRelationWitness`
 
@@ -949,8 +954,8 @@ assemble_relation_rhs
 
 Compressed replay deliberately sets `RingRelationInstance::v()` to an empty
 carrier: the zero $\mathbf D$ rows and terminal $p_H$ row are already encoded
-in the compressed right-hand side. The separate evaluation-trace preparation
-retains the full opening-point data needed to bind the claimed evaluation.
+in the compressed right-hand side. The separate method-selected opening
+preparation retains the full point data needed to bind the claimed evaluation.
 [Opening points and digit-innermost
 layout](./opening-points-layout.md#witness-order) describes the canonical
 physical source and witness order.

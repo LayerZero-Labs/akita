@@ -8,8 +8,8 @@ fn batched_commit_matches_individual_commits() {
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 1) as u64)).collect();
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
-    let poly_a = DensePoly::<F>::from_field_evals(num_vars, D, &evals_a).unwrap();
-    let poly_b = DensePoly::<F>::from_field_evals(num_vars, D, &evals_b).unwrap();
+    let poly_a = DensePoly::<F>::from_field_evals(num_vars, &evals_a).unwrap();
+    let poly_b = DensePoly::<F>::from_field_evals(num_vars, &evals_b).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
@@ -67,8 +67,8 @@ fn commit_rejects_mixed_group_arity() {
         layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
     let evals = vec![F::one(); 1usize << num_vars];
     let smaller_evals = vec![F::one(); 1usize << (num_vars - 1)];
-    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
-    let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, D, &smaller_evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, &evals).unwrap();
+    let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, &smaller_evals).unwrap();
     let setup = Scheme::setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(

@@ -3,7 +3,9 @@ use crate::api::commitment::commit_outer_slices;
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
-use akita_types::{dispatch_for_field, CompressionChainPlan, TerminalCommittedGroupParams};
+use akita_types::{
+    dispatch_for_field, CommittedSourceEncoding, CompressionChainPlan, TerminalCommittedGroupParams,
+};
 
 /// Public state bound for the witness produced by one intermediate fold.
 pub enum NextWitnessState<F: FieldCore> {
@@ -63,14 +65,21 @@ where
         Cfg::Field,
         dims.d_a(),
         |D_A| {
-            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
-                None
-            } else {
-                Some(tensor_pack_recursive_witness::<
-                    Cfg::Field,
-                    Cfg::ExtField,
-                    D_A,
-                >(logical_w)?)
+            let packed_witness = match commit_params.source_encoding {
+                CommittedSourceEncoding::CanonicalCoefficientTable => None,
+                CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+                    if extension_degree != <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE {
+                        return Err(AkitaError::InvalidSetup(
+                            "recursive tensor source encoding does not match the protocol extension degree"
+                                .into(),
+                        ));
+                    }
+                    Some(tensor_pack_recursive_witness::<
+                        Cfg::Field,
+                        Cfg::ExtField,
+                        D_A,
+                    >(logical_w)?)
+                }
             };
             let w = packed_witness.as_ref().unwrap_or(logical_w);
             let committed_coeff_len = w.committed_coeff_len()?;

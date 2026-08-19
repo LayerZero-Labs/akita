@@ -63,28 +63,22 @@ impl<'a, P> PreparedProverGroup<'a, P> {
 /// choose the concrete polynomial type inside the carrier; low-level kernels
 /// remain statically dispatched.
 #[allow(private_bounds)]
-pub trait PreparedGroupProveOps<F, E, O, TS>:
-    crate::protocol::core::RootProverGroupOpening<F, E, O>
-    + crate::protocol::core::RootProverGroupTensor<F, E, TS>
-    + Clone
+pub trait PreparedGroupProveOps<F, E, O>:
+    crate::protocol::core::RootProverGroupOpening<F, E, O> + Clone
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
     O: crate::compute::ComputeBackendSetup<F> + crate::compute::DigitRowsComputeBackend<F>,
-    TS: crate::compute::ComputeBackendSetup<F>,
 {
 }
 
-impl<F, E, O, TS, G> PreparedGroupProveOps<F, E, O, TS> for G
+impl<F, E, O, G> PreparedGroupProveOps<F, E, O> for G
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
     O: crate::compute::ComputeBackendSetup<F> + crate::compute::DigitRowsComputeBackend<F>,
-    TS: crate::compute::ComputeBackendSetup<F>,
-    G: crate::protocol::core::RootProverGroupOpening<F, E, O>
-        + crate::protocol::core::RootProverGroupTensor<F, E, TS>
-        + Clone,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, O> + Clone,
 {
 }

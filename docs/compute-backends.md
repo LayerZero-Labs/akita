@@ -57,8 +57,9 @@ not as a type parameter on the PCS API.
 One hot sources cross this boundary as validated `OneHotView` values. The CPU
 kernel derives one flat sparse block tile from those views, selects a private
 bucketed or merge sweep, and drops the tile after producing its commitment
-rows. `OneHotPoly` does not own block or tensor caches. Opening and tensor
-projection derive their own active data for the lifetime of their operation.
+rows. `OneHotPoly` does not own block caches. Opening derives its active data
+for the lifetime of the operation. Recursive `EvaluationTrace` suffixes derive
+their tensor data from the committed recursive witness.
 
 ## NTT lifecycle
 
@@ -121,14 +122,14 @@ rebuild released shared matrix slots at the next exact request
   failure.
 - Migrated prover code must not accept legacy per-`D` NTT slot caches directly.
   CPU NTT slots stay inside `CpuPreparedSetup` / `ProverComputeStack`.
-- Root commit kernels consume borrowed source views. Dense, one-hot,
-  sparse-ring, projection, and recursive-witness sources do not cross a public
-  representation-specific row-plan boundary.
+- Root commit kernels consume borrowed dense and one-hot source views.
+  Recursive-witness sources do not cross a public representation-specific
+  row-plan boundary.
 - The group method is the only root commitment method. A singleton call passes
   one source. Backends cannot replace a fused group operation with an optional
   default loop.
-- One-hot and sparse-ring compact block storage is private to their source or
-  operation. An accelerator integration should implement the source-typed
+- One-hot compact block storage is private to its source or operation. An
+  accelerator integration should implement the source-typed
   kernel for its backend instead of depending on CPU storage plans.
 - Dynamic ring-dimension code uses `dispatch_for_field!` and prepares the
   target backend context inside the matched `D` arm.
@@ -144,10 +145,10 @@ NTT caches live in `CpuPreparedSetup` only.
 
 Covered operation families:
 
-- dense, one-hot, sparse-ring, projection, and recursive-witness commitment
-  through `RootCommitKernel`;
+- dense, one-hot, and recursive-witness commitment through `RootCommitKernel`;
 - dense cached digits remain an internal CPU optimization;
-- opening fold / decompose-fold / tensor projection (single + batch);
+- opening fold / decompose-fold, plus suffix-only tensor projection (single +
+  batch);
 - single-row cyclic and negacyclic digit rows;
 - ring-switch relation rows, including the D-domain quotient inputs, via
   `RingSwitchRelationKernel`.

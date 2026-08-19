@@ -265,11 +265,12 @@ fn main() -> Result<(), String> {
             }
             schedules += 1;
         }
-        for (key, honest_fold_policies) in (family.group_batch_keys)(&preplans)
+        for request in (family.grouped_requests)(&preplans)
             .map_err(|error| format!("{} group keys: {error}", family.module_name))?
         {
+            let key = request.key();
             let label = format!("{}:group:{key:?}", family.module_name);
-            let schedule = match (family.regen_group_batch)(key, honest_fold_policies) {
+            let schedule = match (family.regen_group_batch)(request) {
                 Ok(schedule) => schedule,
                 Err(AkitaError::UnsupportedSchedule(_)) => {
                     unsupported += 1;

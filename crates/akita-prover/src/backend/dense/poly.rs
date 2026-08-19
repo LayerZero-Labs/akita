@@ -6,8 +6,8 @@ use crate::validation::is_i8_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_types::{tensor_opening_split, RingVec, TensorColumnSource};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
 use std::borrow::Cow;
 use std::mem::size_of;
 use std::sync::OnceLock;
@@ -16,14 +16,15 @@ const MAX_DENSE_DIGIT_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
 /// Minimum physical flat coefficient length.
 ///
-/// Physical storage is zero-padded to `max(1 << num_vars, 256)` so that for
-/// every supported ring dimension `D ∈ {32, 64, 128, 256}` the live view slice
+/// Physical storage is zero-padded to `max(1 << num_vars, 1024)` so that for
+/// every supported commitment ring dimension through `D=1024` the live view slice
 /// `num_ring_elems(D) * D = div_ceil(2^num_vars, D) * D` is in bounds: when
 /// `2^num_vars >= D` the slice is exactly `2^num_vars` coefficients, and when
-/// `2^num_vars < D` it is `D <= 256` coefficients. The old per-`D` storage
+/// `2^num_vars < D` it is `D <= 1024` coefficients. The old per-`D` storage
 /// zero-padded the tail of the last ring element; the physical zero padding
 /// reproduces those coefficients exactly.
-const MIN_FLAT_COEFF_LEN: usize = 256;
+const MIN_FLAT_COEFF_LEN: usize =
+    SUPPORTED_COMMITMENT_RING_DIMS[SUPPORTED_COMMITMENT_RING_DIMS.len() - 1];
 
 /// D-free digit-plane cache: `num_digits` planes of `ring_d` bytes per ring
 /// element, flattened in ring-major order.
@@ -44,9 +45,6 @@ pub(super) struct DenseDigitCache {
 pub struct DensePoly<F: FieldCore> {
     /// Actual multilinear variable count of the source witness.
     pub(super) num_vars: usize,
-    /// Ring-element count at the CONSTRUCTION dimension; metadata, not
-    /// authority — kernels compute their ring count at their own dimension.
-    meta_ring_elems: usize,
     /// Flat field coefficients in sequential block order (untagged compact
     /// [`RingVec`]; see [`MIN_FLAT_COEFF_LEN`] for the physical padding).
     coeffs: RingVec<F>,
@@ -60,7 +58,6 @@ impl<F: FieldCore + Clone> Clone for DensePoly<F> {
     fn clone(&self) -> Self {
         Self {
             num_vars: self.num_vars,
-            meta_ring_elems: self.meta_ring_elems,
             coeffs: self.coeffs.clone(),
             small_i8_coeffs: self.small_i8_coeffs.clone(),
             digit_cache: OnceLock::new(),
@@ -80,9 +77,9 @@ impl<F: FieldCore + Eq> Eq for DensePoly<F> {}
 
 /// Reinterpret a flat coefficient slice as ring elements of dimension `D`.
 ///
-/// This is the sub-slice counterpart of [`RingVec::as_ring_slice_trusted`]:
+/// This is the private sub-slice counterpart of [`RingVec::as_ring_slice`]:
 /// callers slice the live prefix for their view dimension first, then
-/// reinterpret.
+/// reinterpret after checking divisibility.
 #[inline]
 fn as_ring_view<F: FieldCore, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>] {
     debug_assert!(D > 0);
@@ -98,11 +95,6 @@ impl<F: FieldCore> DensePoly<F> {
     /// Full physical (zero-padded) flat coefficient buffer.
     pub fn field_coeffs(&self) -> &[F] {
         self.coeffs.coeffs()
-    }
-
-    /// Ring-element count at the construction dimension (metadata only).
-    pub(super) fn meta_ring_elems(&self) -> usize {
-        self.meta_ring_elems
     }
 
     /// Ring-element count viewed at dimension `ring_d`.
@@ -150,72 +142,26 @@ impl<F: FieldCore> DensePoly<F> {
         debug_assert!(remainder.is_empty());
         Some(chunks)
     }
-
-    /// Live (unpadded) flat coefficient count, `1 << num_vars`.
-    pub(super) fn live_coeff_len(&self) -> Result<usize, AkitaError> {
-        1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
-        })
-    }
-
-    pub(super) fn tensor_shape<E, const D: usize>(
-        &self,
-        logical_point: Option<&[E]>,
-    ) -> Result<(usize, usize), AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        let (split_bits, width) = tensor_opening_split::<F, E>()?;
-        if split_bits > self.num_vars {
-            return Err(AkitaError::InvalidInput(
-                "extension-opening tensor split exceeds polynomial arity".to_string(),
-            ));
-        }
-        if width > D || !D.is_multiple_of(width) {
-            return Err(AkitaError::InvalidInput(format!(
-                "extension degree {width} does not evenly pack into dense ring degree {D}"
-            )));
-        }
-        if let Some(point) = logical_point {
-            if point.len() != self.num_vars {
-                return Err(AkitaError::InvalidPointDimension {
-                    expected: self.num_vars,
-                    actual: point.len(),
-                });
-            }
-        }
-        Ok((split_bits, width))
-    }
 }
 
 impl<F: FieldCore + CanonicalField> DensePoly<F> {
     /// Pack field-element evaluations into flat dense storage.
     ///
-    /// `ring_d` is the caller's configured ring dimension. It is recorded as
-    /// construction metadata (the [`crate::compute::RootPolyMeta`] ring-element
-    /// count) only; the storage itself is D-free and kernels select their view
-    /// dimension at entry. At dimension `D` the first `α = log₂(D)` variables
+    /// At dimension `D` the first `α = log₂(D)` variables
     /// become coefficient slots within each ring element; the remaining
     /// variables index ring elements.
     ///
     /// # Errors
     ///
-    /// Returns an error if `ring_d` is not a power of two or if
-    /// `evals.len() != 2^num_vars`.
+    /// Returns an error if `evals.len() != 2^num_vars`.
     pub fn from_field_evals<'a>(
         num_vars: usize,
-        ring_d: usize,
         evals: impl Into<Cow<'a, [F]>>,
     ) -> Result<Self, AkitaError>
     where
         F: 'a,
     {
         let evals = evals.into();
-        if ring_d == 0 || !ring_d.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring degree D={ring_d} is not a power of two"
-            )));
-        }
         let expected_len = 1usize
             .checked_shl(num_vars as u32)
             .ok_or_else(|| AkitaError::InvalidInput(format!("2^{num_vars} does not fit usize")))?;
@@ -255,7 +201,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
 
         Ok(Self {
             num_vars,
-            meta_ring_elems: expected_len.div_ceil(ring_d),
             coeffs: RingVec::from_coeffs(coeffs),
             small_i8_coeffs: all_small_i8.then_some(small_i8_coeffs),
             digit_cache: OnceLock::new(),
@@ -290,7 +235,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
 
         Self {
             num_vars: total.trailing_zeros() as usize,
-            meta_ring_elems: coeffs.len(),
             coeffs: RingVec::from_coeffs(flat),
             small_i8_coeffs,
             digit_cache: OnceLock::new(),
@@ -352,25 +296,5 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
                 chunks
             },
         )
-    }
-}
-
-/// Column source over the flat dense coefficient buffer: `row(tail)` is the
-/// `width`-length base-field run at flat index `tail*width`.
-///
-/// The old ring-typed source computed `ring_idx = tail*width / D` and sliced
-/// within that ring; runs are `width`-aligned and `width` divides `D`, so a
-/// run never crossed a ring boundary and flat indexing reads the identical
-/// coefficients. `flat` is bounded to the LIVE length (`1 << num_vars`); the
-/// folding reads exactly that live range.
-pub(super) struct DenseColumnSource<'a, F: FieldCore> {
-    pub(super) flat: &'a [F],
-    pub(super) width: usize,
-}
-
-impl<F: FieldCore> TensorColumnSource<F> for DenseColumnSource<'_, F> {
-    #[inline]
-    fn row(&self, tail: usize) -> &[F] {
-        &self.flat[tail * self.width..][..self.width]
     }
 }

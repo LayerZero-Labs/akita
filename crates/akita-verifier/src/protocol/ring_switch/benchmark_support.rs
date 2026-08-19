@@ -157,6 +157,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
             level_params,
             opening_batch,
             witness_layout: Arc::new(witness_layout),
+            extension_degree: 1,
         }),
         setup_plan_cache: Default::default(),
     };

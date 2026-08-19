@@ -19,22 +19,19 @@
 //!     D-free; ring-shaped ops take the kernel dispatch dimension as a
 //!     method-level const generic.
 
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-};
-use akita_types::{FpExtEncoding, RingMatrixView};
+use akita_field::{AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_types::RingMatrixView;
 use std::marker::PhantomData;
 
 use super::flat_blocks::FlatBlocks;
 use super::sparse_ring::{SparseRingBlockEntry, SparseRingCoeff};
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
 mod column_sweep;
 mod decompose_fold;

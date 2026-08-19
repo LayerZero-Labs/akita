@@ -6,16 +6,16 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw};
+use akita_challenges::LiveFoldDraw;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
-use akita_transcript::labels::{self, ABSORB_OPENING_PAYLOAD};
+use akita_transcript::labels;
 use akita_transcript::{sample_ext_challenge, Transcript};
-use akita_types::proof::append_flat_coefficients;
 use akita_types::{
-    append_digit_range_child_claims, AkitaStage1Proof, CommittedGroupParams,
-    DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
+    append_digit_range_child_claims, draw_group_fold_challenges, AkitaStage1Proof,
+    CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan, GroupFoldChallenges,
+    OpeningClaimsLayout,
 };
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
@@ -26,7 +26,8 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
     pub(crate) polynomial_coefficients: Vec<E>,
 }
 
-/// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
+/// Absorb the prover's `v` rows once, then sample one
+/// [`akita_challenges::Challenges`] set per
 /// commitment group in `OpeningClaims` order.
 ///
 /// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
@@ -35,58 +36,35 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
 /// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
 /// each group's native fold-challenge config and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
-/// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
+/// [`akita_challenges::Challenges`] set with
+/// `lp.num_live_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
 /// Returns an error if the group layout is malformed or challenge sampling fails.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
+pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
     transcript: &mut T,
-    opening_payload_coeffs: &[F],
-    v_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
     grind_nonce: u32,
-) -> Result<Vec<Challenges>, AkitaError>
+) -> Result<Vec<GroupFoldChallenges>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
-    append_flat_coefficients(
-        ABSORB_OPENING_PAYLOAD,
-        opening_payload_coeffs,
-        v_ring_d,
-        transcript,
-    )?;
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.group_params(opening_batch, group_index)?;
-        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-        let challenge_config = group_lp.fold_challenge_config();
-        let rejection = matches!(
-            group_lp.inner_commit_matrix_params().security_route(),
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
-        )
-        .then(|| {
-            akita_challenges::selective_l2_operator_norm_rejection(
-                group_dims.d_a(),
-                &challenge_config,
-            )
-        })
-        .flatten();
-        group_challenges.push(
-            LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
-                group_dims.d_a(),
-                group_index,
-                group_lp.num_live_blocks(),
-                k_g,
-                &challenge_config,
-                grind_nonce,
-                rejection,
-            )?,
-        );
+        let drawn = draw_group_fold_challenges::<F, E, _>(
+            &mut LiveFoldDraw::<F, T>::new(transcript),
+            group_lp,
+            group_index,
+            k_g,
+            grind_nonce,
+        )?;
+        group_challenges.push(drawn);
     }
     Ok(group_challenges)
 }

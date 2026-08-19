@@ -21,7 +21,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     type Field = Cfg::Field;
     type ExtField = Cfg::ExtField;
 
-    const D: usize = Cfg::D;
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Cfg::RING_DIMENSION_SCHEDULE_MODE;
     fn decomposition() -> DecompositionParams {
@@ -54,8 +53,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::inner_basis_range()
     }
 
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-        Cfg::root_honest_fold_policy()
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        Cfg::committed_source_class()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {

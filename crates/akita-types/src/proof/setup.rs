@@ -721,10 +721,12 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            log_basis_open: 1,
-            fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-            num_digits_open: 1,
-            num_digits_fold: 1,
+            opening: crate::GroupOpeningPlan::evaluation_trace(
+                akita_challenges::SparseChallengeConfig::pm1_only(0),
+                1,
+                1,
+                1,
+            ),
         }
     }
 
@@ -754,7 +756,7 @@ mod tests {
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
-            id: crate::setup_prefix_slot_id(d_setup - 1, commitment_params),
+            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params).slot_id(),
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
             },
@@ -773,11 +775,31 @@ mod tests {
 
         let mut bytes = Vec::new();
         setup.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaVerifierSetup::<F>::deserialize_compressed(&bytes[..], &()).expect("deserialize");
+        let decoded = AkitaVerifierSetup::<F>::deserialize_compressed_exact(&bytes, &())
+            .expect("deserialize");
 
         assert_eq!(decoded.prefix_slots.len(), 1);
         assert_eq!(decoded, setup);
+
+        for suffix in [0, 0xa5] {
+            let mut suffixed = bytes.clone();
+            suffixed.push(suffix);
+            assert!(AkitaVerifierSetup::<F>::deserialize_compressed_exact(&suffixed, &()).is_err());
+        }
+
+        let mut expanded_bytes = Vec::new();
+        setup
+            .expanded
+            .serialize_compressed(&mut expanded_bytes)
+            .expect("serialize expanded setup");
+        assert!(
+            AkitaExpandedSetup::<F>::deserialize_compressed_exact(&expanded_bytes, &()).is_ok()
+        );
+        for suffix in [0, 0xa5] {
+            let mut suffixed = expanded_bytes.clone();
+            suffixed.push(suffix);
+            assert!(AkitaExpandedSetup::<F>::deserialize_compressed_exact(&suffixed, &()).is_err());
+        }
     }
 
     #[test]

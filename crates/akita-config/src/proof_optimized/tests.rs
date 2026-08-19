@@ -111,7 +111,7 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
         akita_schedules::SelectiveL2ResponseModelId::Disabled;
     let no_l2_bytes = akita_planner::find_schedule(
         &key,
-        fp128::OneHot::root_honest_fold_policy(),
+        crate::honest_fold_policy_of::<fp128::OneHot>(),
         &[],
         &no_l2_policy,
         fp128::OneHot::ring_challenge_config,
@@ -155,7 +155,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
     linf_policy.selective_l2_response_model = akita_schedules::SelectiveL2ResponseModelId::Disabled;
     let linf_schedule = akita_planner::find_schedule(
         &key,
-        fp64::OneHot::root_honest_fold_policy(),
+        crate::honest_fold_policy_of::<fp64::OneHot>(),
         &[],
         &linf_policy,
         fp64::OneHot::ring_challenge_config,
@@ -174,13 +174,6 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(28, 1));
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 one-hot catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
-    assert_eq!(
-        (
-            entry.terminal.fold_log_basis,
-            entry.terminal.fold_digit_count
-        ),
-        (6, 2)
-    );
 
     let schedule = fp64::OneHot::resolve_catalog_row_for_key(&key)
         .expect("generated one-hot schedule")
@@ -190,7 +183,11 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
             schedule.terminal.params.witness.fold_log_basis,
             schedule.terminal.params.witness.fold_digit_count,
         ),
-        (6, 2)
+        (
+            entry.terminal.fold_log_basis,
+            entry.terminal.fold_digit_count as usize,
+        ),
+        "expanded terminal must preserve its generated selective-L2 fold geometry"
     );
     assert!(matches!(
         schedule
@@ -285,12 +282,22 @@ fn setup_capacity_includes_terminal_inner_matrix() {
 }
 
 #[cfg(feature = "schedules-default")]
-fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig>(
+struct TerminalExactCacheCoverage {
+    eligible: usize,
+    base: usize,
+    tail: usize,
+}
+
+#[cfg(feature = "schedules-default")]
+fn validate_table_terminal_exact_cache_plans<Cfg: CommitmentConfig>(
     table: GeneratedScheduleTable,
-) -> (usize, usize) {
+) -> TerminalExactCacheCoverage {
     let policy = crate::policy_of::<Cfg>();
-    let mut min_width = usize::MAX;
-    let mut max_width = 0usize;
+    let mut coverage = TerminalExactCacheCoverage {
+        eligible: 0,
+        base: 0,
+        tail: 0,
+    };
     for entry in table.entries {
         if !entry.root.precommitted_groups.is_empty() {
             continue;
@@ -305,30 +312,37 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig>(
         .expect("shipped entry should materialize");
         let terminal = &schedule.terminal.params.witness;
         let width = terminal.inner_width();
-        min_width = min_width.min(width);
-        max_width = max_width.max(width);
-        let requires_i16_tail = match terminal.d_a() {
-            64 => ntt_cache_requires_i16_tail::<Cfg::Field, 64>(width, 1 << 15),
-            128 => ntt_cache_requires_i16_tail::<Cfg::Field, 128>(width, 1 << 15),
-            dimension => panic!("unsupported generated q32 terminal dimension D{dimension}"),
-        };
-        assert!(
-            requires_i16_tail.expect("generated terminal i16 accumulation should fit"),
-            "generated q32 terminal unexpectedly fits the base CRT profile for {} key={key:?}, D={}, width={width}",
-            std::any::type_name::<Cfg>(),
+        let requires_i16_tail = akita_types::dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            <Cfg as CommitmentConfig>::Field,
             terminal.d_a(),
-        );
+            |D| ntt_cache_requires_i16_tail::<<Cfg as CommitmentConfig>::Field, D>(width, 1 << 15,)
+        )
+        .expect("generated terminal i16 accumulation should fit");
+        coverage.eligible += 1;
+        if requires_i16_tail {
+            coverage.tail += 1;
+        } else {
+            coverage.base += 1;
+        }
     }
-    assert_ne!(min_width, usize::MAX, "generated table should not be empty");
-    (min_width, max_width)
+    coverage
 }
 
 #[test]
 #[cfg(feature = "schedules-default")]
-fn generated_q32_terminals_require_the_i16_tail() {
-    assert_eq!(
-        assert_every_table_terminal_uses_i16_tail::<fp32::OneHot>(fp32_onehot_table()),
-        (128, 128),
+fn generated_q32_terminals_have_valid_exact_cache_plans() {
+    let coverage = validate_table_terminal_exact_cache_plans::<fp32::OneHot>(fp32_onehot_table());
+    assert!(
+        coverage.eligible > 0,
+        "generated q32 table must contain at least one eligible terminal"
+    );
+    // Exact backend capacity and the generated terminal width may legitimately
+    // select the base route. Every row must still receive one complete plan.
+    assert_eq!(coverage.eligible, coverage.base + coverage.tail);
+    assert!(
+        coverage.tail > 0,
+        "generated q32 table must exercise the exact i16-tail route on this target"
     );
 }
 
@@ -350,18 +364,52 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
     );
 }
 
+/// The layout scan enumerates single-group shapes only.
+///
+/// `proof_optimized_schedule_key` is the only route from an
+/// `OpeningClaimsLayout` to a catalog row and rejects layouts with more than one
+/// group, so a multi-group layout in this list could never be priced. Grouped
+/// rows reach the envelope through the catalog scan instead, which
+/// `grouped_catalog_rows_are_priced_without_a_multi_group_layout_scan` covers.
 #[cfg(feature = "schedules-default")]
 #[test]
-fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
-    let layouts = setup_capacity_scan_layouts::<fp128::OneHot>(14, 3).expect("setup scan layouts");
+fn setup_envelope_scan_enumerates_only_single_group_layouts() {
+    let layouts = setup_capacity_scan_layouts(14, 3).expect("setup scan layouts");
 
-    assert!(layouts.iter().any(|layout| {
-        layout.groups()
-            == [
-                PolynomialGroupLayout::new(14, 2),
-                PolynomialGroupLayout::new(14, 1),
-            ]
-    }));
+    assert!(!layouts.is_empty());
+    assert!(layouts.iter().all(|layout| layout.groups().len() == 1));
+    assert!(layouts
+        .iter()
+        .any(|layout| layout.groups() == [PolynomialGroupLayout::new(14, 3)]));
+    for layout in &layouts {
+        assert!(
+            crate::proof_optimized::proof_optimized_schedule_key(layout).is_ok(),
+            "every scanned layout must be resolvable to a catalog key"
+        );
+    }
+}
+
+/// A grouped catalog row still raises the setup envelope.
+///
+/// This is the coverage the deleted multi-group layout enumeration appeared to
+/// provide: the envelope for a request that admits a two-group root must be at
+/// least the grouped row's own matrix footprint.
+#[cfg(feature = "schedules-default")]
+#[test]
+fn grouped_catalog_rows_are_priced_without_a_multi_group_layout_scan() {
+    let pre = fp128::OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(14, 1))
+        .expect("independent one-hot profile");
+    let key = akita_types::AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(16, 1),
+        precommitteds: vec![pre],
+    };
+    let grouped = fp128::OneHot::resolve_catalog_row_for_key(&key).expect("grouped catalog row");
+    let grouped_fields = setup_matrix_capacity_for_schedule(grouped.schedule())
+        .expect("grouped setup capacity")
+        .num_field_elements;
+
+    let capacity = fp128::OneHot::setup_matrix_capacity(16, 2).expect("one-hot setup capacity");
+    assert!(capacity.num_field_elements >= grouped_fields);
 }
 
 #[cfg(feature = "schedules-default")]

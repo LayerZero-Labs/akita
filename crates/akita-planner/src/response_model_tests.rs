@@ -1,10 +1,111 @@
 use super::*;
 
+fn response_geometry_params(opening_method: akita_types::OpeningMethod) -> CommittedGroupParams {
+    let mut params = CommittedGroupParams::params_only(
+        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        256,
+        2,
+        2,
+        2,
+        2,
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+            .expect("D64 challenge"),
+    )
+    .with_decomp(4, 8, 2, 2, 2)
+    .expect("response geometry params");
+    params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    params.opening_method = opening_method;
+    let opening = params.open_commit_matrix;
+    params.open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+        opening.security_policy(),
+        opening.sis_table_key().table_digest,
+        opening.sis_modulus_profile(),
+        opening.output_rank(),
+        opening.input_width(),
+        opening.coeff_linf_bound(),
+        128,
+    );
+    params
+}
+
+#[test]
+fn next_source_moment_prices_packing_e_and_r_but_keeps_ambient_t() {
+    let opening = OpeningClaimsLayout::new(0, 1).expect("opening batch");
+    let source = SourceMomentEstimate::new(1 << 16).expect("source moment");
+    let packing = response_geometry_params(akita_types::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    });
+    let trace = response_geometry_params(akita_types::OpeningMethod::EvaluationTrace);
+    let packing_moment =
+        next_source_moment(&packing, &opening, &[source], 128, 2).expect("packing source moment");
+    let trace_moment =
+        next_source_moment(&trace, &opening, &[source], 128, 2).expect("trace source moment");
+    assert!(packing_moment.mean_l2_sq() < trace_moment.mean_l2_sq());
+    assert_eq!(
+        packing_moment.components[T_COMPONENT],
+        trace_moment.components[T_COMPONENT]
+    );
+    assert!(
+        packing_moment.components[E_COMPONENT].mean_l2_sq
+            < trace_moment.components[E_COMPONENT].mean_l2_sq
+    );
+    assert!(
+        packing_moment.components[R_COMPONENT].mean_l2_sq
+            < trace_moment.components[R_COMPONENT].mean_l2_sq
+    );
+}
+
 #[test]
 fn field_plane_moments_include_the_residual_top_plane() {
     let energy = field_digit_energy(1_000_000, 64, 6, 11).unwrap();
     let expected = 1_000_000.0 * (10.0 * 341.5 + 21.5);
     assert_eq!(energy, expected as u128);
+}
+
+/// A bounded source charges each plane the range its bound leaves, and charges
+/// the carry plane past the bound rather than dropping it.
+///
+/// The canonical depth adds that extra plane exactly when `log_basis` divides the
+/// bound, and balanced extraction can push `±1` into it
+/// (`|c_p| <= |v| / b^p + b / (2·(b - 1))`). Dropping it would make this an
+/// under-estimate rather than the deterministic maximum the L2 caps are priced
+/// from.
+#[test]
+fn bounded_source_charges_the_carry_plane_past_its_bound() {
+    let per_scalar = |bound, log_basis, digits| {
+        bounded_field_source_moment(1, bound, log_basis, digits)
+            .unwrap()
+            .mean_l2_sq()
+    };
+    // `mean_l2_sq` is bucketed conservatively upward, so the expectation goes
+    // through the same bucketing. That keeps the assertion exact about the plane
+    // arithmetic without restating the bucket rule.
+    let plane_energy = |full_planes: u128, log_basis: u32, top_plane_bits: u32| {
+        let raw = full_planes * (1u128 << (log_basis - 1)).pow(2)
+            + (1u128 << (top_plane_bits - 1)).pow(2);
+        SourceMomentEstimate::new(raw).unwrap().mean_l2_sq()
+    };
+
+    // No overshoot: 13 base-2^5 planes under a 64-bit bound consume 60 bits, so
+    // every plane is a real one and the top plane is charged the 4 bits left.
+    assert_eq!(per_scalar(64, 5, 13), plane_energy(12, 5, 4));
+
+    // Overshoot by exactly one plane: `log_basis = 8` divides `bound = 64`, so
+    // `compute_num_digits` returns 9 and plane 8 sits entirely past the bound.
+    // It is charged `1` (a `plane_bits = 1` carry), not dropped.
+    assert_eq!(per_scalar(64, 8, 9), plane_energy(8, 8, 1));
+
+    // The same geometry one digit shallower has no carry plane at all, so it is
+    // strictly cheaper — the carry charge is load-bearing, not rounding noise.
+    assert!(per_scalar(64, 8, 8) < per_scalar(64, 8, 9));
+
+    // A `u64` workload (`log_commit_bound = 65`) at the base the nv=14 row picks:
+    // 14 base-2^5 planes span 70 bits, so plane 13 is the carry plane.
+    assert_eq!(per_scalar(65, 5, 14), plane_energy(13, 5, 1));
+
+    // A full-field source never overshoots by a whole plane, so the carry rule
+    // cannot fire for it: `ceil(128 / 5) = 26` planes consume at most 125 bits.
+    assert_eq!(per_scalar(128, 5, 26), plane_energy(25, 5, 3));
 }
 
 #[test]

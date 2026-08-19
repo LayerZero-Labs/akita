@@ -359,6 +359,136 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertEqual(parse_tracing_optional_int("Some(4096)"), 4096)
         self.assertEqual(parse_tracing_optional_int("4096"), 4096)
 
+    def test_coefficient_packing_report_names_method_and_geometry(self) -> None:
+        from scripts.profile_bench_fold_details import challenge_line, opening_method_lines
+
+        params = {
+            "opening_method": "subring_coefficient_packing",
+            "source_encoding": "canonical_coefficients",
+            "extension_degree": 2,
+            "d_a": 256,
+            "challenge_subring_dimension": 64,
+            "packing_factor": 2,
+            "packing_partial_width": 128,
+            "packing_quotient_width": 128,
+            "challenge_count_pm1": 23,
+            "challenge_count_pm2": 0,
+        }
+
+        self.assertEqual(
+            opening_method_lines(params),
+            [
+                "Subring coefficient packing",
+                "Extension degree: k2",
+                "Challenge subring: S64",
+                "Packing factor: h2",
+                "Packed partial width: 128 base-field coefficients",
+                "Q_pack width: 128 base-field coefficients",
+                "Committed source: canonical coefficient table",
+            ],
+        )
+        self.assertIn("Subring S64 embedded in A ring D256", challenge_line(params))
+        tensor = {
+            "opening_method": "evaluation_trace",
+            "source_encoding": "tensor_subfield_projection",
+            "extension_degree": 4,
+            "d_a": 256,
+        }
+        self.assertIn(
+            "Committed source: tensor subfield projection (k4)",
+            opening_method_lines(tensor),
+        )
+
+    def test_planned_packing_log_round_trips_method_source_chunks_and_eor(self) -> None:
+        from scripts.profile_bench_fold_details import (
+            fold_path_value,
+            opening_method_lines,
+            render_group_choices,
+        )
+        from scripts.profile_bench_report import extract_summary
+
+        log = (
+            "INFO planned fold group label=onehot_fp128 level=1 group=folded "
+            "group_role=folded consumer_level=1 witness_field_elements=1024 "
+            "d_a=256 d_b=128 d_d=64 source_encoding=canonical_coefficients "
+            "extension_degree=1 "
+            "opening_method=subring_coefficient_packing "
+            "challenge_subring_dimension=Some(64) packing_factor=Some(4) "
+            "packing_partial_width=Some(64) packing_quotient_width=Some(64) "
+            "n_a=2 n_b=3 n_d=4 log_basis_inner=5 log_basis_outer=5 "
+            "log_basis_open=5 num_digits_inner=4 num_digits_outer=5 "
+            "num_digits_open=5 num_digits_fold=6 challenge_l1_mass=23 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "num_positions_per_block=128 block_index_domain_size=8 "
+            "setup_prefix_natural_field_elements=0 "
+            "setup_prefix_padded_field_elements=0\n"
+            "INFO planned fold group label=onehot_fp128 level=1 group=pre0 "
+            "group_role=precommitted consumer_level=1 witness_field_elements=512 "
+            "d_a=256 d_b=128 d_d=64 source_encoding=canonical_coefficients "
+            "extension_degree=1 opening_method=subring_coefficient_packing "
+            "challenge_subring_dimension=Some(128) packing_factor=Some(2) "
+            "packing_partial_width=Some(128) packing_quotient_width=Some(128) "
+            "n_a=2 n_b=3 n_d=4 log_basis_inner=5 log_basis_outer=5 "
+            "log_basis_open=5 num_digits_inner=4 num_digits_outer=5 "
+            "num_digits_open=5 num_digits_fold=6 challenge_l1_mass=23 "
+            "num_live_ring_elements_per_claim=4 num_live_blocks=1 "
+            "num_positions_per_block=4 block_index_domain_size=1 "
+            "setup_prefix_natural_field_elements=0 "
+            "setup_prefix_padded_field_elements=0\n"
+            "INFO planned fold level label=onehot_fp128 level=1 d=256 d_a=256 "
+            "d_b=128 d_d=64 source_encoding=canonical_coefficients "
+            "witness_chunk_count=8 witness_chunk_active=true "
+            "witness_chunk_activated_levels=2 "
+            "opening_method=subring_coefficient_packing "
+            "challenge_subring_dimension=Some(64) packing_factor=Some(4) "
+            "packing_partial_width=Some(64) packing_quotient_width=Some(64) "
+            "extension_opening_reduction_present=false "
+            "extension_opening_reduction_bytes=0 n_a=2 n_b=3 n_d=4 "
+            "challenge_l1_mass=23 log_basis=5 position_index_bits=7 block_index_bits=3 "
+            "num_live_ring_elements_per_claim=768 num_live_blocks=6 "
+            "block_index_domain_size=8 num_positions_per_block=128 delta_commit=4 "
+            "delta_open=5 delta_fold=6 input_witness_len=1024 output_witness_len=2048 "
+            "current_w_len=folded:1024 next_w_len=2048\n"
+        )
+
+        level = extract_summary(log, "onehot_fp128", 24, 1)["planned_levels"][0]
+        group, precommit = level["groups"]
+
+        self.assertEqual(level["opening_method"], "subring_coefficient_packing")
+        self.assertEqual(level["source_encoding"], "canonical_coefficients")
+        self.assertEqual(level["challenge_subring_dimension"], 64)
+        self.assertEqual(level["packing_factor"], 4)
+        self.assertEqual(level["packing_partial_width"], 64)
+        self.assertEqual(level["packing_quotient_width"], 64)
+        self.assertEqual(level["witness_chunk_count"], 8)
+        self.assertEqual(level["witness_chunk_activated_levels"], 2)
+        self.assertTrue(level["witness_chunk_active"])
+        self.assertFalse(level["extension_opening_reduction_present"])
+        self.assertEqual(level["extension_opening_reduction_bytes"], 0)
+        self.assertIn("Witness chunks: 8 · activated levels: 2", fold_path_value(level))
+        self.assertEqual(group["opening_method"], "subring_coefficient_packing")
+        self.assertEqual(group["source_encoding"], "canonical_coefficients")
+        self.assertEqual(group["challenge_subring_dimension"], 64)
+        self.assertEqual(group["packing_factor"], 4)
+        self.assertEqual(precommit["challenge_subring_dimension"], 128)
+        self.assertEqual(precommit["packing_factor"], 2)
+
+        rendered = render_group_choices(
+            level["groups"], [], lambda item: "<br>".join(opening_method_lines(item))
+        )
+        self.assertIn("Challenge subring: S64", rendered)
+        self.assertIn("Challenge subring: S128", rendered)
+
+        evaluation_trace_baseline = [dict(item) for item in level["groups"]]
+        evaluation_trace_baseline[0]["opening_method"] = "evaluation_trace"
+        changed = render_group_choices(
+            level["groups"],
+            evaluation_trace_baseline,
+            lambda item: "<br>".join(opening_method_lines(item)),
+        )
+        self.assertIn("<sub>Merge base</sub>", changed)
+        self.assertIn("Evaluation trace", changed)
+
     def test_planned_fold_level_parses_physical_geometry(self) -> None:
         from scripts.profile_bench_report import extract_summary
 
@@ -558,6 +688,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("r shared quotient: 22 digits", report)
         self.assertIn(
             "<sub>Merge base</sub><br><strong>Final group</strong><br>"
+            "<em>Opening method</em><br>Evaluation trace<br>"
+            "Opening width: full A ring D64 base-field coefficients<br>"
             "<em>Commitment matrices used at this fold</em><br>"
             "A commitment: ring D64 · module rank 2",
             report,
@@ -635,8 +767,9 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "INFO proof fold level label=onehot_fp128 level=0 d=64 "
                 "total_bytes=4 fold_grind_nonce_bytes=4",
                 "INFO proof fold level label=onehot_fp128 level=1 d=64 "
-                "total_bytes=548 extension_opening_partials_bytes=64 "
-                "extension_opening_sumcheck_bytes=480 fold_grind_nonce_bytes=4 "
+                "total_bytes=564 extension_opening_partials_bytes=64 "
+                "extension_opening_sumcheck_bytes=480 "
+                "extension_opening_final_claims_bytes=16 fold_grind_nonce_bytes=4 "
                 "root_variant=terminal",
             ]
         )
@@ -678,6 +811,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("Sum of squared coefficients (L2): ≤ 633,237,013", report)
         self.assertIn("<em>Input from L0</em><br>Field elements: 2,048", report)
         self.assertIn("Clear z, e, and t terminal response", report)
+        self.assertIn("final claims 16", report)
         self.assertNotIn("| L1 | terminal fold | — | — |", report)
 
     def test_multi_group_root_and_setup_offload_keep_group_parameters(self) -> None:
@@ -791,18 +925,24 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertIn(
             "<strong>Precommit 1</strong><br>"
+            "<em>Opening method</em><br>Evaluation trace<br>"
+            "Opening width: full A ring D64 base-field coefficients<br>"
             "<em>Commitment matrices used at this fold</em><br>"
             "A commitment: ring D64 · module rank 3",
             report,
         )
         self.assertIn(
             "<strong>Final group</strong><br>"
+            "<em>Opening method</em><br>Evaluation trace<br>"
+            "Opening width: full A ring D256 base-field coefficients<br>"
             "<em>Commitment matrices used at this fold</em><br>"
             "A commitment: ring D256 · module rank 1",
             report,
         )
         self.assertIn(
             "<strong>Setup offload → L1</strong><br>"
+            "<em>Opening method</em><br>Evaluation trace<br>"
+            "Opening width: full A ring D256 base-field coefficients<br>"
             "<em>Commitment matrices used at this fold</em><br>"
             "A commitment: ring D256 · module rank 2",
             report,

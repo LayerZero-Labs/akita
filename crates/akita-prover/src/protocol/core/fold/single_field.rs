@@ -1,5 +1,5 @@
 // Explicit imports only: the compiler enforces that the single-field path has
-// no extension-opening-reduction or root-tensor-projection symbols in scope.
+// no extension-opening-reduction or tensor-projection symbols in scope.
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
@@ -17,7 +17,7 @@ use akita_types::{BasisMode, CommittedGroupParams, FpExtEncoding};
 
 /// Prepare a fold level when claim and coefficient fields coincide (`EXT_DEGREE == 1`).
 ///
-/// This path never runs extension-opening reduction or root tensor projection.
+/// This path never runs extension-opening reduction or tensor projection.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, V, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
@@ -61,7 +61,6 @@ where
         block_claims,
         protocol_points: &protocol_points,
         reduction: None,
-        row_coefficients: None,
         trace_opening_batch: &opening_batch,
         level_params,
         basis,

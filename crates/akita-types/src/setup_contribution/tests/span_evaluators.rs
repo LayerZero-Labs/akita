@@ -136,8 +136,9 @@ pub(super) fn structured_slice_reference(
     alpha: F,
 ) -> F {
     let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
-    let (outer_subcolumns, opening_subcolumns) =
+    let (outer_subcolumns, _) =
         SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims).unwrap();
+    let opening_subcolumns = group.opening_subcolumns;
     let role_dims = group.role_dims;
     let alpha_powers = scalar_powers(alpha, role_dims.d_a());
     let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
@@ -273,6 +274,46 @@ fn span_setup_index_mle_matches_dense_multi_chunk() {
     let (_, _, _, plan, _, _, _) =
         structured_weight_fixture(8, &[2, 2, 2, 2], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
+    let rho = rho_for_required(plan.required());
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
+}
+
+#[test]
+fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
+    let role_dims = CommitmentRingDims::uniform(128);
+    let (inputs, groups, layout, _, _, _, fold_gadget) =
+        structured_weight_fixture(8, &[3, 5], role_dims);
+    let relation_geometry = crate::RelationAddressGeometry::new_with_coefficient_block(
+        role_dims,
+        64,
+        128,
+        layout.live_coeff_len(),
+    )
+    .unwrap();
+    let relation_point = (0..relation_geometry.relation_lane_variable_count())
+        .map(|index| test_scalar(101 + index as u128))
+        .collect::<Vec<_>>();
+    let mut plan = SetupContributionPlan::prepare::<F>(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        1,
+        inputs.eq_tau1.clone(),
+        &layout,
+        &groups,
+        PreparedRelationAddress::new(&relation_point).unwrap(),
+        Some(&fold_gadget),
+        relation_geometry,
+    )
+    .unwrap();
+    let alpha = test_scalar(3);
+    plan.materialize_direct_scan(alpha).unwrap();
+
+    assert_eq!(
+        plan.relation_address_geometry()
+            .relation_coefficient_block_len(),
+        64
+    );
+    assert_eq!(plan.projection_geometry().base_ring_dim(), 128);
     let rho = rho_for_required(plan.required());
     assert_span_mle_matches_dense(&plan, &rho, alpha);
 }

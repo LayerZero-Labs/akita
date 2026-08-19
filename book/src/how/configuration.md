@@ -18,6 +18,12 @@ claims live in a proper extension (`EXT_DEGREE > 1`, `fp32` / `fp64`), never
 on field bit-width. See
 [Fold path and field geometry](./proving/fold-path.md).
 
+`CommitmentConfig` selects either a uniform schedule mode or bounded adaptive
+A, B, and D domains. It does not carry a separate default ring dimension.
+The resolved schedule owns every dimension used by setup preparation,
+commitment, proving, and verification. Setup-prefix slots also record the
+dimension selected by the fold that consumes the prefix.
+
 **Implementation map**
 
 - `crates/akita-config/src/lib.rs:54-120`.
@@ -74,10 +80,14 @@ because it has no product-stage prefix.
 The planner estimates the squared norm of the actual recursive witness. It
 applies the following rules.
 
-* A dense root uses the deterministic maximum squared digit energy for every
-  coefficient. A one-hot root maximizes the physical squared energy over every
-  hot position allowed by its policy-owned chunk contract. This follows the
-  tensor projection kernel and includes coefficient collisions.
+* A balanced signed-digit root uses the deterministic maximum squared digit
+  energy for every coefficient, summed over the digit planes its declared
+  source bound needs. A bounded source stops short of the field width, so its
+  final plane is charged only the range the bound leaves rather than a full
+  `log_basis`. A one-hot root uses the canonical coefficient table: each
+  policy-owned source chunk contributes at most one coefficient of magnitude
+  one, distinct chunks occupy distinct coefficients, and the peak coefficient
+  square is one.
 * The Z part uses the centered residues of a rounded normal variable. Its
   variance comes from the previous source energy and the challenge energy.
 * The E, T, and R parts use the centered field digit moment for every live
@@ -126,6 +136,24 @@ If the typed model is disabled, the geometry is ineligible, no Euclidean SIS
 row exists, or the L2 route does not lower the A rank, the planner keeps the L
 infinity candidate.
 Runtime expansion never reruns the model. It only checks the frozen schedule.
+
+### Subring coefficient packing candidates
+
+At absolute fold levels 0 and 1, the planner searches the A ring dimension and
+the challenge subring dimension together. For each pair it derives the packing
+factor from `d_A = k h s`. It rejects unsupported challenge families and
+invalid D divisibility before it constructs matrices.
+
+The planner does not minimize `s`, `h`, or `d_A` directly. It keeps the same
+objective as other schedules. It minimizes setup field elements first and
+proof payload second, then applies the canonical deterministic ordering. This
+allows a larger A ring to win when its lower module rank reduces the complete
+setup.
+
+Nonterminal folds at levels 0 and 1 require coefficient packing. A state with
+no complete packing assignment is unsupported. Later nonterminal folds and the
+terminal use evaluation trace. The terminal seed is priced separately, so a
+zero EOR packing candidate cannot be mistaken for a terminal opening.
 
 A clear terminal L2 candidate has no recursive norm proof. The verifier checks
 the decoded response norm directly. The planner may use the certified energy

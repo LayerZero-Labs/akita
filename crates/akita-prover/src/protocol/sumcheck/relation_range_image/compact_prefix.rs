@@ -139,16 +139,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     }
 
     #[inline]
-    fn add_trace_pair_to_relation_factor(
-        evaluation_trace: &PreparedProverEvaluationTrace<E>,
+    fn add_linear_pair_to_relation_factor(
+        linear_terms: &PreparedProverLinearTerms<E>,
         lane: usize,
         left: usize,
         coeff_count: usize,
         p0: &mut E,
         p1: &mut E,
     ) {
-        *p0 += evaluation_trace.get(lane, left, coeff_count);
-        *p1 += evaluation_trace.get(lane, left + 1, coeff_count);
+        *p0 += linear_terms.get(lane, left, coeff_count);
+        *p1 += linear_terms.get(lane, left + 1, coeff_count);
     }
 
     #[tracing::instrument(
@@ -159,7 +159,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         &self,
         compact_witness: &[i8],
         alpha_round2: &[E],
-        trace_round2: &PreparedProverEvaluationTrace<E>,
+        linear_terms_round2: &PreparedProverLinearTerms<E>,
         r0: E,
         r1: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
@@ -229,8 +229,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let mut p0 = alpha_round2[left] * lane_weight;
                             let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
+                            Self::add_linear_pair_to_relation_factor(
+                                linear_terms_round2,
                                 lane,
                                 left,
                                 next_coeff_count,
@@ -300,8 +300,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let mut p0 = alpha_round2[left] * lane_weight;
                             let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
+                            Self::add_linear_pair_to_relation_factor(
+                                linear_terms_round2,
                                 lane,
                                 left,
                                 next_coeff_count,
@@ -365,8 +365,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let mut p0 = alpha_round2[left] * lane_weight;
                             let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
+                            Self::add_linear_pair_to_relation_factor(
+                                linear_terms_round2,
                                 lane,
                                 left,
                                 next_coeff_count,
@@ -439,8 +439,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let mut p0 = alpha_round2[left] * lane_weight;
                             let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_trace_pair_to_relation_factor(
-                                trace_round2,
+                            Self::add_linear_pair_to_relation_factor(
+                                linear_terms_round2,
                                 lane,
                                 left,
                                 next_coeff_count,

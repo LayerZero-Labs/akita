@@ -23,6 +23,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .iter()
             .find(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
+        let uses_evaluation_trace_consistency =
+            matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace);
         if self
             .direct_scan_alpha
             .is_some_and(|prepared| prepared != alpha)
@@ -44,8 +46,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let opening_gadget = extension_gadget::<F, E>(group.depth_open, group.log_basis_open);
         let commitment_gadget = extension_gadget::<F, E>(group.depth_commit, group.log_basis_outer);
         let witness_gadget = extension_gadget::<F, E>(group.depth_witness, group.log_basis_inner);
-        let (outer_subcolumns, opening_subcolumns) =
+        let (outer_subcolumns, _) =
             SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
+        let opening_subcolumns = group.opening_subcolumns;
         let e_stride = checked_product(
             opening_subcolumns,
             group.depth_open,
@@ -143,7 +146,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let block_challenge = *block_challenges
                     .get(block_claim)
                     .ok_or(AkitaError::InvalidProof)?;
-                Ok(acc? + block_challenge * (group.consistency_weight * e + t))
+                let consistency = if uses_evaluation_trace_consistency {
+                    group.consistency_weight * e
+                } else {
+                    E::zero()
+                };
+                Ok(acc? + block_challenge * (consistency + t))
             };
             const PARALLEL_THRESHOLD: usize = 1 << 14;
             let et_work = e_len
@@ -208,11 +216,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             // Z carries the group's consistency weight on every position;
             // applying it once after reduction drops one field multiplication
             // per position and leaves the contracted equation auditable.
-            return Ok(et + group.consistency_weight * z);
+            return Ok(if uses_evaluation_trace_consistency {
+                et + group.consistency_weight * z
+            } else {
+                et
+            });
         }
 
         let point = self.relation_address.point();
-        let base_ring_dim = self.projection_geometry.base_ring_dim();
+        let base_ring_dim = self
+            .relation_address_geometry
+            .relation_coefficient_block_len();
         let opening_low = opening_scales.as_deref().unwrap_or(&[]);
         let outer_low = outer_scales.as_deref().unwrap_or(&[]);
         let projected_digits = |gadget: &[E], ratio: usize| -> Result<Option<Vec<E>>, AkitaError> {
@@ -227,9 +241,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .collect(),
             ))
         };
-        let projected_opening = projected_digits(&opening_gadget, group.d_ratio)?;
+        let projected_opening = projected_digits(&opening_gadget, group.d_relation_ratio)?;
         let opening_digits = projected_opening.as_deref().unwrap_or(&opening_gadget);
-        let projected_commitment = projected_digits(&commitment_gadget, group.b_ratio)?;
+        let projected_commitment = projected_digits(&commitment_gadget, group.b_relation_ratio)?;
         let commitment_digits = projected_commitment
             .as_deref()
             .unwrap_or(&commitment_gadget);
@@ -320,19 +334,23 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let e_live_len = unit_blocks
                 .checked_mul(opening_subcolumns)
                 .ok_or(AkitaError::InvalidProof)?;
-            let mut contribution = group.consistency_weight
-                * eval_affine_digit_intervals(
-                    point,
-                    &[d_tensor.right_offset],
-                    e_outer_start,
-                    e_live_len,
-                    opening_digits.len(),
-                    1,
-                    opening_digits,
-                    claim_challenges,
-                    opening_low,
-                    &[],
-                )?;
+            let mut contribution = if uses_evaluation_trace_consistency {
+                group.consistency_weight
+                    * eval_affine_digit_intervals(
+                        point,
+                        &[d_tensor.right_offset],
+                        e_outer_start,
+                        e_live_len,
+                        opening_digits.len(),
+                        1,
+                        opening_digits,
+                        claim_challenges,
+                        opening_low,
+                        &[],
+                    )?
+            } else {
+                E::zero()
+            };
 
             if let Some(b_tensor) = b_tensor {
                 let t_high_weights =
@@ -371,8 +389,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             )
         }?;
 
-        let projection_lanes = (group.a_ratio != 1)
-            .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_ratio))
+        let projection_lanes = (group.a_relation_ratio != 1)
+            .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_relation_ratio))
             .transpose()?;
         let fold_digits = if let Some(lanes) = &projection_lanes {
             group
@@ -445,7 +463,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 &base_scales,
             )?
         };
-        Ok(evaluation + group.consistency_weight * z)
+        Ok(if uses_evaluation_trace_consistency {
+            evaluation + group.consistency_weight * z
+        } else {
+            evaluation
+        })
     }
 }
 

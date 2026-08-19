@@ -1,8 +1,9 @@
 //! Streaming XOF cursor used by the signed-sparse fold-challenge sampler.
 //!
-//! Every per-challenge draw consumes randomness from the same SHAKE256-backed
-//! cursor. Centralising the cursor here means the PRG choice, the buffer size,
-//! and the bias-free drawing primitives can be swapped or audited in one place.
+//! Rejection-filtered draws consume randomness from one SHAKE256 cursor.
+//! Draws without rejection split the transcript seed into fixed batches so
+//! independent batches can run in parallel. This module owns both derivations
+//! and the drawing primitives used inside each cursor.
 //!
 //! The cursor's `next_*` helpers use bitmask rejection sampling, so every
 //! returned value is uniform over the requested range with no modulo bias.
@@ -14,6 +15,7 @@ use sha3::Shake256;
 /// transcript-derived seed. Distinct from any transcript-layer domain tag so
 /// that the PRG output cannot be mistaken for a transcript challenge.
 const SPARSE_PRG_DOMAIN: &[u8] = b"akita/sparse-challenge-prg";
+const BATCHED_SPARSE_PRG_DOMAIN: &[u8] = b"akita/batched-sparse-challenge-prg/v1";
 
 type ShakeReader = <Shake256 as ExtendableOutput>::Reader;
 
@@ -33,9 +35,24 @@ impl XofCursor {
     /// Build a cursor by absorbing the static domain separator followed by the
     /// transcript-derived `seed` into a fresh SHAKE256 instance.
     pub(crate) fn from_seed(seed: &[u8]) -> Self {
+        Self::from_seed_parts(seed, &[])
+    }
+
+    /// Build one deterministic challenge batch substream.
+    pub(crate) fn from_batched_seed(seed: &[u8], batch_index: u64) -> Self {
+        Self::from_seed_parts(
+            seed,
+            &[BATCHED_SPARSE_PRG_DOMAIN, &batch_index.to_le_bytes()],
+        )
+    }
+
+    fn from_seed_parts(seed: &[u8], suffixes: &[&[u8]]) -> Self {
         let mut xof = Shake256::default();
         xof.update(SPARSE_PRG_DOMAIN);
         xof.update(seed);
+        for suffix in suffixes {
+            xof.update(suffix);
+        }
         let mut cursor = Self {
             reader: xof.finalize_xof(),
             buf: Box::new([0u8; XOF_BUF_SIZE]),

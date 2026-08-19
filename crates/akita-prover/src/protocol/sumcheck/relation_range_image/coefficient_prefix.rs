@@ -69,7 +69,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let p0 = common_alpha_factor[left] * lane_weight;
                             let p1 = common_alpha_factor[left + 1] * lane_weight;
-                            self.accumulate_fused_relation_trace_signed(
+                            self.accumulate_fused_relation_linear_signed(
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
@@ -150,7 +150,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let p0 = common_alpha_factor[left] * lane_weight;
                             let p1 = common_alpha_factor[left + 1] * lane_weight;
-                            self.accumulate_fused_relation_trace_signed(
+                            self.accumulate_fused_relation_linear_signed(
                                 &mut rel,
                                 w0_i64,
                                 dw_i64,
@@ -248,7 +248,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let p0 = common_alpha_factor[left] * lane_weight;
                             let p1 = common_alpha_factor[left + 1] * lane_weight;
-                            self.accumulate_fused_relation_trace(
+                            self.accumulate_fused_relation_linear(
                                 &mut rel,
                                 w0,
                                 dw,
@@ -316,7 +316,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let p0 = common_alpha_factor[left] * lane_weight;
                             let p1 = common_alpha_factor[left + 1] * lane_weight;
-                            self.accumulate_fused_relation_trace(
+                            self.accumulate_fused_relation_linear(
                                 &mut rel,
                                 w0,
                                 dw,

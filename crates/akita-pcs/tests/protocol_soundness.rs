@@ -21,8 +21,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommittedGroup,
-    CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection,
-    PolynomialGroupClaims,
+    CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims, OpeningMethod,
+    OpeningScheduleSelection, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 use rand::rngs::StdRng;
@@ -201,7 +201,7 @@ where
         .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
 
-    let poly = DensePoly::<FField>::from_field_evals(nv, D, &evals).unwrap();
+    let poly = DensePoly::<FField>::from_field_evals(nv, &evals).unwrap();
     let pt = random_claim_point::<FField, Cfg::ExtField>(nv);
     let expected_opening = dense_lagrange_opening_from_evals::<FField, Cfg::ExtField>(&evals, &pt);
 
@@ -339,7 +339,7 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
-        const D: usize = Cfg::D;
+        const D: usize = 256;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, b"akita_e2e/root-trace-tamper");
@@ -390,14 +390,14 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F>::new(ONEHOT_K, root_d, indices).unwrap()
+                OneHotPoly::<F>::new(ONEHOT_K, indices).unwrap()
             })
             .collect();
         let poly_refs: Vec<&OneHotPoly<F>> = polys.iter().collect();
         let point = random_point(NV);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &point, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &point, &layout, BasisMode::Lagrange))
             .collect();
 
         #[cfg(feature = "disk-persistence")]
@@ -462,7 +462,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
-        const D: usize = Cfg::D;
+        const D: usize = 256;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, b"akita_e2e/terminal-trace-tamper");
@@ -552,14 +552,14 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F>::new(ONEHOT_K, root_d, indices).unwrap()
+                OneHotPoly::<F>::new(ONEHOT_K, indices).unwrap()
             })
             .collect();
         let poly_group: Vec<&OneHotPoly<F>> = polys.iter().collect();
         let pt = random_point(nv);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout, BasisMode::Lagrange))
             .collect();
 
         #[cfg(feature = "disk-persistence")]
@@ -645,7 +645,7 @@ fn ext4_onehot_poly(seed: usize) -> OneHotPoly<fp32::Field, u8> {
     let indices = (0..num_chunks)
         .map(|chunk| Some(((chunk * 29 + seed * 41 + 7) % onehot_k) as u8))
         .collect();
-    OneHotPoly::new(onehot_k, fp32::OneHot::D, indices).expect("fp32 one-hot polynomial")
+    OneHotPoly::new(onehot_k, indices).expect("fp32 one-hot polynomial")
 }
 
 fn ext4_point() -> Vec<fp32::ExtensionField> {
@@ -661,11 +661,11 @@ fn ext4_point() -> Vec<fp32::ExtensionField> {
         .collect()
 }
 
-/// The fp32 extension-opening reduction (EOR) is a required part of the proof
-/// when claims live in a strict extension of the commitment field. Tampering
-/// with it — or dropping it — must be rejected at the public PCS boundary.
+/// Coefficient packing removes EOR from every emitted early fp32 fold. The
+/// terminal remains EvaluationTrace and must reject a changed or missing EOR
+/// payload.
 #[test]
-fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
+fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -713,6 +713,10 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
         .expect("commit");
         let selection = selection_for::<Cfg>(&commitment);
 
+        #[cfg(feature = "logging-transcript")]
+        let mut prover_transcript =
+            akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<SF>::new(LABEL));
+        #[cfg(not(feature = "logging-transcript"))]
         let mut prover_transcript = AkitaTranscript::<SF>::new(LABEL);
         let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
             &setup,
@@ -722,21 +726,137 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             BasisMode::Lagrange,
         )
         .expect("fp32 extension proof");
+        let resolved = Cfg::resolve_schedule_selection(selection).expect("selected fp32 row");
         assert!(
-            proof.root.extension_opening_reduction.is_some(),
-            "non-base fp32 claims must carry a root extension-opening reduction"
+            matches!(
+                resolved
+                    .schedule()
+                    .root
+                    .params
+                    .final_group
+                    .commitment
+                    .opening_method,
+                OpeningMethod::SubringCoefficientPacking { .. }
+            ),
+            "the shipped fp32 row must use coefficient packing at the root"
+        );
+        assert!(
+            proof.root.extension_opening_reduction.is_none(),
+            "coefficient packing must not emit a root EOR payload"
+        );
+        for (step, recursive_proof) in resolved
+            .schedule()
+            .recursive_folds
+            .iter()
+            .take(1)
+            .zip(proof.recursive_folds.iter().take(1))
+        {
+            assert!(
+                matches!(
+                    step.params.witness.opening_method,
+                    OpeningMethod::SubringCoefficientPacking { .. }
+                ),
+                "every emitted early fp32 fold must use coefficient packing"
+            );
+            assert!(
+                recursive_proof.extension_opening_reduction.is_none(),
+                "coefficient packing must not emit a recursive EOR payload"
+            );
+        }
+        assert!(
+            proof.terminal.extension_opening_reduction.is_some(),
+            "the EvaluationTrace terminal must retain EOR"
         );
 
         // Baseline: the honest proof verifies.
+        #[cfg(feature = "logging-transcript")]
+        let mut vt = akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<SF>::new(LABEL));
+        #[cfg(not(feature = "logging-transcript"))]
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
+        let honest_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,
             &verifier_setup,
             &mut vt,
             verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
             BasisMode::Lagrange,
-        )
-        .expect("honest fp32 extension proof must verify");
+        );
+        #[cfg(feature = "logging-transcript")]
+        {
+            let prover_events = common::public_transcript_events(prover_transcript.events());
+            let verifier_events = common::public_transcript_events(vt.events());
+            if prover_events != verifier_events {
+                let first_difference = prover_events
+                    .iter()
+                    .zip(&verifier_events)
+                    .position(|(prover, verifier)| prover != verifier)
+                    .unwrap_or_else(|| prover_events.len().min(verifier_events.len()));
+                panic!(
+                    "fp32 extension transcript diverged at {first_difference}: prover={:?}, verifier={:?}, lengths=({}, {})",
+                    prover_events.get(first_difference),
+                    verifier_events.get(first_difference),
+                    prover_events.len(),
+                    verifier_events.len(),
+                );
+            }
+            assert!(
+                common::assert_claim_batching_follows_opening_payload(&prover_events) > 0,
+                "multi-claim EOR must batch claims after the opening payload"
+            );
+            let event_index = |label: &[u8]| {
+                prover_events
+                    .iter()
+                    .position(|event| {
+                        common::event_label(event).is_some_and(|candidate| {
+                            common::is_label_or_extension_limb(candidate, label)
+                        })
+                    })
+                    .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
+            };
+            let beta = event_index(akita_transcript::labels::CHALLENGE_EOR_CLAIM_BATCH);
+            let eta = prover_events[..beta]
+                .iter()
+                .rposition(|event| {
+                    common::event_label(event).is_some_and(|candidate| {
+                        common::is_label_or_extension_limb(
+                            candidate,
+                            akita_transcript::labels::CHALLENGE_SUMCHECK_BATCH,
+                        )
+                    })
+                })
+                .expect("EOR eta must precede claim batching");
+            let event_index_after = |start: usize, label: &[u8]| {
+                prover_events[start..]
+                    .iter()
+                    .position(|event| {
+                        common::event_label(event).is_some_and(|candidate| {
+                            common::is_label_or_extension_limb(candidate, label)
+                        })
+                    })
+                    .map(|offset| start + offset)
+                    .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
+            };
+            let combined_claim =
+                event_index_after(beta + 1, akita_transcript::labels::ABSORB_SUMCHECK_CLAIM);
+            let terminal_claim = event_index_after(
+                combined_claim + 1,
+                akita_transcript::labels::ABSORB_EOR_FINAL_CLAIM,
+            );
+            let payload = event_index_after(
+                terminal_claim + 1,
+                akita_transcript::labels::ABSORB_OPENING_PAYLOAD,
+            );
+            let gamma =
+                event_index_after(payload + 1, akita_transcript::labels::CHALLENGE_EVAL_BATCH);
+            assert!(
+                eta < beta
+                    && beta < combined_claim
+                    && combined_claim < terminal_claim
+                    && terminal_claim < payload
+                    && payload < gamma,
+                "EOR transcript must order beta, sumcheck, terminal claims, payload, then gamma"
+            );
+        }
+        honest_result.expect("honest fp32 extension proof must verify");
 
         // (1) A wrong second opening must be rejected.
         let mut wrong = openings.clone();
@@ -751,16 +871,16 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
         )
         .expect_err("wrong batched extension opening must reject");
 
-        // (2) A tampered EOR partial evaluation must be rejected.
+        // (2) A tampered terminal EOR partial evaluation must be rejected.
         let mut tampered = proof.clone();
         *tampered
-            .root
+            .terminal
             .extension_opening_reduction
             .as_mut()
-            .expect("root EOR payload")
+            .expect("terminal EOR payload")
             .partials
             .first_mut()
-            .expect("root EOR must carry a partial evaluation") += SE::one();
+            .expect("terminal EOR must carry a partial evaluation") += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &tampered,
@@ -769,11 +889,32 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
             BasisMode::Lagrange,
         )
-        .expect_err("tampered extension-opening reduction partial must reject");
+        .expect_err("tampered terminal extension-opening reduction partial must reject");
 
-        // (3) Omitting the required EOR entirely must be rejected.
+        // (3) The individual EOR terminal handles remain bound even though the
+        // round messages are compressed into one sumcheck.
+        let mut tampered = proof.clone();
+        *tampered
+            .terminal
+            .extension_opening_reduction
+            .as_mut()
+            .expect("terminal EOR payload")
+            .final_claims
+            .first_mut()
+            .expect("terminal EOR must carry a terminal handle") += SE::one();
+        let mut vt = AkitaTranscript::<SF>::new(LABEL);
+        AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &tampered,
+            &verifier_setup,
+            &mut vt,
+            verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect_err("tampered per-claim EOR terminal handle must reject");
+
+        // (4) Omitting the required EOR entirely must be rejected.
         let mut stripped = proof.clone();
-        stripped.root.extension_opening_reduction = None;
+        stripped.terminal.extension_opening_reduction = None;
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
         AkitaCommitmentScheme::<Cfg>::batched_verify(
             &stripped,
@@ -782,7 +923,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_eor() {
             verify_input::<Cfg>(selection, &point[..], &openings[..], &commitment),
             BasisMode::Lagrange,
         )
-        .expect_err("omitting the required root extension-opening reduction must reject");
+        .expect_err("omitting the required terminal extension-opening reduction must reject");
     });
 }
 
@@ -797,13 +938,11 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         const NV: usize = 16;
         const LABEL: &[u8] = b"soundness/batched-dense-payload";
 
-        let layout = akita_batched_root_layout::<Cfg>(NV, 2).expect("layout");
-        let d = layout.d_a();
         let len = 1usize << NV;
         let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
-        let poly_a = DensePoly::<F>::from_field_evals(NV, d, &evals_a).expect("poly a");
-        let poly_b = DensePoly::<F>::from_field_evals(NV, d, &evals_b).expect("poly b");
+        let poly_a = DensePoly::<F>::from_field_evals(NV, &evals_a).expect("poly a");
+        let poly_b = DensePoly::<F>::from_field_evals(NV, &evals_b).expect("poly b");
 
         let point = random_point::<F>(NV);
         let openings = [
@@ -873,7 +1012,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         // matching extra claim, must not be accepted.
         let mut oversized = proof.clone();
         let mut coeffs = oversized.root.opening_payload.coeffs().to_vec();
-        coeffs.extend(vec![F::zero(); Cfg::D]);
+        coeffs.extend(vec![F::zero(); 256]);
         oversized.root.opening_payload = akita_types::RingVec::from_coeffs(coeffs);
 
         let mut oversized_openings = openings.to_vec();
@@ -940,7 +1079,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F>::new(ONEHOT_K, root_d, indices).expect("onehot poly")
+                OneHotPoly::<F>::new(ONEHOT_K, indices).expect("onehot poly")
             })
             .collect();
         let poly_group: Vec<&OneHotPoly<F>> = polys.iter().collect();
@@ -948,7 +1087,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         let pt = random_point::<F>(NV);
         let openings: Vec<F> = polys
             .iter()
-            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout))
+            .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout, BasisMode::Lagrange))
             .collect();
 
         let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).expect("setup");
@@ -1044,7 +1183,7 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
-        const D: usize = Cfg::D;
+        const D: usize = 256;
         const LABEL: &[u8] = b"soundness/profile-geometry";
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =

@@ -38,6 +38,7 @@ pub struct GeneratedRootFinalGroup {
     pub layout: akita_types::PolynomialGroupLayout,
     pub num_digits_inner: u32,
     pub num_digits_fold: u32,
+    pub opening_method: akita_types::OpeningMethod,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -45,6 +46,7 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
+    pub opening_method: akita_types::OpeningMethod,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,13 +66,15 @@ pub struct GeneratedRootFold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
-    pub num_digits_fold: u32,
-    pub commitment: GeneratedCommittedGroup,
+    /// Exact frozen commitment identity emitted by the planner.
+    pub commitment: akita_types::CommittedGroupProfile,
+    pub opening: akita_types::GroupOpeningPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRecursiveFold {
     pub payload_mode: akita_types::CommitmentPayloadMode,
+    pub opening_method: akita_types::OpeningMethod,
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
     pub response_l2_sq_cap: Option<u128>,
@@ -130,8 +134,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
     pub sis_l2_table_digest: akita_types::SisL2TableDigest,
-    pub uniform_ring_dimension: usize,
-    pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: akita_types::DecompositionParams,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
@@ -339,38 +341,11 @@ pub(crate) fn validate_entry_key(
     }
 }
 
-pub(crate) fn validate_certified_bases(
-    log_basis_inner: u32,
-    log_basis_outer: u32,
-    log_basis_open: u32,
-    policy: &crate::PlannerPolicy,
-    context: &str,
-) -> Result<(), akita_field::AkitaError> {
-    let (inner_min, inner_max) = policy.inner_basis_range;
-    if log_basis_inner < inner_min || log_basis_inner > inner_max {
-        return Err(akita_field::AkitaError::InvalidSetup(format!(
-            "{context} inner basis {log_basis_inner} outside policy range [{inner_min}, {inner_max}]"
-        )));
-    }
-    let (min, max) = policy.opening_basis_range;
-    for (role, basis) in [("outer", log_basis_outer), ("open", log_basis_open)] {
-        if basis < min || basis > max {
-            return Err(akita_field::AkitaError::InvalidSetup(format!(
-                "{context} {role} basis {basis} outside policy range [{min}, {max}]"
-            )));
-        }
-    }
-    if log_basis_open < log_basis_outer {
-        return Err(akita_field::AkitaError::InvalidSetup(format!(
-            "{context} certified open basis must dominate the outer basis"
-        )));
-    }
-    Ok(())
-}
-
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-dense")]
 pub mod fp128_dense;
+#[cfg(feature = "fp128-dense-bounded")]
+pub mod fp128_dense_bounded;
 #[cfg(feature = "fp128-dense-multi-chunk")]
 pub mod fp128_dense_multi_chunk;
 #[cfg(feature = "fp128-onehot")]
@@ -399,6 +374,14 @@ pub fn fp128_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_dense::FP128_DENSE_SCHEDULES,
         identity: fp128_dense::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-dense-bounded")]
+pub fn fp128_dense_bounded_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_dense_bounded::FP128_DENSE_BOUNDED_SCHEDULES,
+        identity: fp128_dense_bounded::CATALOG_IDENTITY,
     }
 }
 

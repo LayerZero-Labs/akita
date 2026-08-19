@@ -203,6 +203,93 @@ impl Challenges {
             claim_indices.len(),
         )
     }
+
+    /// Embed subring challenge positions into an ambient A ring.
+    ///
+    /// Coefficients and claim/block order are preserved exactly. Only each
+    /// position `j` changes to `embedding_stride * j`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if dimensions are inconsistent, a source challenge is
+    /// malformed, or an embedded position overflows or leaves the A ring.
+    pub fn embed_subring_positions(
+        &self,
+        challenge_subring_dimension: usize,
+        embedding_stride: usize,
+        ambient_ring_dimension: usize,
+    ) -> Result<Self, AkitaError> {
+        if challenge_subring_dimension == 0
+            || embedding_stride == 0
+            || challenge_subring_dimension
+                .checked_mul(embedding_stride)
+                .filter(|&dimension| dimension == ambient_ring_dimension)
+                .is_none()
+        {
+            return Err(AkitaError::InvalidInput(
+                "subring challenge embedding dimensions are inconsistent".into(),
+            ));
+        }
+        let embed = |challenge: &SparseChallenge| {
+            challenge.validate_dyn(challenge_subring_dimension)?;
+            let mut positions = crate::SparseChallengePositions::new();
+            positions
+                .try_reserve_exact(challenge.positions.len())
+                .map_err(|_| {
+                    AkitaError::InvalidInput("subring challenge position allocation failed".into())
+                })?;
+            for &position in &challenge.positions {
+                let embedded_position = usize::try_from(position)
+                    .ok()
+                    .and_then(|position| position.checked_mul(embedding_stride))
+                    .filter(|&position| position < ambient_ring_dimension)
+                    .and_then(|position| u32::try_from(position).ok())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "subring challenge embedded position overflow".into(),
+                        )
+                    })?;
+                positions.push(embedded_position);
+            }
+            Ok::<_, AkitaError>(SparseChallenge {
+                positions,
+                coeffs: challenge.coeffs.clone(),
+            })
+        };
+        #[cfg(feature = "parallel")]
+        let embedded = {
+            let work = self
+                .challenges
+                .len()
+                .checked_mul(
+                    self.challenges
+                        .first()
+                        .map_or(0, |challenge| challenge.positions.len()),
+                )
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("subring challenge embedding work overflow".into())
+                })?;
+            const PARALLEL_THRESHOLD: usize = 1 << 14;
+            if work >= PARALLEL_THRESHOLD {
+                self.challenges
+                    .par_iter()
+                    .map(embed)
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                self.challenges
+                    .iter()
+                    .map(embed)
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        };
+        #[cfg(not(feature = "parallel"))]
+        let embedded = self
+            .challenges
+            .iter()
+            .map(embed)
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::from_sparse(embedded, self.num_live_blocks_per_claim, self.num_claims)
+    }
 }
 
 #[cfg(test)]
@@ -234,5 +321,33 @@ mod tests {
             .map(|challenge| challenge.eval_at_pows::<F, F>(&powers).unwrap())
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn subring_embedding_preserves_coefficients_and_batch_order() {
+        let source = Challenges::from_sparse(
+            vec![
+                SparseChallenge {
+                    positions: vec![0, 3, 7].into(),
+                    coeffs: vec![1, -2, 1].into(),
+                },
+                SparseChallenge {
+                    positions: vec![1, 6].into(),
+                    coeffs: vec![-1, 2].into(),
+                },
+            ],
+            1,
+            2,
+        )
+        .unwrap();
+        let embedded = source.embed_subring_positions(8, 4, 32).unwrap();
+        assert_eq!(embedded.num_claims(), 2);
+        assert_eq!(embedded.num_live_blocks_per_claim(), 1);
+        assert_eq!(embedded.as_slice()[0].positions.as_slice(), &[0, 12, 28]);
+        assert_eq!(embedded.as_slice()[0].coeffs, source.as_slice()[0].coeffs);
+        assert_eq!(embedded.as_slice()[1].positions.as_slice(), &[4, 24]);
+        assert_eq!(embedded.as_slice()[1].coeffs, source.as_slice()[1].coeffs);
+        assert!(source.embed_subring_positions(8, 0, 32).is_err());
+        assert!(source.embed_subring_positions(8, 2, 32).is_err());
     }
 }

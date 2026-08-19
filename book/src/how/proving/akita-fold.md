@@ -24,6 +24,14 @@ binding those commitments to smaller terminal payloads through compression
 relations. This choice changes their physical realization, not the four
 semantic constraints derived here.
 
+The opening method is an independent choice. The common-ring equations below
+describe the `EvaluationTrace` realization directly. A
+`SubringCoefficientPacking` fold expresses its consistency relation in the
+challenge subring with extension-coordinate planes and embeds the same sparse
+challenge into the A ring. See [Root fold and ring
+switch](./root-fold-ring-switch.md). This changes the relation geometry, not
+the commitment statements or the four semantic roles.
+
 The goal of the fold is to replace the current polynomial blocks by a smaller
 digit witness while proving that the new witness is consistent with:
 
@@ -95,10 +103,11 @@ inner, position, and block coordinates and defines their interpolation weights
 $I_\ell$, $Q_p$, and $B_b$. We reuse those definitions here rather than
 deriving them again. The position weights $Q_p$ produce $E_b$ below, while the
 block weights $B_b$ and inner weights $I_\ell$ belong to the field-valued
-evaluation relation. The opening claim enters this page with target $v$. The
-evaluation reduction later writes its trace-form target as
-$v_{\mathrm{tr}}$; for the single base-field claim considered here, the valid
-relation has $v_{\mathrm{tr}}=v$.
+evaluation relation. The opening claim enters this page with target $v$. An
+`EvaluationTrace` fold later writes its reduced target as $v_{\mathrm{tr}}$;
+a `SubringCoefficientPacking` fold binds the original scalar target directly.
+For the single base-field claim considered here, the valid method-selected
+target equals $v$.
 
 ### Balanced digit representations
 
@@ -281,10 +290,17 @@ $$
 
 Here $\mathbf D$ commits to the digit-decomposed partial evaluations.
 
+Equations (5) to (7) show the evaluation trace shape, where each partial is a
+full ring element. At packing levels, Akita first splits the ring coefficient
+index and contracts its low part. The resulting partial has `k s` base field
+coordinates instead of `d_A`. See
+[Subring coefficient packing](./root-fold-ring-switch.md#subring-coefficient-packing)
+for that layout and the relation that connects it to the folded source.
+
 The subscript in $\mathbf v_D$ distinguishes this ring-vector commitment from
-the scalar opening target $v$ and its trace-form counterpart
-$v_{\mathrm{tr}}$. Equation (7) binds the newly derived opening digits; it does
-not by itself prove the scalar evaluation claim.
+the scalar opening target $v$ and its method-selected field relation. Equation
+(7) binds the newly derived opening digits; it does not by itself prove the
+scalar evaluation claim.
 
 ### The folded response and its digitization
 

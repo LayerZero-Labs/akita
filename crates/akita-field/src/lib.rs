@@ -22,7 +22,7 @@ pub mod unreduced;
 
 pub use error::AkitaError;
 pub use ext::lift::{
-    canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
+    canonical_extension_basis, solve_frobenius_moore, validate_canonical_frobenius_thetas,
     ExtField, FrobeniusExtField, LiftBase, MulBase, MulBaseUnreduced,
 };
 pub use ext::{

@@ -4,7 +4,10 @@ use crate::{AkitaProverSetup, CommitInnerWitness, CpuBackend, DensePoly};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp64;
-use akita_types::{OpenCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId};
+use akita_types::{
+    CommittedGroupProfile, CommittedSourceEncoding, OpenCommitMatrixParams, OpeningMethod,
+    PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
+};
 
 type F = Fp64<4294967197>;
 const D: usize = 64;
@@ -354,6 +357,38 @@ fn sliced_b_images_match_independent_block_diagonal_oracle_for_all_counts() {
     }
 }
 
+/// Inner digit depth that actually represents an `Fp32` coefficient at
+/// `log_basis_inner = 2`.
+///
+/// The fixture used to declare a single base-4 digit, which cannot represent a
+/// 32-bit field element at all: the commitment silently truncated, and the test
+/// only passed because the production and reference paths truncated identically.
+/// The commit path now rejects a source outside its scheduled digit envelope, so
+/// the fixture states a depth consistent with the coefficients it commits.
+fn slice_fixture_num_digits_inner() -> usize {
+    akita_types::sis::compute_num_digits_field_width(32, 2)
+}
+
+/// Full-field balanced-digit contract matching the slice fixture's geometry.
+///
+/// `log_commit_bound == field_bits` is the unbounded endpoint, so the accepted
+/// interval is representability alone and the fixture keeps committing arbitrary
+/// field elements. The balanced-digit class imposes no structural requirement, so
+/// the dense fixture source is admissible. Both restrictive paths — a bounded
+/// declaration and the unit one-hot class — are covered by the `fp128` e2e tests,
+/// which own real catalogs.
+fn slice_fixture_contract() -> akita_types::sis::CommittedSourceContract {
+    akita_types::sis::CommittedSourceContract::try_new(
+        akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
+        akita_types::DecompositionParams {
+            log_basis: 2,
+            log_commit_bound: 32,
+            log_open_bound: Some(32),
+        },
+    )
+    .expect("full-field slice fixture contract")
+}
+
 fn commitment_params_for_slice_count(
     slice_count: akita_types::CommitmentSliceCount,
 ) -> CommittedGroupParams {
@@ -368,7 +403,7 @@ fn commitment_params_for_slice_count(
     );
     params.outer_slice_count = slice_count;
     params
-        .with_decomp(2, 16, 1, 1, 1)
+        .with_decomp(2, 16, slice_fixture_num_digits_inner(), 1, 1)
         .expect("unsliced commitment geometry")
 }
 
@@ -503,7 +538,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
     let evals = (0..1usize << NUM_VARS)
         .map(|index| F::from_u64(index as u64 + 1))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense polynomial");
+    let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
 
     let production_geometry =
         validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
@@ -513,6 +548,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         &ctx,
         (&params).into(),
         &production_geometry,
+        slice_fixture_contract(),
     )
     .expect("production S=1 commitment");
     let (reference, compression_plan) =
@@ -555,6 +591,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
             &ctx,
             (&sliced_params).into(),
             &slice_geometry,
+            slice_fixture_contract(),
         )
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count
@@ -575,4 +612,75 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
             .expect("real sliced compression hint");
         assert!(!commitment.rows().coeffs().is_empty());
     }
+}
+
+#[test]
+fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
+    const NUM_VARS: usize = 10;
+    let canonical = commitment_params_for_slice_count(akita_types::CommitmentSliceCount::ONE);
+    let mut packing_plan = canonical.clone();
+    packing_plan.opening_method = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    let group = PolynomialGroupLayout::new(NUM_VARS, 1);
+    let profile = |params: &CommittedGroupParams| CommittedGroupProfile {
+        version: CommittedGroupProfile::VERSION,
+        group,
+        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+        num_positions_per_block: params.num_positions_per_block,
+        num_live_blocks: params.num_live_blocks,
+        outer_slice_count: params.outer_slice_count,
+        log_basis_inner: params.log_basis_inner,
+        num_digits_inner: params.num_digits_inner,
+        inner_commit_matrix: params.inner_commit_matrix,
+        log_basis_outer: params.log_basis_outer,
+        num_digits_outer: params.num_digits_outer,
+        outer_commit_matrix: params.outer_commit_matrix,
+    };
+    assert_eq!(
+        profile(&canonical),
+        profile(&packing_plan),
+        "opening policy must not enter commitment identity",
+    );
+
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        NUM_VARS,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 2_000_000,
+        },
+    )
+    .unwrap();
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let ctx = OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref()).unwrap();
+    let evaluations = (0..1usize << NUM_VARS)
+        .map(|index| F::from_u64((index * 17 + 9) as u64))
+        .collect::<Vec<_>>();
+    let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, &evaluations).unwrap();
+    let slice_geometry =
+        validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
+    let contract = akita_config::proof_optimized::fp64::Dense::committed_source_contract().unwrap();
+    let raw = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+        std::slice::from_ref(&polynomial),
+        &ctx,
+        (&canonical).into(),
+        &slice_geometry,
+        contract,
+    )
+    .unwrap();
+    let raw_under_other_method = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+        std::slice::from_ref(&polynomial),
+        &ctx,
+        (&packing_plan).into(),
+        &slice_geometry,
+        contract,
+    )
+    .unwrap();
+    assert_eq!(raw, raw_under_other_method);
+
+    let mut tensor = canonical.clone();
+    tensor.source_encoding = CommittedSourceEncoding::TensorSubfieldProjection {
+        extension_degree: 2,
+    };
+    assert!(CommittedGroupProfile::try_from_params(group, &tensor).is_err());
 }

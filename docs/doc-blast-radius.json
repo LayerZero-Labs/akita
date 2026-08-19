@@ -51,7 +51,7 @@
       "consider_updating": [
         "book/src/how/architecture.md",
         "book/src/how/proving/sumcheck-stages.md",
-        "specs/akita-polyops-cutover.md"
+        "specs/archive/2026-Q3/akita-polyops-cutover.md"
       ]
     },
     {
@@ -77,7 +77,7 @@
         "specs/packed-sumcheck.md",
         "specs/setup-product-sumcheck.md",
         "specs/terminal-fold-cutover.md",
-        "specs/protocol-field-geometry-cutover.md"
+        "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
     {
@@ -90,7 +90,7 @@
         "docs/verifier-contract.md",
         "docs/verifier-panic-audit.md",
         "specs/security-hardening.md",
-        "specs/protocol-field-geometry-cutover.md"
+        "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
     {
@@ -98,7 +98,7 @@
       "description": "Fiat-Shamir transcript and instance binding",
       "code": [
         "crates/akita-transcript/**",
-        "crates/akita-types/src/instance_descriptor.rs"
+        "crates/akita-types/src/instance_descriptor/**"
       ],
       "consider_updating": [
         "book/src/how/transcript.md",
@@ -144,9 +144,9 @@
         "book/src/foundations/extension-opening-reduction.md",
         "book/src/how/proving/extension-opening-reduction.md",
         "book/src/how/proving/fold-path.md",
-        "specs/eor-*.md",
-        "specs/extension-field-*.md",
-        "specs/protocol-field-geometry-cutover.md"
+        "specs/archive/2026-Q3/eor-*.md",
+        "specs/archive/2026-Q3/extension-field-*.md",
+        "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
     {

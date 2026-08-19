@@ -167,6 +167,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-serialization",
  "akita-types",
@@ -2069,6 +2070,7 @@ source = "git+https://github.com/arkworks-rs/spongefish?rev=d2d190b1329d35ac9577
 dependencies = [
  "blake2 0.11.0-rc.6",
  "digest 0.11.3",
+ "keccak 0.1.6",
  "p3-koala-bear",
  "rand 0.8.6",
  "sha2",

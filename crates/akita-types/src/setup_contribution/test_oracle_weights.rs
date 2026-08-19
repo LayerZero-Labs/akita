@@ -177,7 +177,6 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
             let base_ring_dimension = source_ring_dimension / spec.a_ratio;
             let role_ring_dimension = base_ring_dimension * spec.role_lanes;
             let first_lane = unit.e_coefficient_index(
-                source_ring_dimension,
                 role_ring_dimension,
                 num_claims,
                 depth_open,

@@ -14,6 +14,51 @@ pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
     pub(in crate::protocol::core) trace_eval_target: E,
 }
 
+/// Prepared public evaluation-trace claim and its per-opening coefficients (#314 Stage-2).
+pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: FieldCore> {
+    pub(in crate::protocol::core) claimed_evaluation: E,
+    pub(in crate::protocol::core) claim_coefficients: Vec<E>,
+}
+
+fn resolve_evaluation_trace_claim<E: FieldCore>(
+    reduction: Option<&ExtensionOpeningReduction<E>>,
+    openings: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    row_coefficients: &[E],
+) -> Result<PreparedEvaluationTraceClaim<E>, AkitaError> {
+    if reduction.is_some_and(|reduction| {
+        reduction.proof.final_claims.len() != opening_batch.num_total_polynomials()
+            || reduction.final_factors.len() != opening_batch.num_groups()
+    }) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let claim_coefficients = reduction.map_or_else(
+        || Ok(row_coefficients.to_vec()),
+        |reduction| {
+            opening_batch
+                .scale_row_coefficients_by_group(row_coefficients, &reduction.final_factors)
+        },
+    )?;
+    let expected = opening_batch
+        .batched_eval_target(&claim_coefficients, openings)
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
+        })?;
+    let claimed = match reduction {
+        Some(reduction) => opening_batch
+            .batched_eval_target(row_coefficients, &reduction.proof.final_claims)
+            .map_err(|_| AkitaError::InvalidProof)?,
+        None => expected,
+    };
+    if claimed != expected {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(PreparedEvaluationTraceClaim {
+        claimed_evaluation: claimed,
+        claim_coefficients,
+    })
+}
+
 fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
@@ -132,7 +177,6 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     alpha_bits: usize,
     basis: BasisMode,
     opening_batch: &OpeningClaimsLayout,
-    row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
 where
@@ -185,32 +229,26 @@ where
         }
         claim_offset = end;
     }
-    let row_coefficients = if let Some(row_coefficients) = row_coefficients {
-        row_coefficients
-    } else {
-        derive_public_row_coefficients::<F, E, T>(opening_batch, &openings, transcript)?
-    };
-    let claim_coefficients = reduction.as_ref().map_or_else(
-        || Ok(row_coefficients.clone()),
-        |reduction| {
-            opening_batch
-                .scale_row_coefficients_by_group(&row_coefficients, &reduction.final_factors)
-        },
-    )?;
-    let expected_trace_eval_target = opening_batch
-        .batched_eval_target(&claim_coefficients, &openings)
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
-        })?;
-    let trace_eval_target = reduction
-        .as_ref()
-        .map_or(expected_trace_eval_target, |reduction| {
-            reduction.final_claim
-        });
-    if trace_eval_target != expected_trace_eval_target {
-        return Err(AkitaError::InvalidProof);
+    if reduction.is_none() {
+        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     }
-    Ok((TraceTarget { trace_eval_target }, row_coefficients))
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
+        opening_batch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        transcript,
+    )?;
+    let resolved = resolve_evaluation_trace_claim(
+        reduction.as_ref(),
+        &openings,
+        opening_batch,
+        &row_coefficients,
+    )?;
+    Ok((
+        TraceTarget {
+            trace_eval_target: resolved.claimed_evaluation,
+        },
+        row_coefficients,
+    ))
 }
 
 pub(in crate::protocol::core) fn scalar_opening_from_folded_ring<F, E, const D: usize>(
@@ -285,17 +323,10 @@ where
         .collect()
 }
 
-/// Prepared public evaluation-trace claim and its per-opening coefficients (#314 Stage-2).
-pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: FieldCore> {
-    pub(in crate::protocol::core) claimed_evaluation: E,
-    pub(in crate::protocol::core) claim_coefficients: Vec<E>,
-}
-
 pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
-    row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
@@ -309,36 +340,125 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = if let Some(row_coefficients) = row_coefficients {
-        row_coefficients
-    } else {
-        derive_public_row_coefficients::<F, E, T>(opening_batch, openings, transcript)?
-    };
-    let claim_coefficients = reduction.as_ref().map_or_else(
-        || Ok(row_coefficients.clone()),
-        |reduction| {
-            opening_batch
-                .scale_row_coefficients_by_group(&row_coefficients, &reduction.final_factors)
-        },
+    let row_coefficients = sample_row_coefficients::<F, E, T>(
+        opening_batch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        transcript,
     )?;
-    let expected_trace_eval_target = opening_batch
-        .batched_eval_target(&claim_coefficients, openings)
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
-        })?;
-    let trace_eval_target = reduction
-        .as_ref()
-        .map_or(expected_trace_eval_target, |reduction| {
-            reduction.final_claim
-        });
-    if trace_eval_target != expected_trace_eval_target {
-        return Err(AkitaError::InvalidProof);
+    let resolved = resolve_evaluation_trace_claim(
+        reduction.as_ref(),
+        openings,
+        opening_batch,
+        &row_coefficients,
+    )?;
+    Ok((resolved, row_coefficients))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp32;
+
+    type TestF = Fp32<251>;
+
+    fn reduction(
+        final_claims: Vec<TestF>,
+        final_factors: Vec<TestF>,
+    ) -> ExtensionOpeningReduction<TestF> {
+        ExtensionOpeningReduction {
+            proof: ExtensionOpeningReductionProof {
+                partials: Vec::new(),
+                sumcheck: SumcheckProof {
+                    round_polys: Vec::new(),
+                },
+                final_claims,
+            },
+            final_factors,
+        }
     }
-    Ok((
-        PreparedEvaluationTraceClaim {
-            claimed_evaluation: trace_eval_target,
-            claim_coefficients,
-        },
-        row_coefficients,
-    ))
+
+    fn grouped_layout() -> OpeningClaimsLayout {
+        OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(0, 2),
+            PolynomialGroupLayout::new(0, 1),
+        ])
+        .expect("grouped opening layout")
+    }
+
+    #[test]
+    fn trace_claim_resolution_scales_groups_and_binds_terminal_handles() {
+        let layout = grouped_layout();
+        let openings = [TestF::one(), TestF::one(), TestF::one()];
+        let row_coefficients = [TestF::one(), TestF::one(), TestF::one()];
+        let reduction = reduction(
+            vec![TestF::one(), TestF::one(), -TestF::one()],
+            vec![TestF::one(), -TestF::one()],
+        );
+
+        let resolved =
+            resolve_evaluation_trace_claim(Some(&reduction), &openings, &layout, &row_coefficients)
+                .expect("valid grouped trace claim");
+
+        assert_eq!(resolved.claimed_evaluation, TestF::one());
+        assert_eq!(
+            resolved.claim_coefficients,
+            vec![TestF::one(), TestF::one(), -TestF::one()]
+        );
+
+        let unreduced = resolve_evaluation_trace_claim(None, &openings, &layout, &row_coefficients)
+            .expect("valid unreduced trace claim");
+        assert_eq!(
+            unreduced.claimed_evaluation,
+            TestF::one() + TestF::one() + TestF::one()
+        );
+        assert_eq!(unreduced.claim_coefficients, row_coefficients);
+    }
+
+    #[test]
+    fn trace_claim_resolution_rejects_malformed_reduction_shapes() {
+        let layout = grouped_layout();
+        let openings = [TestF::one(), TestF::one(), TestF::one()];
+        let row_coefficients = [TestF::one(), TestF::one(), TestF::one()];
+        let short_claims = reduction(
+            vec![TestF::one(), TestF::one()],
+            vec![TestF::one(), TestF::one()],
+        );
+        let short_factors = reduction(
+            vec![TestF::one(), TestF::one(), TestF::one()],
+            vec![TestF::one()],
+        );
+
+        for malformed in [&short_claims, &short_factors] {
+            assert!(matches!(
+                resolve_evaluation_trace_claim(
+                    Some(malformed),
+                    &openings,
+                    &layout,
+                    &row_coefficients,
+                ),
+                Err(AkitaError::InvalidProof)
+            ));
+        }
+    }
+
+    #[test]
+    fn trace_claim_resolution_rejects_inconsistent_terminal_handles() {
+        let layout = grouped_layout();
+        let openings = [TestF::one(), TestF::one(), TestF::one()];
+        let row_coefficients = [TestF::one(), TestF::one(), TestF::one()];
+        let inconsistent = reduction(
+            vec![TestF::one(), TestF::one(), TestF::one()],
+            vec![TestF::one(), -TestF::one()],
+        );
+
+        assert!(matches!(
+            resolve_evaluation_trace_claim(
+                Some(&inconsistent),
+                &openings,
+                &layout,
+                &row_coefficients,
+            ),
+            Err(AkitaError::InvalidProof)
+        ));
+    }
 }

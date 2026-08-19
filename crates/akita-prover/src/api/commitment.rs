@@ -2,22 +2,22 @@
 
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
-    tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta,
-    RuntimeCommitBackendFor, RuntimeCommitSource, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    UniformProverStack,
+    CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta, RuntimeCommitBackendFor,
+    RuntimeCommitSource, UniformProverStack,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
-use crate::RootTensorProjectionPoly;
+use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
 };
+use akita_types::sis::CommittedSourceContract;
 use akita_types::{
-    dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
-    validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommitmentRingDims, CommitmentSliceCount, CommittedGroup, CommittedGroupParams,
-    CommittedGroupProfile, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
+    dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims,
+    CommitmentSliceCount, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
+    CommittedSourceEncoding, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
 
@@ -311,32 +311,87 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
     })
 }
 
-/// A-role root tensor projection at `transform_ring_d` when the schedule calls for it.
-fn tensor_project_roots<F, P, E, B>(
-    transform_ring_d: usize,
-    tensor_ctx: &OperationCtx<'_, F, B>,
+/// Reject a group whose logical source representation differs from the class
+/// whose honest-response bounds the schedule uses.
+fn ensure_sources_match_declared_class<F, P>(
     polys: &[P],
-) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>
+    contract: CommittedSourceContract,
+) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: FpExtEncoding<F>,
-    P: RuntimeRootCommitPoly<F>,
-    B: RuntimeRootCommitBackend<F, P, E>,
+    F: FieldCore,
+    P: RootPolyMeta<F>,
 {
-    let backend = tensor_ctx.backend();
-    let prepared = tensor_ctx.prepared();
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        transform_ring_d,
-        |D| {
-            polys
-                .iter()
-                .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, Some(prepared), poly))
-                .collect()
+    let Some(required_chunk_size) = contract.class().required_onehot_chunk_size() else {
+        return Ok(());
+    };
+    for poly in polys {
+        match RootPolyMeta::<F>::onehot_chunk_size(poly) {
+            Some(chunk_size) if chunk_size == required_chunk_size => {}
+            Some(chunk_size) => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "committed source is a unit one-hot representation with chunk size \
+                     {chunk_size}, but this schedule is priced for one hot position per \
+                     {required_chunk_size} coefficients"
+                )))
+            }
+            None => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "committed source is not a unit one-hot representation, but this schedule \
+                     is priced for one hot position per {required_chunk_size} coefficients; \
+                     a dense source can satisfy the digit envelope while carrying far more \
+                     energy than the frozen response caps allow"
+                )))
+            }
         }
-    )
+    }
+    Ok(())
+}
+
+/// Reject coefficients outside the intersection of the source declaration and
+/// the exact balanced-digit interval committed by this row.
+fn ensure_sources_fit_accepted_interval<F, P, const D: usize>(
+    polys: &[P],
+    plan: CommitInnerPlan,
+    contract: CommittedSourceContract,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: RootCommitSource<F, D>,
+{
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let threshold =
+        decompose_centering_threshold(plan.num_digits_inner, plan.log_basis_inner, modulus);
+    let (negative_reach, positive_reach) =
+        contract.accepted_bounds(plan.log_basis_inner, plan.num_digits_inner);
+    let exceeds = |negative_abs: u128, positive: u128| {
+        negative_reach.is_some_and(|reach| negative_abs > reach)
+            || positive_reach.is_some_and(|reach| positive > reach)
+    };
+    if !exceeds(modulus.saturating_sub(threshold + 1), threshold) {
+        return Ok(());
+    }
+    let render_reach = |reach: Option<u128>| match reach {
+        Some(value) => value.to_string(),
+        None => ">2^128".to_string(),
+    };
+    for poly in polys {
+        let (negative_abs, positive) =
+            RootCommitSource::<F, D>::committed_centered_reach(poly, modulus, threshold)?;
+        if exceeds(negative_abs, positive) {
+            return Err(AkitaError::InvalidInput(format!(
+                "committed source exceeds the scheduled bound: centered coefficients reach \
+                 [-{negative_abs}, {positive}] but a source declared at \
+                 log_commit_bound = {} and committed as {} balanced base-2^{} digits accepts \
+                 only [-{}, {}]",
+                contract.decomposition().log_commit_bound,
+                plan.num_digits_inner,
+                plan.log_basis_inner,
+                render_reach(negative_reach),
+                render_reach(positive_reach),
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn commit_with_validated_geometry<F, P, B>(
@@ -344,6 +399,7 @@ fn commit_with_validated_geometry<F, P, B>(
     ctx: &OperationCtx<'_, F, B>,
     geometry: CommitmentGeometry<'_>,
     slice_geometry: &akita_types::CommitmentSliceGeometry,
+    contract: CommittedSourceContract,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore
@@ -382,6 +438,7 @@ where
         F,
         dims.d_a(),
         |D_A| {
+            ensure_sources_fit_accepted_interval::<F, P, D_A>(polys, plan, contract)?;
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 F,
@@ -507,9 +564,7 @@ fn validate_explicit_context(
 ///
 /// Scheduler contexts select an existing S or G catalog row. Explicit
 /// contexts validate caller-supplied root parameters without catalog lookup.
-/// Tensor projection is determined solely from field/root geometry. Geometry
-/// validation, commitment arithmetic, and result assembly are shared by every
-/// context.
+/// Root commitments always consume the canonical coefficient table.
 ///
 /// # Errors
 ///
@@ -532,8 +587,8 @@ where
         + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    P: RuntimeRootCommitPoly<Cfg::Field>,
-    B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+    P: RuntimeCommitSource<Cfg::Field>,
+    B: RuntimeCommitBackendFor<Cfg::Field, P>,
 {
     let opening_layout = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let group_layout = opening_layout.root_final_group_layout()?;
@@ -572,33 +627,24 @@ where
             (params, scheduled_row.profiles().final_group)
         };
 
+    let contract = Cfg::committed_source_contract()?;
+    ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
+
     let slice_geometry =
         validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
     let geometry: CommitmentGeometry<'_> = params.into();
-    let transform_ring_d = geometry.inner_matrix.ring_dimension();
-    let (commitment, hint) = if root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
-        transform_ring_d,
-        group_layout.num_vars(),
-    ) {
-        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
-            transform_ring_d,
-            stack.tensor(),
-            polys,
-        )?;
-        commit_with_validated_geometry::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
-            &transformed,
-            stack.commit(),
-            geometry,
-            &slice_geometry,
-        )?
-    } else {
-        commit_with_validated_geometry::<Cfg::Field, P, B>(
-            polys,
-            stack.commit(),
-            geometry,
-            &slice_geometry,
-        )?
-    };
+    if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
+        return Err(AkitaError::InvalidSetup(
+            "root commitments require canonical coefficient-table source encoding".into(),
+        ));
+    }
+    let (commitment, hint) = commit_with_validated_geometry::<Cfg::Field, P, B>(
+        polys,
+        stack.commit(),
+        geometry,
+        &slice_geometry,
+        contract,
+    )?;
 
     Ok(CommitOutput {
         committed_group: CommittedGroup::new(profile, commitment),

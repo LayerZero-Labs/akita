@@ -8,6 +8,19 @@ use akita_transcript::{FoldChallengeSeedPreview, Transcript, FOLD_CHALLENGE_SEED
 use std::marker::PhantomData;
 
 const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
+const SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN: &[u8] =
+    b"akita/subring-coefficient-packing-fold-challenge/v1";
+
+/// Algebraic domain of one fold-challenge draw.
+///
+/// The evaluation-trace variant preserves the historical transcript encoding.
+/// Coefficient packing adds an explicit method domain and challenge-subring
+/// dimension before the seed is squeezed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldChallengeDrawDomain {
+    EvaluationTrace,
+    SubringCoefficientPacking { challenge_subring_dimension: usize },
+}
 
 /// Build the canonical transcript prefix for one group-local fold draw.
 ///
@@ -52,6 +65,7 @@ pub trait FoldDraw {
         grind_nonce: u32,
     ) -> Result<Challenges, AkitaError> {
         self.draw_folding_challenges_with_rejection(
+            FoldChallengeDrawDomain::EvaluationTrace,
             ring_d,
             group_index,
             num_live_blocks,
@@ -65,6 +79,7 @@ pub trait FoldDraw {
     #[allow(clippy::too_many_arguments)]
     fn draw_folding_challenges_with_rejection(
         &mut self,
+        domain: FoldChallengeDrawDomain,
         ring_d: usize,
         group_index: usize,
         num_live_blocks: usize,
@@ -73,6 +88,21 @@ pub trait FoldDraw {
         grind_nonce: u32,
         rejection: Option<OperatorNormRejection>,
     ) -> Result<Challenges, AkitaError> {
+        if let FoldChallengeDrawDomain::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } = domain
+        {
+            if ring_d != challenge_subring_dimension {
+                return Err(AkitaError::InvalidInput(
+                    "coefficient-packing draw dimension mismatch".into(),
+                ));
+            }
+            if rejection.is_some() {
+                return Err(AkitaError::InvalidInput(
+                    "coefficient-packing draws require the L-infinity security route".into(),
+                ));
+            }
+        }
         if ring_d > MAX_STACK_RING_DIM {
             return Err(AkitaError::InvalidInput(format!(
                 "ring dimension {ring_d} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
@@ -103,18 +133,28 @@ pub trait FoldDraw {
         absorb_buf.extend_from_slice(&(ring_d as u64).to_le_bytes());
         absorb_buf.extend_from_slice(&domain_sep);
         absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
+        if matches!(
+            domain,
+            FoldChallengeDrawDomain::SubringCoefficientPacking { .. }
+        ) {
+            absorb_buf.extend_from_slice(SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN);
+        }
         if let Some(rejection) = rejection {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
         let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
-        let mut cursor = XofCursor::from_seed(&seed);
-        let challenges = crate::sampler::sample_challenges_from_xof_cursor(
-            &mut cursor,
-            ring_d,
-            total,
-            cfg,
-            rejection,
-        )?;
+        let challenges = if rejection.is_none() {
+            crate::sampler::sample_batched_challenges_from_seed(&seed, ring_d, total, cfg)?
+        } else {
+            let mut cursor = XofCursor::from_seed(&seed);
+            crate::sampler::sample_challenges_from_xof_cursor(
+                &mut cursor,
+                ring_d,
+                total,
+                cfg,
+                rejection,
+            )?
+        };
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }
@@ -164,5 +204,114 @@ where
         self.transcript.append_bytes(label, payload);
         self.transcript
             .challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, FOLD_CHALLENGE_SEED_LEN)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct CapturingDraw {
+        payloads: Vec<Vec<u8>>,
+    }
+
+    impl FoldDraw for CapturingDraw {
+        fn absorb_and_squeeze(&mut self, _label: &[u8], payload: &[u8]) -> Vec<u8> {
+            self.payloads.push(payload.to_vec());
+            vec![7; FOLD_CHALLENGE_SEED_LEN]
+        }
+    }
+
+    #[test]
+    fn evaluation_trace_draw_preserves_legacy_payload() {
+        let config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let mut draw = CapturingDraw::default();
+        draw.draw_folding_challenges_with_rejection(
+            FoldChallengeDrawDomain::EvaluationTrace,
+            64,
+            2,
+            3,
+            4,
+            &config,
+            5,
+            None,
+        )
+        .unwrap();
+        let label = fold_challenge_sample_label(2, 3, 4).unwrap();
+        let mut expected = label;
+        expected.extend_from_slice(&12u64.to_le_bytes());
+        expected.extend_from_slice(&64u64.to_le_bytes());
+        expected.extend_from_slice(&config.domain_separator_bytes());
+        expected.extend_from_slice(&5u32.to_le_bytes());
+        assert_eq!(draw.payloads, vec![expected]);
+    }
+
+    #[test]
+    fn packing_draw_binds_method_and_subring_dimension() {
+        let mut draw_64 = CapturingDraw::default();
+        let config_64 = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        draw_64
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::SubringCoefficientPacking {
+                    challenge_subring_dimension: 64,
+                },
+                64,
+                0,
+                2,
+                1,
+                &config_64,
+                0,
+                None,
+            )
+            .unwrap();
+        assert!(draw_64.payloads[0].ends_with(SUBRING_COEFFICIENT_PACKING_DRAW_DOMAIN));
+
+        let mut draw_128 = CapturingDraw::default();
+        let config_128 = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+        draw_128
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::SubringCoefficientPacking {
+                    challenge_subring_dimension: 128,
+                },
+                128,
+                0,
+                2,
+                1,
+                &config_128,
+                0,
+                None,
+            )
+            .unwrap();
+        assert_ne!(draw_64.payloads, draw_128.payloads);
+        assert!(CapturingDraw::default()
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::SubringCoefficientPacking {
+                    challenge_subring_dimension: 64,
+                },
+                128,
+                0,
+                2,
+                1,
+                &config_128,
+                0,
+                None,
+            )
+            .is_err());
+
+        let mut evaluation_trace = CapturingDraw::default();
+        evaluation_trace
+            .draw_folding_challenges_with_rejection(
+                FoldChallengeDrawDomain::EvaluationTrace,
+                64,
+                0,
+                2,
+                1,
+                &config_64,
+                0,
+                None,
+            )
+            .unwrap();
+        assert_ne!(draw_64.payloads, evaluation_trace.payloads);
     }
 }

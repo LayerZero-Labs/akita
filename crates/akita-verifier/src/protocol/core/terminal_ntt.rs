@@ -344,8 +344,24 @@ mod tests {
             .output_rank()
             .checked_mul(params.inner_width())
             .expect("terminal prefix");
-        let matrix = vec![CyclotomicRing::<F, D>::zero(); prefix_len];
-        let setup = verifier_setup(&matrix);
+        let field_len = prefix_len
+            .checked_mul(params.d_a())
+            .expect("terminal setup field length");
+        let setup = AkitaVerifierSetup::from_parts(
+            Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    AkitaSetupDescriptor {
+                        max_num_vars: 1,
+                        max_num_batched_polys: 1,
+                        num_field_elements: field_len,
+                        setup_seed: [9; 32].into(),
+                    },
+                    FlatMatrix::from_flat_data(vec![F::from_i64(0); field_len]),
+                ),
+            ),
+            SetupPrefixVerifierRegistry::new([9; 32].into()),
+        )
+        .expect("matching public-matrix identity");
 
         assert_eq!(setup.verifier_ntt_cache_bytes().expect("empty cache"), 0);
         warm_for_schedule(&setup, &schedule).expect("warm cache");
@@ -359,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn covering_cache_preserves_smaller_flat_matrix_geometry() {
+    fn distinct_exact_plans_preserve_smaller_flat_matrix_geometry() {
         let matrix = matrix();
         let setup = verifier_setup(&matrix);
         let wide_rhs = (0..5)
@@ -375,16 +391,21 @@ mod tests {
             centered_rows(&setup, 2, narrow_rhs, 6).expect("narrow cached product"),
             expected(&matrix[..6], &centered_rings(narrow_rhs)),
         );
+        let distinct_plan_bytes = setup
+            .verifier_ntt_cache_bytes()
+            .expect("distinct plan cache bytes");
+        assert!(distinct_plan_bytes > wide_cache_bytes);
+        centered_rows(&setup, 2, narrow_rhs, 6).expect("reuse narrow exact plan");
         assert_eq!(
             setup
                 .verifier_ntt_cache_bytes()
-                .expect("reused cache bytes"),
-            wide_cache_bytes,
+                .expect("reused exact plans"),
+            distinct_plan_bytes,
         );
     }
 
     #[test]
-    fn base_and_tail_requests_share_one_strongest_prefix() {
+    fn exact_capabilities_do_not_alias_cache_entries() {
         let setup = verifier_setup(&matrix());
         let ProtocolCrtNttParams::Q128(params) =
             select_crt_ntt_params::<F, D>().expect("Q128 params")
@@ -405,19 +426,22 @@ mod tests {
         let combined = setup
             .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_ABS_BOUND)
             .expect("larger base-only prefix");
-        assert!(combined.has_i16_tail());
+        assert!(!combined.has_i16_tail());
+        assert!(!Arc::ptr_eq(&initial_tail, &combined));
         assert_eq!(
-            setup.verifier_ntt_cache_bytes().expect("combined bytes"),
-            q128_base_cache_bytes(10) + 4 * D * core::mem::size_of::<i16>()
+            setup.verifier_ntt_cache_bytes().expect("separate bytes"),
+            q128_base_cache_bytes(4)
+                + 4 * D * core::mem::size_of::<i16>()
+                + q128_base_cache_bytes(10)
         );
-        let reused_other_basis = setup
+        let other_basis = setup
             .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 1 << 14)
-            .expect("same physical cache for another exact bound");
-        assert!(Arc::ptr_eq(&combined, &reused_other_basis));
+            .expect("distinct exact bound");
+        assert!(!Arc::ptr_eq(&combined, &other_basis));
 
         let reused_tail = setup
             .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_ABS_BOUND)
             .expect("reused tail prefix");
-        assert!(Arc::ptr_eq(&combined, &reused_tail));
+        assert!(Arc::ptr_eq(&initial_tail, &reused_tail));
     }
 }

@@ -1,23 +1,24 @@
 use super::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
 use super::kernels::{
     OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel, RootCommitKernel,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use super::runtime_capabilities::{
-    RootProveFlowBackend, RuntimeOpeningProveBackendFor, RuntimeRecursiveWitnessProveBackend,
-    RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RootProveFlowBackend, RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootProvePoly,
+    RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::backend::{RecursiveFoldSource, RingSwitchRelationView};
-use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// D-free shape metadata every root polynomial exposes.
 ///
 /// This is the **PCS/batch-facing** capability bound: it names a polynomial's
-/// variable count and ring-element count *without* a const ring dimension `D`,
+/// variable count *without* a const ring dimension `D`,
 /// so D-free entry points (e.g. [`crate::ProverOpeningData`]) can require just
 /// `RootPolyMeta` while the const-D kernel-entry traits ([`RootPolyShape`] and
 /// the commit/opening/tensor/direct-witness family) carry `D`.
@@ -30,9 +31,6 @@ pub trait RootPolyMeta<F>: Clone + Send + Sync
 where
     F: FieldCore,
 {
-    /// Total number of ring elements in the polynomial.
-    fn num_ring_elems(&self) -> usize;
-
     /// Total number of variables (representation-derived, D-independent).
     fn num_vars(&self) -> usize;
 
@@ -64,6 +62,15 @@ where
 {
     /// Total number of ring elements in the polynomial.
     fn num_ring_elems(&self) -> usize;
+
+    /// Exact live ring prefix consumed by coefficient packing.
+    ///
+    /// Ordinary root sources fill their complete Boolean domain, so this is
+    /// identical to [`Self::num_ring_elems`]. Recursive witnesses override it
+    /// to exclude their commitment-only zero padding.
+    fn num_live_ring_elems(&self) -> usize {
+        self.num_ring_elems()
+    }
 
     /// Total number of variables (`log2(num_ring_elems() * D)`).
     ///
@@ -103,6 +110,94 @@ where
 
     /// Borrow a commit view of this polynomial.
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError>;
+
+    /// Largest centered coefficient magnitudes this source commits, as
+    /// `(negative_abs_max, positive_max)`, under the balanced-decomposition sign
+    /// rule for `modulus` and `centering_threshold`.
+    ///
+    /// The commit path compares this reach against
+    /// [`akita_types::sis::CommittedSourceContract::accepted_bounds`] and rejects
+    /// the commitment when it falls outside. That interval intersects two
+    /// constraints: what `num_digits_inner` balanced digits can *represent* (the
+    /// kernel silently discards anything above it, so a truncation would bind a
+    /// different polynomial than the caller opens) and the bound the schedule was
+    /// *priced* for (see
+    /// [`akita_types::DecompositionParams::log_commit_bound`]). Only a bounded
+    /// committed source constrains either side.
+    ///
+    /// This answers the *magnitude* half of the contract only. The source's
+    /// class — whether it is the representation the schedule's response caps were
+    /// priced against — is a separate admission check that no coefficient reach
+    /// can express.
+    ///
+    /// `centering_threshold` comes from
+    /// `akita_algebra::ring::cyclotomic::decompose_centering_threshold`, so a
+    /// source reports its reach under exactly the sign rule its digits will be
+    /// produced with instead of a locally assumed one.
+    ///
+    /// Every source must answer: there is no safe default. Sources whose
+    /// representation is structurally inside every envelope (unit one-hot, or an
+    /// already-decomposed digit witness) report their small exact reach without
+    /// scanning. This is never called for a full-field depth, so an unbounded
+    /// source never pays for it.
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: CanonicalField;
+}
+
+/// Largest centered magnitudes over a flat field slice, as
+/// `(negative_abs_max, positive_max)`.
+///
+/// Shared by every dense-like [`RootCommitSource::committed_centered_reach`]
+/// implementation so the centering convention is written once: a canonical
+/// residue at or below `centering_threshold` is the positive side, anything above
+/// it is negative with magnitude `modulus - canonical`. That is the same split
+/// `akita_algebra::ring::cyclotomic::center_for_decomposition` applies. We track
+/// the magnitude directly rather than calling that helper because it is
+/// `pub(crate)` to `akita-algebra` and returns an `i128` centered value, which
+/// cannot hold the largest negative magnitude a full-width residue reaches
+/// (`modulus - canonical` can exceed `i128::MAX`); the range check needs the
+/// `u128` magnitude on each side.
+///
+/// This runs over the whole committed span before any commitment arithmetic, so
+/// at `nv = 26` it is ~2^26 canonical reductions. The rest of the commit path is
+/// rayon-parallel; keeping this serial would make the guard a visible sequential
+/// section in an otherwise parallel phase, so it folds in parallel under the
+/// `parallel` feature. Both reaches are commutative-associative maxima, so the
+/// reduction order does not affect the result.
+pub fn centered_reach_of_field_coeffs<F: FieldCore + CanonicalField>(
+    coeffs: &[F],
+    modulus: u128,
+    centering_threshold: u128,
+) -> (u128, u128) {
+    let fold = |(negative_abs_max, positive_max): (u128, u128), coeff: &F| {
+        let canonical = coeff.to_canonical_u128();
+        if canonical <= centering_threshold {
+            (negative_abs_max, positive_max.max(canonical))
+        } else {
+            (negative_abs_max.max(modulus - canonical), positive_max)
+        }
+    };
+    let combine =
+        |left: (u128, u128), right: (u128, u128)| (left.0.max(right.0), left.1.max(right.1));
+
+    #[cfg(feature = "parallel")]
+    {
+        coeffs
+            .par_iter()
+            .fold(|| (0u128, 0u128), fold)
+            .reduce(|| (0u128, 0u128), combine)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = combine;
+        coeffs.iter().fold((0u128, 0u128), fold)
+    }
 }
 
 /// Capability: expose borrowed opening views for the opening fold kernels.
@@ -152,58 +247,6 @@ where
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError>;
 }
 
-/// One opening-point polynomial bundle passed to commit entry points.
-///
-/// The wrapper pins the polynomial type `P` for inference through generic
-/// `crate::api::commit` and the scheme-level commit entry point. The scheme
-/// method takes this bundle before `backend` so `P` is known when the
-/// compiler checks [`RootCommitBackend`].
-#[derive(Clone, Copy, Debug)]
-pub struct RootCommitPolys<'a, P> {
-    polys: &'a [P],
-}
-
-impl<'a, P> RootCommitPolys<'a, P> {
-    /// Borrow a slice of root polynomials.
-    #[must_use]
-    pub fn new(polys: &'a [P]) -> Self {
-        Self { polys }
-    }
-
-    /// Borrow a singleton polynomial bundle.
-    #[must_use]
-    pub fn from_ref(poly: &'a P) -> Self {
-        Self {
-            polys: std::slice::from_ref(poly),
-        }
-    }
-
-    /// Borrowed polynomial slice.
-    #[must_use]
-    pub fn as_slice(&self) -> &'a [P] {
-        self.polys
-    }
-}
-
-/// Marker bundle for scheme-level commit entry points that may tensor-project.
-///
-/// Algorithms live on [`RootCommitKernel`] / [`TensorProjectionKernel`], not here.
-/// Private commitment arithmetic remains generic over [`RootCommitSource`],
-/// while this public root capability includes tensor projection.
-pub trait RootCommitPoly<F, const D: usize>:
-    RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>
-where
-    F: FieldCore,
-{
-}
-
-impl<F, const D: usize, P> RootCommitPoly<F, D> for P
-where
-    F: FieldCore,
-    P: RootPolyShape<F, D> + RootCommitSource<F, D> + RootTensorSource<F, D>,
-{
-}
-
 /// Capability: this backend can **commit** a single source `P`.
 ///
 /// This is the uniform "source-typed capability" vocabulary: a bound of the form
@@ -211,9 +254,6 @@ where
 /// kernel bundle. It folds together the shared outer digit-row surface and the
 /// inner-commit kernel over `P`'s borrowed commit view.
 ///
-/// The same alias is applied to the generic input poly and to the internal
-/// [`RootTensorProjectionPoly`] (the extension-reduction projection), so both
-/// source types are expressed through one symmetric concept.
 pub trait CommitBackendFor<F, P, const D: usize>: DigitRowsComputeBackend<F>
 where
     F: FieldCore + CanonicalField,
@@ -304,100 +344,10 @@ where
 {
 }
 
-/// Capability: this backend can **tensor-project** a single source `P` at an
-/// extension-field opening point of type `E`.
-///
-/// Commit-side alias for single-point tensor projection only. Prove paths use
-/// the full [`TensorBackendFor`] bundle (single + batch).
-pub trait ProjectBackendFor<F, P, E, const D: usize>: ComputeBackendSetup<F>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootTensorSource<F, D>,
-    Self: for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
-{
-}
-
-impl<F, P, E, const D: usize, B> ProjectBackendFor<F, P, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootTensorSource<F, D>,
-    B: ComputeBackendSetup<F>
-        + for<'a> TensorProjectionKernel<<P as RootTensorSource<F, D>>::TensorView<'a>, F, E, D>,
-{
-}
-
-/// Capability: this backend can run the full **opening/prove** kernel set over a
-/// single source `P` at an extension-field opening point of type `E`.
-///
-/// Composed from [`OpeningProveBackendFor`] and [`TensorBackendFor`]. Like
-/// [`CommitBackendFor`], the same alias is applied to both the generic input poly
-/// and the internal [`RootTensorProjectionPoly`].
-pub trait ProveBackendFor<F, P, E, const D: usize>:
-    OpeningProveBackendFor<F, P, D> + TensorBackendFor<F, P, E, D>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
-{
-}
-
-impl<F, P, E, const D: usize, B> ProveBackendFor<F, P, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
-    B: OpeningProveBackendFor<F, P, D> + TensorBackendFor<F, P, E, D>,
-{
-}
-
-/// Backend capability bundle for scheme-level commit with optional tensor transform.
-///
-/// Use as **`B: RootCommitBackend<F, P, E, D>`** on generic `fn commit<P, B>(backend: &B, …)`.
-///
-/// Composed from the uniform source-typed capabilities: the backend must
-/// [`CommitBackendFor`] the input poly `P`, [`ProjectBackendFor`] it (tensor projection),
-/// and [`CommitBackendFor`] the internal [`RootTensorProjectionPoly`] produced by the
-/// extension-reduction transform. Read it as "commit `P`, project `P`, commit the
-/// projection". A blanket impl covers every backend satisfying those three, so a
-/// downstream backend opts in structurally (no explicit marker impl required).
-///
-/// `F: 'static` is required for the same GAT + `for<'a>` view-kernel reason documented on
-/// [`RootProveBackend`]. `E` (tensor extension field) is not bounded `'static` here.
-pub trait RootCommitBackend<F, P, E, const D: usize>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootCommitPoly<F, D>,
-    Self: CommitBackendFor<F, P, D>
-        + ProjectBackendFor<F, P, E, D>
-        + CommitBackendFor<F, RootTensorProjectionPoly<F>, D>,
-{
-}
-
-impl<F, P, E, const D: usize, B> RootCommitBackend<F, P, E, D> for B
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F>,
-    P: RootCommitPoly<F, D>,
-    B: CommitBackendFor<F, P, D>
-        + ProjectBackendFor<F, P, E, D>
-        + CommitBackendFor<F, RootTensorProjectionPoly<F>, D>,
-{
-}
-
 /// Marker bundle for scheme-level prove entry points.
 ///
 /// Algorithms live on [`OpeningFoldKernel`] / [`TensorProjectionKernel`], not here.
-pub trait RootProvePoly<F, const D: usize>:
-    RootOpeningSource<F, D> + RootTensorSource<F, D>
+pub trait RootProvePoly<F, const D: usize>: RootOpeningSource<F, D>
 where
     F: FieldCore,
 {
@@ -406,7 +356,7 @@ where
 impl<F, const D: usize, P> RootProvePoly<F, D> for P
 where
     F: FieldCore,
-    P: RootOpeningSource<F, D> + RootTensorSource<F, D>,
+    P: RootOpeningSource<F, D>,
 {
 }
 
@@ -417,26 +367,25 @@ where
 ///
 /// ## Why `F: 'static`?
 ///
-/// The bundle closes over higher-ranked bounds on borrowed polynomial views, e.g.
-/// `for<'a> OpeningFoldKernel<<RootTensorProjectionPoly<F> as RootOpeningSource<F, D>>::OpeningView<'a>, …>`.
-/// Those GATs carry `where Self: 'a` (see [`RootOpeningSource::OpeningView`]). For the
-/// bound to hold for **every** lifetime `'a`, `RootTensorProjectionPoly<F>` must be
-/// `'static`, which requires `F: 'static`. This is a rustc lifetime solver artifact, not
-/// a protocol requirement that base-field types outlive the process.
+/// The bundle closes over higher-ranked bounds on borrowed polynomial views.
 ///
 /// `E` does **not** need `'static`; preset extension fields satisfy it vacuously, but the
 /// trait does not require it.
 ///
-/// Composed from the uniform [`ProveBackendFor`] capability applied to both the input
-/// poly `P` and the internal [`RootTensorProjectionPoly`] (the extension-reduction
-/// projection), so both source types are expressed through one symmetric concept.
+/// Root proving evaluates and coefficient-packs the canonical source directly.
 pub trait RootProveBackend<F, P, E, const D: usize>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
-    Self: ProveBackendFor<F, P, E, D> + ProveBackendFor<F, RootTensorProjectionPoly<F>, E, D>,
+    Self: OpeningProveBackendFor<F, P, D>
+        + for<'a> SubringCoefficientPackingBatchKernel<
+            <P as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
+            F,
+            E,
+            D,
+        >,
 {
 }
 
@@ -447,8 +396,13 @@ where
     E: ExtField<F>,
     P: RootProvePoly<F, D>,
     B: ComputeBackendSetup<F>
-        + ProveBackendFor<F, P, E, D>
-        + ProveBackendFor<F, RootTensorProjectionPoly<F>, E, D>,
+        + OpeningProveBackendFor<F, P, D>
+        + for<'a> SubringCoefficientPackingBatchKernel<
+            <P as RootOpeningSource<F, D>>::OpeningBatchView<'a>,
+            F,
+            E,
+            D,
+        >,
 {
 }
 
@@ -532,11 +486,11 @@ where
     C: ComputeBackendSetup<F> + DigitRowsComputeBackend<F>,
     O: ComputeBackendSetup<F>
         + RuntimeOpeningProveBackendFor<F, P>
+        + RuntimeCoefficientPackingBackendFor<F, P, E>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
         + SuffixOpeningProveBackend<F>
         + DigitRowsComputeBackend<F>,
     TS: ComputeBackendSetup<F>
-        + RuntimeTensorBackendFor<F, P, E>
         + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>
         + SuffixTensorProveBackend<F, E>,
     R: ComputeBackendSetup<F> + RuntimeRingSwitchProveBackend<F> + DigitRowsComputeBackend<F>,
@@ -566,10 +520,6 @@ where
     F: FieldCore,
     P: RootPolyMeta<F>,
 {
-    fn num_ring_elems(&self) -> usize {
-        RootPolyMeta::num_ring_elems(*self)
-    }
-
     fn num_vars(&self) -> usize {
         RootPolyMeta::num_vars(*self)
     }
@@ -581,5 +531,60 @@ where
     #[cfg(feature = "response-model-diagnostics")]
     fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
         RootPolyMeta::exact_integer_coeff_l2_sq(*self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp64;
+
+    type F = Fp64<4294967197>;
+
+    #[derive(Clone)]
+    struct CanonicalOpeningOnlySource;
+
+    impl RootPolyMeta<F> for CanonicalOpeningOnlySource {
+        fn num_vars(&self) -> usize {
+            0
+        }
+    }
+
+    impl<const D: usize> RootPolyShape<F, D> for CanonicalOpeningOnlySource {
+        fn num_ring_elems(&self) -> usize {
+            1
+        }
+
+        fn num_vars(&self) -> usize {
+            0
+        }
+    }
+
+    impl<const D: usize> RootOpeningSource<F, D> for CanonicalOpeningOnlySource {
+        type OpeningView<'a>
+            = ()
+        where
+            Self: 'a;
+        type OpeningBatchView<'a>
+            = ()
+        where
+            Self: 'a;
+
+        fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
+            Ok(())
+        }
+
+        fn opening_batch<'a>(
+            _polys: &'a [&'a Self],
+        ) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn canonical_root_prove_source_does_not_require_tensor_capability() {
+        fn assert_runtime_root_source<P: RuntimeRootProvePoly<F>>() {}
+        assert_runtime_root_source::<CanonicalOpeningOnlySource>();
+        assert_eq!(RootPolyMeta::num_vars(&CanonicalOpeningOnlySource), 0);
     }
 }

@@ -100,7 +100,7 @@ fn new_stage2_test_prover(
         params.lane_bits,
         params.coefficient_bits,
         direct.relation,
-        PreparedProverEvaluationTrace::from_dense(
+        PreparedProverLinearTerms::from_dense(
             zero_trace_weights,
             params.live_lane_count,
             1usize << params.coefficient_bits,
@@ -119,12 +119,37 @@ pub(super) fn new_stage2_test_prover_with_trace(
     trace_compact: Vec<F>,
     params: Stage2Params<'_>,
 ) -> RelationRangeImageProver<F> {
+    let linear_terms = PreparedProverLinearTerms::from_dense(
+        trace_compact.clone(),
+        params.live_lane_count,
+        1usize << params.coefficient_bits,
+    );
+    new_stage2_test_prover_with_linear_terms(
+        batching_coeff,
+        compact_witness,
+        common_alpha_factor,
+        relation_lane_weights,
+        trace_compact,
+        linear_terms,
+        params,
+    )
+}
+
+pub(super) fn new_stage2_test_prover_with_linear_terms(
+    batching_coeff: F,
+    compact_witness: Vec<i8>,
+    common_alpha_factor: Vec<F>,
+    relation_lane_weights: Vec<F>,
+    linear_weights_dense: Vec<F>,
+    linear_terms: PreparedProverLinearTerms<F>,
+    params: Stage2Params<'_>,
+) -> RelationRangeImageProver<F> {
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
         &compact_witness,
         &common_alpha_factor,
         &relation_lane_weights,
-        &trace_compact,
+        &linear_weights_dense,
         &params,
     );
     RelationRangeImageProver::new(
@@ -139,11 +164,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
         params.lane_bits,
         params.coefficient_bits,
         direct.relation,
-        PreparedProverEvaluationTrace::from_dense(
-            trace_compact,
-            params.live_lane_count,
-            1usize << params.coefficient_bits,
-        ),
+        linear_terms,
         direct.evaluation_trace,
         None,
     )
@@ -648,7 +669,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     expected.split_eq.bind(r1);
     expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
     expected.common_alpha_factor = expected_alpha_round2.clone();
-    expected.evaluation_trace.fold_two_coefficients(r0, r1);
+    expected.linear_terms.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
     expected.relation_lane_weights = expected_relation_lane_weights.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
@@ -742,7 +763,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     expected.split_eq.bind(r1);
     expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
     expected.common_alpha_factor = expected_alpha_round2.clone();
-    expected.evaluation_trace.fold_two_coefficients(r0, r1);
+    expected.linear_terms.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
     expected.relation_lane_weights = expected_relation_lane_weights.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();

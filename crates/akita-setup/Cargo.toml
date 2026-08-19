@@ -16,7 +16,17 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["schedules-default"]
+default = ["schedules-default", "transcript-blake2b"]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-prover/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-prover/transcript-keccak",
+  "akita-types/transcript-keccak",
+]
 parallel = [
   "akita-algebra/parallel",
   "akita-field/parallel",
@@ -31,11 +41,11 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-types = { version = "0.1.0", path = "../akita-types" }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 tracing = "0.1"
 
 [dev-dependencies]
-akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 
 [lints]
 workspace = true

@@ -297,10 +297,6 @@ where
             .ok_or(AkitaError::InvalidProof)
     }
 
-    pub(crate) fn groups(&self) -> impl ExactSizeIterator<Item = &G> {
-        self.group_inputs.iter().map(ProverGroupInput::group)
-    }
-
     /// Commitments in commitment-group order.
     pub fn commitments(&self) -> Vec<&Commitment<CommitF>> {
         self.opening_claims
@@ -325,7 +321,12 @@ where
         // polynomial group's shape, keeping this byte-identical to verifier
         // replay for well-formed inputs.
         let layout = self.opening_layout()?;
-        let relation_layout = akita_types::relation_rhs_layout_for(root_params, &layout)?;
+        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+            root_params,
+            &layout,
+            PointF::EXT_DEGREE,
+        )?;
+        let relation_layout = relation_geometry.rhs_layout();
         layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
         for (group_index, commitment) in self.commitments().into_iter().enumerate() {
             let compression = relation_layout.compression_plan_for_group(group_index)?;
@@ -350,46 +351,6 @@ where
             }
         }
         Ok(())
-    }
-
-    /// Preserve grouping metadata while replacing the flat polynomial stream.
-    pub(crate) fn regroup_polynomial_refs<'b, Q>(
-        self,
-        polynomials: &'b [&'b Q],
-    ) -> Result<ProverOpeningData<'b, PointF, PreparedProverGroup<'b, Q>, CommitF>, AkitaError>
-    where
-        'a: 'b,
-        Q: RootPolyMeta<CommitF>,
-    {
-        let mut input_offset = 0usize;
-        let mut regrouped = Vec::with_capacity(self.group_inputs.len());
-        for input in self.group_inputs {
-            let group_len = input.group.num_polynomials();
-            let input_end = input_offset.checked_add(group_len).ok_or_else(|| {
-                AkitaError::InvalidInput("fold input group offset overflow".to_string())
-            })?;
-            let replacement_polynomials =
-                polynomials.get(input_offset..input_end).ok_or_else(|| {
-                    AkitaError::InvalidInput("fold input group shape mismatch".to_string())
-                })?;
-            regrouped.push(ProverGroupInput::new(
-                input.hint,
-                PreparedProverGroup::from_refs(replacement_polynomials)?,
-            ));
-            input_offset = input_end;
-        }
-        if input_offset != polynomials.len() {
-            return Err(AkitaError::InvalidInput(
-                "fold input group coverage mismatch".to_string(),
-            ));
-        }
-        let data = ProverOpeningData {
-            opening_claims: self.opening_claims,
-            opening_layout: self.opening_layout,
-            group_inputs: regrouped,
-        };
-        data.check_alignment()?;
-        Ok(data)
     }
 }
 
@@ -475,10 +436,6 @@ mod tests {
     }
 
     impl RootPolyMeta<F> for MockPoly {
-        fn num_ring_elems(&self) -> usize {
-            0
-        }
-
         fn num_vars(&self) -> usize {
             self.num_vars
         }
@@ -563,10 +520,12 @@ mod tests {
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
             layout: synthetic_profile(pre_layout, &pre),
-            log_basis_open: pre.log_basis_open,
-            fold_challenge_config: pre.fold_challenge_config,
-            num_digits_open: pre.num_digits_open,
-            num_digits_fold: pre.num_digits_fold,
+            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                pre.fold_challenge_config,
+                pre.log_basis_open,
+                pre.num_digits_open,
+                pre.num_digits_fold,
+            ),
         });
         root
     }
@@ -634,37 +593,6 @@ mod tests {
                 actual: 2
             }
         ));
-    }
-
-    #[test]
-    fn regrouping_preserves_declared_onehot_source_identity() {
-        let pre_poly = MockPoly { num_vars: 2 };
-        let final_a = MockPoly { num_vars: 4 };
-        let final_b = MockPoly { num_vars: 4 };
-        let pre_refs = [&pre_poly];
-        let final_refs = [&final_a, &final_b];
-        let mut data = multi_group_data(&pre_refs, &final_refs);
-        data.opening_layout = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::new(2, 1),
-            PolynomialGroupLayout::new(4, 2),
-        ])
-        .expect("one-hot layout");
-
-        let replacements = [&pre_poly, &final_a, &final_b];
-        let regrouped = data
-            .regroup_polynomial_refs(&replacements)
-            .expect("regrouped prover data");
-
-        assert_eq!(
-            regrouped
-                .opening_layout()
-                .expect("preserved layout")
-                .groups(),
-            &[
-                PolynomialGroupLayout::new(2, 1),
-                PolynomialGroupLayout::new(4, 2),
-            ]
-        );
     }
 
     #[test]

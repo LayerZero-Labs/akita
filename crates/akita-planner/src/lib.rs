@@ -22,6 +22,7 @@ pub use akita_schedules::{
     DEFAULT_SIS_SECURITY_POLICY,
 };
 
+mod diagnostics;
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
@@ -39,7 +40,7 @@ pub use akita_schedules::{
 };
 pub use emit::{
     publish_generated_outputs, render_generated_outputs, render_generated_outputs_with_validation,
-    EmitSpec, GeneratedOutput,
+    EmitSpec, GeneratedOutput, MaterializationDiagnostics,
 };
 pub use planner::find_schedule;
 pub use policy::InnerBasisSource;

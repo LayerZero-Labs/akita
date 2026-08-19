@@ -236,20 +236,17 @@ witness or searches the suffix:
 
 - `MinEstimatedProofPayload` keeps every admitted count for normal proof size
   selection.
-- `MinSetupMatrixFieldElementsThenProofPayload` computes the exact local setup
-  envelope for every admitted count. It keeps the smallest `S` that reaches
-  the minimum.
 - `MinFirstDirectSetupThenPayload` computes the exact padded active setup
   capacity for every admitted count. It keeps the smallest `S` that reaches
   the minimum.
 
-The first rule preserves proof focused search. The other two rules stop adding
-logical B rows once further slicing does not improve their local setup goal.
-They evaluate all four bounded values before choosing. They do not stop at the
+The first rule preserves proof focused search. The second rule stops adding
+logical B rows once further slicing does not improve its local setup goal. It
+evaluates all four bounded values before choosing. It does not stop at the
 first worse value.
 
 This is a normative local slicing policy. It does not claim that every removed
-count is dominated under the old whole schedule objective. Slice count changes
+count is dominated under the complete schedule objective. Slice count changes
 the successor witness, so that stronger global claim would require carrying
 the counts through suffix search. The local rule deliberately avoids that
 search multiplication at the two eligible levels.
@@ -257,8 +254,6 @@ search multiplication at the two eligible levels.
 The normal complete schedule objective selects among the retained candidates:
 
 - `MinEstimatedProofPayload` compares proof bytes before setup size.
-- `MinSetupMatrixFieldElementsThenProofPayload` compares setup size before
-  proof bytes.
 - `MinFirstDirectSetupThenPayload` compares the first direct setup capacity,
   then proof bytes and total setup size.
 
@@ -655,9 +650,9 @@ once. Akita follows that construction.
 #### Force the largest feasible slice count
 
 Larger counts can reduce physical setup while increasing logical rows and
-compression work. No one count is best for every selection policy. Setup
-focused policies stop at the smallest count that reaches their exact local
-setup minimum. Proof focused policy leaves the choice to the complete
+compression work. No one count is best for every selection policy. The
+setup-first policy stops at the smallest count that reaches its exact local
+setup minimum. The proof-focused policy leaves the choice to the complete
 objective.
 
 #### Couple `S` to `W`

@@ -63,6 +63,27 @@
 //!
 //! Every ✓ cell resolves against a real shipped catalog row; no cell here is
 //! backed by a schedule added solely to make a test pass.
+//!
+//! # Group E — heterogeneous cells (see `akita_fp128_e2e/heterogeneous.rs`)
+//!
+//! The matrix above is indexed by polynomial type; the committed-source **bound**
+//! is a second, orthogonal axis. `Dense` rows are full-width
+//! (`log_commit_bound = 128`) and `OneHot` rows are the unit endpoint
+//! (`log_commit_bound = 1`); a bounded source is any value in between. Group E
+//! carries the mixed-bound cell:
+//!
+//! - `bounded_dense_precommit_with_onehot_final_group` — cfg=schedules-fp128-dense-bounded.
+//!   A `fp128::DenseBounded` precommit (bound 65 inside the 128-bit field) opened
+//!   jointly with a `fp128::OneHot` final group, so the two groups in one root
+//!   disagree on their committed-source bound.
+//! - `bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size` —
+//!   cfg=same. The bounded family's own scalar rows [14, 24, 26] over the workload
+//!   the preset exists for: full-width `u64` coefficients on both signs.
+//! - `bounded_dense_declares_a_bound_that_contains_every_u64` — cfg=same. The
+//!   bound is a *signed* bit width, so covering `u64::MAX` takes 65, not 64.
+//! - `bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound` —
+//!   cfg=same. The producer-side guard enforces the *declared* interval, which is
+//!   strictly tighter than what the digits can represent.
 
 #![allow(missing_docs)]
 #![cfg(feature = "schedules-default")]
@@ -214,16 +235,18 @@ fn fp128_dense_mc() {
             akita_types::CommitmentSliceCount::EIGHT,
             "multi-chunk regression profile must pin the exact S=8 root geometry"
         );
+        let first_fold = schedule
+            .recursive_folds
+            .first()
+            .expect("dense multi-chunk schedule must have a recursive fold");
+        assert!(
+            first_fold.params.witness.outer_slice_count.is_sliced(),
+            "multi-chunk regression profile must retain sliced level-one geometry"
+        );
         assert_eq!(
-            schedule
-                .recursive_folds
-                .first()
-                .expect("dense multi-chunk schedule must have a recursive fold")
-                .params
-                .witness
-                .outer_slice_count,
-            akita_types::CommitmentSliceCount::EIGHT,
-            "multi-chunk regression profile must pin the exact S=8 level-one geometry"
+            first_fold.params.witness_partition,
+            akita_types::WitnessPartition::Distributed { num_chunks: 8 },
+            "W8R2 regression profile must retain eight witness chunks"
         );
         prove_verify_dense_roundtrip::<fp128::DenseMultiChunk>(
             &[16],
@@ -400,9 +423,7 @@ fn fp128_dense_batched() {
         let evals: Vec<Vec<F>> = seeds.iter().map(|&s| dense_field_evals(nv, s)).collect();
         let polys: Vec<_> = evals
             .iter()
-            .map(|e| {
-                akita_prover::DensePoly::<F>::from_field_evals(nv, DENSE_D, e).expect("dense poly")
-            })
+            .map(|e| akita_prover::DensePoly::<F>::from_field_evals(nv, e).expect("dense poly"))
             .collect();
         let pt = random_point(nv, 0xaaaa_0000 + nv as u64);
         let openings: Vec<F> = evals
@@ -491,16 +512,15 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             let indices: Vec<Option<u8>> = (0..num_chunks)
                 .map(|_| Some(r.gen_range(0..onehot_k) as u8))
                 .collect();
-            akita_prover::OneHotPoly::<F, u8>::new(onehot_k, root_d, indices)
-                .expect("mixed onehot poly")
+            akita_prover::OneHotPoly::<F, u8>::new(onehot_k, indices).expect("mixed onehot poly")
         };
 
         let evals_a = dense_field_evals(NV, 0x4d10_0001);
         let evals_b = dense_field_evals(NV, 0x4d10_0002);
         let dense_a =
-            akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals_a).expect("dense a");
+            akita_prover::DensePoly::<F>::from_field_evals(NV, &evals_a).expect("dense a");
         let dense_b =
-            akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals_b).expect("dense b");
+            akita_prover::DensePoly::<F>::from_field_evals(NV, &evals_b).expect("dense b");
         let onehot_a = make_mixed_onehot(0x4d10_1001);
         let onehot_b = make_mixed_onehot(0x4d10_1002);
 
@@ -559,8 +579,7 @@ fn fp128_onehot_oversized_setup() {
         let indices: Vec<Option<u8>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly =
-            akita_prover::OneHotPoly::<F, u8>::new(ONEHOT_K, d, indices).expect("onehot poly");
+        let poly = akita_prover::OneHotPoly::<F, u8>::new(ONEHOT_K, indices).expect("onehot poly");
 
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
@@ -633,8 +652,7 @@ fn fp128_dense_monomial_basis() {
     run_on_large_stack(|| {
         const NV: usize = 14;
         let evals = dense_field_evals(NV, 0xb0b0_0000);
-        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, DENSE_D, &evals)
-            .expect("dense poly");
+        let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
         let pt = random_point(NV, 0xc0de_0000);
         let expected_opening = dense_opening_monomial(&evals, &pt);
 

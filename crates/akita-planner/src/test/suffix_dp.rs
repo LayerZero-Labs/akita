@@ -1,22 +1,42 @@
-use super::{dominates_mixed_score, offloaded_witness_contracts};
-use crate::schedule_params::MixedScore;
+use super::offloaded_witness_contracts;
 use std::collections::VecDeque;
 
-#[test]
-fn suffix_cache_gives_referenced_entry_a_second_chance() {
-    let key = |level| super::ScheduleMemoKey {
+fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
+    super::ScheduleMemoKey {
         level,
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix: None,
+        incoming_setup_prefix,
         d_a: 64,
         d_b: 64,
         d_d: 64,
         payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-    };
-    let hot = key(1);
-    let cold = key(2);
+    }
+}
+
+#[test]
+fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
+    let direct = memo_key(1, None);
+    let prefixed = memo_key(2, Some(1));
+    let mut memo = super::ScheduleMemo::new();
+    for key in [direct, prefixed] {
+        memo.insert(key, super::empty_suffix_result());
+    }
+    assert!(memo.contains(&direct));
+    assert_eq!(memo.len(), 2);
+    assert!(memo.contains(&prefixed));
+
+    memo.insert(direct, super::empty_suffix_result());
+    assert_eq!(memo.len(), 2);
+    assert!(memo.contains(&direct));
+    assert!(memo.contains(&prefixed));
+}
+
+#[test]
+fn suffix_cache_gives_referenced_entry_a_second_chance() {
+    let hot = memo_key(1, None);
+    let cold = memo_key(2, None);
     let mut entries = std::collections::HashMap::from([
         (
             hot,
@@ -40,6 +60,81 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
     assert!(entries.contains_key(&hot));
     assert!(!entries.contains_key(&cold));
     assert_eq!(insertion_order, VecDeque::from([hot]));
+}
+
+#[test]
+fn parent_observable_key_ignores_unpriced_successor_opening_details() {
+    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+        .expect("D64 challenge");
+    let mut evaluation_trace = akita_types::CommittedGroupParams::params_only(
+        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        256,
+        2,
+        2,
+        2,
+        2,
+        challenge,
+    );
+    evaluation_trace.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    let mut packing = evaluation_trace.clone();
+    packing.opening_method = akita_types::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    packing.log_basis_open = 4;
+    packing.num_digits_open = 32;
+    assert_ne!(
+        evaluation_trace.canonical_descriptor_bytes(),
+        packing.canonical_descriptor_bytes()
+    );
+    assert_eq!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
+        "a parent prices only the successor outer payload and setup-prefix payload"
+    );
+    assert_eq!(
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            &policy,
+            &evaluation_trace,
+            Some(&evaluation_trace),
+            1024,
+            512,
+        )
+        .unwrap(),
+        akita_schedules::planner_support::nonterminal_level_payload_bytes(
+            &policy,
+            &evaluation_trace,
+            Some(&packing),
+            1024,
+            512,
+        )
+        .unwrap(),
+        "successors in one parent-observable bucket must price identically"
+    );
+
+    let outer = packing.outer_commit_matrix;
+    packing.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank() * 2,
+        outer.input_width(),
+        outer.coeff_linf_bound(),
+        outer.ring_dimension(),
+    );
+    assert_ne!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
+        "changing the transmitted successor payload must change the parent key"
+    );
+}
+
+#[test]
+fn terminal_seed_requires_a_scalar_state_without_setup_prefix() {
+    assert!(super::state_allows_terminal_seed(false, false));
+    assert!(!super::state_allows_terminal_seed(true, false));
+    assert!(!super::state_allows_terminal_seed(false, true));
+    assert!(!super::state_allows_terminal_seed(true, true));
 }
 
 #[test]
@@ -111,52 +206,6 @@ fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
         state(akita_types::CommitmentRingDims::uniform(64)).memo_key(&policy),
         state(akita_types::CommitmentRingDims::uniform(128)).memo_key(&policy),
         "a D64 transition must prevent suffix states from rising back to D128"
-    );
-}
-
-#[test]
-fn mixed_frontier_keeps_lower_payload_child_until_parent_masks_setup() {
-    let lower_setup = MixedScore {
-        setup_field_elements: 10,
-        proof_bytes: 20,
-    };
-    let lower_payload = MixedScore {
-        setup_field_elements: 15,
-        proof_bytes: 10,
-    };
-    assert!(!dominates_mixed_score(lower_setup, lower_payload));
-    assert!(!dominates_mixed_score(lower_payload, lower_setup));
-
-    let parent_setup = 20;
-    let lower_setup_complete = MixedScore {
-        setup_field_elements: parent_setup.max(lower_setup.setup_field_elements),
-        proof_bytes: lower_setup.proof_bytes,
-    };
-    let lower_payload_complete = MixedScore {
-        setup_field_elements: parent_setup.max(lower_payload.setup_field_elements),
-        proof_bytes: lower_payload.proof_bytes,
-    };
-    assert!(lower_payload_complete < lower_setup_complete);
-}
-
-#[test]
-fn mixed_frontier_keeps_equal_payload_alternatives_for_descriptor_ties() {
-    let lower_setup = MixedScore {
-        setup_field_elements: 10,
-        proof_bytes: 20,
-    };
-    let higher_setup = MixedScore {
-        setup_field_elements: 15,
-        proof_bytes: 20,
-    };
-
-    assert!(!dominates_mixed_score(lower_setup, higher_setup));
-    assert!(!dominates_mixed_score(higher_setup, lower_setup));
-
-    let parent_setup = 20;
-    assert_eq!(
-        parent_setup.max(lower_setup.setup_field_elements),
-        parent_setup.max(higher_setup.setup_field_elements)
     );
 }
 

@@ -23,9 +23,10 @@ pub use opening_point::{
     ring_opening_point_from_field, witness_commitment_domain_len, BasisMode, RingOpeningPoint,
 };
 pub use params::{
-    shared_d_digit_log_basis, CommittedGroupParams, InnerCommitMatrixParams, LevelParamsLike,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy,
-    PrecommittedLevelParams, SisModulusProfileId,
+    opening_d_segment_width, shared_d_digit_log_basis, CommittedGroupParams, GroupOpeningPlan,
+    InnerCommitMatrixParams, LevelParamsLike, OpenCommitMatrixParams, OpeningFamily, OpeningMethod,
+    OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+    SisModulusProfileId,
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,

@@ -50,12 +50,12 @@ fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn setup_primary_slice_pruning_stops_at_the_exact_setup_floor() {
+fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     use akita_config::{policy_of, proof_optimized::fp32::OneHot};
     use akita_types::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>();
-    policy.selection_policy = crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayload;
     let params_for = |outer_slice_count| {
         let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
@@ -82,10 +82,15 @@ fn setup_primary_slice_pruning_stops_at_the_exact_setup_floor() {
     let selected =
         prune_locally_unprofitable_slices(&policy, &opening_layout, candidates).expect("pruning");
     assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].outer_slice_count, CommitmentSliceCount::TWO);
-    assert_eq!(
-        level_setup_field_elements(&selected[0]).expect("selected setup"),
-        level_setup_field_elements(&params_for(CommitmentSliceCount::FOUR))
-            .expect("four-slice setup")
+    assert_eq!(selected[0].outer_slice_count, CommitmentSliceCount::FOUR);
+    let selected_capacity = padded_setup_prefix_len(
+        active_setup_field_len(&selected[0], &opening_layout).expect("selected setup prefix"),
     );
+    for other in [CommitmentSliceCount::ONE, CommitmentSliceCount::TWO] {
+        let other_params = params_for(other);
+        let other_capacity = padded_setup_prefix_len(
+            active_setup_field_len(&other_params, &opening_layout).expect("other setup prefix"),
+        );
+        assert!(selected_capacity <= other_capacity);
+    }
 }

@@ -80,6 +80,7 @@ where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + HalvingField + Valid + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
+    akita_config::validate_config_policy::<Cfg>()?;
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -589,6 +590,50 @@ mod tests {
     type Cfg = fp128::Dense;
     type TestF = fp128::Field;
 
+    #[derive(Clone)]
+    struct WrongModulusProfileConfig;
+
+    impl CommitmentConfig for WrongModulusProfileConfig {
+        type Field = TestF;
+        type ExtField = <Cfg as CommitmentConfig>::ExtField;
+
+        const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
+            Cfg::RING_DIMENSION_SCHEDULE_MODE;
+
+        fn decomposition() -> akita_types::DecompositionParams {
+            Cfg::decomposition()
+        }
+
+        fn ring_challenge_config(
+            d: usize,
+        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+            Cfg::ring_challenge_config(d)
+        }
+
+        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            akita_types::SisModulusProfileId::Q64Offset59
+        }
+
+        fn setup_matrix_capacity(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
+            panic!("invalid config reached setup capacity materialization")
+        }
+
+        fn opening_basis_range() -> (u32, u32) {
+            Cfg::opening_basis_range()
+        }
+
+        fn inner_basis_range() -> (u32, u32) {
+            Cfg::inner_basis_range()
+        }
+
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            Cfg::committed_source_class()
+        }
+    }
+
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, Cfg>(14, 3).unwrap();
@@ -622,6 +667,13 @@ mod tests {
         // required root and suffix folds.
         new_prover_setup::<fp128::Field, fp128::Dense>(14, 1)
             .expect("fp128 dense preset should accept the default field");
+    }
+
+    #[test]
+    fn setup_rejects_a_mismatched_field_profile_before_materialization() {
+        let error = new_prover_setup::<TestF, WrongModulusProfileConfig>(14, 1)
+            .expect_err("field modulus and SIS profile must agree");
+        assert!(error.to_string().contains("does not match field modulus"));
     }
 
     #[cfg(feature = "disk-persistence")]
@@ -727,7 +779,7 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
+                    scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
                     CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
                     OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
                     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
@@ -779,12 +831,14 @@ mod tests {
                         num_digits_outer: 1,
                         outer_commit_matrix,
                     },
-                    log_basis_open: 1,
-                    fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-                    num_digits_open: 1,
-                    num_digits_fold: 1,
+                    opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                        akita_challenges::SparseChallengeConfig::pm1_only(0),
+                        1,
+                        1,
+                        1,
+                    ),
                 };
-                let id = setup_prefix_slot_id(1, commitment_params.clone());
+                let id = scheduled_setup_prefix(1, commitment_params.clone()).slot_id();
                 let compression_plan = CompressionChainPlan::for_complete_source(
                     commitment_params
                         .layout

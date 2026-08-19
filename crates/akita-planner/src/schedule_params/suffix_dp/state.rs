@@ -10,71 +10,66 @@ use super::*;
 ///   by first direct setup scan and then proof payload. The payload projection
 ///   is the smallest-payload schedule used after an earlier direct edge has
 ///   fixed the setup-size objective.
-/// - `mixed_frontier` — nondominated setup-envelope/proof candidates for the
-///   direct adaptive-dimension objective.
 pub(crate) struct SuffixResult {
-    pub(super) payload_only: BTreeMap<FirstFoldKey, ScheduleCandidate>,
-    pub(super) setup_and_payload: BTreeMap<FirstFoldKey, frontier::ObjectiveChoices>,
-    /// Nondominated setup-envelope/proof candidates used by adaptive scalar
-    /// planning. Candidates with different first folds remain distinct because
-    /// the parent proof price and canonical descriptor can distinguish them.
-    pub(crate) mixed_frontier: Vec<ScheduleCandidate>,
+    pub(super) payload_only: BTreeMap<ParentObservableKey, Vec<ScheduleCandidate>>,
+    pub(super) setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices>,
 }
 
 impl SuffixResult {
     pub(crate) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
-        self.payload_only.values().chain(
+        self.payload_only.values().flatten().chain(
             self.setup_and_payload
                 .values()
-                .filter_map(|choices| choices.payload.as_ref()),
+                .flat_map(frontier::ObjectiveChoices::payload_candidates),
         )
     }
 
     pub(crate) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.setup_and_payload
             .values()
-            .filter_map(|choices| choices.setup.as_ref())
+            .flat_map(frontier::ObjectiveChoices::setup_candidates)
     }
 }
 
-fn mixed_score(candidate: &ScheduleCandidate) -> MixedScore {
-    MixedScore {
-        setup_field_elements: candidate.setup_field_elements,
-        proof_bytes: candidate.total_bytes,
-    }
-}
-
-pub(super) fn dominates_mixed_score(left: MixedScore, right: MixedScore) -> bool {
-    left.setup_field_elements <= right.setup_field_elements
-        // A setup-only improvement cannot prune `right`: a parent can mask
-        // both setup footprints, leaving proof bytes and the descriptor to
-        // decide the complete schedule.
-        && left.proof_bytes < right.proof_bytes
-}
-
-pub(super) fn insert_mixed_frontier(
-    policy: &PlannerPolicy,
-    frontier: &mut Vec<ScheduleCandidate>,
-    candidate: ScheduleCandidate,
-) {
-    if policy.selection_policy
-        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        || !policy.admits_setup_field_elements(candidate.setup_field_elements)
-    {
-        return;
-    }
-    crate::schedule_params::pareto::insert(frontier, candidate, |left, right| {
-        left.first_fold_params() == right.first_fold_params()
-            && dominates_mixed_score(mixed_score(left), mixed_score(right))
-    });
-}
-
-/// Parent-visible first-fold class. A parent edge prices the child's outgoing
-/// commitment payload, so suffixes with different first payload sizes are not
-/// interchangeable even when they use the same digit basis.
+/// Exact successor geometry visible to a parent fold.
+///
+/// The parent prices only the child's outgoing commitment payload and optional
+/// Stage-3 setup-prefix payload. The child's other matrix and opening choices
+/// remain part of the retained full schedule for the canonical tie-break, but
+/// cannot affect the parent edge price.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct FirstFoldKey {
-    pub(super) descriptor: Option<Vec<u8>>,
+pub(crate) struct ParentObservableKey {
+    outer_payload_bytes: usize,
+    setup_prefix_payload_bytes: usize,
+}
+
+impl ParentObservableKey {
+    pub(super) fn new(
+        policy: &PlannerPolicy,
+        first: Option<&akita_types::CommittedGroupParams>,
+    ) -> Result<Self, AkitaError> {
+        let Some(first) = first else {
+            return Ok(Self {
+                outer_payload_bytes: 0,
+                setup_prefix_payload_bytes: 0,
+            });
+        };
+        let payload = first.outer_payload_geometry()?;
+        let outer_payload_bytes = payload
+            .transmitted_coefficients()
+            .checked_mul(akita_types::layout::proof_size::field_bytes(
+                policy.decomposition.field_bits(),
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("outer payload byte count overflow".into()))?;
+        Ok(Self {
+            outer_payload_bytes,
+            setup_prefix_payload_bytes:
+                akita_schedules::planner_support::stage3_payload_bytes_for_successor(
+                    policy,
+                    Some(first),
+                )?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -110,9 +105,8 @@ pub(super) struct MemoEntry {
 
 const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
 // Prefix layouts create a much wider stream of one-off states than ordinary
-// suffixes. Separate FIFO quotas prevent that stream from evicting the direct
-// states reused across basis, dimension, and split candidates while preserving
-// the original hard bound on total cached results.
+// suffixes. Separate quotas keep that stream from evicting direct states while
+// preserving a hard bound on the completed exact-DP cache.
 const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 196_608;
 const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
     MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
@@ -148,6 +142,16 @@ impl ScheduleMemo {
             prefixed_insertion_order: VecDeque::new(),
             setup_prefixes: SetupPrefixSearchCache::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn contains(&self, key: &ScheduleMemoKey) -> bool {
+        self.entries.contains_key(key)
     }
 
     pub(super) fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
@@ -188,28 +192,29 @@ impl ScheduleMemo {
             },
         );
     }
+
+    pub(crate) fn setup_prefix_cache_diagnostics(&self) -> (usize, usize) {
+        self.setup_prefixes.diagnostics()
+    }
 }
 
 pub(super) fn empty_suffix_result() -> Arc<SuffixResult> {
     Arc::new(SuffixResult {
         payload_only: BTreeMap::new(),
         setup_and_payload: BTreeMap::new(),
-        mixed_frontier: Vec::new(),
     })
 }
 
 /// DP-invariant inputs for the suffix search.
 ///
-/// `policy`, `ring_challenge_cfg`, and `num_vars` are constant across the whole
-/// recursion, so they are carried in one context value rather than as
-/// per-call arguments (keeps the recursive signature small).
+/// Values that remain constant across the whole recursion are carried in one
+/// context value rather than as per-call arguments.
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
+    pub(crate) diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,

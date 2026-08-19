@@ -25,7 +25,6 @@ macro_rules! __apply_protocol_dispatch_policy {
             inner: [$($i128:literal),* $(,)?]
             outer: [$($o128:literal),* $(,)?]
             opening: [$($p128:literal),* $(,)?]
-            uniform_policy: [$($e128:literal),* $(,)?]
             ntt: [$($n128:literal),* $(,)?]
             compression: [$($c128:literal),* $(,)?]
         }
@@ -33,7 +32,6 @@ macro_rules! __apply_protocol_dispatch_policy {
             inner: [$($i64:literal),* $(,)?]
             outer: [$($o64:literal),* $(,)?]
             opening: [$($p64:literal),* $(,)?]
-            uniform_policy: [$($e64:literal),* $(,)?]
             ntt: [$($n64:literal),* $(,)?]
             compression: [$($c64:literal),* $(,)?]
         }
@@ -41,7 +39,6 @@ macro_rules! __apply_protocol_dispatch_policy {
             inner: [$($i32:literal),* $(,)?]
             outer: [$($o32:literal),* $(,)?]
             opening: [$($p32:literal),* $(,)?]
-            uniform_policy: [$($e32:literal),* $(,)?]
             ntt: [$($n32:literal),* $(,)?]
             compression: [$($c32:literal),* $(,)?]
         }
@@ -77,7 +74,6 @@ macro_rules! __apply_protocol_dispatch_policy {
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Role(RingRole::Opening)) => {
                     &[$($p128),*]
                 }
-                (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::UniformPolicy) => &[$($e128),*],
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Ntt) => &[$($n128),*],
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Compression) => &[$($c128),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Role(RingRole::Inner)) => {
@@ -89,7 +85,6 @@ macro_rules! __apply_protocol_dispatch_policy {
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Role(RingRole::Opening)) => {
                     &[$($p64),*]
                 }
-                (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::UniformPolicy) => &[$($e64),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Ntt) => &[$($n64),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Compression) => &[$($c64),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Role(RingRole::Inner)) => {
@@ -101,7 +96,6 @@ macro_rules! __apply_protocol_dispatch_policy {
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Role(RingRole::Opening)) => {
                     &[$($p32),*]
                 }
-                (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::UniformPolicy) => &[$($e32),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Ntt) => &[$($n32),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Compression) => &[$($c32),*],
             }
@@ -185,7 +179,6 @@ macro_rules! __apply_protocol_dispatch_policy {
             inner: [$($i128:literal),* $(,)?]
             outer: [$($o128:literal),* $(,)?]
             opening: [$($p128:literal),* $(,)?]
-            uniform_policy: [$($e128:literal),* $(,)?]
             ntt: [$($n128:literal),* $(,)?]
             compression: [$($c128:literal),* $(,)?]
         }
@@ -193,7 +186,6 @@ macro_rules! __apply_protocol_dispatch_policy {
             inner: [$($i64:literal),* $(,)?]
             outer: [$($o64:literal),* $(,)?]
             opening: [$($p64:literal),* $(,)?]
-            uniform_policy: [$($e64:literal),* $(,)?]
             ntt: [$($n64:literal),* $(,)?]
             compression: [$($c64:literal),* $(,)?]
         }
@@ -201,7 +193,6 @@ macro_rules! __apply_protocol_dispatch_policy {
             inner: [$($i32:literal),* $(,)?]
             outer: [$($o32:literal),* $(,)?]
             opening: [$($p32:literal),* $(,)?]
-            uniform_policy: [$($e32:literal),* $(,)?]
             ntt: [$($n32:literal),* $(,)?]
             compression: [$($c32:literal),* $(,)?]
         }
@@ -211,7 +202,6 @@ macro_rules! __apply_protocol_dispatch_policy {
             inner: { fp128: [$($i128),*], fp64: [$($i64),*], fp32: [$($i32),*] }
             outer: { fp128: [$($o128),*], fp64: [$($o64),*], fp32: [$($o32),*] }
             opening: { fp128: [$($p128),*], fp64: [$($p64),*], fp32: [$($p32),*] }
-            uniform_policy: { fp128: [$($e128),*], fp64: [$($e64),*], fp32: [$($e32),*] }
             ntt: { fp128: [$($n128),*], fp64: [$($n64),*], fp32: [$($n32),*] }
             compression: { fp128: [$($c128),*], fp64: [$($c64),*], fp32: [$($c32),*] }
         )
@@ -296,24 +286,10 @@ macro_rules! __dispatch_protocol_policy_slot {
         )
     };
     (
-        uniform_policy, $F:ty, $d:expr, |$D:ident| $body:expr;
-        inner: { $($inner:tt)* }
-        outer: { $($outer:tt)* }
-        opening: { $($opening:tt)* }
-        uniform_policy: { fp128: [$($d128:literal),+], fp64: [$($d64:literal),+], fp32: [$($d32:literal),+] }
-        $($rest:tt)*
-    ) => {
-        $crate::__dispatch_protocol_policy_tiers!(
-            $F, $d, |$D| $body;
-            fp128: [$($d128),+], fp64: [$($d64),+], fp32: [$($d32),+]
-        )
-    };
-    (
         ntt, $F:ty, $d:expr, |$D:ident| $body:expr;
         inner: { $($inner:tt)* }
         outer: { $($outer:tt)* }
         opening: { $($opening:tt)* }
-        uniform_policy: { $($uniform:tt)* }
         ntt: { fp128: [$($d128:literal),+], fp64: [$($d64:literal),+], fp32: [$($d32:literal),+] }
         $($rest:tt)*
     ) => {
@@ -327,7 +303,6 @@ macro_rules! __dispatch_protocol_policy_slot {
         inner: { $($inner:tt)* }
         outer: { $($outer:tt)* }
         opening: { $($opening:tt)* }
-        uniform_policy: { $($uniform:tt)* }
         ntt: { $($ntt:tt)* }
         compression: { fp128: [$($d128:literal),+], fp64: [$($d64:literal),+], fp32: [$($d32:literal),+] }
     ) => {
@@ -370,16 +345,6 @@ macro_rules! dispatch_for_field {
         $crate::__protocol_dispatch_policy!(dispatch opening, $F, $d, |$D| $body)
     };
 
-    ($crate::ProtocolDispatchSlot::UniformPolicy, $F:ty, $d:expr, |$D:ident| $body:expr) => {
-        $crate::__protocol_dispatch_policy!(dispatch uniform_policy, $F, $d, |$D| $body)
-    };
-    (ProtocolDispatchSlot::UniformPolicy, $F:ty, $d:expr, |$D:ident| $body:expr) => {
-        $crate::__protocol_dispatch_policy!(dispatch uniform_policy, $F, $d, |$D| $body)
-    };
-    (akita_types::ProtocolDispatchSlot::UniformPolicy, $F:ty, $d:expr, |$D:ident| $body:expr) => {
-        $crate::__protocol_dispatch_policy!(dispatch uniform_policy, $F, $d, |$D| $body)
-    };
-
     ($crate::ProtocolDispatchSlot::Ntt, $F:ty, $d:expr, |$D:ident| $body:expr) => {
         $crate::__protocol_dispatch_policy!(dispatch ntt, $F, $d, |$D| $body)
     };
@@ -411,23 +376,20 @@ macro_rules! __protocol_dispatch_policy {
                 inner: [64, 128, 256, 512]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
-                uniform_policy: [64, 128, 256]
                 ntt: [16, 32, 64, 128, 256, 512]
                 compression: [8, 16]
             }
             Fp64: {
-                inner: [64, 128, 256, 512]
+                inner: [64, 128, 256, 512, 1024]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
-                uniform_policy: [64, 128, 256, 512]
                 ntt: [32, 64, 128, 256, 512, 1024]
                 compression: [16, 32]
             }
             Fp32: {
-                inner: [64, 128, 256, 512, 1024]
+                inner: [64, 128, 256, 512, 1024, 2048]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
-                uniform_policy: [64, 128, 256]
                 ntt: [64, 128, 256, 512, 1024, 2048]
                 compression: [32, 64]
             }
@@ -544,7 +506,6 @@ mod tests {
                 ProtocolDispatchSlot::Role(RingRole::Inner),
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 ProtocolDispatchSlot::Role(RingRole::Opening),
-                ProtocolDispatchSlot::UniformPolicy,
                 ProtocolDispatchSlot::Ntt,
                 ProtocolDispatchSlot::Compression,
             ] {

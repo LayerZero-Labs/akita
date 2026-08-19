@@ -49,9 +49,8 @@ logical source to a backend.
 
 The protocol always commits a group. A singleton is a group with one source.
 `RootCommitKernel::commit_inner_group` is therefore the only root commitment
-operation. Dense, one hot, sparse ring, tensor projection, and recursive
-witness sources implement the same source typed boundary without sharing a
-CPU representation.
+operation. Dense, one hot, and recursive witness sources implement the same
+source typed boundary without sharing a CPU representation.
 
 The CPU one hot path runs this flow:
 
@@ -76,11 +75,11 @@ the entries that overlap that tile. The output rows remain live because they
 are the result of the operation. The sparse entries and sweep scratch are
 dropped at tile completion.
 
-This ownership also applies to opening and tensor projection. Opening builds
-only the active challenge range. Batched opening keeps only the current
-polynomial and its current block tile. Tensor projection builds one sparse
-ring polynomial and moves it into the returned projection object. Cloning a
-one hot polynomial does not share mutable derived state.
+This ownership also applies to opening and recursive-suffix tensor projection.
+Opening builds only the active challenge range. Batched opening keeps only the
+current polynomial and its current block tile. Suffix tensor projection
+consumes the recursive witness source directly. Cloning a one hot polynomial
+does not share mutable derived state.
 
 ## Tiling and sweep selection
 

@@ -307,6 +307,8 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) d_weights: Arc<[E]>,
     pub(crate) setup_index_tensors: Vec<ProjectedEqPairTensor<E>>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
+    pub(crate) setup_relation_address: PreparedRelationAddress<E>,
+    pub(crate) relation_base_bridge_point: Arc<[E]>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
     pub(crate) direct_scan_alpha: Option<E>,
@@ -444,10 +446,15 @@ type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
 
 pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) group_id: usize,
+    pub(crate) opening_method: crate::OpeningMethod,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) a_ratio: usize,
     pub(crate) b_ratio: usize,
     pub(crate) d_ratio: usize,
+    pub(crate) a_relation_ratio: usize,
+    pub(crate) b_relation_ratio: usize,
+    pub(crate) d_relation_ratio: usize,
+    pub(crate) opening_subcolumns: usize,
     pub(crate) consistency_weight: E,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
@@ -497,8 +504,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         })
     }
 
-    pub(crate) fn set_projection_ratios(&mut self, base_ring_dim: usize) -> Result<(), AkitaError> {
-        let ratio = |name: &'static str, dimension: usize| {
+    pub(crate) fn set_projection_ratios(
+        &mut self,
+        setup_base_ring_dim: usize,
+        relation_base_ring_dim: usize,
+    ) -> Result<(), AkitaError> {
+        let ratio = |name: &'static str, dimension: usize, base_ring_dim: usize| {
             dimension
                 .checked_div(base_ring_dim)
                 .filter(|ratio| {
@@ -512,9 +523,12 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                     ))
                 })
         };
-        self.a_ratio = ratio("A", self.role_dims.d_a())?;
-        self.b_ratio = ratio("B", self.role_dims.d_b())?;
-        self.d_ratio = ratio("D", self.role_dims.d_d())?;
+        self.a_ratio = ratio("A", self.role_dims.d_a(), setup_base_ring_dim)?;
+        self.b_ratio = ratio("B", self.role_dims.d_b(), setup_base_ring_dim)?;
+        self.d_ratio = ratio("D", self.role_dims.d_d(), setup_base_ring_dim)?;
+        self.a_relation_ratio = ratio("relation A", self.role_dims.d_a(), relation_base_ring_dim)?;
+        self.b_relation_ratio = ratio("relation B", self.role_dims.d_b(), relation_base_ring_dim)?;
+        self.d_relation_ratio = ratio("relation D", self.role_dims.d_d(), relation_base_ring_dim)?;
         Ok(())
     }
 }

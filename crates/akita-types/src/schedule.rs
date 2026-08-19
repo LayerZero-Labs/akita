@@ -1,25 +1,21 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, RelationAddressGeometry, SetupContributionMode,
-    TerminalResponseShape,
+    CommittedGroupParams, InnerCommitMatrixParams, InnerCommitSecurityRoute, LevelParamsLike,
+    OpeningMethod, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::AkitaError;
 
+mod descriptor;
 mod profiles;
 mod sizing;
 
 pub use profiles::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    PrecommittedGroupProfiles,
+    CommittedSourceEncoding, PrecommittedGroupProfiles,
 };
-pub use sizing::{
-    detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
-    intermediate_w_ring_element_count_with_counts,
-    intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels,
-};
+pub use sizing::{detect_field_modulus, r_decomp_levels};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,7 +82,7 @@ pub struct RecursiveFoldParams {
     pub witness: CommittedGroupParams,
     pub open_commit_matrix: crate::OpenCommitMatrixParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub incoming_setup_prefix: Option<crate::SetupPrefixSlotId>,
+    pub incoming_setup_prefix: Option<crate::ScheduledSetupPrefix>,
     pub witness_partition: WitnessPartition,
 }
 
@@ -325,6 +321,25 @@ pub struct FoldSchedule {
     pub terminal: TerminalFoldStep,
 }
 
+/// Borrowed nonterminal step used to encode a checked planner candidate
+/// without constructing a temporary [`FoldSchedule`].
+#[derive(Clone, Copy)]
+pub struct FoldScheduleDescriptorStep<'a> {
+    pub params: &'a CommittedGroupParams,
+    pub payload_mode: crate::CommitmentPayloadMode,
+    pub input_witness_len: usize,
+    pub output_witness_len: usize,
+}
+
+/// Borrowed terminal step used by canonical schedule descriptor encoding.
+#[derive(Clone, Copy)]
+pub struct TerminalFoldDescriptor<'a> {
+    pub witness: &'a TerminalCommittedGroupParams,
+    pub sparse_challenge_config: &'a akita_challenges::SparseChallengeConfig,
+    pub response_shape: &'a TerminalResponseShape,
+    pub input_witness_len: usize,
+}
+
 impl FoldSchedule {
     pub fn num_fold_levels(&self) -> usize {
         self.recursive_folds.len() + 2
@@ -342,6 +357,9 @@ impl FoldSchedule {
         let root_commitment = &self.root.params.final_group.commitment;
         root_commitment
             .validate_commitment_request(0, root_commitment.commitment_polynomial_count()?)?;
+        for group in &self.root.params.precommitted_groups {
+            group.commitment.validate()?;
+        }
         if !self
             .root
             .params
@@ -425,6 +443,7 @@ impl FoldSchedule {
                 )));
             }
             if let Some(prefix) = &step.params.incoming_setup_prefix {
+                prefix.commitment_params.validate()?;
                 prefix
                     .commitment_params
                     .layout
@@ -489,87 +508,188 @@ impl FoldSchedule {
         Ok(())
     }
 
+    /// Validate the opening methods currently admitted by nonterminal proving
+    /// and verification.
+    ///
+    /// Subring coefficient packing is required at absolute levels 0 and 1.
+    /// Evaluation trace is required at later nonterminal levels. Every group
+    /// consumed by one fold uses the same method family. Packing requires the
+    /// audited production challenge family under the L-infinity A route.
+    pub fn validate_nonterminal_opening_execution(
+        &self,
+        extension_degree: usize,
+    ) -> Result<(), AkitaError> {
+        self.validate_structure()?;
+        if !extension_degree.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "opening extension degree must be a nonzero power of two".into(),
+            ));
+        }
+        if !self.root.input_witness_len.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "root input witness length must be a power of two".into(),
+            ));
+        }
+        let root_final = &self.root.params.final_group.commitment;
+        let mut root_groups = vec![OpeningExecutionGroup {
+            params: root_final,
+            expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                root_final.opening_method,
+                extension_degree,
+                root_final.d_a(),
+                self.root.input_witness_len.trailing_zeros() as usize,
+                true,
+            )),
+        }];
+        root_groups.extend(self.root.params.precommitted_groups.iter().map(|group| {
+            let commitment = &group.commitment;
+            OpeningExecutionGroup {
+                params: commitment as &dyn LevelParamsLike,
+                expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                    commitment.opening.opening_method,
+                    extension_degree,
+                    commitment.layout.inner_commit_matrix.ring_dimension(),
+                    group.descriptor.group.num_vars(),
+                    true,
+                )),
+            }
+        }));
+        validate_level_opening_execution(0, extension_degree, &root_groups)?;
+        for (index, step) in self.recursive_folds.iter().enumerate() {
+            let witness = &step.params.witness;
+            let mut groups = vec![OpeningExecutionGroup {
+                params: witness,
+                expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                    witness.opening_method,
+                    extension_degree,
+                    witness.d_a(),
+                    0,
+                    false,
+                )),
+            }];
+            if let Some(prefix) = &step.params.incoming_setup_prefix {
+                groups.push(OpeningExecutionGroup {
+                    params: &prefix.commitment_params,
+                    expected_source_encoding: None,
+                });
+            }
+            validate_level_opening_execution(index + 1, extension_degree, &groups)?;
+        }
+        Ok(())
+    }
+
     pub fn initial_witness_len(&self) -> usize {
         self.root.input_witness_len
     }
-
-    /// Canonical byte encoding used to order semantically distinct schedules.
-    ///
-    /// This is an ordering descriptor, not a wire encoding or transcript
-    /// commitment. It includes every schedule field that can affect proving or
-    /// verification.
-    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(1);
-        self.root
-            .params
-            .final_group
-            .commitment
-            .append_descriptor_bytes(bytes);
-        push_usize(bytes, self.root.params.precommitted_groups.len());
-        for group in &self.root.params.precommitted_groups {
-            group.descriptor.append_descriptor_bytes(bytes);
-            group.commitment.append_descriptor_bytes(bytes);
-        }
-        self.root
-            .params
-            .open_commit_matrix
-            .append_descriptor_bytes(bytes);
-        append_schedule_sparse_challenge_descriptor_bytes(
-            bytes,
-            &self.root.params.sparse_challenge_config,
-        );
-        append_witness_partition_descriptor_bytes(bytes, &self.root.params.witness_partition);
-        push_usize(bytes, self.root.input_witness_len);
-        push_usize(bytes, self.root.output_witness_len);
-        push_usize(bytes, self.recursive_folds.len());
-        for fold in &self.recursive_folds {
-            fold.params.witness.append_descriptor_bytes(bytes);
-            fold.params
-                .open_commit_matrix
-                .append_descriptor_bytes(bytes);
-            append_schedule_sparse_challenge_descriptor_bytes(
-                bytes,
-                &fold.params.sparse_challenge_config,
-            );
-            match &fold.params.incoming_setup_prefix {
-                None => bytes.push(0),
-                Some(prefix) => {
-                    bytes.push(1);
-                    prefix.append_descriptor_bytes(bytes);
-                }
-            }
-            append_witness_partition_descriptor_bytes(bytes, &fold.params.witness_partition);
-            push_usize(bytes, fold.input_witness_len);
-            push_usize(bytes, fold.output_witness_len);
-        }
-        self.terminal.append_descriptor_bytes(bytes);
-    }
 }
 
-impl TerminalFoldStep {
-    /// Canonical ordering descriptor for a terminal suffix.
-    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
+struct OpeningExecutionGroup<'a> {
+    params: &'a dyn LevelParamsLike,
+    expected_source_encoding: Option<crate::CommittedSourceEncoding>,
+}
 
-    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(3);
-        self.params.witness.append_descriptor_bytes(bytes);
-        append_schedule_sparse_challenge_descriptor_bytes(
-            bytes,
-            &self.params.sparse_challenge_config,
-        );
-        self.params.response_shape.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.input_witness_len);
+fn validate_level_opening_execution(
+    absolute_level: usize,
+    extension_degree: usize,
+    groups: &[OpeningExecutionGroup<'_>],
+) -> Result<(), AkitaError> {
+    let first = groups
+        .first()
+        .ok_or_else(|| AkitaError::InvalidSetup("nonterminal fold has no opening groups".into()))?;
+    let packing_family = matches!(
+        first.params.opening_method(),
+        OpeningMethod::SubringCoefficientPacking { .. }
+    );
+    let packing_required = absolute_level <= 1;
+    if packing_family != packing_required {
+        let required = if packing_required {
+            "subring coefficient packing"
+        } else {
+            "evaluation trace"
+        };
+        return Err(AkitaError::InvalidSetup(format!(
+            "nonterminal level {absolute_level} requires {required}"
+        )));
     }
+    if groups.iter().any(|group| {
+        matches!(
+            group.params.opening_method(),
+            OpeningMethod::SubringCoefficientPacking { .. }
+        ) != packing_family
+    }) {
+        return Err(AkitaError::InvalidSetup(
+            "all groups consumed by one fold must use the same opening-method family".into(),
+        ));
+    }
+    for group in groups {
+        let opening_method = group.params.opening_method();
+        match (opening_method, group.params.source_encoding()) {
+            (
+                OpeningMethod::EvaluationTrace,
+                crate::CommittedSourceEncoding::TensorSubfieldProjection {
+                    extension_degree: encoded_degree,
+                },
+            ) if encoded_degree != extension_degree => {
+                return Err(AkitaError::InvalidSetup(
+                    "tensor source encoding does not match the protocol extension degree".into(),
+                ));
+            }
+            (
+                OpeningMethod::SubringCoefficientPacking { .. },
+                crate::CommittedSourceEncoding::TensorSubfieldProjection { .. },
+            ) => {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient packing requires the canonical coefficient source encoding".into(),
+                ));
+            }
+            _ => {}
+        }
+        if group
+            .expected_source_encoding
+            .is_some_and(|expected| expected != group.params.source_encoding())
+        {
+            return Err(AkitaError::InvalidSetup(
+                "committed source encoding does not match its producer geometry and opening method"
+                    .into(),
+            ));
+        }
+        let OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } = opening_method
+        else {
+            continue;
+        };
+        if absolute_level > 1 {
+            return Err(AkitaError::InvalidSetup(
+                "subring coefficient packing is restricted to nonterminal levels 0 and 1".into(),
+            ));
+        }
+        let expected = akita_challenges::SparseChallengeConfig::production_for_ring_dim(
+            challenge_subring_dimension,
+        )
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "coefficient-packing challenge subring is not in the production ladder".into(),
+            )
+        })?;
+        let matrix = group.params.inner_commit_matrix_params();
+        if !matches!(matrix.security_route(), InnerCommitSecurityRoute::Linf(_)) {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient packing requires the L-infinity A security route".into(),
+            ));
+        }
+        if group.params.fold_challenge_config() != expected {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient packing requires its audited production challenge family".into(),
+            ));
+        }
+        crate::SubringCoefficientPackingGeometry::try_new(
+            extension_degree,
+            matrix.ring_dimension(),
+            challenge_subring_dimension,
+        )?;
+    }
+    Ok(())
 }
 
 fn validate_stage2_successor_capacity(
@@ -587,14 +707,31 @@ fn validate_stage2_successor_capacity(
             "{predecessor_name} successor ring dimension {successor_ring_dimension} is invalid"
         )));
     }
-    let shared_d = predecessor.role_dims().d_d();
-    let precommitted_role_dims = predecessor
-        .precommitted_group_iter()
-        .map(|group| group.role_dims(shared_d))
-        .collect::<Vec<_>>();
-    let geometry = RelationAddressGeometry::new_for_groups(
-        predecessor.role_dims(),
-        &precommitted_role_dims,
+    let role_dims = predecessor.role_dims();
+    let shared_d = role_dims.d_d();
+    let mut relation_coefficient_block_len = role_dims.common_relation_coeff_count();
+    if let OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension,
+    } = predecessor.opening_method
+    {
+        relation_coefficient_block_len =
+            relation_coefficient_block_len.min(challenge_subring_dimension);
+    }
+    for group in predecessor.precommitted_group_iter() {
+        let group_dims = group.role_dims(shared_d);
+        relation_coefficient_block_len =
+            relation_coefficient_block_len.min(group_dims.common_relation_coeff_count());
+        if let OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } = group.opening.opening_method
+        {
+            relation_coefficient_block_len =
+                relation_coefficient_block_len.min(challenge_subring_dimension);
+        }
+    }
+    let geometry = RelationAddressGeometry::new_with_coefficient_block(
+        role_dims,
+        relation_coefficient_block_len,
         successor_ring_dimension,
         output_witness_len,
     )?;
@@ -608,16 +745,6 @@ fn validate_stage2_successor_capacity(
     Ok(())
 }
 
-fn append_witness_partition_descriptor_bytes(bytes: &mut Vec<u8>, partition: &WitnessPartition) {
-    match partition {
-        WitnessPartition::Single => bytes.push(0),
-        WitnessPartition::Distributed { num_chunks } => {
-            bytes.push(1);
-            push_usize(bytes, *num_chunks);
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
     pub estimated_root_direct_payload_bytes: usize,
@@ -628,8 +755,8 @@ pub struct FoldScheduleEstimate {
     pub estimated_terminal_response_payload_bytes: usize,
     /// Maximum flat setup-matrix capacity required by the schedule.
     pub estimated_num_setup_field_elements: usize,
-    /// Natural (unpadded) setup length at the first direct edge, when the
-    /// recursive setup planner is active.
+    /// Natural (unpadded) setup length at the first direct edge for setup-first
+    /// schedule selection.
     pub first_direct_setup_field_len: Option<usize>,
     /// Number of recursive successors that consume an offloaded setup prefix.
     pub selected_offload_edges: usize,

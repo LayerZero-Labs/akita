@@ -8,7 +8,7 @@ pub type Field = Prime64Offset59;
 pub type ExtensionField = Ext2<Field>;
 
 const SUFFIX_RING_DIMENSIONS: &[usize] = &[64];
-const A_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512];
+const A_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024];
 const B_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
 const D_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
 const ADAPTIVE_RING_DIMENSION_MODE: akita_schedules::RingDimensionScheduleMode =
@@ -33,10 +33,9 @@ impl_proof_optimized_preset!(
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q64Offset59,
-    256,
     64,
     64,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
+    source = balanced_digits,
     schedules = ("schedules-fp64-dense", "fp64_dense", fp64_dense_table),
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );
@@ -45,10 +44,9 @@ impl_proof_optimized_preset!(
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q64Offset59,
-    256,
     64,
     1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    source = unit_one_hot,
     schedules = ("schedules-fp64-onehot", "fp64_onehot", fp64_onehot_table),
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );

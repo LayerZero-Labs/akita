@@ -60,11 +60,11 @@ jobs:
         with:
           components: clippy
       - name: Clippy (transparent default features)
-        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
       - name: Clippy (no default features)
-        run: cargo clippy --all --all-targets --release --no-default-features -- -D warnings
+        run: cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
       - name: Clippy (response model diagnostics)
-        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics -- -D warnings
+        run: cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics,transcript-blake2b -- -D warnings
       - name: Crate dependency hygiene
         run: |
           scripts/check-crate-deps.sh akita-verifier
@@ -106,7 +106,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
       - name: Build documentation
-        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence
+        run: cargo doc -q --release --no-deps --no-default-features --features parallel,disk-persistence,transcript-blake2b
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -143,7 +143,7 @@ jobs:
           set +e
           # --lib --bins --tests matches the default test target set but skips
           # compiling examples (clippy's --all-targets already compile-checks them).
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,schedules-default \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,schedules-default,catalog-gen,transcript-blake2b \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
@@ -188,22 +188,57 @@ jobs:
         run: |
           cargo test --release -p akita-config --features all-schedules --test generated_tables
       - name: Generate schedule tables
-        run: scripts/generate-schedule-tables.sh --check-catalog
-      - name: Committed schedule tables match the generator
-        run: git diff --exit-code -- crates/akita-schedules/src/generated
+        env:
+          # The suffix memo is bounded per row; keep two rows in flight on the
+          # standard hosted runner while retaining a conservative memory cap.
+          AKITA_SCHEDULE_GEN_JOBS: 2
+        run: |
+          scripts/generate-schedule-tables.sh \
+            --check-catalog \
+            --row-progress \
+            --catalog-snapshot specs/evidence/subring-coefficient-packing/head.tsv \
+            --catalog-baseline specs/evidence/subring-coefficient-packing/base.tsv \
+            --catalog-report specs/evidence/subring-coefficient-packing/comparison.tsv
+      - name: Committed schedule tables and evidence match the generator
+        run: |
+          git diff --exit-code -- \
+            crates/akita-schedules/src/generated \
+            specs/evidence/subring-coefficient-packing/head.tsv \
+            specs/evidence/subring-coefficient-packing/comparison.tsv
       - name: Recursive setup-prefix slots
         run: |
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
       - name: Dense multi-chunk PCS e2e
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-multi-chunk -- --exact fp128_dense_mc
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-multi-chunk,transcript-blake2b -- --exact fp128_dense_mc
       - name: One-hot multi-chunk catalog wiring
         run: |
-          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-onehot-multi-chunk -- --exact fp128_onehot_mc_catalog_resolves
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-onehot-multi-chunk,transcript-blake2b -- --exact fp128_onehot_mc_catalog_resolves
+      - name: Bounded dense source PCS e2e
+        run: |
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-bounded,transcript-blake2b -- heterogeneous::bounded_
+          cargo test --release -p akita-config --features all-schedules --test bounded_dense_source
       - name: Schedule catalog wiring
         run: |
-          cargo test --release -p akita-config --no-default-features --test schedule_catalog_feature_off
+          cargo test --release -p akita-config --no-default-features --features transcript-blake2b --test schedule_catalog_feature_off
           cargo test --release -p akita-config --features schedules-fp128-onehot,schedules-fp128-dense --test schedule_catalog_miswire
+
+  test-transcript-backends:
+    name: Transcript semantics (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        backend: [transcript-blake2b, transcript-keccak]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Run semantic transcript suites
+        run: >-
+          cargo test --release -p akita-pcs
+          --test transcript_hardening
+          --test transcript_hardening_proptest
+          --no-default-features
+          --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
 
   test-timing:
     name: Test timing

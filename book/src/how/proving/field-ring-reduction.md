@@ -22,8 +22,11 @@ ring elements, define that multiplication as a `TraceOpen` operation, and then
 write the same evaluation claim directly as a linear relation on the committed
 fold witness.
 
-Base-field polynomials evaluated at extension-field points require the
-extension-opening reduction summarized at the end of this page.
+For base-field polynomials evaluated at extension-field points, the schedule
+uses evaluation trace with EOR or subring coefficient packing. See
+[Fold path and field geometry](./fold-path.md). The coefficient packing
+walkthrough is in
+[Root fold and ring switching](./root-fold-ring-switch.md#subring-coefficient-packing).
 
 ## The evaluation problem
 
@@ -442,7 +445,11 @@ quotient.
 [Sumcheck stages](./sumcheck-stages.md#add-the-opening-claim-consistency)
 explains how this claim is row-batched and fused with the other Stage-2 terms.
 
-## Code reference
+## Evaluation trace code reference
+
+This section applies when the schedule selects `EvaluationTrace`. A fold that
+selects `SubringCoefficientPacking` uses the direct coefficient-packing flow
+in [Root fold and ring switch](./root-fold-ring-switch.md) instead.
 
 The base-field path follows the reduction above:
 
@@ -537,17 +544,21 @@ directly from the committed digit witness.
 
 ## Base-field polynomial at an extension-field point
 
-When `CommitmentConfig::EXT_DEGREE > 1`, Akita does not treat a base-field
-multilinear polynomial as an ordinary extension-valued opening of the same
-arity. It first runs the
-[extension-opening reduction](./extension-opening-reduction.md): the low
-$\log_2[\mathbb E:\mathbb F]$ variables are packed into extension-field
-coefficients, and one degree-two tensor sumcheck reduces the original claim to
-a claim on that packed polynomial with fewer variables.
+The scheduled opening method determines this case.
 
-The resulting extension-valued claim, rather than the unreduced base-field
-claim, enters the later fold and evaluation trace. The trace represents its
-extension weights by canonical subfield coordinates; the verifier rejects
-invalid shapes, coordinate counts, and noncanonical images before using them.
-See [extension-field evaluation traces](../verifying/evaluation_trace.md#extension-field-openings).
-Single-field configurations with `EXT_DEGREE == 1` skip this reduction.
+With `EvaluationTrace`, Akita does not treat a base-field multilinear
+polynomial as an ordinary extension-valued opening of the same arity. It first
+runs the [extension-opening reduction](./extension-opening-reduction.md). The
+low $\log_2[\mathbb E:\mathbb F]$ variables are packed into extension-field
+coefficients, and one degree-two tensor sumcheck reduces the original claim to
+a claim on that packed polynomial with fewer variables. The reduced claim then
+enters the evaluation trace. The trace represents its extension weights by
+canonical subfield coordinates, and the verifier rejects invalid shapes,
+coordinate counts, and noncanonical images before using them. Configurations
+with $[\mathbb E:\mathbb F]=1$ skip this reduction.
+
+With `SubringCoefficientPacking`, Akita keeps one coefficient axis in the
+challenge subring, contracts the other axes over the extension field, and
+binds the original scalar opening directly in Stage 2 without EOR. See [Fold
+path and field geometry](./fold-path.md) and [Root fold and ring
+switch](./root-fold-ring-switch.md).

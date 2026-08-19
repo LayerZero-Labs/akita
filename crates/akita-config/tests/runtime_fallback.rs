@@ -323,8 +323,6 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
-        uniform_ring_dimension: Cfg::D,
-        setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
         ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
@@ -396,10 +394,10 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
         precommitteds: vec![pre_profile],
     };
-    let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
+    let precommitted_honest_fold_policies = vec![akita_config::honest_fold_policy_of::<Cfg>()];
     let planned = find_schedule(
         &key,
-        Cfg::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Cfg>(),
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -418,7 +416,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
             .commitment
             .role_dims(),
         CommitmentRingDims {
-            inner: 256,
+            inner: 512,
             outer: 64,
             opening: 64,
         }
@@ -472,19 +470,12 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     };
 
     let precommitted_honest_fold_policies = vec![
-        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::new(Cfg::decomposition().field_bits(), 1, 256),
-        ),
-        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-            akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
-                Cfg::decomposition().field_bits(),
-                akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
-            ),
-        ),
+        akita_config::honest_fold_policy_of::<Cfg>(),
+        akita_config::honest_fold_policy_of::<fp128::Dense>(),
     ];
     let planned = find_schedule(
         &key,
-        Cfg::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Cfg>(),
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

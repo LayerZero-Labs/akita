@@ -330,13 +330,31 @@ pub(crate) fn uniform_field_source_moment(
         .ok_or_else(|| AkitaError::InvalidSetup("uniform field source is empty".into()))
 }
 
+/// Deterministic maximum squared digit energy of a balanced signed-digit source
+/// whose centered coefficients fit `source_log_bound` bits.
+///
+/// `source_log_bound` is the **declared committed-source bound**, not the field
+/// width: a bounded source stops short of the field, so its final digit plane
+/// only spans the bits the bound leaves. Charging that plane a full `log_basis`
+/// of range would over-estimate its energy and inflate the L2 response cap the
+/// A rank is priced against. A full-field source passes its own field width and
+/// is unaffected.
+///
+/// Planes past the bound are **not** free. Balanced extraction carries:
+/// `|c_p| <= |v| / b^p + b / (2·(b - 1))`, so the plane just past the bound can
+/// still hold `±1`, and the canonical depth adds exactly one such plane whenever
+/// `log_basis` divides `source_log_bound` (the `+1` correction in
+/// `compute_num_digits`). Charging it `1` instead of dropping it keeps this a
+/// true deterministic maximum. This never fires for a full-field source, whose
+/// depth is `ceil(field_bits / log_basis)` and so never overshoots by a whole
+/// plane.
 fn bounded_field_source_moment(
     scalar_count: usize,
-    field_bits: u32,
+    source_log_bound: u32,
     log_basis: u32,
     digit_count: usize,
 ) -> Result<SourceMomentEstimate, AkitaError> {
-    if scalar_count == 0 || field_bits == 0 || log_basis == 0 || digit_count == 0 {
+    if scalar_count == 0 || source_log_bound == 0 || log_basis == 0 || digit_count == 0 {
         return Err(AkitaError::InvalidSetup(
             "bounded field source requires positive geometry".into(),
         ));
@@ -347,10 +365,12 @@ fn bounded_field_source_moment(
         let consumed = (plane as u32)
             .checked_mul(log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane width overflow".into()))?;
-        if consumed >= field_bits {
-            break;
-        }
-        let plane_bits = log_basis.min(field_bits - consumed);
+        // `max(1)` is the carry plane described above; below the bound this is
+        // just `min(log_basis, source_log_bound - consumed)`.
+        let plane_bits = source_log_bound
+            .saturating_sub(consumed)
+            .min(log_basis)
+            .max(1);
         let half_basis = 1u128
             .checked_shl(plane_bits - 1)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane bound overflow".into()))?;
@@ -608,13 +628,20 @@ fn checked_logical_group_len(num_vars: usize, num_polynomials: usize) -> Result<
 }
 
 /// Source moments of each root opening group before its first fold.
+///
+/// `decomposition` supplies both the field width and the final group's declared
+/// committed-source bound (`log_commit_bound`). Precommitted groups were frozen
+/// by a possibly different producer whose bound is not carried in their params,
+/// so they are priced at the shared field width — always a valid upper bound on
+/// their source energy, and exactly the previous behavior.
 pub(crate) fn root_group_source_moments(
     params: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
     final_policy: HonestFoldPolicySpec,
     precommitted_policies: &[HonestFoldPolicySpec],
-    field_bits: u32,
+    decomposition: akita_types::DecompositionParams,
 ) -> Result<Vec<SourceMomentEstimate>, AkitaError> {
+    let field_bits = decomposition.field_bits();
     let final_group_index = opening_layout.root_final_group_index()?;
     if precommitted_policies.len() != final_group_index {
         return Err(AkitaError::InvalidSetup(
@@ -624,7 +651,7 @@ pub(crate) fn root_group_source_moments(
     let mut moments = Vec::with_capacity(opening_layout.num_groups());
     for group_index in 0..opening_layout.num_groups() {
         let group_layout = *opening_layout.group_layout(group_index)?;
-        let group_params = params.group_params(opening_layout, group_index)?;
+        let group_params = params.group_params_geometry(opening_layout, group_index)?;
         let logical_len =
             checked_logical_group_len(group_layout.num_vars(), group_layout.num_polynomials())?;
         let policy = if group_index == final_group_index {
@@ -647,7 +674,6 @@ pub(crate) fn root_group_source_moments(
                     .root_source_l2_sq(
                         logical_len,
                         group_params.inner_commit_matrix_params().ring_dimension(),
-                        group_layout.num_vars(),
                     )
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup(
@@ -671,12 +697,19 @@ pub(crate) fn root_group_source_moments(
                     AkitaError::InvalidSetup("unit one-hot source moments overflow".into())
                 })?
             }
-            HonestFoldPolicySpec::BalancedSignedDigit(_) => bounded_field_source_moment(
-                logical_len,
-                field_bits,
-                group_params.log_basis_inner(),
-                group_params.num_digits_inner(),
-            )?,
+            HonestFoldPolicySpec::BalancedSignedDigit(_) => {
+                let source_log_bound = if group_index == final_group_index {
+                    decomposition.log_commit_bound
+                } else {
+                    field_bits
+                };
+                bounded_field_source_moment(
+                    logical_len,
+                    source_log_bound,
+                    group_params.log_basis_inner(),
+                    group_params.num_digits_inner(),
+                )?
+            }
         };
         moments.push(moment);
     }
@@ -718,9 +751,12 @@ pub(crate) fn next_source_moment(
         ));
     }
     let quotient_depth = compute_num_digits_field_width(field_bits, params.log_basis_open);
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
     let layout = WitnessLayout::new(
         params,
         opening_layout,
+        &relation_geometry,
         params.witness_chunk.num_chunks,
         quotient_depth,
     )?;
@@ -728,7 +764,7 @@ pub(crate) fn next_source_moment(
 
     for unit in layout.units() {
         let group_index = unit.group_index();
-        let group_params = params.group_params(opening_layout, group_index)?;
+        let group_params = params.group_params_geometry(opening_layout, group_index)?;
         let group_source = source_groups
             .get(group_index)
             .copied()
@@ -745,7 +781,12 @@ pub(crate) fn next_source_moment(
             .and_then(|value| value.checked_add(total_blocks as u128 - 1))
             .map(|rounded| rounded / total_blocks as u128)
             .ok_or_else(|| AkitaError::InvalidSetup("chunk source energy overflow".into()))?;
-        let group_d_a = params.group_role_dims(opening_layout, group_index)?.d_a();
+        let group_d_a = relation_geometry
+            .rhs_layout()
+            .groups
+            .iter()
+            .find_map(|group| (group.group_index == group_index).then_some(group.role_dims.d_a()))
+            .ok_or_else(|| AkitaError::InvalidSetup("response relation group is missing".into()))?;
         let response_energy = chunk_source
             .checked_mul(group_params.fold_challenge_config().challenge_l2_sq_max())
             .ok_or_else(|| AkitaError::InvalidSetup("fold response energy overflow".into()))?;
@@ -769,9 +810,12 @@ pub(crate) fn next_source_moment(
         }
 
         let num_claims = opening_layout.group_layout(group_index)?.num_polynomials();
+        let opening_width = relation_geometry
+            .group_opening_geometry(group_index)?
+            .physical_coefficient_width();
         let e_scalar_count = num_claims
             .checked_mul(unit.num_live_blocks())
-            .and_then(|count| count.checked_mul(group_d_a))
+            .and_then(|count| count.checked_mul(opening_width))
             .ok_or_else(|| AkitaError::InvalidSetup("live E source length overflow".into()))?;
         let allocated_e_scalar_count = unit.e_range().len() / group_params.num_digits_open();
         if e_scalar_count > allocated_e_scalar_count {
@@ -788,8 +832,10 @@ pub(crate) fn next_source_moment(
             )?;
             checked_add_component(&mut logical_components, E_COMPONENT, energy, peak)?;
         }
-        let t_scalar_count = e_scalar_count
-            .checked_mul(group_params.a_rows_len())
+        let t_scalar_count = num_claims
+            .checked_mul(unit.num_live_blocks())
+            .and_then(|count| count.checked_mul(group_d_a))
+            .and_then(|count| count.checked_mul(group_params.a_rows_len()))
             .ok_or_else(|| AkitaError::InvalidSetup("live T source length overflow".into()))?;
         let allocated_t_scalar_count = unit.t_range().len() / group_params.num_digits_outer();
         if t_scalar_count > allocated_t_scalar_count {

@@ -6,7 +6,7 @@ use crate::protocol::ring_relation::{
     RelationQuotientOutput,
 };
 use crate::protocol::ring_relation_witness::{
-    FoldChunkCoefficients, RingRelationGroupWitness, RingRelationWitness,
+    FoldChunkCoefficients, GroupFoldedOpening, RingRelationGroupWitness, RingRelationWitness,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::DecomposeFoldWitness;
@@ -26,7 +26,7 @@ pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
     pub(crate) t_hat: DigitBlocks,
     /// Block-major native-A rows: `[block][A row][coefficient]`.
     pub(crate) recomposed_inner_rows: RingVec<F>,
-    pub(crate) e_folded: RingVec<F>,
+    pub(crate) folded_opening: GroupFoldedOpening<F>,
     pub(crate) z_centered: Vec<i32>,
     pub(crate) z_inf: u32,
     pub(crate) z_folded_coefficients: FoldChunkCoefficients,
@@ -210,26 +210,26 @@ fn emit_group_witness_segments<F: CanonicalField>(
     }
     {
         let _span = tracing::info_span!("ring_switch_emit_e_segments").entered();
+        let opening_width = layout
+            .units_for_group(group_id)?
+            .next()
+            .ok_or(AkitaError::InvalidProof)?
+            .e_geometry()
+            .physical_coefficient_width();
         dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
+            ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
-            group.role_dims.d_a(),
-            |D_A| {
-                dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Opening),
-                    F,
-                    group.role_dims.d_d(),
-                    |D_D| {
-                        emit_witness_e_planes::<D_A, D_D>(
-                            out,
-                            layout,
-                            group_id,
-                            num_claims,
-                            group.params.num_digits_open(),
-                            &group.e_hat,
-                            group.params.num_live_blocks(),
-                        )
-                    }
+            group.role_dims.d_d(),
+            |D_D| {
+                emit_witness_e_planes::<D_D>(
+                    out,
+                    layout,
+                    group_id,
+                    opening_width,
+                    num_claims,
+                    group.params.num_digits_open(),
+                    &group.e_hat,
+                    group.params.num_live_blocks(),
                 )
             }
         )
@@ -365,7 +365,7 @@ where
             z_folded_rings,
             z_folded_coefficients,
             e_hat,
-            e_folded,
+            folded_opening,
             hint,
             ..
         } = group;
@@ -446,7 +446,7 @@ where
             e_hat,
             t_hat,
             recomposed_inner_rows,
-            e_folded,
+            folded_opening,
             z_centered,
             z_inf,
             z_folded_coefficients,
@@ -455,34 +455,31 @@ where
     validate_chunked_witness_cfg(lp)?;
     for group_index in 0..opening_batch.num_groups() {
         let group_dims = lp.group_role_dims(opening_batch, group_index)?;
-        dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            group_dims.d_a(),
-            |D_G| {
-                instance
-                    .group_ring_multiplier_point(group_index)?
-                    .ensure_ring_dim::<D_G>()
-            }
-        )?;
+        let opening = instance
+            .group_openings()
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if let Ok(ring_multiplier_point) = opening.evaluation_trace_multiplier_point() {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                group_dims.d_a(),
+                |D_G| ring_multiplier_point.ensure_ring_dim::<D_G>()
+            )?;
+        }
     }
     let witness_layout = instance.segment_layout(lp, None)?;
 
     // Relation quotient `r`: each group owns a native consistency/A/B
     // block, while the level owns the shared D tail. One trailing witness
     // segment carries all quotient rows in canonical relation order.
-    let ring_multiplier_points = owned
-        .iter()
-        .enumerate()
-        .map(|(group_index, _)| instance.group_ring_multiplier_point(group_index))
-        .collect::<Result<Vec<_>, AkitaError>>()?;
     let r = compute_multi_group_relation_quotient::<F, B>(
         ring_switch_ctx,
         lp,
         opening_batch,
         &owned,
-        &ring_multiplier_points,
-        instance.group_challenges(),
+        instance.group_openings(),
+        instance.extension_degree(),
         &d_quotients,
         instance.rhs(),
         compression.as_ref(),
@@ -615,14 +612,15 @@ fn emit_r_rows<F: CanonicalField>(
             .r_rows()
             .get(row_index)
             .ok_or(AkitaError::InvalidProof)?;
-        if row_layout.ring_dim() != row.ring_dim() {
+        let geometry = row_layout.geometry();
+        if geometry != row.geometry() {
             return Err(AkitaError::InvalidSize {
-                expected: row_layout.ring_dim(),
-                actual: row.ring_dim(),
+                expected: geometry.physical_coefficient_width(),
+                actual: row.coeffs().len(),
             });
         }
         let expected_len = levels
-            .checked_mul(row.ring_dim())
+            .checked_mul(geometry.physical_coefficient_width())
             .ok_or_else(|| AkitaError::InvalidSetup("R witness row length overflow".into()))?;
         let range = row_layout.range();
         if range.len() != expected_len {

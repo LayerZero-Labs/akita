@@ -182,7 +182,6 @@ Fold each, then `git mv` to `specs/archive/`:
 | Spec | Book chapter |
 |------|--------------|
 | `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
-| `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
 | `terminal-fold-cutover.md` | `how/recursion.md` |
 | `security-hardening.md` | `how/verification.md` |
 | `remove-fp16.md` | `foundations/rings-and-fields.md` |
@@ -195,11 +194,10 @@ Fold each, then `git mv` to `specs/archive/`:
 `flat-public-matrix-and-exact-ntt-cache.md`,
 `role-native-projected-digit-layout.md`, `setup-layout-repack.md`,
 `setup-offloading-planner.md`,
-`eor-streamed-prover.md`, `packed-sumcheck.md`,
+`packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
 `akita-compute-backend-metal.md`,
 `large-digit-ntt-infrastructure.md`,
-`eor-sumcheck-prover-acceleration.md`,
 `cross-repo-field-microbench.md`,
 `sis-quantum128-scalar-n-table.md`, plus `TEMPLATE.md`,
 `SPEC_REVIEW.md`, and this file.

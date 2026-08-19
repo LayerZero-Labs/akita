@@ -46,7 +46,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let mut weights = materialize_eq_tensor_left(&equality, &factored, output_len)?;
             let projection = role_projection_evaluation(
                 alpha,
-                self.projection_geometry.base_ring_dim(),
+                self.relation_address_geometry
+                    .relation_coefficient_block_len(),
                 low_point,
             )?;
             if projection != E::one() {
@@ -63,7 +64,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             tensors,
             ratio,
             alpha,
-            self.projection_geometry.base_ring_dim(),
+            self.relation_address_geometry
+                .relation_coefficient_block_len(),
         )?;
         materialize_eq_tensor_left(
             self.relation_address.equality_window(),
@@ -82,19 +84,19 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|group| -> Result<_, AkitaError> {
                 let column_weights = [
                     self.materialize_role_tensor_weights(
-                        group.a_ratio,
+                        group.a_relation_ratio,
                         &group.a_tensors,
                         group.z_cols,
                         alpha,
                     )?,
                     self.materialize_role_tensor_weights(
-                        group.b_ratio,
+                        group.b_relation_ratio,
                         &group.physical_b.relation_tensors,
                         group.physical_b.logical_input_width(),
                         alpha,
                     )?,
                     self.materialize_role_tensor_weights(
-                        group.d_ratio,
+                        group.d_relation_ratio,
                         &group.d_tensors,
                         group.d_col_range.len(),
                         alpha,
@@ -147,7 +149,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     return Ok(evaluation
                         + eval_boolean_pair_tensor_families::<_, false, false>(
                             rho_setup_idx,
-                            self.relation_address.point(),
+                            self.setup_relation_address.point(),
                             families,
                         )?);
                 }
@@ -171,7 +173,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     self.projection_geometry.base_ring_dim(),
                     setup_low_point,
                 )?;
-                let relation_point = self.relation_address.point();
+                let relation_point = self.setup_relation_address.point();
                 let contraction = match batch.state {
                     ProjectedEqPairTensorState::RelationFactored => {
                         let relation_low_point = relation_point
@@ -207,6 +209,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     }
                 };
                 Ok(evaluation + setup_projection * contraction)
+            })
+            .and_then(|evaluation| {
+                Ok(evaluation
+                    * role_projection_evaluation(
+                        alpha,
+                        self.relation_address_geometry
+                            .relation_coefficient_block_len(),
+                        &self.relation_base_bridge_point,
+                    )?)
             })
     }
 
@@ -353,7 +364,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
-            push_projected_tensor(batches, group.d_ratio, tensor)?;
+            push_projected_tensor(
+                batches,
+                group.d_ratio,
+                rebase_relation_tensor(&tensor, self.relation_base_bridge_ratio()?)?,
+            )?;
         }
         Ok(())
     }
@@ -372,7 +387,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             compact_affine_unit_families(group.physical_b.setup_tensors.clone(), group.num_claims)?
         };
         for tensor in tensors {
-            push_projected_tensor(batches, group.b_ratio, tensor)?;
+            push_projected_tensor(
+                batches,
+                group.b_ratio,
+                rebase_relation_tensor(&tensor, self.relation_base_bridge_ratio()?)?,
+            )?;
         }
         Ok(())
     }
@@ -391,10 +410,69 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|tensor| lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights))
             .collect::<Result<Vec<_>, _>>()?;
         for tensor in compact_affine_unit_families(lifted, 1)? {
-            push_projected_tensor(batches, group.a_ratio, tensor)?;
+            push_projected_tensor(
+                batches,
+                group.a_ratio,
+                rebase_relation_tensor(&tensor, self.relation_base_bridge_ratio()?)?,
+            )?;
         }
         Ok(())
     }
+
+    fn relation_base_bridge_ratio(&self) -> Result<usize, AkitaError> {
+        let relation_base = self
+            .relation_address_geometry
+            .relation_coefficient_block_len();
+        self.projection_geometry
+            .base_ring_dim()
+            .checked_div(relation_base)
+            .filter(|ratio| {
+                relation_base != 0
+                    && self
+                        .projection_geometry
+                        .base_ring_dim()
+                        .is_multiple_of(relation_base)
+                    && ratio.is_power_of_two()
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup base does not decompose over the relation base".into(),
+                )
+            })
+    }
+}
+
+fn rebase_relation_tensor<E: FieldCore>(
+    tensor: &EqPairTensorFamily<E>,
+    bridge_ratio: usize,
+) -> Result<EqPairTensorFamily<E>, AkitaError> {
+    if bridge_ratio == 0
+        || !bridge_ratio.is_power_of_two()
+        || !tensor.right_offset.is_multiple_of(bridge_ratio)
+        || tensor
+            .axes
+            .iter()
+            .any(|axis| !axis.right_stride.is_multiple_of(bridge_ratio))
+    {
+        return Err(AkitaError::InvalidSetup(
+            "relation tensor does not align to the Stage 3 setup base".into(),
+        ));
+    }
+    let axes = tensor
+        .axes
+        .iter()
+        .cloned()
+        .map(|mut axis| {
+            axis.right_stride /= bridge_ratio;
+            axis
+        })
+        .collect();
+    EqPairTensorFamily::new(
+        tensor.left_offset,
+        tensor.right_offset / bridge_ratio,
+        tensor.scalar,
+        axes,
+    )
 }
 
 fn build_group_role_tensors<E: FieldCore>(
@@ -402,9 +480,9 @@ fn build_group_role_tensors<E: FieldCore>(
     group: &SetupContributionGroupPlan<E>,
     witness_layout: &WitnessLayout,
 ) -> Result<[Vec<EqPairTensorFamily<E>>; 3], AkitaError> {
-    let (b_subcolumns, d_subcolumns) =
-        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
-    let source_lanes = group.a_ratio;
+    let (b_subcolumns, _) = SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
+    let d_subcolumns = group.opening_subcolumns;
+    let source_lanes = group.a_relation_ratio;
     let a_relation_ring_stride = source_lanes;
 
     let d_block_setup_stride = checked_mul(
@@ -412,14 +490,19 @@ fn build_group_role_tensors<E: FieldCore>(
         group.depth_open,
         "setup D block stride overflow",
     )?;
+    let opening_relation_lanes = checked_mul(
+        d_subcolumns,
+        group.d_relation_ratio,
+        "setup D opening lane count overflow",
+    )?;
     let d_block_relation_stride = checked_mul(
         group.depth_open,
-        source_lanes,
+        opening_relation_lanes,
         "setup D relation stride overflow",
     )?;
     let d_subcolumn_relation_stride = checked_mul(
         group.depth_open,
-        group.d_ratio,
+        group.d_relation_ratio,
         "setup D subcolumn relation stride overflow",
     )?;
     let b_a_row_setup_stride = checked_mul(
@@ -439,7 +522,7 @@ fn build_group_role_tensors<E: FieldCore>(
     )?;
     let b_subcolumn_relation_stride = checked_mul(
         group.depth_commit,
-        group.b_ratio,
+        group.b_relation_ratio,
         "setup B subcolumn relation stride overflow",
     )?;
     let b_block_relation_stride = checked_mul(
@@ -476,7 +559,6 @@ fn build_group_role_tensors<E: FieldCore>(
                 .and_then(|base| base.checked_mul(d_block_setup_stride))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
             let d_witness_coefficient = unit.e_coefficient_index(
-                group.role_dims.d_a(),
                 group.role_dims.d_d(),
                 group.num_claims,
                 group.depth_open,
@@ -496,7 +578,7 @@ fn build_group_role_tensors<E: FieldCore>(
                 d_relation_lane_start,
                 E::one(),
                 vec![
-                    EqPairTensorAxis::unit(group.depth_open, 1, group.d_ratio),
+                    EqPairTensorAxis::unit(group.depth_open, 1, group.d_relation_ratio),
                     EqPairTensorAxis::unit(
                         d_subcolumns,
                         group.depth_open,
@@ -539,7 +621,7 @@ fn build_group_role_tensors<E: FieldCore>(
                     b_relation_lane_start,
                     E::one(),
                     vec![
-                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_ratio),
+                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_relation_ratio),
                         EqPairTensorAxis::unit(
                             b_subcolumns,
                             group.depth_commit,
