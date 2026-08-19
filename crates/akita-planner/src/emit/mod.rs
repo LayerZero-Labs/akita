@@ -123,8 +123,16 @@ impl GroupedGenerationRequest {
         &self.precommitted_producers
     }
 
+    /// Offline sizing policies declared by the precommitted producers, in
+    /// opening order.
+    ///
+    /// Downstream catalog generators need these exact policies when invoking
+    /// their [`EmitSpec::regen_group_batch`] callback. Keeping them attached to
+    /// the request prevents mixed-source grouped catalogs from reconstructing
+    /// policy by inspecting commitment descriptors.
     #[cfg(feature = "catalog-gen")]
-    pub(crate) fn fold_policies(&self) -> Vec<HonestFoldPolicySpec> {
+    #[must_use]
+    pub fn fold_policies(&self) -> Vec<HonestFoldPolicySpec> {
         self.precommitted_producers
             .iter()
             .copied()
