@@ -176,7 +176,16 @@ another table or role.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
-One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. Recursive levels and dense roots use dense balanced-digit witness bounds.
+The committed-source class is declared by the preset, not inferred from a bound: a
+one-hot root uses a sparse committed-witness norm, while recursive levels and every
+balanced signed-digit root use dense balanced-digit witness bounds.
+
+`log_commit_bound` is a separate knob — the declared source coefficient bound,
+anywhere from `1` to the field width. It does not select the sizing rule; it sets
+the A-role digit depth `ceil(log_commit_bound / log_basis_inner)`, and through that
+the A input width, the SIS rank, and the next-level witness length. A bounded dense
+family (`fp128::DenseBounded`) differs from its full-width sibling in that parameter
+alone.
 
 ## Generated Tables
 

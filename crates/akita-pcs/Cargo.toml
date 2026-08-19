@@ -123,6 +123,7 @@ profile-onehot-fp128 = ["akita-config/schedules-fp128-onehot"]
 schedules-fp128-dense-multi-chunk = [
   "akita-config/schedules-fp128-dense-multi-chunk",
 ]
+schedules-fp128-dense-bounded = ["akita-config/schedules-fp128-dense-bounded"]
 schedules-fp128-onehot-multi-chunk = [
   "akita-config/schedules-fp128-onehot-multi-chunk",
 ]

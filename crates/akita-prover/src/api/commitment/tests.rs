@@ -354,6 +354,38 @@ fn sliced_b_images_match_independent_block_diagonal_oracle_for_all_counts() {
     }
 }
 
+/// Inner digit depth that actually represents an `Fp32` coefficient at
+/// `log_basis_inner = 2`.
+///
+/// The fixture used to declare a single base-4 digit, which cannot represent a
+/// 32-bit field element at all: the commitment silently truncated, and the test
+/// only passed because the production and reference paths truncated identically.
+/// The commit path now rejects a source outside its scheduled digit envelope, so
+/// the fixture states a depth consistent with the coefficients it commits.
+fn slice_fixture_num_digits_inner() -> usize {
+    akita_types::sis::compute_num_digits_field_width(32, 2)
+}
+
+/// Full-field balanced-digit contract matching the slice fixture's geometry.
+///
+/// `log_commit_bound == field_bits` is the unbounded endpoint, so the accepted
+/// interval is representability alone and the fixture keeps committing arbitrary
+/// field elements. The balanced-digit class imposes no structural requirement, so
+/// the dense fixture source is admissible. Both restrictive paths — a bounded
+/// declaration and the unit one-hot class — are covered by the `fp128` e2e tests,
+/// which own real catalogs.
+fn slice_fixture_contract() -> akita_types::sis::CommittedSourceContract {
+    akita_types::sis::CommittedSourceContract::try_new(
+        akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
+        akita_types::DecompositionParams {
+            log_basis: 2,
+            log_commit_bound: 32,
+            log_open_bound: Some(32),
+        },
+    )
+    .expect("full-field slice fixture contract")
+}
+
 fn commitment_params_for_slice_count(
     slice_count: akita_types::CommitmentSliceCount,
 ) -> CommittedGroupParams {
@@ -368,7 +400,7 @@ fn commitment_params_for_slice_count(
     );
     params.outer_slice_count = slice_count;
     params
-        .with_decomp(2, 16, 1, 1, 1)
+        .with_decomp(2, 16, slice_fixture_num_digits_inner(), 1, 1)
         .expect("unsliced commitment geometry")
 }
 
@@ -513,6 +545,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         &ctx,
         (&params).into(),
         &production_geometry,
+        slice_fixture_contract(),
     )
     .expect("production S=1 commitment");
     let (reference, compression_plan) =
@@ -555,6 +588,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
             &ctx,
             (&sliced_params).into(),
             &slice_geometry,
+            slice_fixture_contract(),
         )
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count

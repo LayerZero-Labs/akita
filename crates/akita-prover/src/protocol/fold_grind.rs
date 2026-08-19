@@ -592,7 +592,7 @@ where
         }
         let delta_fold = group.params.num_digits_fold();
         let (digit_negative_abs_bound, digit_positive_bound) =
-            akita_types::sis::fold_witness_representable_linf_bounds(
+            akita_types::sis::balanced_digit_representable_bounds(
                 group.params.log_basis_open(),
                 delta_fold,
             );
@@ -693,7 +693,7 @@ mod tests {
             CenteredFoldChunk::from_witness(&rejected_chunk),
             CenteredFoldChunk::from_witness(&accepted_chunk),
         ];
-        let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
+        let (neg_bound, pos_bound) = akita_types::sis::balanced_digit_representable_bounds(4, 2);
         let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound, None);
         assert!(accepts_fold_witness_flat(
             &acceptance,
@@ -725,7 +725,7 @@ mod tests {
             vec![CyclotomicRing::<F, D>::zero()],
             vec![[2022, 0, 0, 0]],
         );
-        let (neg_bound, pos_bound) = akita_types::sis::fold_witness_representable_linf_bounds(6, 2);
+        let (neg_bound, pos_bound) = akita_types::sis::balanced_digit_representable_bounds(6, 2);
         assert_eq!(neg_bound, 2080);
         assert_eq!(pos_bound, 2015);
         let acceptance = fold_grind_acceptance_ctx(neg_bound, pos_bound, None);
@@ -737,8 +737,7 @@ mod tests {
 
     #[test]
     fn digit_interval_accepts_both_endpoints_and_rejects_neighbors() {
-        let (negative_abs, positive) =
-            akita_types::sis::fold_witness_representable_linf_bounds(4, 2);
+        let (negative_abs, positive) = akita_types::sis::balanced_digit_representable_bounds(4, 2);
         let acceptance = fold_grind_acceptance_ctx(negative_abs, positive, None);
         let negative_abs = i32::try_from(negative_abs).unwrap();
         let positive = i32::try_from(positive).unwrap();

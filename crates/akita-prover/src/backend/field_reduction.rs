@@ -113,6 +113,32 @@ where
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         Ok(RootTensorProjectionView { poly: self })
     }
+
+    /// The projection's own coefficients are what get decomposed, so delegate to
+    /// the projected representation rather than to the logical source: tensor
+    /// packing combines base-field coefficients and can reach further than the
+    /// logical bound.
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: akita_field::CanonicalField,
+    {
+        match self {
+            Self::Dense(poly) => RootCommitSource::<F, D>::committed_centered_reach(
+                poly,
+                modulus,
+                centering_threshold,
+            ),
+            Self::Sparse(poly) => RootCommitSource::<F, D>::committed_centered_reach(
+                poly.as_ref(),
+                modulus,
+                centering_threshold,
+            ),
+        }
+    }
 }
 
 impl<F, const D: usize> RootOpeningSource<F, D> for RootTensorProjectionPoly<F>

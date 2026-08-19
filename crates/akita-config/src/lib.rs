@@ -68,8 +68,8 @@ macro_rules! impl_multi_chunk_companion {
             fn inner_basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::inner_basis_range()
             }
-            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-                <$base as $crate::CommitmentConfig>::root_honest_fold_policy()
+            fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+                <$base as $crate::CommitmentConfig>::committed_source_class()
             }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
@@ -140,7 +140,10 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
 
 /// Root group's source-specific policy for offline schedule generation.
 pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
-    Cfg::root_honest_fold_policy()
+    Cfg::committed_source_class().honest_fold_policy(
+        <Cfg::Field as CanonicalField>::modulus_bits(),
+        Cfg::EXT_DEGREE,
+    )
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -265,8 +268,35 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::opening_basis_range()
     }
 
-    /// Group-owned honest sizing rule used only during offline planning.
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec;
+    /// Declared committed-source class: what shape a source this config commits
+    /// must have.
+    ///
+    /// This is the **canonical** declaration. It is independent of
+    /// [`akita_types::DecompositionParams::log_commit_bound`], which declares how
+    /// *wide* a coefficient may be; neither may be inferred from the other. The
+    /// runtime commit path admits sources against this, and
+    /// [`honest_fold_policy_of`] is the offline projection of it.
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass;
+
+    /// This config's complete producer contract: declared class plus declared
+    /// bound, validated.
+    ///
+    /// The one value runtime admission reads. Both halves come from the
+    /// declarations above, so a config cannot present a class to one consumer and
+    /// a different one to another.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the declared decomposition or
+    /// class is not representable; see
+    /// [`akita_types::sis::CommittedSourceContract::try_new`].
+    fn committed_source_contract() -> Result<akita_types::sis::CommittedSourceContract, AkitaError>
+    {
+        akita_types::sis::CommittedSourceContract::try_new(
+            Self::committed_source_class(),
+            Self::decomposition(),
+        )
+    }
 
     /// Multi-chunk witness layout parameters for schedule planning and (future)
     /// prover orchestration.
@@ -463,13 +493,8 @@ mod tests {
             (3, 3)
         }
 
-        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-            akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-                akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
-                    32,
-                    akita_types::sis::FoldWitnessNorms::bounded(8, Self::D),
-                ),
-            )
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            akita_types::sis::CommittedSourceClass::BalancedSignedDigit
         }
     }
 
@@ -610,7 +635,7 @@ mod fp128_policy_tests {
         num_vars_values: &[usize],
     ) {
         for &num_vars in num_vars_values {
-            let group = match Cfg::root_honest_fold_policy() {
+            let group = match crate::honest_fold_policy_of::<Cfg>() {
                 akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
                     PolynomialGroupLayout::singleton(num_vars)
                 }

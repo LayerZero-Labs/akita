@@ -8,11 +8,13 @@ use crate::compute::{
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use crate::RootTensorProjectionPoly;
+use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
 };
+use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
@@ -339,11 +341,175 @@ where
     )
 }
 
+/// Reject a group whose sources are not the *representation* the schedule was
+/// priced against.
+///
+/// A schedule declares two independent things about its root
+/// ([`CommittedSourceContract`]): how wide a coefficient may be, and what shape
+/// the source has. Magnitude is checked by
+/// [`ensure_sources_fit_accepted_interval`]; this checks shape, which no
+/// coefficient interval can express.
+///
+/// Only the unit one-hot class is structurally restrictive, and the reason is
+/// sparsity rather than size: [`UnitOneHotFoldPolicy`] prices at most one hot
+/// position per `source_chunk_size` coefficients, so a *dense* source whose
+/// values all happen to be `0`/`1` satisfies the `[-4, 3]` digit envelope while
+/// carrying up to `source_chunk_size` times the modeled energy. Its commitment
+/// would enter proving with response caps that no longer bound the honest
+/// prover. The verifier's frozen caps still prevent an invalid proof from being
+/// accepted, so this is a completeness and grinding-budget break rather than a
+/// soundness one — but the producer boundary is where it has to be refused, not
+/// a later proof failure.
+///
+/// A one-hot source under a balanced-digit schedule is admissible in the other
+/// direction: its digit energy is strictly below what that schedule charges, so
+/// the pricing stays conservative.
+///
+/// This runs on the **logical** sources, before any root tensor projection: the
+/// class is a property of the caller's representation, and projection rewrites a
+/// one-hot into a dense or sparse projected form that no longer reports it.
+fn ensure_sources_match_declared_class<F, P>(
+    polys: &[P],
+    contract: CommittedSourceContract,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>,
+{
+    let Some(required_chunk_size) = contract.class().required_onehot_chunk_size() else {
+        return Ok(());
+    };
+    for poly in polys {
+        match RootPolyMeta::<F>::onehot_chunk_size(poly) {
+            Some(chunk_size) if chunk_size == required_chunk_size => {}
+            Some(chunk_size) => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "committed source is a unit one-hot representation with chunk size \
+                     {chunk_size}, but this schedule is priced for one hot position per \
+                     {required_chunk_size} coefficients"
+                )))
+            }
+            None => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "committed source is not a unit one-hot representation, but this schedule \
+                     is priced for one hot position per {required_chunk_size} coefficients; \
+                     a dense source can satisfy the digit envelope while carrying far more \
+                     energy than the frozen response caps allow"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reject a group whose sources fall outside the interval this commitment
+/// accepts.
+///
+/// The accepted interval is [`CommittedSourceContract::accepted_bounds`], the
+/// intersection of two independent constraints — see that method for the full
+/// statement. In short:
+///
+/// - **Representability**: the commitment stores `num_digits_inner` balanced
+///   base-`2^log_basis_inner` digits per coefficient and the decomposition kernel
+///   discards anything beyond that, so an out-of-range coefficient would be
+///   committed as a *different* value than the caller later opens.
+/// - **Declaration**: the schedule is *priced* for `log_commit_bound`, which is
+///   narrower than what those digits can represent because the depth rounds up.
+///   The planner charges a bounded source's final digit plane only the range its
+///   bound leaves, so a coefficient past the declaration inflates the level-1
+///   witness beyond the L2 response caps frozen into the recursion suffix.
+///
+/// Checking representability alone would admit up to 256x the declared bound at
+/// the shipped `log_basis_inner = 9` geometry, which is exactly how a too-narrow
+/// declaration ships silently. A full-field schedule constrains neither side and
+/// returns early without scanning, so unbounded configs pay nothing.
+///
+/// This is a **magnitude** test only. The source's *class* — whether it is the
+/// sparse representation the schedule's response caps were priced against — is
+/// checked separately by [`ensure_sources_match_declared_class`], because no
+/// coefficient interval can express per-chunk sparsity.
+///
+/// When root tensor projection is enabled this runs on the *projected* sources,
+/// because those are the coefficients that get decomposed — tensor packing
+/// combines base-field coefficients and can reach further than the logical
+/// source. The cost is that an out-of-range input pays for its projection before
+/// being rejected; checking the pre-projection source instead would be cheaper
+/// on the failure path but would police the wrong coefficients.
+///
+/// Both the early-out and the per-source comparison are stated against
+/// [`decompose_centering_threshold`] — the exact sign rule the decomposition uses.
+/// That matters: for a depth where `num_digits · log_basis == field_bits` (base 4,
+/// 16, or 256 on a 128-bit field) the threshold drops below `q / 2` precisely so
+/// that values above the shorter positive reach are centered negative instead,
+/// where the longer negative reach covers them. Testing against `q / 2` would
+/// declare those full-field depths uncovered and then reject valid field elements.
+fn ensure_sources_fit_accepted_interval<F, P, const D: usize>(
+    polys: &[P],
+    plan: CommitInnerPlan,
+    contract: CommittedSourceContract,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: RootCommitSource<F, D>,
+{
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let threshold =
+        decompose_centering_threshold(plan.num_digits_inner, plan.log_basis_inner, modulus);
+    // Exact reaches, not the saturating ones: a saturated lower bound would
+    // reject legitimate coefficients. `None` means the side is beyond every
+    // `u128` and so cannot be exceeded.
+    let (negative_reach, positive_reach) =
+        contract.accepted_bounds(plan.log_basis_inner, plan.num_digits_inner);
+    let exceeds = |negative_abs: u128, positive: u128| {
+        negative_reach.is_some_and(|reach| negative_abs > reach)
+            || positive_reach.is_some_and(|reach| positive > reach)
+    };
+    // Widest reach the threshold rule can produce over all of `[0, q)`.
+    if !exceeds(modulus.saturating_sub(threshold + 1), threshold) {
+        return Ok(());
+    }
+    // A `None` side reaches beyond every `u128`, so it cannot be the side that
+    // was exceeded; render it as such rather than leaking `Some`/`None` into a
+    // caller-facing error.
+    let render_reach = |reach: Option<u128>| match reach {
+        Some(value) => value.to_string(),
+        None => ">2^128".to_string(),
+    };
+    for poly in polys {
+        let (negative_abs, positive) =
+            RootCommitSource::<F, D>::committed_centered_reach(poly, modulus, threshold)?;
+        if exceeds(negative_abs, positive) {
+            return Err(AkitaError::InvalidInput(format!(
+                "committed source exceeds the scheduled bound: centered coefficients reach \
+                 [-{negative_abs}, {positive}] but a source declared at \
+                 log_commit_bound = {} and committed as {} balanced base-2^{} digits accepts \
+                 only [-{}, {}]",
+                contract.decomposition().log_commit_bound,
+                plan.num_digits_inner,
+                plan.log_basis_inner,
+                render_reach(negative_reach),
+                render_reach(positive_reach),
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Commit one group whose geometry has already been validated.
+///
+/// `contract` is the *config's* declared producer contract, not the row's. The
+/// row's own selected basis and depth come from `geometry`; the contract supplies
+/// the declared bound consumed by [`ensure_sources_fit_accepted_interval`]. It is
+/// threaded in from [`commit`] because class and bound are properties of the
+/// `Cfg`, and neither `CommittedGroupParams` nor `CommitInnerPlan` carries them —
+/// a committed row records the *consequences* (digit depth, matrix geometry),
+/// never the declarations they came from.
 fn commit_with_validated_geometry<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
     geometry: CommitmentGeometry<'_>,
     slice_geometry: &akita_types::CommitmentSliceGeometry,
+    contract: CommittedSourceContract,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore
@@ -382,6 +548,10 @@ where
         F,
         dims.d_a(),
         |D_A| {
+            // The accepted interval is an A-role property, so this belongs to the
+            // inner dispatch and runs once, before any commitment arithmetic
+            // touches the coefficients.
+            ensure_sources_fit_accepted_interval::<F, P, D_A>(polys, plan, contract)?;
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 F,
@@ -572,6 +742,14 @@ where
             (params, scheduled_row.profiles().final_group)
         };
 
+    // The config's canonical producer contract, read once and shared by both
+    // admission checks. It is validated at construction, so neither check has to
+    // defend against an unrepresentable declaration. The class check runs here, on
+    // the caller's logical sources, because root tensor projection below rewrites
+    // a one-hot source into a projected form that no longer reports it.
+    let contract = Cfg::committed_source_contract()?;
+    ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
+
     let slice_geometry =
         validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
     let geometry: CommitmentGeometry<'_> = params.into();
@@ -590,6 +768,7 @@ where
             stack.commit(),
             geometry,
             &slice_geometry,
+            contract,
         )?
     } else {
         commit_with_validated_geometry::<Cfg::Field, P, B>(
@@ -597,6 +776,7 @@ where
             stack.commit(),
             geometry,
             &slice_geometry,
+            contract,
         )?
     };
 

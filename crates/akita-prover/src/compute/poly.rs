@@ -13,6 +13,8 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// D-free shape metadata every root polynomial exposes.
 ///
@@ -103,6 +105,94 @@ where
 
     /// Borrow a commit view of this polynomial.
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError>;
+
+    /// Largest centered coefficient magnitudes this source commits, as
+    /// `(negative_abs_max, positive_max)`, under the balanced-decomposition sign
+    /// rule for `modulus` and `centering_threshold`.
+    ///
+    /// The commit path compares this reach against
+    /// [`akita_types::sis::CommittedSourceContract::accepted_bounds`] and rejects
+    /// the commitment when it falls outside. That interval intersects two
+    /// constraints: what `num_digits_inner` balanced digits can *represent* (the
+    /// kernel silently discards anything above it, so a truncation would bind a
+    /// different polynomial than the caller opens) and the bound the schedule was
+    /// *priced* for (see
+    /// [`akita_types::DecompositionParams::log_commit_bound`]). Only a bounded
+    /// committed source constrains either side.
+    ///
+    /// This answers the *magnitude* half of the contract only. The source's
+    /// class — whether it is the representation the schedule's response caps were
+    /// priced against — is a separate admission check that no coefficient reach
+    /// can express.
+    ///
+    /// `centering_threshold` comes from
+    /// `akita_algebra::ring::cyclotomic::decompose_centering_threshold`, so a
+    /// source reports its reach under exactly the sign rule its digits will be
+    /// produced with instead of a locally assumed one.
+    ///
+    /// Every source must answer: there is no safe default. Sources whose
+    /// representation is structurally inside every envelope (unit one-hot, or an
+    /// already-decomposed digit witness) report their small exact reach without
+    /// scanning. This is never called for a full-field depth, so an unbounded
+    /// source never pays for it.
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: CanonicalField;
+}
+
+/// Largest centered magnitudes over a flat field slice, as
+/// `(negative_abs_max, positive_max)`.
+///
+/// Shared by every dense-like [`RootCommitSource::committed_centered_reach`]
+/// implementation so the centering convention is written once: a canonical
+/// residue at or below `centering_threshold` is the positive side, anything above
+/// it is negative with magnitude `modulus - canonical`. That is the same split
+/// `akita_algebra::ring::cyclotomic::center_for_decomposition` applies. We track
+/// the magnitude directly rather than calling that helper because it is
+/// `pub(crate)` to `akita-algebra` and returns an `i128` centered value, which
+/// cannot hold the largest negative magnitude a full-width residue reaches
+/// (`modulus - canonical` can exceed `i128::MAX`); the range check needs the
+/// `u128` magnitude on each side.
+///
+/// This runs over the whole committed span before any commitment arithmetic, so
+/// at `nv = 26` it is ~2^26 canonical reductions. The rest of the commit path is
+/// rayon-parallel; keeping this serial would make the guard a visible sequential
+/// section in an otherwise parallel phase, so it folds in parallel under the
+/// `parallel` feature. Both reaches are commutative-associative maxima, so the
+/// reduction order does not affect the result.
+pub fn centered_reach_of_field_coeffs<F: FieldCore + CanonicalField>(
+    coeffs: &[F],
+    modulus: u128,
+    centering_threshold: u128,
+) -> (u128, u128) {
+    let fold = |(negative_abs_max, positive_max): (u128, u128), coeff: &F| {
+        let canonical = coeff.to_canonical_u128();
+        if canonical <= centering_threshold {
+            (negative_abs_max, positive_max.max(canonical))
+        } else {
+            (negative_abs_max.max(modulus - canonical), positive_max)
+        }
+    };
+    let combine =
+        |left: (u128, u128), right: (u128, u128)| (left.0.max(right.0), left.1.max(right.1));
+
+    #[cfg(feature = "parallel")]
+    {
+        coeffs
+            .par_iter()
+            .fold(|| (0u128, 0u128), fold)
+            .reduce(|| (0u128, 0u128), combine)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = combine;
+        coeffs.iter().fold((0u128, 0u128), fold)
+    }
 }
 
 /// Capability: expose borrowed opening views for the opening fold kernels.

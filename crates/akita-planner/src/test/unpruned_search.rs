@@ -313,7 +313,7 @@ pub(super) fn find_schedule(
                             &opening_layout,
                             honest_fold_policy,
                             &[],
-                            field_bits,
+                            policy.decomposition,
                         )?;
                         Some(crate::response_model::next_source_moment(
                             &root_params,

@@ -30,10 +30,10 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
         }
     }
     let precommitted_honest_fold_policies =
-        vec![Cfg::root_honest_fold_policy(); key.precommitteds.len()];
+        vec![akita_config::honest_fold_policy_of::<Cfg>(); key.precommitteds.len()];
     akita_planner::find_schedule(
         &key,
-        Cfg::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Cfg>(),
         &precommitted_honest_fold_policies,
         &akita_config::policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

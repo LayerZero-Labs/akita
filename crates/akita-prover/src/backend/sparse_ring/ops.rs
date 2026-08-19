@@ -77,6 +77,19 @@ where
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         Ok(SparseRingView { poly: self })
     }
+
+    /// Signed-sparse coefficients are validated to `-1` or `1` at construction,
+    /// so the reach is exact without scanning.
+    fn committed_centered_reach(
+        &self,
+        _modulus: u128,
+        _centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: akita_field::CanonicalField,
+    {
+        Ok((1, 1))
+    }
 }
 
 impl<F, const D: usize> RootOpeningSource<F, D> for SparseRingPoly<F>

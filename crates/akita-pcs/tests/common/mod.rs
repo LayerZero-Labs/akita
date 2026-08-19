@@ -371,6 +371,48 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     out
 }
 
+/// Signed `u64` evaluations: every centered magnitude is a full `u64`, on both
+/// signs.
+///
+/// This is the workload `fp128::DenseBounded` exists for, and it is deliberately
+/// *wider* than [`dense_field_evals`]: that generator draws `u64` magnitudes but
+/// only on the positive side, whereas a bounded source has to survive
+/// `-u64::MAX` too. Both endpoints are forced into every draw sequence by
+/// [`u64_magnitude_endpoints`], so a fixture can never drift into staying
+/// comfortably small.
+///
+/// A `u64` magnitude needs `log_commit_bound = 65`, not `64`: the bound is a
+/// *signed* bit width, so `k` means `[-2^(k-1), 2^(k-1) - 1]` and covering
+/// `u64::MAX = 2^64 - 1` takes one sign bit plus 64 magnitude bits.
+pub(super) fn u64_dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
+    let n = 1usize << nv;
+    let mut out = Vec::with_capacity(n);
+    let mut state = seed;
+    for index in 0..n {
+        // Seed the first few slots with the exact endpoints so the fixture always
+        // exercises them, then fill the rest with full-width draws.
+        if let Some(value) = u64_magnitude_endpoints().get(index) {
+            out.push(*value);
+            continue;
+        }
+        let draw = splitmix64_next(&mut state);
+        let magnitude = F::from_canonical_u128_reduced(u128::from(draw));
+        out.push(if draw & 1 == 0 { magnitude } else { -magnitude });
+    }
+    out
+}
+
+/// The centered endpoints a `u64` workload reaches: `±u64::MAX` and `±1`.
+///
+/// A bounded schedule must accept all of these. `-u64::MAX` is the interesting
+/// one — it is the widest *negative* centered magnitude, and balanced digits
+/// reach further negative than positive, so a guard stated only on the positive
+/// side would miss it.
+pub(super) fn u64_magnitude_endpoints() -> [F; 4] {
+    let max = F::from_canonical_u128_reduced(u128::from(u64::MAX));
+    [max, -max, F::one(), -F::one()]
+}
+
 pub(super) fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
     &schedule.root.params.final_group.commitment
 }

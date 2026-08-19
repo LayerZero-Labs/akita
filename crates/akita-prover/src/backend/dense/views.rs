@@ -65,6 +65,32 @@ where
         self.ring_coeffs::<D>()?;
         Ok(DenseView { poly: self })
     }
+
+    /// Exact scan of the committed ring view.
+    ///
+    /// A dense source carries arbitrary field elements, so this is the one root
+    /// representation that can exceed a bounded schedule's digit envelope. The
+    /// scan covers the same coefficients the commit view decomposes, physical
+    /// zero padding included (padding is centered zero and cannot raise either
+    /// reach).
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: akita_field::CanonicalField,
+    {
+        // `ring_coeffs` both validates `D` and pins the live prefix the commit
+        // kernel reads, so scanning its exact flat span keeps the check and the
+        // decomposition over the same coefficients.
+        let live_coeffs = self.ring_coeffs::<D>()?.len() * D;
+        Ok(crate::compute::centered_reach_of_field_coeffs(
+            &self.field_coeffs()[..live_coeffs],
+            modulus,
+            centering_threshold,
+        ))
+    }
 }
 
 impl<F, const D: usize> RootOpeningSource<F, D> for DensePoly<F>

@@ -55,11 +55,11 @@ pub use plans::RingSwitchRelationRows;
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{
-    CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
-    ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend,
-    RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
-    TensorBackendFor,
+    centered_reach_of_field_coeffs, CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor,
+    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend,
+    RingSwitchProveBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
+    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProvePoly,
+    RootTensorSource, TensorBackendFor,
 };
 pub use runtime_capabilities::{
     RootProveFlowBackend, RuntimeCommitBackendFor, RuntimeCommitSource,

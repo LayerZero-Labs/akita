@@ -243,6 +243,54 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_a);
 }
 
+/// The root digit depth must be the canonical depth for the declared bound.
+///
+/// A generated row carries its own root `num_digits_inner` and expansion replays
+/// it verbatim, so this is the only check tying the committed digits back to
+/// `log_commit_bound`. The mutation shrinks the depth *and* the A input width
+/// together, so the width-consistency check and the SIS rank audit both still
+/// pass — only the canonical-depth check can reject it. Without that check a row
+/// could silently accept a narrower witness space than the config declares, and
+/// an honest prover's in-bound polynomial would no longer be representable.
+#[test]
+fn resolved_row_audit_rejects_a_noncanonical_root_digit_depth() {
+    type Cfg = fp128::Dense;
+
+    let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
+    let entry = catalog.entries.first().expect("nonempty generated catalog");
+    let selected = resolve_generated_catalog_row_for_key(
+        &entry.to_runtime_lookup_key(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Some(catalog),
+    )
+    .expect("valid generated row");
+    let profiles = selected.profiles().clone();
+
+    let mut shallow = selected.schedule().clone();
+    let root = &mut shallow.root.params.final_group.commitment;
+    assert!(
+        root.num_digits_inner > 1,
+        "a full-width dense root must need more than one digit for this mutation"
+    );
+    let matrix = &root.inner_commit_matrix;
+    let table_key = matrix
+        .sis_table_key()
+        .expect("root A matrix must use the L infinity route");
+    let shallow_digits = root.num_digits_inner - 1;
+    root.inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
+        table_key.policy,
+        table_key.table_digest,
+        table_key.modulus_profile,
+        matrix.output_rank(),
+        root.num_positions_per_block * shallow_digits,
+        table_key.coeff_linf_bound,
+        table_key.ring_dimension as usize,
+    );
+    root.num_digits_inner = shallow_digits;
+    assert_mutated_row_is_rejected::<Cfg>(profiles, shallow);
+}
+
 #[test]
 fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
     type Cfg = fp128::Dense;
@@ -396,10 +444,10 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
         precommitteds: vec![pre_profile],
     };
-    let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
+    let precommitted_honest_fold_policies = vec![akita_config::honest_fold_policy_of::<Cfg>()];
     let planned = find_schedule(
         &key,
-        Cfg::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Cfg>(),
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -478,13 +526,12 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
             akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
                 Cfg::decomposition().field_bits(),
-                akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
             ),
         ),
     ];
     let planned = find_schedule(
         &key,
-        Cfg::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Cfg>(),
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
