@@ -17,14 +17,14 @@
 
 ## Summary
 
-Akita stores the same commitment parameters in **24** types and one trait. Each
-copy has its own validator, its own byte encoder, and an audit that compares it
-with the other copies. **Ten** of these audits compare a value with a copy of
-itself.
+Akita stores the same commitment parameters across **24** inventory entries, one
+of which is a trait (§2.1). Each copy has its own validator, its own byte
+encoder, and an audit that compares it with the other copies. **Ten** of these
+audits compare a value with a copy of itself.
 
-This document replaces those 24 types with **10**, and the `LevelParamsLike`
-trait with nothing. `FoldSchedule` keeps its shape and is not counted on either
-side. The reduction comes from one structural change:
+This document replaces those 24 entries with **10** types, and the
+`LevelParamsLike` trait with nothing. `FoldSchedule` keeps its shape and is not
+counted on either side. The reduction comes from one structural change:
 
 > **A fold owns one ordered list of groups. Every group has the same type.**
 
@@ -34,6 +34,12 @@ inside `ScheduledSetupPrefix`. All three are the same shape. `LevelParamsLike`
 exists only to hide that fact behind 22 methods. One list removes the trait, the
 two `CommitInnerPlan` constructors, the `CommitmentGeometry` view, ten mirror
 audits, and the recursive type cycle that stopped draft 1.
+
+Two types are also renamed, to state a group's two phases in its type name:
+`CommittedGroupProfile` becomes **`GroupCommitPhaseParams`** (§5.2), and the
+group type that replaces `PrecommittedLevelParams` is
+**`GroupOpenPhaseParams`** (§5.3). Neither rename changes a byte. See the note at
+the head of §2 for which name each part of this document uses.
 
 Draft 1 proposed one `CommitParams` type with a `CommitKind` enum. Draft 1 was
 rejected, and correctly so. This draft introduces **no kind enum, no `Option`
@@ -109,9 +115,9 @@ type is `ScheduledSetupPrefix` ([setup_prefix.rs:46](../crates/akita-types/src/p
 Two consequences. First, **draft 2 named the wrong type for deletion.**
 `SetupPrefixSlotId` must stay: [typed-schedule-topology-cutover.md:105](typed-schedule-topology-cutover.md#L105)
 names it the canonical runtime identity of a committed prefix, and it keys two
-`BTreeMap`s. `ScheduledSetupPrefix` is the type that absorbs into `GroupParams`,
+`BTreeMap`s. `ScheduledSetupPrefix` is the type that absorbs into `GroupOpenPhaseParams`,
 and `SetupPrefixSlotId` is then **derived** from a group by
-`GroupParams::slot_id()`. Second, the draft-1 `E0072` cycle is already broken by
+`GroupOpenPhaseParams::slot_id()`. Second, the draft-1 `E0072` cycle is already broken by
 this split, so §6's cycle proof is now history rather than a live constraint.
 §6 keeps only the part that still binds: static constructibility.
 
@@ -221,6 +227,15 @@ resolved by structure, not by argument.
 
 ## 2. What the code holds today
 
+> **Which name to grep for.** Two types are renamed by this plan, and the two
+> names both appear in this document on purpose. `CommittedGroupProfile` becomes
+> `GroupCommitPhaseParams` (§5.2); `PrecommittedLevelParams` becomes
+> `GroupOpenPhaseParams` (§5.3). Sections that describe the tree **as it is
+> today** — §0, this section, the "Location today" column of §9, §10.1, and §15 —
+> use the names that exist in the tree, so a reader can grep. Everything
+> describing the **target** uses the new names. Where a table spans both, the
+> cell reads `old` → `new`.
+
 The whole problem is in the first four rows below. Each holds the same block
 geometry, the A role, and the B role.
 
@@ -264,14 +279,14 @@ trait", which double-counts the trait row; the arithmetic is otherwise the same.
 
 | Type | Location | Owner or mirror | Surface | Validation boundary | `Copy` / const needed | Fate |
 |---|---|---|---|---|---|---|
-| `CommittedGroupProfile` | `schedule/profiles.rs:84` | owner | public wire + descriptor + generated static | `validate`, `validate_root_geometry`, `validate_frozen_precommit`, wire deserialize | **both** | kept, restructured (§5.2) |
-| `CommittedGroupParams` | `layout/params.rs:87` | owner, plus 1 mirror field (`setup_prefix`) | descriptor + runtime | `validate_commitment_request`, expansion re-audit | neither | split into `FoldParams` + `GroupParams` |
-| `PrecommittedLevelParams` | `layout/params/precommitted.rs:165` | owner | descriptor + runtime | `admit`, `validate` | neither | becomes `GroupParams` (§5.3) |
-| `GroupOpeningPlan` | `layout/params/precommitted.rs:112` | owner | descriptor + runtime + generated static | through `PrecommittedLevelParams::validate` | **both** | kept verbatim as `GroupParams::opening` |
+| `CommittedGroupProfile` | `schedule/profiles.rs:84` | owner | public wire + descriptor + generated static | `validate`, `validate_root_geometry`, `validate_frozen_precommit`, wire deserialize | **both** | kept; renamed to `GroupCommitPhaseParams` and restructured (§5.2) |
+| `CommittedGroupParams` | `layout/params.rs:87` | owner, plus 1 mirror field (`setup_prefix`) | descriptor + runtime | `validate_commitment_request`, expansion re-audit | neither | split into `FoldParams` + `GroupOpenPhaseParams` |
+| `PrecommittedLevelParams` | `layout/params/precommitted.rs:165` | owner | descriptor + runtime | `admit`, `validate` | neither | becomes `GroupOpenPhaseParams` (§5.3) |
+| `GroupOpeningPlan` | `layout/params/precommitted.rs:112` | owner | descriptor + runtime + generated static | through `PrecommittedLevelParams::validate` | **both** | kept verbatim as `GroupOpenPhaseParams::opening` |
 | `OpeningMethod` | `layout/params/precommitted.rs:17` | owner | descriptor + runtime + generated static | `validate_level_opening_execution` | **both** | kept, unchanged |
 | `CommittedSourceEncoding` | `schedule/profiles.rs:17` | owner, plus 1 hard-coded copy | descriptor + runtime | `validate`, `validate_level_opening_execution` | **both** | kept; moves to `FoldParams` (§5.4, §7.2) |
-| `ScheduledSetupPrefix` | `proof/setup_prefix.rs:46` | owner | descriptor + runtime | `validate_structure` | neither | deleted, merged into `GroupParams` |
-| `SetupPrefixSlotId` | `proof/setup_prefix.rs:37` | owner | registry key + wire | `Valid::check` | neither | **kept**; derived by `GroupParams::slot_id()` |
+| `ScheduledSetupPrefix` | `proof/setup_prefix.rs:46` | owner | descriptor + runtime | `validate_structure` | neither | deleted, merged into `GroupOpenPhaseParams` |
+| `SetupPrefixSlotId` | `proof/setup_prefix.rs:37` | owner | registry key + wire | `Valid::check` | neither | **kept**; derived by `GroupOpenPhaseParams::slot_id()` |
 | `TerminalCommittedGroupParams` | `schedule.rs:108` | owner | descriptor + generated | `try_from_expanded_group` | neither | merged into `TerminalFoldParams` |
 | `RootFinalGroupParams` | `schedule.rs:61` | pass-through (1 field) | runtime | none | neither | deleted |
 | `RootPrecommittedGroupParams` | `schedule.rs:66` | mirror (`descriptor` = `commitment.layout`) | runtime | `audit.rs:519`, `:520` | neither | deleted |
@@ -490,7 +505,7 @@ against the checked-in SIS table, exactly as the macro does today.
 /// group-owned roles. A group's D digits, opening method, and fold challenge
 /// family are chosen by the fold that opens it, so they are not here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CommittedGroupProfile {
+pub struct GroupCommitPhaseParams {
     pub version: u8,
     pub group: PolynomialGroupLayout,
     pub blocks: BlockGeometry,
@@ -500,8 +515,17 @@ pub struct CommittedGroupProfile {
 }
 ```
 
-Same name, same wire bytes, same `Copy`, same 288 bytes as today. Only the field
-grouping changes: 12 flat fields become 6 nested ones. `VERSION` stays `4`.
+**This type is today's `CommittedGroupProfile`, renamed.** Same wire bytes, same
+`Copy`, same 288 bytes, same `VERSION` of `4`. Only the field grouping changes —
+12 flat fields become 6 nested ones — and the name.
+
+The rename pairs this type with `GroupOpenPhaseParams` in §5.3 and states the
+commit/open split in the type names: this type holds what the **commit** step
+fixes and freezes, and §5.3's holds what the **opening** fold decides. A rename
+changes no descriptor bytes and no digest, so §10.2's byte-preservation property
+is unaffected. It does rewrite all 30 struct literals in the 13 generated
+catalogs and the emitter that writes them, so it lands in step 4 with the other
+`GroupCommitPhaseParams` restructuring and a single regeneration.
 
 ### 5.3 A group inside one fold's opening batch
 
@@ -512,9 +536,9 @@ grouping changes: 12 flat fields become 6 nested ones. `VERSION` stays `4`.
 /// group, and the setup prefix. The fold owns the shared D matrix; a group
 /// owns only its contribution of D digits, through `opening`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GroupParams {
+pub struct GroupOpenPhaseParams {
     /// Frozen commit-time identity of this group.
-    pub profile: CommittedGroupProfile,
+    pub profile: GroupCommitPhaseParams,
     /// Opening policy chosen by the fold that consumes this group. Unchanged
     /// from today's `GroupOpeningPlan`: opening method, fold challenge family,
     /// `log_basis_open`, `num_digits_open`, `num_digits_fold`.
@@ -526,7 +550,7 @@ pub struct GroupParams {
     pub setup_natural_len: Option<usize>,
 }
 
-impl GroupParams {
+impl GroupOpenPhaseParams {
     /// Registry identity for a prefix group. `None` for an ordinary group.
     ///
     /// `SetupPrefixSlotId` stays the runtime registry key (§0.5); it is now
@@ -539,7 +563,7 @@ impl GroupParams {
 }
 ```
 
-`GroupParams` is `Copy`: `CommittedGroupProfile`, `GroupOpeningPlan`, and
+`GroupOpenPhaseParams` is `Copy`: `GroupCommitPhaseParams`, `GroupOpeningPlan`, and
 `Option<usize>` are all `Copy` today. Sites pass it by value.
 
 `setup_natural_len` is not a tag beside a payload. It **is** the payload. A
@@ -549,7 +573,27 @@ is no audit.
 
 This is the smallest of the five type changes: `profile` renames `layout`,
 `opening` is untouched, and one `Option<usize>` arrives. `ScheduledSetupPrefix`
-disappears into it.
+disappears into it. The type is today's `PrecommittedLevelParams`; draft 2 and
+draft 3 called the target `GroupParams`.
+
+**On the two names.** `GroupCommitPhaseParams` and `GroupOpenPhaseParams` name the
+two halves of a group's lifecycle: what the commit step freezes, and what the
+consuming fold decides when it opens. Two consequences a reader should hold onto.
+
+First, the two types are **not siblings**. `GroupOpenPhaseParams` *contains* a
+`GroupCommitPhaseParams`, in its `profile` field. The parallel names describe the
+two phases, not two peers, and the containment is the point: a group carries its
+frozen commit-phase identity into whichever fold opens it.
+
+Second, `GroupOpenPhaseParams` therefore holds **both** phases — commit-phase data
+in `profile`, open-phase policy in `opening`. It is named for the phase in which
+it is assembled, not for the only kind of data it holds.
+
+The field names `profile` and `opening` are kept as they are. `profile` now reads
+slightly against its type name, and `opening: GroupOpeningPlan` sits inside a type
+whose name also says "open". Renaming the fields to match — `commit` and `open`,
+say — would touch every destination path in §12.2 and is left as a separate
+decision, not folded into this plan.
 
 ### 5.4 One fold level
 
@@ -565,7 +609,7 @@ pub struct FoldParams {
     ///
     /// The last entry is the final/new group. Earlier entries are precommitted.
     /// A setup prefix, when present, is `groups[0]`.
-    pub groups: Vec<GroupParams>,
+    pub groups: Vec<GroupOpenPhaseParams>,
     /// The shared D matrix over every group's `w_hat` segment.
     pub open_matrix: OpenCommitMatrixParams,
     pub witness_chunk: ChunkedWitnessCfg,
@@ -575,14 +619,14 @@ pub struct FoldParams {
 
 impl FoldParams {
     /// The final/new group. `Err` when `groups` is empty.
-    pub fn final_group(&self) -> Result<&GroupParams, AkitaError>;
+    pub fn final_group(&self) -> Result<&GroupOpenPhaseParams, AkitaError>;
     /// The incoming setup prefix, when this fold consumes one.
-    pub fn setup_prefix(&self) -> Option<&GroupParams>;
+    pub fn setup_prefix(&self) -> Option<&GroupOpenPhaseParams>;
     /// Presence of the incoming prefix is the canonical statement that the
     /// predecessor offloaded its setup contribution.
     pub fn predecessor_setup_contribution_mode(&self) -> SetupContributionMode;
     /// A group's A/B dimensions with this fold's shared D dimension.
-    pub fn role_dims(&self, group: &GroupParams) -> CommitmentRingDims;
+    pub fn role_dims(&self, group: &GroupOpenPhaseParams) -> CommitmentRingDims;
     /// Source encoding of `groups[index]`: this fold's own for the final group,
     /// `CanonicalCoefficientTable` for every earlier group.
     pub fn source_encoding_of(&self, index: usize) -> CommittedSourceEncoding;
@@ -635,7 +679,7 @@ impl TerminalFoldParams {
     /// `group` supplies the block geometry, the inner role, and the challenge
     /// family, so none of the three is a separate argument.
     pub fn admit(
-        group: &GroupParams,
+        group: &GroupOpenPhaseParams,
         response_shape: TerminalResponseShape,
         input_witness_len: usize,
     ) -> Result<(Self, Option<u128>), AkitaError>;
@@ -694,19 +738,19 @@ recomposes the first.
 DAG:
 
 ```text
-FoldParams  → Vec<GroupParams>              (heap, and not the cycle anyway)
-FoldParams  → OpenCommitMatrixParams        → SisTableKey → scalars
-GroupParams → CommittedGroupProfile         → RoleParams<M> → matrix → scalars
-GroupParams → GroupOpeningPlan              → SparseChallengeConfig, scalars
-GroupParams → Option<usize>                 → scalars
-TerminalFoldParams → BlockGeometry, InnerRoleParams, GadgetDigits,
-                     TerminalResponseShape
+FoldParams           → Vec<GroupOpenPhaseParams>   (heap, and not the cycle anyway)
+FoldParams           → OpenCommitMatrixParams      → SisTableKey → scalars
+GroupOpenPhaseParams → GroupCommitPhaseParams      → RoleParams<M> → matrix → scalars
+GroupOpenPhaseParams → GroupOpeningPlan            → SparseChallengeConfig, scalars
+GroupOpenPhaseParams → Option<usize>               → scalars
+TerminalFoldParams   → BlockGeometry, InnerRoleParams, GadgetDigits,
+                       TerminalResponseShape
 ```
 
-`CommittedGroupProfile` is a leaf: every field is a scalar or a `Copy` leaf
-struct. No type reachable from it names `GroupParams` or `FoldParams`.
-`SetupPrefixSlotId` already reaches only `CommittedGroupProfile`, so deriving it
-from a `GroupParams` adds no edge. Every type is finite-sized without `Box`.
+`GroupCommitPhaseParams` is a leaf: every field is a scalar or a `Copy` leaf
+struct. No type reachable from it names `GroupOpenPhaseParams` or `FoldParams`.
+`SetupPrefixSlotId` already reaches only `GroupCommitPhaseParams`, so deriving it
+from a `GroupOpenPhaseParams` adds no edge. Every type is finite-sized without `Box`.
 **No allocation is added anywhere.**
 
 **Static constructibility.** The 13 generated tables embed **30**
@@ -723,11 +767,11 @@ This draft keeps that:
 | `InnerCommitMatrixParams` | yes | `const fn new_unchecked` (kept) | yes |
 | `LinfCommitMatrix<R>` | yes | `const fn new_unchecked` (kept) | yes |
 | `RoleParams<M>` | yes | public fields | yes |
-| `CommittedGroupProfile` | yes | public fields | yes |
+| `GroupCommitPhaseParams` | yes | public fields | yes |
 | `GroupOpeningPlan` | yes | public fields (already in a `static`) | yes |
 | `OpeningMethod` | yes | enum literal (already in a `static`) | yes |
 | `CommittedSourceEncoding` | yes | enum literal | no |
-| `GroupParams` | yes | public fields | no — expanded at run time |
+| `GroupOpenPhaseParams` | yes | public fields | no — expanded at run time |
 | `FoldParams` | no (`Vec`) | not required | no |
 | `TerminalFoldParams` | no (`Vec` in response shape) | not required | no |
 
@@ -750,16 +794,16 @@ Every field that has two or more owners today gets exactly one owner.
 | Field | Owners today | Single owner after | Deleted mirror(s) |
 |---|---|---|---|
 | Shared D matrix | `CommittedGroupParams::open_commit_matrix`, `RootFoldParams::open_commit_matrix`, `RecursiveFoldParams::open_commit_matrix` | `FoldParams::open_matrix` | 2 fields, audits `:503`, `:550` |
-| Fold challenge family | `CommittedGroupParams::fold_challenge_config`, `GroupOpeningPlan::fold_challenge_config`, `RootFoldParams::sparse_challenge_config`, `RecursiveFoldParams::sparse_challenge_config` | `GroupParams::opening.fold_challenge_config`, per group | 2 fields, no audit existed |
+| Fold challenge family | `CommittedGroupParams::fold_challenge_config`, `GroupOpeningPlan::fold_challenge_config`, `RootFoldParams::sparse_challenge_config`, `RecursiveFoldParams::sparse_challenge_config` | `GroupOpenPhaseParams::opening.fold_challenge_config`, per group | 2 fields, no audit existed |
 | Witness chunking | `CommittedGroupParams::witness_chunk`, `RootFoldParams::witness_partition`, `RecursiveFoldParams::witness_partition` | `FoldParams::witness_chunk` | 2 fields + `WitnessPartition` type, no audit existed |
 | Precommitted groups | `CommittedGroupParams::precommitted_groups`, `RootFoldParams::precommitted_groups`, the lookup key's `precommitteds` | `FoldParams::groups` | 1 field, audits `:502`, `:504` |
-| Frozen group descriptor | `RootPrecommittedGroupParams::descriptor`, `…::commitment.layout` | `GroupParams::profile` | 1 field, audits `:519`, `:520`, `:521` |
+| Frozen group descriptor | `RootPrecommittedGroupParams::descriptor`, `…::commitment.layout` | `GroupOpenPhaseParams::profile` | 1 field, audits `:519`, `:520`, `:521` |
 | Setup prefix | `CommittedGroupParams::setup_prefix`, `RecursiveFoldParams::incoming_setup_prefix` | `FoldParams::groups[0].setup_natural_len` | 2 fields + `ScheduledSetupPrefix` type, check `schedule.rs:440` |
 | Setup-prefix opening plan | `GeneratedSetupPrefixInput::opening`, re-derived by expansion | derived only | 1 field, audits `expand.rs:95`, `:96`, `:116` |
 | Final group geometry and roles | `CommittedGroupParams` flat fields, and a copy in `CommittedGroupProfile::from_params_fields` | `FoldParams::groups.last()` | `RootFinalGroupParams`, the `from_params_fields` copy |
 | Source encoding | `CommittedGroupParams::source_encoding`, hard-coded in the `PrecommittedLevelParams` trait arm | `FoldParams::source_encoding` (§7.2) | 1 hard-coded arm |
 | Block index bit widths | duplicated formula in `CommittedGroupParams` and both `LevelParamsLike` impls | `BlockGeometry` methods | 2 duplicate formulas |
-| Opening basis dominance check | `PrecommittedLevelParams::admit:236` **and** `validate:342` | `GroupParams::validate` | 1 duplicate check |
+| Opening basis dominance check | `PrecommittedLevelParams::admit:236` **and** `validate:342` | `GroupOpenPhaseParams::validate` | 1 duplicate check |
 | Certified terminal response cap | `certified_response_linf_cap` and `terminal_response_linf_limit_for_params`, which **disagree** | one function (§16) | 1 divergent copy |
 
 ### 7.1 On the setup prefix, specifically
@@ -828,7 +872,7 @@ Two remedies exist. This plan takes the cheaper one.
   describes the fold's own new witness. `source_encoding_of(index)` returns
   `CanonicalCoefficientTable` for every non-final group. The hard-coded trait arm
   disappears and profile bytes do not move.
-- **Not taken: move `source_encoding` onto `CommittedGroupProfile`.** This is
+- **Not taken: move `source_encoding` onto `GroupCommitPhaseParams`.** This is
   arguably more honest, and it would let the rejection live at the
   standalone-commit boundary where it belongs. It costs a profile version bump
   from 4 to 5, new profile bytes, a new `key_digest` for all 13 catalogs, and it
@@ -836,8 +880,8 @@ Two remedies exist. This plan takes the cheaper one.
   on. Record it as a follow-up, not as part of this change.
 
 One prerequisite either way: under §5.4 the fold's final group is a
-`GroupParams` with a `profile`. A recursive fold whose witness uses
-`TensorSubfieldProjection` therefore needs a `CommittedGroupProfile` that
+`GroupOpenPhaseParams` with a `profile`. A recursive fold whose witness uses
+`TensorSubfieldProjection` therefore needs a `GroupCommitPhaseParams` that
 `try_from_params` currently refuses to build. Move that rejection out of the
 constructor and into `validate_frozen_precommit` — the precommit admission
 boundary — where the rule "a standalone commitment must be canonical" actually
@@ -892,16 +936,16 @@ Every check that exists today has a named destination. No check is dropped.
 
 | Check today | Location today | Destination |
 |---|---|---|
-| version equality; both matrix `validate`s; power-of-two A/B dims with `d_b \| d_a`; digit kernel exists; depth within field width; nonzero outer basis and depth; slice-count admissibility; `field_bits` agreement; exact A width; exact B width via `CommitmentSliceGeometry` | `CommittedGroupProfile::validate` (`profiles.rs:189`) | `CommittedGroupProfile::validate(field_bits)`, unchanged, plus geometry below |
-| `N · d_a == 2^num_vars`; `M` power of two; `B == ceil(N / M)` | `validate_root_geometry` (`profiles.rs:262`) | `M`/`B` go to `BlockGeometry::validate`; `N · d_a == 2^num_vars` stays on `CommittedGroupProfile::validate` |
+| version equality; both matrix `validate`s; power-of-two A/B dims with `d_b \| d_a`; digit kernel exists; depth within field width; nonzero outer basis and depth; slice-count admissibility; `field_bits` agreement; exact A width; exact B width via `CommitmentSliceGeometry` | `CommittedGroupProfile::validate` (`profiles.rs:189`) | `GroupCommitPhaseParams::validate(field_bits)`, unchanged, plus geometry below |
+| `N · d_a == 2^num_vars`; `M` power of two; `B == ceil(N / M)` | `validate_root_geometry` (`profiles.rs:262`) | `M`/`B` go to `BlockGeometry::validate`; `N · d_a == 2^num_vars` stays on `GroupCommitPhaseParams::validate` |
 | conjunction of the two above | `validate_frozen_precommit` (`profiles.rs:301`) | **kept.** Draft 2 said "deleted". That was wrong: it is the entry point for the `CommittedGroup<F>` wire deserialize (`proof/commitment.rs:207` and `:459` — two sites, not one) and for `PrecommittedLevelParams::admit` |
 | standalone commitments require a canonical source encoding | `CommittedGroupProfile::try_from_params:125` | `validate_frozen_precommit`, so an in-fold final-group profile can carry a tensor projection (§7.2) |
 | digit kernel and depth-within-field-width | `CommittedGroupProfile::validate` and `expand.rs`, twice | `GadgetDigits::validate(field_bits)`, one place |
 | **exact** A digit depth equals `ceil(log_commit_bound / log_basis_inner)`, with the root distinguished from recursive levels | `audit_committed_params` (`audit.rs:216-230`), added by #407 | **kept, unchanged**, in `akita-schedules`; reads `groups.last()`. Not a mirror audit: `num_digits_inner` already has one owner. `GadgetDigits::validate` gives only the field-width bound and cannot replace this (§0.9, §5.1) |
-| opening basis dominates the frozen outer basis | `PrecommittedLevelParams::admit:236` **and** `validate:342` | `GroupParams::validate`, once |
-| A and B bounds cover the certified opening basis; frozen B bound covers its own basis; outer digit depth matches its frozen basis; modulus-profile agreement; A is not an L2 route | `PrecommittedLevelParams::admit:205-280` | `GroupParams::admit`, unchanged |
-| fold-challenge family validates for the A ring or the packing subring | `PrecommittedLevelParams::validate:322-333` | `GroupParams::validate`, unchanged |
-| `natural_len != 0`; `natural_len <= n_prefix`; `d_setup() != 0`; `n_prefix % d_setup() == 0`; prefix slice-count admissibility | `FoldSchedule::validate_structure:445-466` | `GroupParams::validate`, which owns the field |
+| opening basis dominates the frozen outer basis | `PrecommittedLevelParams::admit:236` **and** `validate:342` | `GroupOpenPhaseParams::validate`, once |
+| A and B bounds cover the certified opening basis; frozen B bound covers its own basis; outer digit depth matches its frozen basis; modulus-profile agreement; A is not an L2 route | `PrecommittedLevelParams::admit:205-280` | `GroupOpenPhaseParams::admit`, unchanged |
+| fold-challenge family validates for the A ring or the packing subring | `PrecommittedLevelParams::validate:322-333` | `GroupOpenPhaseParams::validate`, unchanged |
+| `natural_len != 0`; `natural_len <= n_prefix`; `d_setup() != 0`; `n_prefix % d_setup() == 0`; prefix slice-count admissibility | `FoldSchedule::validate_structure:445-466` | `GroupOpenPhaseParams::validate`, which owns the field |
 | setup-prefix mirror agreement | `validate_structure:440` | **deleted** — there is no mirror |
 | root payload is compressed | `validate_structure:372` | unchanged |
 | root A route must be `Linf` | `audit.rs:488` | unchanged; reads `groups.last()` |
@@ -916,13 +960,13 @@ Every check that exists today has a named destination. No check is dropped.
 | terminal L2 route carries no independent Linf cap; Linf route carries a nonzero cap within its certified capacity | `validate_terminal_linf_cap:240` | `TerminalFoldParams::validate_terminal_linf_cap`, one fewer argument |
 | A-role check on the inner matrix; L2 route rejected | `terminal_response_linf_limit_for_params:405` | `TerminalFoldParams::certified_response_linf_cap` |
 | `i16::MAX` representation clamp | `certified_response_linf_cap:235` only | same single function, after §16 resolves the divergence |
-| wire: version; tag well-formedness; role identity; SIS rank re-audit; geometry; slice-count source coefficients; untrusted-coefficient allocation cap; payload consistency | `CommittedGroup<F>` deserialize (`proof/commitment.rs:443-489`) | unchanged. The wire form is byte-identical and constructs `CommittedGroupProfile` only |
+| wire: version; tag well-formedness; role identity; SIS rank re-audit; geometry; slice-count source coefficients; untrusted-coefficient allocation cap; payload consistency | `CommittedGroup<F>` deserialize (`proof/commitment.rs:443-489`) | unchanged. The wire form is byte-identical and constructs `GroupCommitPhaseParams` only |
 | mirror equality audits | `audit.rs:502`, `:503`, `:504`, `:519`, `:520`, `:521`, `:550`; `schedule.rs:440`; `expand.rs:95`, `:96`, `:116` | **deleted** — single owners |
 | shared-D width; shared-D basis; terminal audit | `audit.rs:206`, `:256`, `audit_terminal` | kept; read `FoldParams::groups` |
 | generated expansion re-audits rank against the SIS table | `expand.rs`, 3 parallel paths | one `expand_group`, same checks (§11) |
 
 The original review asked whether a wire boundary must prove it built the frozen
-case. It does not have to prove anything: `CommittedGroupProfile` is the only
+case. It does not have to prove anything: `GroupCommitPhaseParams` is the only
 type the wire encoder accepts, and no `FoldParams` or `TerminalFoldParams` can
 appear there. There is no case to reject because there is no enum.
 
@@ -973,7 +1017,7 @@ byte-neutral everywhere. The profile's `(basis, depth, matrix)` grouping matches
 - `RoleParams<M>` bytes as `basis, depth, matrix`.
 - `GroupOpeningPlan` bytes. Its encoder (`precommitted.rs:151`) already exists
   and is unchanged.
-- **`CommittedGroupProfile` bytes and wire form.** Its declared field order in
+- **`GroupCommitPhaseParams` bytes and wire form.** Its declared field order in
   §5.2 reproduces today's order exactly. `version` stays `4`.
 
 This is worth the constraint. Profile bytes reach the catalog `key_digest`
@@ -992,7 +1036,7 @@ field is set from `entries_key_digest` at
 [catalog_identity.rs:230](../crates/akita-schedules/src/catalog_identity.rs#L230).
 Draft 2 conflated the two.
 
-**Changed once, deliberately:** `GroupParams`, `FoldParams`,
+**Changed once, deliberately:** `GroupOpenPhaseParams`, `FoldParams`,
 `TerminalFoldParams`, `FoldSchedule`. Their storage no longer matches the old
 layout, so their bytes cannot. Required with the break:
 
@@ -1002,7 +1046,7 @@ layout, so their bytes cannot. Required with the break:
 | `SCHEDULE_ROW_DOMAIN_V2` | `akita-types/src/schedule_selection.rs:16` | `b"akita/schedule-row/v2"` | `…/v3`, renamed to `_V3` |
 | `FoldSchedule` leading descriptor byte | `schedule/descriptor.rs:38`, `:72` | `1` | `2` |
 | `TerminalFoldDescriptor` tag byte | `schedule/descriptor.rs:196` | `3` | `3`, unchanged |
-| `CommittedGroupProfile::VERSION` | `schedule/profiles.rs:113` | `4` | `4`, unchanged |
+| `GroupCommitPhaseParams::VERSION` | `schedule/profiles.rs:113` | `4` | `4`, unchanged |
 | `SETUP_PREFIX_CONTENT_TAG` | `proof/setup_prefix.rs:25` | `b"SPF4"` | unchanged, still inside the slot-id encoding |
 
 `SCHEDULE_ROW_DOMAIN_V2` lives in **`akita-types`**, not `akita-config`. Both
@@ -1039,26 +1083,26 @@ order is protocol-visible.
 The resulting orders:
 
 ```text
-GadgetDigits          := log_basis:u32, num_digits:u64
-BlockGeometry         := N:u64, M:u64, B:u64
+GadgetDigits            := log_basis:u32, num_digits:u64
+BlockGeometry           := N:u64, M:u64, B:u64
 InnerCommitMatrixParams := unchanged (route-tagged, 5 or 8 items)
-LinfCommitMatrix<R>   := unchanged (8 items)
-RoleParams<M>         := GadgetDigits, matrix
-CommittedGroupProfile := version:u8, num_vars:u64, num_polynomials:u64,
-                         BlockGeometry, CommitmentSliceCount,
-                         RoleParams<Inner>, RoleParams<Outer>
-GroupOpeningPlan      := unchanged (opening_method, log_basis_open,
-                         sparse_challenge, num_digits_open, num_digits_fold)
-GroupParams           := CommittedGroupProfile, GroupOpeningPlan,
-                         has_prefix:u8, [b"SPF4", setup_natural_len:u64]
-FoldParams            := payload_mode:u8, source_encoding, groups.len():u64,
-                         groups…, LinfCommitMatrix<Open>, ChunkedWitnessCfg,
-                         input_witness_len:u64, output_witness_len:u64
-TerminalFoldParams    := BlockGeometry, RoleParams<Inner>, GadgetDigits(fold),
-                         sparse_challenge, TerminalResponseShape,
-                         input_witness_len:u64
-FoldSchedule          := 2u8, FoldParams(root), recursive.len():u64,
-                         recursive…, TerminalFoldParams
+LinfCommitMatrix<R>     := unchanged (8 items)
+RoleParams<M>           := GadgetDigits, matrix
+GroupCommitPhaseParams  := version:u8, num_vars:u64, num_polynomials:u64,
+                           BlockGeometry, CommitmentSliceCount,
+                           RoleParams<Inner>, RoleParams<Outer>
+GroupOpeningPlan        := unchanged (opening_method, log_basis_open,
+                           sparse_challenge, num_digits_open, num_digits_fold)
+GroupOpenPhaseParams    := GroupCommitPhaseParams, GroupOpeningPlan,
+                           has_prefix:u8, [b"SPF4", setup_natural_len:u64]
+FoldParams              := payload_mode:u8, source_encoding, groups.len():u64,
+                           groups…, LinfCommitMatrix<Open>, ChunkedWitnessCfg,
+                           input_witness_len:u64, output_witness_len:u64
+TerminalFoldParams      := BlockGeometry, RoleParams<Inner>, GadgetDigits(fold),
+                           sparse_challenge, TerminalResponseShape,
+                           input_witness_len:u64
+FoldSchedule            := 2u8, FoldParams(root), recursive.len():u64,
+                           recursive…, TerminalFoldParams
 ```
 
 `GroupOpeningPlan`'s own order is kept as written rather than normalized,
@@ -1107,7 +1151,7 @@ pub struct GeneratedGroup {
     pub opening_method: akita_types::OpeningMethod,
     /// Persisted frozen identity, for groups that are catalog lookup keys.
     /// `None` when the expansion recomputes it.
-    pub frozen_profile: Option<akita_types::CommittedGroupProfile>,
+    pub frozen_profile: Option<akita_types::GroupCommitPhaseParams>,
     /// `Some` when this group is the consuming fold's setup prefix.
     pub setup_natural_len: Option<u64>,
 }
@@ -1165,7 +1209,7 @@ three near-parallel copies of one algorithm:
 three run the same steps in the same order and differ only in the struct they
 assemble.
 
-With one `GeneratedGroup` and one `GroupParams`, write one `expand_group`. The
+With one `GeneratedGroup` and one `GroupOpenPhaseParams`, write one `expand_group`. The
 real differences become parameters:
 
 - the opening ring dimension, which a prefix derives from its own outer
@@ -1208,7 +1252,7 @@ Merging four group emitters into one deletes `emit_committed_group`
 
 Identity effects, precisely:
 
-- `key_digest` reads `CommittedGroupProfile` bytes for precommitted descriptors
+- `key_digest` reads `GroupCommitPhaseParams` bytes for precommitted descriptors
   and setup prefixes, which §10.2 preserves. Dropping the stored prefix
   `opening` plan **does** change `entries_key_digest`, because it hashes
   `prefix.opening.canonical_descriptor_bytes()`
@@ -1243,10 +1287,10 @@ and [schedule.rs:587](../crates/akita-types/src/schedule.rs#L587), which **is**
 `OpeningExecutionGroup`'s field. Draft 3 said five and listed `schedule.rs:743`
 and `OpeningExecutionGroup` as separate entries; they are the same field.
 
-After §5.4, `groups[i]` is a concrete `GroupParams`. The trait object, the
+After §5.4, `groups[i]` is a concrete `GroupOpenPhaseParams`. The trait object, the
 `opening_batch` argument, and the index remapping all disappear.
 `group_params(i)` becomes `groups.get(i)`. One `&dyn` field becomes a
-`&GroupParams`, which also removes the `!Sync` obstacle noted at
+`&GroupOpenPhaseParams`, which also removes the `!Sync` obstacle noted at
 [relation_weights.rs:697](../crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L424).
 
 ### 12.2 Method destinations
@@ -1320,7 +1364,7 @@ which is why the rule above excludes them.
 - `CommitInnerPlan::from_profile`
   ([operation_plans.rs:60](../crates/akita-prover/src/compute/operation_plans.rs#L60)).
   `from_level` and `from_profile` have identical bodies over different
-  receivers. One `from_profile(&CommittedGroupProfile)` serves both, because all
+  receivers. One `from_profile(&GroupCommitPhaseParams)` serves both, because all
   four of its fields live in the profile. `CommitInnerPlan` itself stays: it is a
   kernel shape plan on a public extension boundary, with out-of-tree
   implementations in
@@ -1333,10 +1377,10 @@ disposition.
 
 | Type | Fields | Construction sites | Disposition |
 |---|---|---|---|
-| `CommitmentGeometry<'a>` (`akita-prover/src/api/commitment.rs:125`) | 10, of which 9 are a strict subset of `CommittedGroupProfile` | **2** (`commitment.rs:236` and `:635`, both via the `From<&CommittedGroupParams>` impl at `:138`) | **Delete.** Draft 2 said its consumers fabricate a fake `opening` dimension. That is no longer true — it has no opening field at all. Its 9 payload fields are exactly a `CommittedGroupProfile` minus `version`, `group`, and `N`. Replace it with `&CommittedGroupProfile` plus the `context: &'static str` label as a separate argument. Draft 3 said one site at `:545`; there are two, and both go through the `From` impl, so deleting the impl catches both. |
+| `CommitmentGeometry<'a>` (`akita-prover/src/api/commitment.rs:125`) | 10, of which 9 are a strict subset of `GroupCommitPhaseParams` | **2** (`commitment.rs:236` and `:635`, both via the `From<&CommittedGroupParams>` impl at `:138`) | **Delete.** Draft 2 said its consumers fabricate a fake `opening` dimension. That is no longer true — it has no opening field at all. Its 9 payload fields are exactly a `GroupCommitPhaseParams` minus `version`, `group`, and `N`. Replace it with `&GroupCommitPhaseParams` plus the `context: &'static str` label as a separate argument. Draft 3 said one site at `:545`; there are two, and both go through the `From` impl, so deleting the impl catches both. |
 | `FoldScheduleDescriptorStep<'a>` (`schedule.rs:327`) | 4 | planner candidate encoding, consumed in `schedule/descriptor.rs` (§0.8) | **Delete.** It exists so the planner can encode a candidate without building a `FoldSchedule`. Its `params`, `payload_mode`, and two lengths are all fields of `FoldParams` after §5.4, so the planner encodes a `&FoldParams` directly. |
 | `TerminalFoldDescriptor<'a>` (`schedule.rs:336`) | 4 | terminal descriptor encoding, now in `schedule/descriptor.rs` (§0.8) | **Delete.** Its four borrowed fields are exactly `TerminalFoldParams` after the §5.5 merge. |
-| `OpeningExecutionGroup<'a>` (`schedule.rs:586`) | 2 | 3 | **Delete.** It pairs a `&dyn LevelParamsLike` with an expected source encoding. After §5.4 the loop iterates `&GroupParams` and asks the fold for the encoding (§7.2). |
+| `OpeningExecutionGroup<'a>` (`schedule.rs:586`) | 2 | 3 | **Delete.** It pairs a `&dyn LevelParamsLike` with an expected source encoding. After §5.4 the loop iterates `&GroupOpenPhaseParams` and asks the fold for the encoding (§7.2). |
 
 ### 12.5 The cost
 
@@ -1350,7 +1394,7 @@ shorter, not longer.
 ## 13. Derives, size, and allocation
 
 **`Copy`.** Every type that a `static` table needs stays `Copy`
-(§6). `GroupParams` gains `Copy`, which today's `PrecommittedLevelParams` lacks
+(§6). `GroupOpenPhaseParams` gains `Copy`, which today's `PrecommittedLevelParams` lacks
 only because it derives `Clone` alone; both of its fields are `Copy` already.
 `FoldParams` and `TerminalFoldParams` are not `Copy` because they own a `Vec`,
 exactly as `CommittedGroupParams` and today's `TerminalFoldParams` already are.
@@ -1359,11 +1403,11 @@ would lose it on generated parents; this draft does not, because the wire
 profile stays a `Copy` leaf.
 
 **`Hash` and `Eq`.** `AkitaScheduleLookupKey` keeps
-`Vec<CommittedGroupProfile>`, and `CommittedGroupProfile` remains all-scalar, so
-its derived `Hash` still compiles. `GroupParams` cannot derive `Hash`, because
+`Vec<GroupCommitPhaseParams>`, and `GroupCommitPhaseParams` remains all-scalar, so
+its derived `Hash` still compiles. `GroupOpenPhaseParams` cannot derive `Hash`, because
 `SparseChallengeConfig` has none — and it does not need to, since it is not in
 the lookup key. `SetupPrefixSlotId` keeps its hand-written `Hash` and `Ord` over
-`CommittedGroupProfile` descriptor bytes, unchanged; only its construction moves
+`GroupCommitPhaseParams` descriptor bytes, unchanged; only its construction moves
 (§5.3). Draft 1's problem was that it put a `Vec<PrecommittedLevelParams>`
 inside the hashed type.
 
@@ -1372,7 +1416,7 @@ Separately: the `Hash` derives on `AkitaScheduleLookupKey` and
 and lookup uses `partition_point` ordering, not hashing. Removing them is a
 small independent cleanup, not part of this plan.
 
-`GroupParams` derives `PartialEq`. Today `PrecommittedLevelParams` derives it too,
+`GroupOpenPhaseParams` derives `PartialEq`. Today `PrecommittedLevelParams` derives it too,
 so this is a no-op.
 
 **Size.** Re-measured on `8e552d2ac`, debug profile, aarch64-darwin, with
@@ -1385,9 +1429,9 @@ every struct declaration in this table is byte-identical across the two bases.
 | `SisTableKey` | 64 | 64 | untouched |
 | `InnerCommitMatrixParams` | 128 | 128 | untouched (holds `InnerCommitSecurityRoute`) |
 | `OuterCommitMatrixParams` / `OpenCommitMatrixParams` | 80 / 80 | 80 | generic adds a ZST |
-| `CommittedGroupProfile` | 288 | 288 | same fields, regrouped only |
+| `CommittedGroupProfile` → `GroupCommitPhaseParams` | 288 | 288 | same fields, regrouped and renamed |
 | `GroupOpeningPlan` | 56 | 56 | untouched |
-| `PrecommittedLevelParams` → `GroupParams` | 352 | ~360 | plus `Option<usize>`; `ScheduledSetupPrefix` (368) is deleted |
+| `PrecommittedLevelParams` → `GroupOpenPhaseParams` | 352 | ~360 | plus `Option<usize>`; `ScheduledSetupPrefix` (368) is deleted |
 | `CommittedGroupParams` → `FoldParams` | 816 | ~160 | the profile and two of three matrices move to the groups |
 | `RootFoldParams` + `RootFoldStep` | 960 + 976 | — | merged into `FoldParams` |
 | `RecursiveFoldParams` + `RecursiveFoldStep` | 1296 + 1312 | — | merged into `FoldParams` |
@@ -1624,7 +1668,7 @@ The review:
 - Its recommendation to keep `CommittedGroupProfile`, executable level
   parameters, and terminal parameters as distinct semantic wrappers is adopted.
   Its `StandaloneCommitCore` sketch is adopted in the form of
-  `CommittedGroupProfile` (§5.2).
+  `GroupCommitPhaseParams` (§5.2).
 - Its recommendation to keep typed root, recursive and terminal schedule steps
   is adopted at the schedule level (§5.6) and declined for the step wrapper
   types, which after §5.4 hold identical fields. §8 accounts for the exact
@@ -1679,7 +1723,7 @@ hide inside a mechanical refactor. Decide three things:
    already carries one per group, so the data is available;
 3. whether the explicit A-role check adds anything over the typed field.
 
-Then keep one function. After the consolidation, `GroupParams` carries the
+Then keep one function. After the consolidation, `GroupOpenPhaseParams` carries the
 per-group config, `TerminalFoldParams` carries its own, and
 `certified_response_linf_cap` takes no config argument (§5.5), so the divergence
 becomes impossible to re-introduce.
@@ -1694,8 +1738,8 @@ Steps 1 to 4 change no bytes and no call sites. Step 5 is the cutover.
 | 1 | Golden fixture harness (§14), including the B-slicing, packing, L2, and bounded-dense cases, across all 13 catalogs and each explicitly selected transcript backend | none | none |
 | 2 | `BlockGeometry` and `GadgetDigits`, with `validate` and the index-bit methods. Use the atomic geometry encoder where the triple is already contiguous; keep field-level digit encoding in the two encoders that interleave. | **identical** | none |
 | 3 | `LinfCommitMatrix<R>` with a sealed `LinfMatrixRole`; delete the 2-role macro; keep the two aliases. `InnerCommitMatrixParams` untouched. | **identical** | none |
-| 4 | `RoleParams<M>`; restructure `CommittedGroupProfile` to `version, group, blocks, outer_slice_count, inner, outer`. Update the emitter for nesting. | **identical**, verified by step 1 | regenerate; `key_digest` unchanged |
-| 5a | `GroupParams` from `PrecommittedLevelParams`: rename `layout` to `profile`, add `setup_natural_len`, add `slot_id()`. Absorb `ScheduledSetupPrefix`. Derive `SetupPrefixSlotId` instead of storing it. | break | regenerate |
+| 4 | `RoleParams<M>`; rename `CommittedGroupProfile` to `GroupCommitPhaseParams` and restructure it to `version, group, blocks, outer_slice_count, inner, outer`. Update the emitter for nesting. | **identical**, verified by step 1 | regenerate; `key_digest` unchanged |
+| 5a | `GroupOpenPhaseParams` from `PrecommittedLevelParams`: rename `layout` to `profile`, add `setup_natural_len`, add `slot_id()`. Absorb `ScheduledSetupPrefix`. Derive `SetupPrefixSlotId` instead of storing it. | break | regenerate |
 | 5b | `FoldParams` with the uniform `groups` list; D matrix and `source_encoding` to the fold; merge `RootFoldParams`, `RecursiveFoldParams`, `RootFinalGroupParams`, `RootPrecommittedGroupParams`, `RootFoldStep`, `RecursiveFoldStep`; delete `WitnessPartition`; delete the 8 schedule-side mirror audits and the `validate_structure` mirror check; fold the per-fold parts of `validate_level_opening_execution` into `FoldParams::validate` and settle the prefix ordering (§7.1); add the 3 new checks. Rewrite the two fold encoders in `schedule/descriptor.rs` (§0.8) — they are all in one file now. Keep the #407 A-depth audit (§9). Bump the §10.2 constants here. | break | regenerate |
 | 5c | Delete `LevelParamsLike`, `group_params` and its geometry twin, the 10 wrappers, `CommitInnerPlan::from_profile`, the `From<&CommittedGroupParams> for CommitmentGeometry` impl, and all four borrowed views (§12.4). | none | none |
 | 5d | `TerminalFoldParams` merging 3 types; move the 6 fallible steps into `admit`; drop the config argument from `certified_response_linf_cap` and `validate_terminal_linf_cap`. | break | regenerate |
