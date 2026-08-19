@@ -187,6 +187,13 @@ jobs:
         # prior descriptor is reachable through `profile_without_prior_groups`.
         run: |
           cargo test --release -p akita-config --features all-schedules --test generated_tables
+      # Golden descriptor bytes for every catalog, at every level of the
+      # parameter surface. Owned by specs/parameter-struct-consolidation.md.
+      # This job is the only one that links all 13 catalogs, so it is the only
+      # place the fixture is complete.
+      - name: Schedule descriptor byte fixtures
+        run: |
+          cargo test --release -p akita-config --features all-schedules --test schedule_descriptor_fixtures
       - name: Generate schedule tables
         env:
           # The suffix memo is bounded per row; keep two rows in flight on the

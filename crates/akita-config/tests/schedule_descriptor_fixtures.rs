@@ -1,0 +1,415 @@
+//! Golden descriptor-byte fixtures for every generated schedule catalog.
+//!
+//! This is step 1 of `specs/parameter-struct-consolidation.md`. It exists to be
+//! built **before** any type change, so that the byte-neutral steps (2 through 4)
+//! can be proven byte-neutral rather than asserted, and so that the deliberate
+//! break in step 5 is visible as an exact, reviewed diff instead of a surprise.
+//!
+//! # What is covered
+//!
+//! Every entry of every catalog whose Cargo feature is active, at each level of
+//! the parameter surface:
+//!
+//! - the catalog identity and its `key_digest`;
+//! - the lookup key;
+//! - the whole-schedule descriptor;
+//! - each fold's `CommittedGroupParams` descriptor;
+//! - each group's frozen `CommittedGroupProfile` and its `GroupOpeningPlan`;
+//! - the incoming setup prefix, where a recursive fold consumes one;
+//! - the terminal descriptor;
+//! - the `ScheduleRowDigest` for the row.
+//!
+//! Coverage is metadata-driven through
+//! [`akita_planner::generated_families::ALL_GENERATED_FAMILIES`], so a new
+//! family is picked up without editing this file. Under `--features
+//! all-schedules` that is all 13 catalogs, which is what the spec requires:
+//! single- and multi-group roots, chunked and unchunked, recursive folds,
+//! B-sliced groups, subring-packing folds, terminal L2 routes, and bounded
+//! committed dense sources.
+//!
+//! # Why digests rather than raw byte dumps
+//!
+//! A length plus a digest per level detects any change, which is the property
+//! the spec needs, while keeping the committed file small enough to review in a
+//! diff. On mismatch the failure prints the full hex of the differing record, so
+//! debugging does not need the raw bytes checked in.
+//!
+//! # Regenerating
+//!
+//! ```text
+//! AKITA_BLESS_SCHEDULE_FIXTURES=1 \
+//!   cargo test -p akita-config --features all-schedules \
+//!   --test schedule_descriptor_fixtures
+//! ```
+//!
+//! Only bless a diff you have read. Steps 2 through 4 must produce an empty one.
+
+#![allow(missing_docs)]
+
+use akita_planner::generated_families::ALL_GENERATED_FAMILIES;
+use akita_schedules::schedule_from_entry;
+use akita_types::{
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, ScheduleRowDigest,
+};
+
+const FIXTURE_PATH: &str = "tests/fixtures/schedule_descriptor_bytes.txt";
+const BLESS_ENV: &str = "AKITA_BLESS_SCHEDULE_FIXTURES";
+
+/// FNV-1a 64. Implemented here on purpose: the fixture must not drift because a
+/// hashing dependency changed its output.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// One captured descriptor record.
+struct Record {
+    label: String,
+    bytes: Vec<u8>,
+}
+
+impl Record {
+    fn line(&self) -> String {
+        format!(
+            "{:<58} len={:<6} fnv1a={:016x}",
+            self.label,
+            self.bytes.len(),
+            fnv1a(&self.bytes)
+        )
+    }
+}
+
+fn push(records: &mut Vec<Record>, label: impl Into<String>, bytes: Vec<u8>) {
+    records.push(Record {
+        label: label.into(),
+        bytes,
+    });
+}
+
+/// Capture every descriptor level of one expanded row.
+fn capture_row(
+    records: &mut Vec<Record>,
+    prefix: &str,
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+) {
+    push(
+        records,
+        format!("{prefix} lookup_key"),
+        key.canonical_descriptor_bytes(),
+    );
+    push(
+        records,
+        format!("{prefix} schedule"),
+        schedule.canonical_descriptor_bytes(),
+    );
+
+    // Root fold: the fold record, its final group, and each precommitted group.
+    let root = &schedule.root.params;
+    push(
+        records,
+        format!("{prefix} root.fold"),
+        root.final_group.commitment.canonical_descriptor_bytes(),
+    );
+    push(
+        records,
+        format!("{prefix} root.final_group.profile"),
+        akita_types::CommittedGroupProfile::try_from_params(
+            key.final_group,
+            &root.final_group.commitment,
+        )
+        .map(|profile| profile.canonical_descriptor_bytes())
+        .unwrap_or_default(),
+    );
+    for (index, group) in root.precommitted_groups.iter().enumerate() {
+        push(
+            records,
+            format!("{prefix} root.precommitted[{index}].profile"),
+            group.descriptor.canonical_descriptor_bytes(),
+        );
+        push(
+            records,
+            format!("{prefix} root.precommitted[{index}].opening"),
+            group.commitment.opening.canonical_descriptor_bytes(),
+        );
+        push(
+            records,
+            format!("{prefix} root.precommitted[{index}].group"),
+            group.commitment.canonical_descriptor_bytes(),
+        );
+    }
+
+    // Recursive folds, including any consumed setup prefix.
+    for (level, step) in schedule.recursive_folds.iter().enumerate() {
+        push(
+            records,
+            format!("{prefix} recursive[{level}].fold"),
+            step.params.witness.canonical_descriptor_bytes(),
+        );
+        if let Some(prefix_group) = step.params.incoming_setup_prefix.as_ref() {
+            push(
+                records,
+                format!("{prefix} recursive[{level}].setup_prefix.profile"),
+                prefix_group
+                    .commitment_params
+                    .layout
+                    .canonical_descriptor_bytes(),
+            );
+            push(
+                records,
+                format!("{prefix} recursive[{level}].setup_prefix.opening"),
+                prefix_group
+                    .commitment_params
+                    .opening
+                    .canonical_descriptor_bytes(),
+            );
+            push(
+                records,
+                format!("{prefix} recursive[{level}].setup_prefix.natural_len"),
+                prefix_group.natural_len.to_le_bytes().to_vec(),
+            );
+        }
+    }
+
+    push(
+        records,
+        format!("{prefix} terminal"),
+        schedule.terminal.canonical_descriptor_bytes(),
+    );
+
+    // The row digest is what schedule selection compares, so pin it too.
+    let profiles = CommittedGroupBatchProfile {
+        final_group: akita_types::CommittedGroupProfile::try_from_params(
+            key.final_group,
+            &root.final_group.commitment,
+        )
+        .expect("final group profile"),
+        precommitteds: key.precommitteds.clone(),
+    };
+    let digest: ScheduleRowDigest =
+        akita_types::schedule_row_digest(&profiles, schedule).expect("schedule row digest");
+    push(
+        records,
+        format!("{prefix} row_digest"),
+        format!("{digest:?}").into_bytes(),
+    );
+}
+
+fn collect_records() -> Vec<Record> {
+    let mut records = Vec::new();
+    let mut families: Vec<_> = ALL_GENERATED_FAMILIES.iter().collect();
+    families.sort_by_key(|family| family.module_name);
+
+    for family in families {
+        let Some(table) = (family.schedule_catalog)() else {
+            // Feature inactive in this build. The fixture records only what is
+            // linked, and the header states the feature set it was blessed under.
+            continue;
+        };
+        let name = family.module_name;
+        let identity = table.identity;
+        push(
+            &mut records,
+            format!("{name} catalog.identity"),
+            format!("{identity:?}").into_bytes(),
+        );
+        push(
+            &mut records,
+            format!("{name} catalog.key_digest"),
+            identity.key_digest.to_le_bytes().to_vec(),
+        );
+        push(
+            &mut records,
+            format!("{name} catalog.key_count"),
+            identity.key_count.to_le_bytes().to_vec(),
+        );
+
+        let policy = (family.policy)();
+        for (index, entry) in table.entries.iter().enumerate() {
+            let key = AkitaScheduleLookupKey {
+                final_group: entry.root.final_group.layout,
+                precommitteds: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.descriptor)
+                    .collect(),
+            };
+            let schedule = schedule_from_entry(entry, &key, &policy, family.ring_challenge_config)
+                .unwrap_or_else(|error| panic!("{name} entry {index} failed to expand: {error}"));
+            capture_row(
+                &mut records,
+                &format!("{name} [{index:03}]"),
+                &key,
+                &schedule,
+            );
+        }
+    }
+    records
+}
+
+fn render(records: &[Record]) -> String {
+    let mut out = String::new();
+    out.push_str("# Golden descriptor-byte fixtures for the generated schedule catalogs.\n");
+    out.push_str("#\n");
+    out.push_str("# Owned by specs/parameter-struct-consolidation.md (step 1).\n");
+    out.push_str("# Steps 2 through 4 of that plan must produce an EMPTY diff here.\n");
+    out.push_str("# Step 5 breaks everything above the commit-phase profile on purpose;\n");
+    out.push_str("# the profile and catalog.* lines must still not move.\n");
+    out.push_str("#\n");
+    out.push_str("# Regenerate (only after reading the diff):\n");
+    out.push_str("#   AKITA_BLESS_SCHEDULE_FIXTURES=1 cargo test -p akita-config \\\n");
+    out.push_str("#     --features all-schedules --test schedule_descriptor_fixtures\n");
+    out.push_str("#\n");
+    out.push_str("# Format: <family> [<entry>] <level>  len=<bytes> fnv1a=<hex>\n");
+    out.push_str("# Digest is FNV-1a 64 over the canonical descriptor bytes.\n");
+    out.push('\n');
+    for record in records {
+        out.push_str(&record.line());
+        out.push('\n');
+    }
+    out
+}
+
+/// A fixture that cannot fail is worse than no fixture, because it reads as
+/// coverage. Prove the mechanism detects a single flipped bit at every level
+/// this harness captures, and that the digest is not accidentally
+/// length-only.
+#[test]
+fn the_fixture_mechanism_detects_change() {
+    let records = collect_records();
+    assert!(records.len() > 100, "expected a populated capture");
+    let baseline = render(&records);
+
+    for index in [0usize, records.len() / 2, records.len() - 1] {
+        let mut mutated: Vec<Record> = records
+            .iter()
+            .map(|record| Record {
+                label: record.label.clone(),
+                bytes: record.bytes.clone(),
+            })
+            .collect();
+        let target = &mut mutated[index];
+        if target.bytes.is_empty() {
+            target.bytes.push(1);
+        } else {
+            // Flip one bit, preserving length, so a length-only comparison
+            // would miss it.
+            target.bytes[0] ^= 0x01;
+        }
+        let before = records[index].bytes.len();
+        let after = mutated[index].bytes.len();
+        assert_ne!(
+            render(&mutated),
+            baseline,
+            "flipping a bit in record {index} ({}) did not change the fixture",
+            records[index].label
+        );
+        if before == after {
+            assert_ne!(
+                fnv1a(&records[index].bytes),
+                fnv1a(&mutated[index].bytes),
+                "digest is length-only for record {index}"
+            );
+        }
+    }
+
+    // A reordering must also be visible: the labels carry position.
+    let mut swapped: Vec<Record> = records
+        .iter()
+        .map(|record| Record {
+            label: record.label.clone(),
+            bytes: record.bytes.clone(),
+        })
+        .collect();
+    let last = swapped.len() - 1;
+    swapped.swap(0, last);
+    assert_ne!(render(&swapped), baseline, "record order is not pinned");
+}
+
+#[test]
+fn generated_schedule_descriptor_bytes_are_stable() {
+    let records = collect_records();
+    assert!(
+        !records.is_empty(),
+        "no generated catalog was linked; run with --features all-schedules"
+    );
+
+    let rendered = render(&records);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_PATH);
+
+    if std::env::var_os(BLESS_ENV).is_some() {
+        std::fs::create_dir_all(path.parent().expect("fixture parent"))
+            .expect("create fixture dir");
+        std::fs::write(&path, &rendered).expect("write fixture");
+        eprintln!("blessed {} records into {}", records.len(), path.display());
+        return;
+    }
+
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "missing descriptor fixture {}: {error}\n\
+             create it with {BLESS_ENV}=1 and the all-schedules feature",
+            path.display()
+        )
+    });
+
+    if expected == rendered {
+        return;
+    }
+
+    // Report the first few differing records with full hex, so a reviewer does
+    // not need the raw bytes committed to diagnose a break.
+    let by_label: std::collections::HashMap<&str, &Record> = records
+        .iter()
+        .map(|record| (record.label.as_str(), record))
+        .collect();
+    let mut detail = String::new();
+    let mut shown = 0usize;
+    let mut differing = 0usize;
+    for (expected_line, actual_line) in expected
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .zip(
+            rendered
+                .lines()
+                .filter(|line| !line.starts_with('#') && !line.trim().is_empty()),
+        )
+    {
+        if expected_line == actual_line {
+            continue;
+        }
+        differing += 1;
+        if shown >= 8 {
+            continue;
+        }
+        shown += 1;
+        detail.push_str(&format!(
+            "\n  expected: {expected_line}\n  actual:   {actual_line}\n"
+        ));
+        let label = actual_line.split("  ").next().unwrap_or("").trim();
+        if let Some(record) = by_label.get(label) {
+            detail.push_str(&format!("  actual bytes: {}\n", hex(&record.bytes)));
+        }
+    }
+
+    panic!(
+        "generated schedule descriptor bytes changed ({differing} differing records, \
+         {} expected lines, {} actual lines).\n\
+         If this change is intended, read the diff and re-bless with \
+         {BLESS_ENV}=1.\n{detail}",
+        expected
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+            .count(),
+        records.len(),
+    );
+}
