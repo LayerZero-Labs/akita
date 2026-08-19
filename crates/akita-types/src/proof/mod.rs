@@ -11,6 +11,7 @@ pub mod batch;
 mod coefficient_packing_relation;
 pub mod commitment;
 pub mod compression_relation_weights;
+mod fold_challenges;
 pub mod relation;
 pub mod relation_address;
 pub mod relation_range_image;
@@ -48,8 +49,6 @@ pub use batch::{
     ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
     RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
-#[cfg(any(debug_assertions, test))]
-pub use coefficient_packing_relation::CoefficientPackingRelationEvents;
 pub use coefficient_packing_relation::{
     prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, CoefficientPackingBatchSemanticInputs,
@@ -67,6 +66,7 @@ pub use compression_relation_weights::{
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
 };
+pub use fold_challenges::{draw_group_fold_challenges, GroupFoldChallenges};
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,

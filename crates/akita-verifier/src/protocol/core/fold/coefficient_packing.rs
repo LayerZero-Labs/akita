@@ -41,8 +41,34 @@ fn prepare_group<E: FieldCore>(
     )
 }
 
+fn prepare_prefix_points<F: FieldCore, E: ExtField<F>, C>(
+    claims: &OpeningClaims<'_, E, C>,
+    openings: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    level_params: &CommittedGroupParams,
+) -> Result<Vec<PreparedFoldOpeningPoint<F, E>>, AkitaError> {
+    if openings.len() != opening_batch.num_total_polynomials() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+    for group_index in 0..opening_batch.num_groups() {
+        let layout = opening_batch.group_layout(group_index)?;
+        let group_params = level_params.group_params_geometry(opening_batch, group_index)?;
+        prepared_points.push(PreparedFoldOpeningPoint::SubringCoefficientPacking(
+            prepare_group::<E>(
+                claims.group_point(group_index)?,
+                basis,
+                layout.num_vars(),
+                group_params,
+                E::EXT_DEGREE,
+            )?,
+        ));
+    }
+    Ok(prepared_points)
+}
+
 /// Prepare a root packing prefix directly from the authenticated public claims.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_coefficient_packing_root_prefix<F, E>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     openings: &[E],
@@ -54,23 +80,8 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
 {
-    if openings.len() != opening_batch.num_total_polynomials() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-    for group_index in 0..opening_batch.num_groups() {
-        let layout = opening_batch.group_layout(group_index)?;
-        let group_params = root_lp.group_params_geometry(opening_batch, group_index)?;
-        prepared_points.push(PreparedFoldOpeningPoint::SubringCoefficientPacking(
-            prepare_group::<E>(
-                claims.group_point(group_index)?,
-                basis,
-                layout.num_vars(),
-                group_params,
-                E::EXT_DEGREE,
-            )?,
-        ));
-    }
+    let prepared_points =
+        prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, root_lp)?;
     Ok(FoldClaimMaterial {
         prepared_points,
         openings: openings.to_vec(),
@@ -93,18 +104,11 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    if openings.len() != opening_batch.num_total_polynomials() {
-        return Err(AkitaError::InvalidProof);
-    }
+    let prepared_points =
+        prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, lp)?;
     let mut point_refs = Vec::with_capacity(opening_batch.num_groups());
-    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let point = claims.group_point(group_index)?;
-        let layout = opening_batch.group_layout(group_index)?;
-        let group_params = lp.group_params_geometry(opening_batch, group_index)?;
-        prepared_points.push(PreparedFoldOpeningPoint::SubringCoefficientPacking(
-            prepare_group::<E>(point, basis, layout.num_vars(), group_params, E::EXT_DEGREE)?,
-        ));
         point_refs.push(point);
     }
     super::single_field::absorb_protocol_opening_points::<F, E, T>(&point_refs, transcript);

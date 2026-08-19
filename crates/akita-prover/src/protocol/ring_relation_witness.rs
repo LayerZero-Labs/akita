@@ -178,7 +178,6 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
     }
 
     /// Construct one coefficient-packing group witness from checked physical coordinates.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_coefficient_packing_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
         z_folded_coefficients: FoldChunkCoefficients,

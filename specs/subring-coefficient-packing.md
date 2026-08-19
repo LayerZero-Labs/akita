@@ -1286,6 +1286,13 @@ on 15, and regresses on eight. Its sum falls from 4,965,430 to 4,681,064 bytes,
 a 5.73% reduction. Fifteen rows use fewer fold levels, 42 retain their count,
 and ten use more levels.
 
+The primary first-direct setup capacity improves on 65 retained rows, is equal
+on two, and regresses on none. Its sum falls from 10,278,666,240 to
+5,119,311,872 field elements, a 50.19% reduction. These baseline values were
+reconstructed at the pinned base commit from each exact materialized schedule;
+the comparator treats a missing primary coordinate as drift rather than a
+wildcard.
+
 This closes the missing-row, primary-objective, and comparison-report evidence
 gaps. The retained catalog improves in aggregate under both reported resource
 coordinates. The eight proof regressions remain explicit per-row review data;
@@ -1484,6 +1491,8 @@ The planner MUST keep the search bounded in the following ways.
       L0/L1 EOR removal in actual serialized proof breakdowns.
 - [x] The one removed fp128 dense nv44 stress row and every retained-row
       regression are explicit in the checked base-to-head report.
+- [x] Both checked snapshots contain the exact padded first-direct setup
+      capacity, and the complete comparison reports it for every retained row.
 - [x] The checked head contains 71 rows across 13 families. The complete
       comparison contains four additions, one removal, and 67 changed rows.
 - [x] Subring packing setup prefix edges use Linf. Reports for later evaluation trace

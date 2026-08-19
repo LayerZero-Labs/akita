@@ -144,8 +144,8 @@
         "book/src/foundations/extension-opening-reduction.md",
         "book/src/how/proving/extension-opening-reduction.md",
         "book/src/how/proving/fold-path.md",
-        "specs/eor-*.md",
-        "specs/extension-field-*.md",
+        "specs/archive/2026-Q3/eor-*.md",
+        "specs/archive/2026-Q3/extension-field-*.md",
         "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },

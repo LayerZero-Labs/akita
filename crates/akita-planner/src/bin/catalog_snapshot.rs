@@ -59,9 +59,7 @@ impl CatalogSnapshotRow {
             && self.fold_levels == other.fold_levels
             && self.row_digest == other.row_digest
             && self.policy == other.policy
-            && (self.first_direct_setup_capacity == other.first_direct_setup_capacity
-                || (self.schema == SnapshotSchema::Legacy
-                    && self.first_direct_setup_capacity.is_none()))
+            && self.first_direct_setup_capacity == other.first_direct_setup_capacity
     }
 
     fn write_snapshot(&self, out: &mut String) {
@@ -379,14 +377,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_missing_capacity_does_not_create_catalog_drift() {
+    fn legacy_missing_capacity_is_reported_as_catalog_drift() {
         let current = row("family", "same", 1);
         let mut legacy = current.clone();
         legacy.schema = SnapshotSchema::Legacy;
         legacy.first_direct_setup_capacity = None;
         let comparison = compare_snapshots(vec![legacy], vec![current]).expect("compare snapshots");
-        assert_eq!(comparison.equal_rows, 1);
-        assert_eq!(comparison.changed_rows, 0);
+        assert_eq!(comparison.equal_rows, 0);
+        assert_eq!(comparison.changed_rows, 1);
     }
 
     #[test]
@@ -419,6 +417,9 @@ mod tests {
 
         assert_eq!(base.len(), 68);
         assert_eq!(head.len(), 71);
+        assert!(base
+            .iter()
+            .all(|row| row.first_direct_setup_capacity.is_some()));
         assert!(head
             .iter()
             .all(|row| row.first_direct_setup_capacity.is_some()));

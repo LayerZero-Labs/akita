@@ -11,9 +11,7 @@ type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>
 type PackingField = <PackingCfg as CommitmentConfig>::Field;
 type PackingExt = <PackingCfg as CommitmentConfig>::ExtField;
 type PackingScheme = AkitaCommitmentScheme<PackingCfg>;
-#[cfg(feature = "logging-transcript")]
 type RootEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConfig<fp32::Dense, 0>;
-#[cfg(feature = "logging-transcript")]
 type RecursiveEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConfig<fp32::Dense, 1>;
 
 #[test]
@@ -341,7 +339,6 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 )
                 .unwrap();
 
-                #[cfg(feature = "logging-transcript")]
                 if basis == BasisMode::Lagrange {
                     let mut malformed = proof.clone();
                     malformed.root.extension_opening_reduction =
@@ -350,6 +347,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                             sumcheck: akita_sumcheck::SumcheckProof {
                                 round_polys: Vec::new(),
                             },
+                            final_claims: Vec::new(),
                         });
                     let verifier_claims =
                         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -360,9 +358,12 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .unwrap()])
                         .unwrap();
                     let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
+                    #[cfg(feature = "logging-transcript")]
                     let mut transcript = akita_transcript::LoggingTranscript::wrap(
                         AkitaTranscript::<PackingField>::new(label),
                     );
+                    #[cfg(not(feature = "logging-transcript"))]
+                    let mut transcript = AkitaTranscript::<PackingField>::new(label);
                     assert!(PackingScheme::batched_verify(
                         &malformed,
                         &verifier_setup,
@@ -371,6 +372,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         basis,
                     )
                     .is_err());
+                    #[cfg(feature = "logging-transcript")]
                     assert!(
                         transcript.events().is_empty(),
                         "unexpected packing EOR must reject before transcript replay"
@@ -393,10 +395,13 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                             )
                             .unwrap();
                             let selection = prover_data.selection();
+                            #[cfg(feature = "logging-transcript")]
                             let mut transcript =
                                 akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<
                                     PackingField,
                                 >::new(label));
+                            #[cfg(not(feature = "logging-transcript"))]
+                            let mut transcript = AkitaTranscript::<PackingField>::new(label);
                             assert!(AkitaCommitmentScheme::<$config>::batched_prove::<_, _, _>(
                                 &setup,
                                 prover_data,
@@ -405,6 +410,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                                 basis,
                             )
                             .is_err());
+                            #[cfg(feature = "logging-transcript")]
                             assert!(
                                 transcript.events().is_empty(),
                                 concat!($context, " must reject before prover transcript work")
@@ -419,10 +425,13 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                                 .unwrap()])
                                 .unwrap();
                             let statement = GroupBatchStatement::new(selection, claims).unwrap();
+                            #[cfg(feature = "logging-transcript")]
                             let mut transcript =
                                 akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<
                                     PackingField,
                                 >::new(label));
+                            #[cfg(not(feature = "logging-transcript"))]
+                            let mut transcript = AkitaTranscript::<PackingField>::new(label);
                             assert!(AkitaCommitmentScheme::<$config>::batched_verify(
                                 &proof,
                                 &verifier_setup,
@@ -431,6 +440,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                                 basis,
                             )
                             .is_err());
+                            #[cfg(feature = "logging-transcript")]
                             assert!(
                                 transcript.events().is_empty(),
                                 concat!($context, " must reject before verifier transcript work")

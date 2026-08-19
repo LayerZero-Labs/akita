@@ -7,10 +7,88 @@ use akita_field::{AkitaError, FieldCore};
 use std::ops::Range;
 use std::sync::Arc;
 
-use super::{CoefficientPackingAffineRelationFamily, CoefficientPackingCompactFactors};
 use crate::{
     PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry, WitnessLayout,
 };
+
+/// One verifier group's compact coefficient-packing semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoefficientPackingVerifierGroupSemantics<E: FieldCore> {
+    pub(super) group_index: usize,
+    pub(super) geometry: SubringCoefficientPackingGeometry,
+    pub(super) group_claim_range: Range<usize>,
+    pub(super) scalar_claim_weight: E,
+    pub(super) compact_factors: CoefficientPackingCompactFactors<E>,
+}
+
+/// Compact tensor factors used by the verifier at the Stage 2 final point.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoefficientPackingCompactFactors<E: FieldCore> {
+    pub(super) basis: crate::BasisMode,
+    pub(super) physical_field_len: usize,
+    pub(super) direct_opening_point: Arc<[E]>,
+    pub(super) packing_z_point: Arc<[E]>,
+    pub(super) affine_relation_families: Vec<CoefficientPackingAffineRelationFamily<E>>,
+    pub(super) quotient_families: Vec<EqPairTensorFamily<E>>,
+    pub(super) direct_opening_families: Vec<EqPairTensorFamily<E>>,
+    pub(super) packing_z_families: Vec<EqPairTensorFamily<E>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct CoefficientPackingAffineRelationFamily<E: FieldCore> {
+    pub(super) scalar: E,
+    pub(super) coefficient_weights: Arc<[E]>,
+    pub(super) coefficient_len: usize,
+    pub(super) base_offset: usize,
+    pub(super) outer_len: usize,
+    pub(super) outer_stride: usize,
+    pub(super) digit_stride: usize,
+    pub(super) digit_weights: Arc<[E]>,
+    pub(super) outer_weights: Arc<[E]>,
+}
+
+/// Checked compact packing semantics for the Stage 2 verifier.
+///
+/// Unlike the prover batch, this carrier never builds the expanded event and
+/// segment representation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoefficientPackingVerifierBatchSemantics<E: FieldCore> {
+    pub(super) groups: Vec<CoefficientPackingVerifierGroupSemantics<E>>,
+}
+
+impl<E: FieldCore> CoefficientPackingVerifierBatchSemantics<E> {
+    #[must_use]
+    pub fn groups(&self) -> &[CoefficientPackingVerifierGroupSemantics<E>] {
+        &self.groups
+    }
+}
+
+impl<E: FieldCore> CoefficientPackingVerifierGroupSemantics<E> {
+    #[must_use]
+    pub const fn group_index(&self) -> usize {
+        self.group_index
+    }
+
+    #[must_use]
+    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
+        self.geometry
+    }
+
+    #[must_use]
+    pub fn group_claim_range(&self) -> Range<usize> {
+        self.group_claim_range.clone()
+    }
+
+    #[must_use]
+    pub const fn scalar_claim_weight(&self) -> E {
+        self.scalar_claim_weight
+    }
+
+    #[must_use]
+    pub const fn compact_factors(&self) -> &CoefficientPackingCompactFactors<E> {
+        &self.compact_factors
+    }
+}
 
 impl<E: FieldCore> CoefficientPackingAffineRelationFamily<E> {
     fn shares_contraction_geometry(&self, other: &Self) -> bool {
@@ -42,36 +120,6 @@ impl<E: FieldCore> CoefficientPackingAffineRelationFamily<E> {
             .fold(E::zero(), |sum, (coefficient, &weight)| {
                 sum + weight * eq_eval_at_index(coefficient_point, coefficient)
             }))
-    }
-
-    #[cfg(test)]
-    fn evaluate_with_coefficient_at_point(
-        &self,
-        point: &[E],
-        coefficient_evaluation: E,
-    ) -> Result<E, AkitaError> {
-        let coefficient_bits = self.coefficient_len.trailing_zeros() as usize;
-        let (_, outer_point) = point
-            .split_at_checked(coefficient_bits)
-            .ok_or(AkitaError::InvalidProof)?;
-        let affine = eval_affine_digit_intervals(
-            outer_point,
-            &[self.base_offset],
-            0,
-            self.outer_len,
-            self.outer_stride,
-            self.digit_stride,
-            self.digit_weights.as_ref(),
-            self.outer_weights.as_ref(),
-            &[],
-            &[],
-        )?;
-        Ok(self.scalar * coefficient_evaluation * affine)
-    }
-
-    #[cfg(test)]
-    pub(super) fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        self.evaluate_with_coefficient_at_point(point, self.coefficient_evaluation_at_point(point)?)
     }
 }
 
@@ -485,12 +533,15 @@ pub(super) fn prepare_compact_factors<E: FieldCore>(
                             .ok_or_else(|| {
                                 AkitaError::InvalidSetup("direct-opening offset overflow".into())
                             })?;
+                        let opening_weight = inputs
+                            .opening_gadget
+                            .get(digit_segment.start)
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)?;
                         direct_opening_families.push(EqPairTensorFamily::new(
                             left_offset,
                             physical_start,
-                            inputs.scalar_claim_weight
-                                * basis_element
-                                * inputs.opening_gadget[digit_segment.start],
+                            inputs.scalar_claim_weight * basis_element * opening_weight,
                             vec![
                                 EqPairTensorAxis::unit(coefficient_count, 1, 1),
                                 digit_axis.clone(),
@@ -537,13 +588,15 @@ pub(super) fn prepare_compact_factors<E: FieldCore>(
                 plane,
                 0,
             )?;
+            let quotient_weight = inputs
+                .quotient_gadget
+                .get(digit_segment.start)
+                .copied()
+                .ok_or(AkitaError::InvalidProof)?;
             quotient_families.push(EqPairTensorFamily::new(
                 0,
                 physical_start,
-                -(inputs.consistency_weight
-                    * basis_element
-                    * inputs.denominator
-                    * inputs.quotient_gadget[digit_segment.start]),
+                -(inputs.consistency_weight * basis_element * inputs.denominator * quotient_weight),
                 vec![alpha_axis.clone(), digit_axis.clone()],
             )?);
         }
@@ -597,12 +650,20 @@ pub(super) fn prepare_compact_factors<E: FieldCore>(
                     fold_segment.start,
                     0,
                 )?;
+                let witness_weight = inputs
+                    .witness_gadget
+                    .get(witness_segment.start)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)?;
+                let fold_weight = inputs
+                    .fold_gadget
+                    .get(fold_segment.start)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)?;
                 packing_z_families.push(EqPairTensorFamily::new(
                     0,
                     physical_start,
-                    -(inputs.consistency_weight
-                        * inputs.witness_gadget[witness_segment.start]
-                        * inputs.fold_gadget[fold_segment.start]),
+                    -(inputs.consistency_weight * witness_weight * fold_weight),
                     vec![
                         EqPairTensorAxis::unit(kh, 1, 1),
                         packing_alpha_axis.clone(),

@@ -17,7 +17,7 @@ use akita_field::AdditiveGroup;
 
 use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, InnerCommitSecurityRoute, OpeningClaimsLayout,
-    PhysicalResponsePlan, RelationRangeImagePlan,
+    OpeningFamily, PhysicalResponsePlan, RelationRangeImagePlan,
 };
 
 pub(in crate::protocol::core) struct PhysicalL2ProverReplay<E: FieldCore> {
@@ -510,7 +510,7 @@ where
     .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
     let mut rs = ring_switch.output;
     let relation_range_image_plan = ring_switch.relation_plan;
-    let coefficient_packing_batch = ring_switch.coefficient_packing_batch;
+    let opening_semantics = ring_switch.opening_semantics;
 
     let relation_rhs_layout = relation_range_image_plan
         .relation_witness_geometry()
@@ -558,181 +558,89 @@ where
             .relation_coefficient_block_len(),
     )
     .entered();
-    let (linear_terms, scalar_opening_claim) = if let Some(batch) = coefficient_packing_batch {
-        if prepared_fold
-            .relation_groups
-            .iter()
-            .any(|group| group.evaluation_trace_point().is_some())
-        {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient-packing fold retained EvaluationTrace points".into(),
-            ));
+    let (linear_terms, scalar_opening_claim) = match opening_semantics {
+        OpeningFamily::SubringCoefficientPacking(batch) => {
+            let mut combined_terms: Option<PreparedProverLinearTerms<E>> = None;
+            let mut authenticated_opening = E::zero();
+            let mut weighted_opening_claim = E::zero();
+            for semantics in batch.into_groups() {
+                let group_index = semantics.group_index();
+                let geometry = semantics.geometry();
+                let claim_range = semantics.stage2_terms().group_claim_range();
+                let group = prepared_fold
+                    .relation_groups
+                    .get(group_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let group_openings = group.scalar_openings();
+                let claim_coefficients = prepared_fold
+                    .evaluation_trace_claim_coefficients
+                    .get(claim_range.clone())
+                    .ok_or(AkitaError::InvalidProof)?;
+                if group_openings.len() != claim_range.len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let group_opening = group_openings
+                    .iter()
+                    .zip(claim_coefficients)
+                    .fold(E::zero(), |sum, (&opening, &coefficient)| {
+                        sum + opening * coefficient
+                    });
+                authenticated_opening += group_opening;
+                let prepared = prepare_coefficient_packing_linear_terms(semantics, group_opening)?;
+                if prepared.group_index != group_index || prepared.geometry != geometry {
+                    return Err(AkitaError::InvalidProof);
+                }
+                weighted_opening_claim += prepared.weighted_scalar_opening_claim;
+                if let Some(combined) = combined_terms.as_mut() {
+                    combined.merge(prepared.linear_terms)?;
+                } else {
+                    combined_terms = Some(prepared.linear_terms);
+                }
+            }
+            if authenticated_opening != prepared_fold.evaluation_trace_claim {
+                return Err(AkitaError::InvalidProof);
+            }
+            (
+                combined_terms.ok_or(AkitaError::InvalidProof)?,
+                weighted_opening_claim,
+            )
         }
-        let mut combined_terms: Option<PreparedProverLinearTerms<E>> = None;
-        let mut authenticated_opening = E::zero();
-        let mut weighted_opening_claim = E::zero();
-        for semantics in batch.into_groups() {
-            let group_index = semantics.group_index();
-            let geometry = semantics.geometry();
-            let claim_range = semantics.stage2_terms().group_claim_range();
-            let group = prepared_fold
+        OpeningFamily::EvaluationTrace(()) => {
+            // EvaluationTrace is the last padded relation row: weight openings by
+            // `eq(tau1, EvaluationTrace_row_index)`.
+            let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
+            let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
+            ensure_trace_stage2_supported(E::EXT_DEGREE)?;
+            let evaluation_trace_points = prepared_fold
                 .relation_groups
-                .get(group_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            let group_openings = group.scalar_openings();
-            let claim_coefficients = prepared_fold
-                .evaluation_trace_claim_coefficients
-                .get(claim_range.clone())
-                .ok_or(AkitaError::InvalidProof)?;
-            if group_openings.len() != claim_range.len() {
-                return Err(AkitaError::InvalidProof);
-            }
-            let group_opening = group_openings
                 .iter()
-                .zip(claim_coefficients)
-                .fold(E::zero(), |sum, (&opening, &coefficient)| {
-                    sum + opening * coefficient
-                });
-            authenticated_opening += group_opening;
-            #[cfg(debug_assertions)]
-            {
-                let witness = rs.w_evals_compact.as_ref();
-                let events = semantics.relation_events();
-                let event_sum = events.events().iter().try_fold(E::zero(), |sum, event| {
-                    let range = event.physical_coefficients();
-                    let coefficients =
-                        witness.get(range.clone()).ok_or(AkitaError::InvalidProof)?;
-                    let powers = events
-                        .alpha_powers()
-                        .get(
-                            event.alpha_exponent_start()
-                                ..event.alpha_exponent_start() + range.len(),
-                        )
-                        .ok_or(AkitaError::InvalidProof)?;
-                    Ok::<_, AkitaError>(
-                        sum + coefficients.iter().zip(powers).fold(
-                            E::zero(),
-                            |acc, (&coefficient, &power)| {
-                                acc + event.scalar() * power * E::from_i64(i64::from(coefficient))
-                            },
-                        ),
-                    )
-                })?;
-                let stage2 = semantics.stage2_terms();
-                let mut direct_sum = E::zero();
-                let mut packing_z_sum = E::zero();
-                for term in stage2.terms() {
-                    let source = match term.source() {
-                        akita_types::CoefficientPackingStage2Source::DirectOpening => {
-                            stage2.direct_opening_source()
-                        }
-                        akita_types::CoefficientPackingStage2Source::PackingZ => {
-                            stage2.packing_z_source()
-                        }
-                    };
-                    let mut term_sum = E::zero();
-                    for segment in stage2
-                        .segments()
-                        .get(term.segments())
-                        .ok_or(AkitaError::InvalidProof)?
-                    {
-                        let physical = witness
-                            .get(segment.physical_coefficients())
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let weights = source
-                            .get(segment.source_coefficients())
-                            .ok_or(AkitaError::InvalidProof)?;
-                        term_sum += physical.iter().zip(weights).fold(
-                            E::zero(),
-                            |acc, (&coefficient, &weight)| {
-                                acc + weight * E::from_i64(i64::from(coefficient))
-                            },
-                        );
-                    }
-                    match term.source() {
-                        akita_types::CoefficientPackingStage2Source::DirectOpening => {
-                            direct_sum += term.factor() * term_sum;
-                        }
-                        akita_types::CoefficientPackingStage2Source::PackingZ => {
-                            packing_z_sum += term.factor() * term_sum;
-                        }
-                    }
-                }
-                if event_sum + packing_z_sum != E::zero() {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "coefficient-packing consistency relation failed for group {group_index}"
-                    )));
-                }
-                if direct_sum != semantics.stage2_terms().scalar_claim_weight() * group_opening {
-                    return Err(AkitaError::InvalidInput(
-                        "coefficient-packing direct-opening relation failed".into(),
-                    ));
-                }
-            }
-            let prepared = prepare_coefficient_packing_linear_terms(semantics, group_opening)?;
-            if prepared.group_index != group_index || prepared.geometry != geometry {
-                return Err(AkitaError::InvalidProof);
-            }
-            weighted_opening_claim += prepared.weighted_scalar_opening_claim;
-            if let Some(combined) = combined_terms.as_mut() {
-                combined.merge(prepared.linear_terms)?;
-            } else {
-                combined_terms = Some(prepared.linear_terms);
-            }
-        }
-        if authenticated_opening != prepared_fold.evaluation_trace_claim {
-            return Err(AkitaError::InvalidProof);
-        }
-        (
-            combined_terms.ok_or(AkitaError::InvalidProof)?,
-            weighted_opening_claim,
-        )
-    } else {
-        if prepared_fold
-            .relation_groups
-            .iter()
-            .any(|group| group.coefficient_packing_point().is_some())
-        {
-            return Err(AkitaError::InvalidSetup(
-                "EvaluationTrace fold retained coefficient-packing points".into(),
-            ));
-        }
-        // EvaluationTrace is the last padded relation row: weight openings by
-        // `eq(tau1, EvaluationTrace_row_index)`.
-        let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
-        let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
-        ensure_trace_stage2_supported(E::EXT_DEGREE)?;
-        let evaluation_trace_points = prepared_fold
-            .relation_groups
-            .iter()
-            .map(|group| {
-                group
-                    .evaluation_trace_point()
-                    .cloned()
-                    .ok_or(AkitaError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let semantic_trace = build_evaluation_trace_weights::<F, E>(EvaluationTraceInputs {
-            digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
-            relation_coefficient_block_len: rs
-                .relation_address_geometry
-                .relation_coefficient_block_len(),
-            witness_layout: relation_range_image_plan.witness_layout(),
-            level_params: lp,
-            opening_batch,
-            prepared_points: &evaluation_trace_points,
-            claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
-            basis: prepared_fold.evaluation_trace_basis,
-        })?;
-        (
-            PreparedProverLinearTerms::from_evaluation_trace(
-                &semantic_trace,
-                rs.relation_address_geometry
+                .map(|group| match group.kind() {
+                    OpeningFamily::EvaluationTrace(point) => Ok(point.clone()),
+                    OpeningFamily::SubringCoefficientPacking(_) => Err(AkitaError::InvalidProof),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let semantic_trace = build_evaluation_trace_weights::<F, E>(EvaluationTraceInputs {
+                digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
+                relation_coefficient_block_len: rs
+                    .relation_address_geometry
                     .relation_coefficient_block_len(),
-                evaluation_trace_weight,
-            )?,
-            evaluation_trace_weight * prepared_fold.evaluation_trace_claim,
-        )
+                witness_layout: relation_range_image_plan.witness_layout(),
+                level_params: lp,
+                opening_batch,
+                prepared_points: &evaluation_trace_points,
+                claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
+                basis: prepared_fold.evaluation_trace_basis,
+            })?;
+            (
+                PreparedProverLinearTerms::from_evaluation_trace(
+                    &semantic_trace,
+                    rs.relation_address_geometry
+                        .relation_coefficient_block_len(),
+                    evaluation_trace_weight,
+                )?,
+                evaluation_trace_weight * prepared_fold.evaluation_trace_claim,
+            )
+        }
     };
     drop(opening_preparation_span);
     let relation_address_geometry = rs.relation_address_geometry;

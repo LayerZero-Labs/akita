@@ -1,4 +1,5 @@
 use super::offloaded_witness_contracts;
+use std::collections::VecDeque;
 
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
     super::ScheduleMemoKey {
@@ -30,6 +31,35 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
+}
+
+#[test]
+fn suffix_cache_gives_referenced_entry_a_second_chance() {
+    let hot = memo_key(1, None);
+    let cold = memo_key(2, None);
+    let mut entries = std::collections::HashMap::from([
+        (
+            hot,
+            super::MemoEntry {
+                result: super::empty_suffix_result(),
+                referenced: true,
+            },
+        ),
+        (
+            cold,
+            super::MemoEntry {
+                result: super::empty_suffix_result(),
+                referenced: false,
+            },
+        ),
+    ]);
+    let mut insertion_order = VecDeque::from([hot, cold]);
+
+    super::evict_suffix_entry(&mut entries, &mut insertion_order);
+
+    assert!(entries.contains_key(&hot));
+    assert!(!entries.contains_key(&cold));
+    assert_eq!(insertion_order, VecDeque::from([hot]));
 }
 
 #[test]

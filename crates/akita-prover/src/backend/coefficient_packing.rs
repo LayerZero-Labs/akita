@@ -16,21 +16,24 @@ fn zero_vec<T: FieldCore>(len: usize) -> Result<Vec<T>, AkitaError> {
     Ok(values)
 }
 
-/// Construct canonical partials from an indexed A-ring coefficient source.
+/// Construct canonical partials from an A-ring position source.
 ///
-/// The source index is `[position][A coefficient]`. This helper is shared by
-/// dense and recursive representations; sparse representations may implement
-/// a direct scatter while comparing against this path in tests.
+/// The checked source callback runs once per position. The arithmetic kernel
+/// then consumes the validated contiguous coefficient array without a
+/// fallible callback in its innermost multiply-accumulate loop. This helper is
+/// shared by dense and recursive representations; sparse representations may
+/// implement a direct scatter while comparing against this path in tests.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
-pub(super) fn partials_from_indexed_source<F, E, const D: usize>(
+pub(super) fn partials_from_position_source<'a, F, E, S, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
     source_num_vars: usize,
-    source_len: usize,
-    coefficient_at: impl Fn(usize) -> Result<F, AkitaError> + Sync,
+    position_at: impl Fn(usize) -> Result<&'a [S; D], AkitaError> + Sync,
+    coefficient: impl Fn(usize, usize, S) -> F + Sync,
 ) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F> + FpExtEncoding<F>,
+    S: Copy + Sync + 'a,
 {
     plan.validate::<D>(source_num_vars)?;
     let point = plan.point;
@@ -40,16 +43,6 @@ where
             "coefficient-packing field extension degree mismatch".into(),
         ));
     }
-    let expected_source_len = point.num_live_positions().checked_mul(D).ok_or_else(|| {
-        AkitaError::InvalidInput("coefficient-packing source length overflow".into())
-    })?;
-    if source_len != expected_source_len {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_source_len,
-            actual: source_len,
-        });
-    }
-
     let num_blocks = point.num_live_blocks();
     let partial_width = geometry.partial_base_field_width();
     let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
@@ -75,9 +68,7 @@ where
                 let position = first_position
                     .checked_add(position_in_block)
                     .ok_or(AkitaError::InvalidProof)?;
-                let source_offset = position.checked_mul(D).ok_or_else(|| {
-                    AkitaError::InvalidInput("coefficient-packing source offset overflow".into())
-                })?;
+                let source_position = position_at(position)?;
                 let position_weight = point.position_weights()[position_in_block];
                 for (subring_index, accumulator) in packed.iter_mut().enumerate() {
                     let subring_offset = subring_index.checked_mul(stride).ok_or_else(|| {
@@ -87,15 +78,12 @@ where
                     })?;
                     let mut packed_position = E::zero();
                     for (low_index, &packing_weight) in point.packing_weights().iter().enumerate() {
-                        let index = source_offset
-                            .checked_add(subring_offset)
-                            .and_then(|value| value.checked_add(low_index))
-                            .ok_or_else(|| {
-                                AkitaError::InvalidInput(
-                                    "coefficient-packing source index overflow".into(),
-                                )
-                            })?;
-                        let source = coefficient_at(index)?;
+                        let coefficient_index = subring_offset + low_index;
+                        let source = coefficient(
+                            position,
+                            coefficient_index,
+                            source_position[coefficient_index],
+                        );
                         packed_position += packing_weight.mul_base(source);
                     }
                     *accumulator += position_weight * packed_position;

@@ -48,6 +48,25 @@ impl OpeningMethod {
             }
         }
     }
+
+    /// Physical base-field coefficient width opened by this method.
+    pub fn physical_coefficient_width(
+        self,
+        extension_degree: usize,
+        inner_ring_dimension: usize,
+    ) -> Result<usize, AkitaError> {
+        match self {
+            Self::EvaluationTrace => Ok(inner_ring_dimension),
+            Self::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => Ok(crate::SubringCoefficientPackingGeometry::try_new(
+                extension_degree,
+                inner_ring_dimension,
+                challenge_subring_dimension,
+            )?
+            .partial_base_field_width()),
+        }
+    }
 }
 
 /// Ring-column width of one group's decomposed opening segment in the shared
@@ -57,7 +76,6 @@ impl OpeningMethod {
 /// decomposes its `k * s` physical base-field coordinates instead. This is the
 /// canonical sizing authority used by planners, generated-row expansion, and
 /// authenticated schedule replay.
-#[allow(clippy::too_many_arguments)]
 pub fn opening_d_segment_width(
     opening_method: OpeningMethod,
     extension_degree: usize,
@@ -72,17 +90,8 @@ pub fn opening_d_segment_width(
             "group D opening dimension must be nonzero".into(),
         ));
     }
-    let physical_width = match opening_method {
-        OpeningMethod::EvaluationTrace => inner_ring_dimension,
-        OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } => crate::SubringCoefficientPackingGeometry::try_new(
-            extension_degree,
-            inner_ring_dimension,
-            challenge_subring_dimension,
-        )?
-        .partial_base_field_width(),
-    };
+    let physical_width =
+        opening_method.physical_coefficient_width(extension_degree, inner_ring_dimension)?;
     let role_subcolumns = physical_width
         .checked_div(opening_ring_dimension)
         .filter(|_| physical_width.is_multiple_of(opening_ring_dimension))

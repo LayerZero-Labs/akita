@@ -64,12 +64,12 @@ The pre-cutover `main` baseline baked `D` into these high-level surfaces. All ar
 removed at merge:
 
 - `AkitaCommitmentScheme<const D, Cfg>`
-- `CommitmentProver<F, D>`
-- `CommitmentVerifier<F, D>`
+- the former dimension-typed commitment prover trait
+- the former dimension-typed commitment verifier trait
 - `AkitaProverSetup<F, D>`
 - `AkitaCommitmentHint<F, D>`
-- `ProverOpeningBatch<'a, PointF, P, CommitF, D>`
-- `ProverCommitmentGroup<'a, P, F, D>`
+- the former dimension-typed prover opening-batch carrier
+- the former dimension-typed prover commitment-group carrier
 - `RingCommitment<F, D>` as a protocol-facing commitment object
 - `FlatDigitBlocks<D>` as protocol/hint storage
 - `FlatRingVec<F>` methods that reconstruct protocol-level
@@ -303,7 +303,7 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 ### Acceptance Criteria
 
 - [x] `AkitaCommitmentScheme` is no longer const-generic over `D`.
-- [x] `CommitmentProver<F, D>` and `CommitmentVerifier<F, D>` are removed or
+- [x] The dimension-typed commitment prover and verifier traits are removed or
       replaced by D-free API surfaces.
 - [x] `AkitaProverSetup<F, D>` is replaced by `AkitaProverSetup<F>`.
 - [x] Protocol-facing commitments use `RingVec<F>` or an equivalent D-free
@@ -316,8 +316,8 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
 - [x] Top-level `akita_prover::batched_prove` and
       `akita_verifier::batched_verify` are not const-generic over a root `D`.
 - [x] Root polynomial inputs do not force `D` through PCS orchestration. Any
-      remaining `DensePoly<F, D>`, `OneHotPoly<F, D>`, or `SparseRingPoly<F, D>`
-      usage is confined to implementation views or kernel-entry conversions.
+      remaining dimension-typed polynomial usage is confined to implementation
+      views or kernel-entry conversions.
 - [x] Verifier-reachable shape mismatches return errors, not panics.
 - [x] Uniform-D existing E2E tests still pass.
 - [x] A mixed-D-per-level fixture proves and verifies through the normal
@@ -464,8 +464,8 @@ Replace:
 
 ```rust
 AkitaCommitmentScheme<const D: usize, Cfg>
-CommitmentProver<F, D>
-CommitmentVerifier<F, D>
+dimension-typed commitment prover trait
+dimension-typed commitment verifier trait
 ```
 
 with:
@@ -475,7 +475,7 @@ AkitaCommitmentScheme<Cfg>
 // D-free inherent methods or D-free traits.
 ```
 
-The normal API should obtain ring dimensions from `Cfg::runtime_schedule` and
+The normal API should obtain ring dimensions from the selected schedule and
 the proof/opening shape. It must not choose a single root `D` and propagate it
 through the whole proof.
 
@@ -521,35 +521,32 @@ validation.
 
 #### Prover Claims
 
-Replace `ProverOpeningBatch<'a, PointF, P, CommitF, D>` with a D-free batch.
+Replace the dimension-typed prover opening-batch carrier with a D-free batch.
 The commitment component should be a flat commitment plus hint. Polynomial
 source objects should expose their logical field length/arity without requiring
 the high-level batch to carry `D`.
 
-Root polynomial implementations may still have typed storage initially, but
-their D must be consumed at a root operation boundary, not at the PCS API.
+Root polynomial implementations may still have dimension-typed storage
+initially, but their dimension must be consumed at a root operation boundary,
+not at the PCS API.
 See "Root Polynomial Inputs" below — typed poly storage is the single
 structural reason the prover entry cannot lose its `const D`, and it has its
 own cutover step.
 
 #### Root Polynomial Inputs
 
-This is the load-bearing blocker for a D-free `batched_prove`, and the reason
-both prior attempts stalled at the entry signature. Today callers construct
-`DensePoly<F, D>`, `OneHotPoly<F, D>`, `SparseRingPoly<F, D>` — `D` is baked
-into the *type constructor of the input data*. `batched_prove` is generic
-over `P: RootProvePoly<F, D>`, so as long as inputs carry `D` in their type,
-any "D-free" entry can only be a facade that reads `D` back out of the type
-(forbidden pattern F1). **You cannot cut the entry before cutting the input
-representation. Do not try.**
+This was the load-bearing blocker for a D-free `batched_prove`, and the reason
+both prior attempts stalled at the entry signature. Before the cutover, root
+polynomial input types baked the ring dimension into their type constructors.
+As long as inputs carried the dimension in their type, any "D-free" entry could
+only have been a facade that read it back out of the type (forbidden pattern
+F1). The input representation therefore had to change before the entry point.
 
 The cutover:
 
 - A polynomial is flat field coefficients plus arity metadata. `num_vars` is
-  already stored on the poly independent of `D` (that is what the
-  `RootPolyMeta<F>` / `RootPolyShape<F, D>` split established). Make the
-  storage types D-free: `DensePoly<F>`, `OneHotPoly<F, I>`,
-  `SparseRingPoly<F>`.
+  stored independently of the scheduled ring dimension. The storage types are
+  D-free, and typed views are constructed only at operation boundaries.
 - `RootPolyShape<F, D>` and the view traits (`RootCommitSource`,
   `RootOpeningSource`, `RootTensorSource`, `DirectRootWitnessSource`) become
   kernel-entry view constructors reached through operation adapters that
@@ -565,7 +562,7 @@ The cutover:
 
 #### Verifier Claims
 
-`VerifierOpeningBatch` should remain D-free and should point at D-free
+The verifier opening-batch carrier should remain D-free and should point at D-free
 commitments. The verifier should derive all commitment row counts and field
 lengths from the opening shape and schedule.
 

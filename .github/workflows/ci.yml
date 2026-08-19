@@ -143,7 +143,7 @@ jobs:
           set +e
           # --lib --bins --tests matches the default test target set but skips
           # compiling examples (clippy's --all-targets already compile-checks them).
-          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,schedules-default,transcript-blake2b \
+          cargo nextest run --lib --bins --tests --profile ci --cargo-profile ci-test --no-default-features --features parallel,disk-persistence,schedules-default,catalog-gen,transcript-blake2b \
             --partition "slice:${SHARD_INDEX}/${SHARD_TOTAL}"
           status=$?
           end_epoch=$(date +%s)
@@ -189,9 +189,9 @@ jobs:
           cargo test --release -p akita-config --features all-schedules --test generated_tables
       - name: Generate schedule tables
         env:
-          # Exact packing searches retain large suffix frontiers. Keep the
-          # standard hosted runner below the measured two-row memory peak.
-          AKITA_SCHEDULE_GEN_JOBS: 1
+          # The suffix memo is bounded per row; keep two rows in flight on the
+          # standard hosted runner while retaining a conservative memory cap.
+          AKITA_SCHEDULE_GEN_JOBS: 2
         run: |
           scripts/generate-schedule-tables.sh \
             --check-catalog \

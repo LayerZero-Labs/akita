@@ -14,7 +14,7 @@ use akita_field::{
 use akita_types::{
     gadget_row_scalars, prepare_coefficient_packing_batch_semantics, r_decomp_levels,
     AkitaExpandedSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningMethod,
+    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
     PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
     RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
 };
@@ -41,9 +41,9 @@ pub struct RelationWeightEventInputs<'a, F: FieldCore, E: FieldCore> {
     pub opening_source_len: usize,
     pub opening_ring_dim: usize,
     pub relation_plan: &'a RelationRangeImagePlan,
-    /// Prepared public packing points keyed by authenticated group index.
-    pub prepared_coefficient_packing_points:
-        &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<E>)],
+    /// Method-typed prepared points for the current fold.
+    pub opening_points:
+        OpeningFamily<(), &'a [(usize, &'a PreparedSubringCoefficientPackingPoint<E>)]>,
 }
 
 mod events;
@@ -128,16 +128,15 @@ fn matching_row_range(
 }
 
 /// Emit the complete checked relation semantics for one fold.
+pub(super) type RelationWeightBuild<E> = (
+    RelationWeightEvents<E>,
+    OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,
+);
+
 #[tracing::instrument(skip_all, name = "build_relation_weight_events")]
 pub fn build_relation_weight_events<F, E>(
     inputs: RelationWeightEventInputs<'_, F, E>,
-) -> Result<
-    (
-        RelationWeightEvents<E>,
-        Option<CoefficientPackingBatchSemantics<E>>,
-    ),
-    AkitaError,
->
+) -> Result<RelationWeightBuild<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
@@ -152,7 +151,7 @@ where
         opening_source_len,
         opening_ring_dim,
         relation_plan,
-        prepared_coefficient_packing_points,
+        opening_points,
     } = inputs;
     let opening_batch = instance.opening_batch();
     lp.witness_chunk.validate()?;
@@ -172,6 +171,15 @@ where
     let alpha_pows_d = scalar_powers(alpha, d_d);
     let relation_geometry =
         RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
+    let packing_required = matches!(
+        relation_geometry.group_opening_method(0)?,
+        OpeningMethod::SubringCoefficientPacking { .. }
+    );
+    if packing_required != matches!(opening_points, OpeningFamily::SubringCoefficientPacking(_)) {
+        return Err(AkitaError::InvalidSetup(
+            "relation opening family disagrees with prepared points".into(),
+        ));
+    }
     let relation_rhs_layout = relation_geometry.rhs_layout();
     let row_families = relation_rhs_layout.row_families()?;
     let quotient_row_dims = row_families
@@ -253,35 +261,28 @@ where
             "relation plan disagrees with the current ring switch".into(),
         ));
     }
-    let has_coefficient_packing = instance
-        .group_openings()
-        .iter()
-        .any(|opening| opening.coefficient_packing_geometry().is_some());
-    let (coefficient_packing_events, coefficient_packing_batch) = if has_coefficient_packing {
-        let (events, batch) =
-            prepare_coefficient_packing_batch_semantics(CoefficientPackingBatchSemanticInputs {
-                level_params: lp,
-                opening_batch,
-                relation_plan,
-                relation: instance,
-                prepared_points: prepared_coefficient_packing_points,
-                alpha,
-                tau1,
-                claim_coefficients: gamma,
-            })?;
-        (events, Some(batch))
-    } else {
-        if !prepared_coefficient_packing_points.is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "EvaluationTrace relation supplied coefficient-packing points".into(),
-            ));
+    let (coefficient_packing_events, opening_semantics) = match opening_points {
+        OpeningFamily::SubringCoefficientPacking(prepared_points) => {
+            let (events, batch) = prepare_coefficient_packing_batch_semantics(
+                CoefficientPackingBatchSemanticInputs {
+                    level_params: lp,
+                    opening_batch,
+                    relation_plan,
+                    relation: instance,
+                    prepared_points,
+                    alpha,
+                    tau1,
+                    claim_coefficients: gamma,
+                },
+            )?;
+            (events, OpeningFamily::SubringCoefficientPacking(batch))
         }
-        (Vec::new(), None)
+        OpeningFamily::EvaluationTrace(()) => (Vec::new(), OpeningFamily::EvaluationTrace(())),
     };
-    let coefficient_packing_groups = coefficient_packing_batch
-        .as_ref()
-        .map(CoefficientPackingBatchSemantics::groups)
-        .unwrap_or(&[]);
+    let coefficient_packing_groups = match &opening_semantics {
+        OpeningFamily::EvaluationTrace(()) => &[][..],
+        OpeningFamily::SubringCoefficientPacking(batch) => batch.groups(),
+    };
     let mut relation_events = RelationWeightEvents {
         events: Vec::new(),
         alpha_powers: scalar_powers(
@@ -793,7 +794,7 @@ where
             )?;
         }
     }
-    Ok((relation_events, coefficient_packing_batch))
+    Ok((relation_events, opening_semantics))
 }
 
 #[cfg(test)]

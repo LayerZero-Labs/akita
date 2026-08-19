@@ -124,8 +124,7 @@ fn wide_matches_reference_fp128() {
     }
 }
 
-#[test]
-fn counting_column_sweep_matches_per_block_reference() {
+fn assert_counting_column_sweep_matches_per_block_reference(num_live_blocks: usize) {
     type F = Fp64<4294967197>;
     const D: usize = 64;
 
@@ -133,12 +132,6 @@ fn counting_column_sweep_matches_per_block_reference() {
     let n_a = 2;
     let num_positions_per_block = 4;
     let num_digits_inner = 3;
-    // The production sweep threshold is 32 blocks per worker.
-    const BLOCKS_PER_THREAD: usize = 33;
-    #[cfg(feature = "parallel")]
-    let num_live_blocks = rayon::current_num_threads() * BLOCKS_PER_THREAD;
-    #[cfg(not(feature = "parallel"))]
-    let num_live_blocks = BLOCKS_PER_THREAD;
     let active_a_cols = num_positions_per_block * num_digits_inner;
     let a_matrix: Vec<Vec<CyclotomicRing<F, D>>> = (0..n_a)
         .map(|_| {
@@ -179,6 +172,29 @@ fn counting_column_sweep_matches_per_block_reference() {
         .collect::<Vec<_>>();
 
     assert_eq!(got, expected);
+}
+
+#[test]
+fn counting_column_sweep_matches_per_block_reference() {
+    // The production sweep threshold is 32 blocks per worker.
+    const BLOCKS_PER_THREAD: usize = 33;
+    #[cfg(feature = "parallel")]
+    let num_live_blocks = rayon::current_num_threads() * BLOCKS_PER_THREAD;
+    #[cfg(not(feature = "parallel"))]
+    let num_live_blocks = BLOCKS_PER_THREAD;
+    assert_counting_column_sweep_matches_per_block_reference(num_live_blocks);
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn counting_column_sweep_is_worker_count_invariant() {
+    for workers in [1, 2, 4, 8, 16] {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| assert_counting_column_sweep_matches_per_block_reference(257));
+    }
 }
 
 // -------------------------------------------------------------------------

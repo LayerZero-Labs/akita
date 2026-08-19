@@ -108,7 +108,7 @@ dead_patterns=(
   'SparseRingBatchView\b'
   'root_tensor_projection_enabled\b'
   'root_tensor_projection_enabled_for_width\b'
-  'ProveBackendFor\b'
+  '\bProveBackendFor\b'
   'ProjectBackendFor\b'
   'CommitmentConfig::D\b'
   'uniform_ring_dimension\b'
@@ -132,6 +132,8 @@ live_specs=(
   specs/akita-pcs-crate-decomposition.md
   specs/akita-field-refactor.md
   specs/cross-repo-field-microbench.md
+  specs/runtime-ring-cutover.md
+  specs/subring-coefficient-packing.md
 )
 # Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:
 # specs/akita-compute-backend-metal.md

@@ -67,6 +67,9 @@ macro_rules! impl_multi_chunk_companion {
             fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
                 <$base as $crate::CommitmentConfig>::committed_source_class()
             }
+            fn recursive_setup_planning() -> bool {
+                <$base as $crate::CommitmentConfig>::recursive_setup_planning()
+            }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
             }
@@ -664,6 +667,17 @@ mod fp128_policy_tests {
     fn assert_cfg_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         num_vars_values: &[usize],
     ) {
+        let catalog = Cfg::schedule_catalog().expect("generated schedule catalog");
+        let catalog_max = catalog
+            .entries
+            .iter()
+            .map(|entry| entry.to_runtime_lookup_key().final_group.num_vars())
+            .max()
+            .expect("nonempty generated schedule catalog");
+        assert!(
+            num_vars_values.contains(&catalog_max),
+            "SIS-width spot checks must include catalog maximum nv={catalog_max}"
+        );
         for &num_vars in num_vars_values {
             let group = match crate::honest_fold_policy_of::<Cfg>() {
                 akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
@@ -866,7 +880,9 @@ mod independent_commitment_tests {
             fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
                 .expect("generated scalar row");
         assert_eq!(profile, scalar_row.profiles().final_group);
-        assert_ne!(profile.inner_commit_matrix.output_rank(), 0);
-        assert_ne!(profile.outer_commit_matrix.output_rank(), 0);
+        assert_eq!(profile.inner_commit_matrix.ring_dimension(), 256);
+        assert_eq!(profile.outer_commit_matrix.ring_dimension(), 64);
+        assert_eq!(profile.log_basis_inner, 3);
+        assert_eq!(profile.log_basis_outer, 3);
     }
 }

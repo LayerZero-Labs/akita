@@ -849,15 +849,6 @@ where
             .iter()
             .map(|witness| {
                 let view = witness.view::<F, D>()?;
-                let source_len =
-                    plan.point
-                        .num_live_positions()
-                        .checked_mul(D)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "coefficient-packing recursive source length overflow".into(),
-                            )
-                        })?;
                 plan.validate::<D>(view.num_vars())?;
                 if view.live_ring_elems != plan.point.num_live_positions() {
                     return Err(AkitaError::InvalidSize {
@@ -866,22 +857,22 @@ where
                     });
                 }
                 let coordinates =
-                    crate::backend::coefficient_packing::partials_from_indexed_source::<F, E, D>(
+                    crate::backend::coefficient_packing::partials_from_position_source::<
+                        F,
+                        E,
+                        i8,
+                        D,
+                    >(
                         plan,
                         view.num_vars(),
-                        source_len,
-                        |index| {
-                            if index >= view.live_coeff_len {
-                                return Ok(F::zero());
+                        |position| view.coeffs.get(position).ok_or(AkitaError::InvalidProof),
+                        |position, coefficient_index, coefficient| {
+                            let flat_index = position * D + coefficient_index;
+                            if flat_index < view.live_coeff_len {
+                                F::from_i8(coefficient)
+                            } else {
+                                F::zero()
                             }
-                            let ring_index = index / D;
-                            let coefficient_index = index % D;
-                            view.coeffs
-                                .get(ring_index)
-                                .and_then(|ring| ring.get(coefficient_index))
-                                .copied()
-                                .map(F::from_i8)
-                                .ok_or(AkitaError::InvalidProof)
                         },
                     )?;
                 SubringCoefficientPackingPartials::new(

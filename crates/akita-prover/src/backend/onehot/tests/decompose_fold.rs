@@ -42,6 +42,18 @@ fn direct_indices_match_dense_for_all_chunk_relations() {
     assert_onehot_decompose_fold_matches_dense::<256>(256, make_indices(8, 256));
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn direct_indices_are_worker_count_invariant() {
+    for workers in [1, 2, 4, 8, 16] {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(direct_indices_match_dense_for_all_chunk_relations);
+    }
+}
+
 #[test]
 fn batched_direct_indices_match_dense_aggregation() {
     type F = Prime24Offset3;

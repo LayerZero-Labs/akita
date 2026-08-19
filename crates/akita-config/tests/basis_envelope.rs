@@ -57,7 +57,8 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
                 witness_norms: honest_policy
-                    .witness_norms_for_inner_basis(root.log_basis_inner, root.d_a()),
+                    .witness_norms_for_inner_basis(root.log_basis_inner, root.d_a())
+                    .expect("one-hot source geometry"),
                 log_basis_response: root.log_basis_open,
                 challenge_config: &root.fold_challenge_config,
             })

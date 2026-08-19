@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use std::sync::Arc;
 
 /// Checked inputs for one coefficient-packing group's shared relation semantics.
 pub(super) struct CoefficientPackingGroupSemanticInputs<'a, F: FieldCore, E: FieldCore> {
@@ -15,35 +17,35 @@ pub(super) struct CoefficientPackingGroupSemanticInputs<'a, F: FieldCore, E: Fie
 }
 
 /// Packing-specific E and quotient events over the checked flat witness domain.
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingRelationEvents<E: FieldCore> {
+pub(super) struct CoefficientPackingRelationEvents<E: FieldCore> {
     pub(super) events: Vec<RelationWeightEvent<E>>,
     pub(super) alpha_powers: Arc<[E]>,
     pub(super) relation_coefficient_block_len: usize,
     pub(super) physical_field_len: usize,
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 impl<E: FieldCore> CoefficientPackingRelationEvents<E> {
     #[must_use]
-    pub fn events(&self) -> &[RelationWeightEvent<E>] {
+    pub(super) fn events(&self) -> &[RelationWeightEvent<E>] {
         &self.events
     }
 
     /// Canonical powers of the alpha used to prepare every event scalar.
     #[must_use]
-    pub fn alpha_powers(&self) -> &[E] {
+    pub(super) fn alpha_powers(&self) -> &[E] {
         &self.alpha_powers
     }
 
     #[must_use]
-    pub const fn relation_coefficient_block_len(&self) -> usize {
+    pub(super) const fn relation_coefficient_block_len(&self) -> usize {
         self.relation_coefficient_block_len
     }
 
     #[must_use]
-    pub const fn physical_field_len(&self) -> usize {
+    pub(super) const fn physical_field_len(&self) -> usize {
         self.physical_field_len
     }
 
@@ -52,7 +54,7 @@ impl<E: FieldCore> CoefficientPackingRelationEvents<E> {
     /// The returned value already includes every event's alpha powers. A
     /// caller that separately contracts the native common-alpha factor must
     /// add this value afterwards, without multiplying by that factor again.
-    pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+    pub(super) fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         let point_variables = u32::try_from(point.len())
             .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
         let expected = 1usize
@@ -399,45 +401,9 @@ impl<E: FieldCore> CoefficientPackingStage2Terms<E> {
 pub struct CoefficientPackingGroupSemantics<E: FieldCore> {
     pub(super) group_index: usize,
     pub(super) geometry: SubringCoefficientPackingGeometry,
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(test)]
     pub(super) relation_events: CoefficientPackingRelationEvents<E>,
     pub(super) stage2_terms: CoefficientPackingStage2Terms<E>,
-}
-
-/// One verifier group's compact coefficient-packing semantics.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingVerifierGroupSemantics<E: FieldCore> {
-    pub(super) group_index: usize,
-    pub(super) geometry: SubringCoefficientPackingGeometry,
-    pub(super) group_claim_range: Range<usize>,
-    pub(super) scalar_claim_weight: E,
-    pub(super) compact_factors: CoefficientPackingCompactFactors<E>,
-}
-
-/// Compact tensor factors used by the verifier at the Stage 2 final point.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingCompactFactors<E: FieldCore> {
-    pub(super) basis: crate::BasisMode,
-    pub(super) physical_field_len: usize,
-    pub(super) direct_opening_point: Arc<[E]>,
-    pub(super) packing_z_point: Arc<[E]>,
-    pub(super) affine_relation_families: Vec<CoefficientPackingAffineRelationFamily<E>>,
-    pub(super) quotient_families: Vec<EqPairTensorFamily<E>>,
-    pub(super) direct_opening_families: Vec<EqPairTensorFamily<E>>,
-    pub(super) packing_z_families: Vec<EqPairTensorFamily<E>>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct CoefficientPackingAffineRelationFamily<E: FieldCore> {
-    pub(super) scalar: E,
-    pub(super) coefficient_weights: Arc<[E]>,
-    pub(super) coefficient_len: usize,
-    pub(super) base_offset: usize,
-    pub(super) outer_len: usize,
-    pub(super) outer_stride: usize,
-    pub(super) digit_stride: usize,
-    pub(super) digit_weights: Arc<[E]>,
-    pub(super) outer_weights: Arc<[E]>,
 }
 
 /// Exact authority used to prepare every packing group in one fold.
@@ -459,15 +425,6 @@ pub struct CoefficientPackingBatchSemantics<E: FieldCore> {
     pub(super) groups: Vec<CoefficientPackingGroupSemantics<E>>,
 }
 
-/// Checked compact packing semantics for the Stage 2 verifier.
-///
-/// Unlike [`CoefficientPackingBatchSemantics`], this carrier never builds the
-/// prover's expanded event and segment representation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingVerifierBatchSemantics<E: FieldCore> {
-    pub(super) groups: Vec<CoefficientPackingVerifierGroupSemantics<E>>,
-}
-
 impl<E: FieldCore> CoefficientPackingBatchSemantics<E> {
     #[must_use]
     pub fn groups(&self) -> &[CoefficientPackingGroupSemantics<E>] {
@@ -477,13 +434,6 @@ impl<E: FieldCore> CoefficientPackingBatchSemantics<E> {
     #[must_use]
     pub fn into_groups(self) -> Vec<CoefficientPackingGroupSemantics<E>> {
         self.groups
-    }
-}
-
-impl<E: FieldCore> CoefficientPackingVerifierBatchSemantics<E> {
-    #[must_use]
-    pub fn groups(&self) -> &[CoefficientPackingVerifierGroupSemantics<E>] {
-        &self.groups
     }
 }
 
@@ -498,9 +448,9 @@ impl<E: FieldCore> CoefficientPackingGroupSemantics<E> {
         self.geometry
     }
 
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(test)]
     #[must_use]
-    pub const fn relation_events(&self) -> &CoefficientPackingRelationEvents<E> {
+    pub(super) const fn relation_events(&self) -> &CoefficientPackingRelationEvents<E> {
         &self.relation_events
     }
 
@@ -518,32 +468,5 @@ impl<E: FieldCore> CoefficientPackingGroupSemantics<E> {
         CoefficientPackingStage2Terms<E>,
     ) {
         (self.group_index, self.geometry, self.stage2_terms)
-    }
-}
-
-impl<E: FieldCore> CoefficientPackingVerifierGroupSemantics<E> {
-    #[must_use]
-    pub const fn group_index(&self) -> usize {
-        self.group_index
-    }
-
-    #[must_use]
-    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
-        self.geometry
-    }
-
-    #[must_use]
-    pub fn group_claim_range(&self) -> Range<usize> {
-        self.group_claim_range.clone()
-    }
-
-    #[must_use]
-    pub const fn scalar_claim_weight(&self) -> E {
-        self.scalar_claim_weight
-    }
-
-    #[must_use]
-    pub const fn compact_factors(&self) -> &CoefficientPackingCompactFactors<E> {
-        &self.compact_factors
     }
 }

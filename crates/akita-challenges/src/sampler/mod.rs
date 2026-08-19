@@ -29,7 +29,7 @@ use op_norm::OpNormTable;
 
 const OP_NORM_PREDICATE_SCALE: u32 = 48;
 const MAX_OP_NORM_ATTEMPTS: usize = 4096;
-const PACKING_CHALLENGE_BATCH_SIZE: usize = 128;
+const CHALLENGE_BATCH_SIZE: usize = 128;
 static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
     LazyLock::new(|| {
         let config = crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
@@ -130,7 +130,7 @@ pub(crate) fn sample_batched_challenges_from_seed(
     n: usize,
     cfg: &SparseChallengeConfig,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
-    let num_batches = n.div_ceil(PACKING_CHALLENGE_BATCH_SIZE);
+    let num_batches = n.div_ceil(CHALLENGE_BATCH_SIZE);
     let sample_batch = |batch_index: usize| {
         let canonical_batch_index = u64::try_from(batch_index).map_err(|_| {
             AkitaError::InvalidSetup("sparse challenge batch index exceeds u64".into())
@@ -138,9 +138,9 @@ pub(crate) fn sample_batched_challenges_from_seed(
         let mut cursor = XofCursor::from_batched_seed(seed, canonical_batch_index);
         let mut scratch = SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2);
         let start = batch_index
-            .checked_mul(PACKING_CHALLENGE_BATCH_SIZE)
+            .checked_mul(CHALLENGE_BATCH_SIZE)
             .ok_or_else(|| AkitaError::InvalidSetup("sparse challenge batch overflow".into()))?;
-        let batch_len = n.saturating_sub(start).min(PACKING_CHALLENGE_BATCH_SIZE);
+        let batch_len = n.saturating_sub(start).min(CHALLENGE_BATCH_SIZE);
         let mut batch = Vec::with_capacity(batch_len);
         for _ in 0..batch_len {
             scratch.sample(&mut cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
@@ -240,14 +240,14 @@ mod tests {
         let ring_d = 64;
         let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d).unwrap();
         let seed = [11u8; 32];
-        let challenge_count = 2 * PACKING_CHALLENGE_BATCH_SIZE;
+        let challenge_count = 2 * CHALLENGE_BATCH_SIZE;
         let batch =
             sample_batched_challenges_from_seed(&seed, ring_d, challenge_count, &cfg).unwrap();
         let expected = (0..2)
             .flat_map(|batch_index| {
                 let mut cursor = XofCursor::from_batched_seed(&seed, batch_index);
                 let mut scratch = SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2);
-                (0..PACKING_CHALLENGE_BATCH_SIZE)
+                (0..CHALLENGE_BATCH_SIZE)
                     .map(|_| {
                         scratch
                             .sample(&mut cursor, ring_d, cfg.count_pm1, cfg.count_pm2)

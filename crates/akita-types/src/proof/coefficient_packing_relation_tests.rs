@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
@@ -528,6 +529,17 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
         digit_weights: digit_weights.clone().into(),
         outer_weights: outer_weights.clone().into(),
     };
+    let family_scalar = family.scalar;
+    let compact = CoefficientPackingCompactFactors {
+        basis: BasisMode::Lagrange,
+        physical_field_len: 1usize << point.len(),
+        direct_opening_point: Arc::from([]),
+        packing_z_point: Arc::from([]),
+        affine_relation_families: vec![family],
+        quotient_families: Vec::new(),
+        direct_opening_families: Vec::new(),
+        packing_z_families: Vec::new(),
+    };
 
     let coefficient_evaluation = coefficient_weights.iter().enumerate().fold(
         Extension::zero(),
@@ -554,11 +566,11 @@ fn compact_affine_e_relation_handles_the_production_fp128_root_stride() {
                 )
             });
     assert_eq!(
-        family.evaluate_at_point(&point).unwrap(),
-        family.scalar * coefficient_evaluation * outer_evaluation
+        compact.evaluate_relation_at_point(&point).unwrap(),
+        family_scalar * coefficient_evaluation * outer_evaluation
     );
-    assert!(family
-        .evaluate_at_point(&point[..coefficient_bits - 1])
+    assert!(compact
+        .evaluate_relation_at_point(&point[..coefficient_bits - 1])
         .is_err());
 }
 

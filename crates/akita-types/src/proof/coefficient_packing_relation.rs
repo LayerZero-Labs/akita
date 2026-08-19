@@ -1,11 +1,10 @@
 //! Shared coefficient-packing relation semantics for prover and verifier.
 
 use std::ops::Range;
-use std::sync::Arc;
 
 #[cfg(test)]
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
+use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
@@ -43,15 +42,19 @@ struct RelationEventDomain {
     physical_field_len: usize,
 }
 
-#[cfg(any(debug_assertions, test))]
-pub use expanded::CoefficientPackingRelationEvents;
-use expanded::{CoefficientPackingAffineRelationFamily, CoefficientPackingGroupSemanticInputs};
+#[cfg(test)]
+use compact::CoefficientPackingAffineRelationFamily;
+pub use compact::{
+    CoefficientPackingCompactFactors, CoefficientPackingVerifierBatchSemantics,
+    CoefficientPackingVerifierGroupSemantics,
+};
+use expanded::CoefficientPackingGroupSemanticInputs;
+#[cfg(test)]
+use expanded::CoefficientPackingRelationEvents;
 pub use expanded::{
     CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
-    CoefficientPackingCompactFactors, CoefficientPackingGroupSemantics,
-    CoefficientPackingStage2Segment, CoefficientPackingStage2Source, CoefficientPackingStage2Term,
-    CoefficientPackingStage2Terms, CoefficientPackingVerifierBatchSemantics,
-    CoefficientPackingVerifierGroupSemantics,
+    CoefficientPackingGroupSemantics, CoefficientPackingStage2Segment,
+    CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
 };
 
 struct ValidatedCoefficientPackingGroup<'a, F: FieldCore, E: FieldCore> {
@@ -697,7 +700,7 @@ where
         }
     }
 
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(test)]
     let relation_events = CoefficientPackingRelationEvents {
         events: events.clone(),
         alpha_powers: alpha_powers.clone().into(),
@@ -709,7 +712,7 @@ where
         CoefficientPackingGroupSemantics {
             group_index: inputs.group_index,
             geometry,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(test)]
             relation_events,
             stage2_terms: CoefficientPackingStage2Terms {
                 direct_opening_source,

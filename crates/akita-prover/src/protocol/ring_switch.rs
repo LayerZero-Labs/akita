@@ -15,7 +15,8 @@ use akita_types::{
     CompressionRelationWeights, FpExtEncoding, RingVec,
 };
 use akita_types::{
-    CoefficientPackingBatchSemantics, DigitBlocks, RelationRangeImagePlan, RingRelationInstance,
+    CoefficientPackingBatchSemantics, DigitBlocks, OpeningFamily, RelationRangeImagePlan,
+    RingRelationInstance,
 };
 
 mod coeffs;
@@ -65,5 +66,5 @@ pub struct RingSwitchOutput<E: FieldCore> {
 pub(crate) struct RingSwitchFinalization<E: FieldCore> {
     pub(crate) output: RingSwitchOutput<E>,
     pub(crate) relation_plan: RelationRangeImagePlan,
-    pub(crate) coefficient_packing_batch: Option<CoefficientPackingBatchSemantics<E>>,
+    pub(crate) opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,
 }

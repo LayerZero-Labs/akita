@@ -6,7 +6,7 @@
 
 mod extension_opening_reduction;
 mod verify;
-use crate::protocol::evaluation_trace::{prepare_evaluation_trace, PreparedEvaluationTrace};
+use crate::protocol::evaluation_trace::prepare_evaluation_trace;
 use crate::protocol::ring_switch::{
     ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
 };

@@ -166,12 +166,11 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         }
         previous = current;
     }
-    let terminal_d_a = schedule.terminal.params.witness.d_a();
-    let terminal_level = schedule.recursive_folds.len().saturating_add(1);
-    assert!(dimension_candidates(&policy, terminal_level, previous)
-        .unwrap()
-        .iter()
-        .any(|dimensions| dimensions.d_a() == terminal_d_a));
+    assert_eq!(
+        schedule.terminal.params.witness.d_a(),
+        ADAPTIVE_SUFFIX_RING_DIMENSION,
+        "the shipped adaptive schedule must terminate in the audited suffix dimension"
+    );
 }
 
 #[cfg(feature = "catalog-gen")]

@@ -220,6 +220,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     };
     let opening =
         PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 64)
+            .expect("valid packing request")
             .expect("packing geometry");
     let request = RecursiveCandidateRequest {
         policy: &policy,
@@ -382,6 +383,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
             dimensions,
             64,
         )
+        .expect("valid packing request")
         .expect("production packing geometry");
         let derive = |without_bounds| {
             let request = RecursiveCandidateRequest {
@@ -441,6 +443,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     };
     let opening =
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 64)
+            .unwrap()
             .unwrap();
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 2));
     let candidates = crate::planner::root_level_candidates_for_basis(
@@ -533,6 +536,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     };
     let precommit_opening =
         PlannerOpeningCandidate::coefficient_packing(0, policy.claim_ext_degree, dimensions, 128)
+            .unwrap()
             .unwrap();
     let grouped = crate::planner::root_level_candidates_for_basis(
         &grouped_key,
@@ -691,9 +695,11 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
     let trace = PlannerOpeningCandidate::evaluation_trace(challenge);
     let exact_packing =
         PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 128)
+            .unwrap()
             .unwrap();
     let reduced_packing =
         PlannerOpeningCandidate::coefficient_packing(1, policy.claim_ext_degree, dimensions, 64)
+            .unwrap()
             .unwrap();
     let mut cache = SetupPrefixSearchCache::default();
     let request = |opening| SetupPrefixSearchRequest {

@@ -1,7 +1,7 @@
 //! CpuBackend kernels over dense polynomial views.
 
 use super::views::{DenseBatchView, DenseView};
-use crate::backend::coefficient_packing::partials_from_indexed_source;
+use crate::backend::coefficient_packing::partials_from_position_source;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -128,15 +128,6 @@ where
             .iter()
             .map(|poly| {
                 let rings = poly.ring_coeffs::<D>()?;
-                let source_len =
-                    plan.point
-                        .num_live_positions()
-                        .checked_mul(D)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "coefficient-packing dense source length overflow".into(),
-                            )
-                        })?;
                 // Dense roots authenticate the complete Boolean hypercube, so
                 // every stored ring is live. Exact-prefix storage is reserved
                 // for recursive witness views.
@@ -146,19 +137,16 @@ where
                         actual: rings.len(),
                     });
                 }
-                let coordinates = partials_from_indexed_source::<F, E, D>(
+                let coordinates = partials_from_position_source::<F, E, F, D>(
                     plan,
                     RootPolyMeta::<F>::num_vars(*poly),
-                    source_len,
-                    |index| {
-                        let ring_index = index / D;
-                        let coefficient_index = index % D;
+                    |position| {
                         rings
-                            .get(ring_index)
-                            .and_then(|ring| ring.coefficients().get(coefficient_index))
-                            .copied()
+                            .get(position)
+                            .map(|ring| ring.coefficients())
                             .ok_or(AkitaError::InvalidProof)
                     },
+                    |_, _, coefficient| coefficient,
                 )?;
                 SubringCoefficientPackingPartials::new(
                     plan.point.geometry(),

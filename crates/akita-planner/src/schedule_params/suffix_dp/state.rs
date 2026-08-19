@@ -85,19 +85,61 @@ pub(super) struct ScheduleMemoKey {
     pub(super) payload_phase: akita_types::CommitmentPayloadPhase,
 }
 
+impl ScheduleMemoKey {
+    const fn is_direct(self) -> bool {
+        self.incoming_setup_prefix.is_none()
+    }
+}
+
 pub(crate) struct ScheduleMemo {
-    // Every completed state is retained for the lifetime of one row search.
-    // Evicting completed exact-DP states turns a wide packing search into
-    // repeated subtree evaluation; the compact suffix frontiers and persistent
-    // fold chains are the memory bound instead.
-    entries: HashMap<ScheduleMemoKey, Arc<SuffixResult>>,
+    entries: HashMap<ScheduleMemoKey, MemoEntry>,
+    direct_insertion_order: VecDeque<ScheduleMemoKey>,
+    prefixed_insertion_order: VecDeque<ScheduleMemoKey>,
     pub(super) setup_prefixes: SetupPrefixSearchCache,
+}
+
+pub(super) struct MemoEntry {
+    pub(super) result: Arc<SuffixResult>,
+    pub(super) referenced: bool,
+}
+
+const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
+// Prefix layouts create a much wider stream of one-off states than ordinary
+// suffixes. Separate quotas keep that stream from evicting direct states while
+// preserving a hard bound on the completed exact-DP cache.
+const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 196_608;
+const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
+    MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
+const MAX_SECOND_CHANCE_PROBES: usize = 16;
+
+pub(super) fn evict_suffix_entry(
+    entries: &mut HashMap<ScheduleMemoKey, MemoEntry>,
+    insertion_order: &mut VecDeque<ScheduleMemoKey>,
+) {
+    let mut probes = 0;
+    while let Some(evicted) = insertion_order.pop_front() {
+        let recently_referenced = probes < MAX_SECOND_CHANCE_PROBES
+            && entries.get_mut(&evicted).is_some_and(|entry| {
+                let referenced = entry.referenced;
+                entry.referenced = false;
+                referenced
+            });
+        if recently_referenced {
+            insertion_order.push_back(evicted);
+            probes += 1;
+        } else {
+            entries.remove(&evicted);
+            break;
+        }
+    }
 }
 
 impl ScheduleMemo {
     pub(crate) fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            direct_insertion_order: VecDeque::new(),
+            prefixed_insertion_order: VecDeque::new(),
             setup_prefixes: SetupPrefixSearchCache::default(),
         }
     }
@@ -112,12 +154,43 @@ impl ScheduleMemo {
         self.entries.contains_key(key)
     }
 
-    pub(super) fn get(&self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
-        self.entries.get(key)
+    pub(super) fn get(&mut self, key: &ScheduleMemoKey) -> Option<&Arc<SuffixResult>> {
+        self.entries.get_mut(key).map(|entry| {
+            entry.referenced = true;
+            &entry.result
+        })
     }
 
     pub(super) fn insert(&mut self, key: ScheduleMemoKey, result: Arc<SuffixResult>) {
-        self.entries.insert(key, result);
+        if let Entry::Occupied(mut existing) = self.entries.entry(key) {
+            existing.insert(MemoEntry {
+                result,
+                referenced: true,
+            });
+            return;
+        }
+        let (insertion_order, capacity) = if key.is_direct() {
+            (
+                &mut self.direct_insertion_order,
+                MAX_DIRECT_SUFFIX_CACHE_ENTRIES,
+            )
+        } else {
+            (
+                &mut self.prefixed_insertion_order,
+                MAX_PREFIXED_SUFFIX_CACHE_ENTRIES,
+            )
+        };
+        if insertion_order.len() >= capacity {
+            evict_suffix_entry(&mut self.entries, insertion_order);
+        }
+        insertion_order.push_back(key);
+        self.entries.insert(
+            key,
+            MemoEntry {
+                result,
+                referenced: false,
+            },
+        );
     }
 
     pub(crate) fn setup_prefix_cache_diagnostics(&self) -> (usize, usize) {

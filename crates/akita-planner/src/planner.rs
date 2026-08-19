@@ -61,7 +61,7 @@ fn materialize_precommitted_group_for_open_basis(
         num_chunks,
         num_fold_coeffs,
         witness_norms: honest_fold_policy
-            .witness_norms_for_inner_basis(layout.log_basis_inner, ring_dimension),
+            .witness_norms_for_inner_basis(layout.log_basis_inner, ring_dimension)?,
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
     })?;
@@ -400,7 +400,7 @@ fn root_final_group_level_params_candidate(
     let num_chunks = policy.chunks_at_level(0);
     let witness_norms = ctx
         .final_honest_fold_policy
-        .witness_norms_for_inner_basis(log_basis_inner, d_a);
+        .witness_norms_for_inner_basis(log_basis_inner, d_a)?;
     let Some(ab_candidate) = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
         policy,
         fold_policy: &ctx.final_honest_fold_policy,

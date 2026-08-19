@@ -65,17 +65,17 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
                 .map(|slot| slot.natural_len)
         })
         .collect::<Vec<_>>();
-    eprintln!(
-        "W8R2 setup capacities: provisioned_k2={}, provisioned_k4={}, exact_prover={}, exact_verifier={}, incoming_prefixes={:?}",
-        setup_for_two.num_field_elements,
-        setup_for_four.num_field_elements,
-        prover.num_field_elements,
-        verifier.num_field_elements,
-        incoming_prefixes
+    assert_eq!(setup_for_two.num_field_elements, 32_768);
+    assert_eq!(setup_for_four.num_field_elements, 8_388_608);
+    assert_eq!(prover.num_field_elements, 8_388_608);
+    assert_eq!(verifier.num_field_elements, 3_432_448);
+    assert_eq!(
+        incoming_prefixes,
+        [Some(8_388_608), None, None, None, None, None]
     );
     // Exactly one fold carries a setup prefix, and it carries the length the
-    // committed catalog states. Reading the length from the schedule keeps this
-    // assertion from pinning a planner output that legitimately moves.
+    // committed catalog states. These values deliberately pin the shipped row:
+    // a planner change must update the fixture and explain the new setup shape.
     assert_eq!(
         incoming_prefixes.len(),
         schedule.schedule().recursive_folds.len()
@@ -191,12 +191,53 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             challenge_subring_dimension,
         )
         .expect("valid coefficient-packing geometry");
+        let expected_d_a = if level == 0 { 256 } else { 64 };
+        assert_eq!(
+            params.d_a(),
+            expected_d_a,
+            "level {level} must preserve its exact A-ring dimension"
+        );
+        assert_eq!(
+            challenge_subring_dimension, 64,
+            "level {level} must use the 64-coefficient challenge subring"
+        );
+        let expected_packing_factor = if level == 0 { 4 } else { 1 };
+        assert_eq!(geometry.packing_factor(), expected_packing_factor);
         if level == 0 {
             assert!(
                 geometry.packing_factor() > 1,
                 "the root must use reduced-width coefficient packing"
             );
         }
+    }
+    assert_eq!(
+        schedule.root.params.precommitted_groups.len(),
+        2,
+        "W8R2 must carry the two frozen singleton groups"
+    );
+    for (group_index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+        assert_eq!(
+            group.commitment.layout.inner_commit_matrix.ring_dimension(),
+            512
+        );
+        let expected_subring_dimension = if group_index == 0 { 64 } else { 128 };
+        assert_eq!(
+            group.commitment.opening.opening_method,
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: expected_subring_dimension,
+            },
+            "precommitted group {group_index} must preserve its exact packing domain"
+        );
+        let geometry = SubringCoefficientPackingGeometry::try_new(
+            W8R2Cfg::EXT_DEGREE,
+            group.commitment.layout.inner_commit_matrix.ring_dimension(),
+            expected_subring_dimension,
+        )
+        .expect("valid precommitted packing geometry");
+        assert_eq!(
+            geometry.packing_factor(),
+            if group_index == 0 { 8 } else { 4 }
+        );
     }
     assert_eq!(
         schedule.recursive_folds[1].params.witness.opening_method,

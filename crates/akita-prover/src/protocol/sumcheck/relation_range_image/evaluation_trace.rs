@@ -1,9 +1,10 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
 use super::fold_two_round_quad;
+use std::collections::BTreeMap;
 #[cfg(test)]
 use std::ops::Range;
-use std::{mem, sync::Arc};
+use std::sync::Arc;
 
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt, Invertible};
@@ -139,6 +140,55 @@ struct PreparedLaneTerm<E: FieldCore> {
     lane: usize,
 }
 
+#[derive(Clone)]
+struct PreparedPackingSegment<E: FieldCore> {
+    factor: E,
+    source_index: usize,
+    target_lane_start: usize,
+    source_lane_start: usize,
+    lane_count: usize,
+}
+
+struct PreparedPackingLaneMap<E: FieldCore> {
+    segments: Vec<PreparedPackingSegment<E>>,
+    lane_to_segment: Vec<Option<usize>>,
+    overlapping_segments: BTreeMap<usize, Vec<usize>>,
+}
+
+impl<E: FieldCore> PreparedPackingLaneMap<E> {
+    fn add_segment(&mut self, lane: usize, segment: usize) -> Result<(), AkitaError> {
+        let slot = self
+            .lane_to_segment
+            .get_mut(lane)
+            .ok_or(AkitaError::InvalidProof)?;
+        if let Some(existing) = *slot {
+            self.overlapping_segments
+                .entry(lane)
+                .or_insert_with(|| vec![existing])
+                .push(segment);
+        } else {
+            *slot = Some(segment);
+        }
+        Ok(())
+    }
+
+    fn for_each_segment(&self, lane: usize, mut visit: impl FnMut(usize)) {
+        if let Some(segments) = self.overlapping_segments.get(&lane) {
+            for &segment in segments {
+                visit(segment);
+            }
+        } else if let Some(Some(segment)) = self.lane_to_segment.get(lane) {
+            visit(*segment);
+        }
+    }
+}
+
+enum PreparedLaneWeights<E: FieldCore> {
+    Sparse(Vec<Vec<PreparedLaneTerm<E>>>),
+    Packing(PreparedPackingLaneMap<E>),
+    Dense(Vec<E>),
+}
+
 struct PreparedTraceSource<E: FieldCore> {
     values: Vec<E>,
     lane_count: usize,
@@ -178,7 +228,7 @@ pub(crate) struct StructuredLinearWeights<E: FieldCore> {
 /// coefficient coordinates are folded; lane challenges then merge the prepared support
 /// directly. No full coefficient-domain weight table is materialized.
 pub(crate) struct PreparedProverLinearTerms<E: FieldCore> {
-    lane_terms: Vec<Vec<PreparedLaneTerm<E>>>,
+    lane_weights: PreparedLaneWeights<E>,
     sources: Vec<PreparedTraceSource<E>>,
     live_lane_count: usize,
     coeff_count: usize,
@@ -217,7 +267,7 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
             })
             .collect();
         Self {
-            lane_terms,
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
             sources,
             live_lane_count,
             coeff_count,
@@ -415,7 +465,7 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
             }
         }
         Ok(Self {
-            lane_terms,
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
             sources,
             live_lane_count,
             coeff_count,
@@ -454,7 +504,11 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let live_lane_count = physical_field_len / coeff_count;
-        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        let mut packing = PreparedPackingLaneMap {
+            segments: Vec::new(),
+            lane_to_segment: vec![None; live_lane_count],
+            overlapping_segments: BTreeMap::new(),
+        };
         for term in terms {
             let source_index = match term.source() {
                 CoefficientPackingStage2Source::DirectOpening => 0,
@@ -487,6 +541,14 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
                 let target_lane_start = physical.start / coeff_count;
                 let source_lane_start = source_range.start / coeff_count;
                 let lane_count = physical.len() / coeff_count;
+                let segment_index = packing.segments.len();
+                packing.segments.push(PreparedPackingSegment {
+                    factor: term.factor(),
+                    source_index,
+                    target_lane_start,
+                    source_lane_start,
+                    lane_count,
+                });
                 for lane_offset in 0..lane_count {
                     let target_lane =
                         target_lane_start.checked_add(lane_offset).ok_or_else(|| {
@@ -503,19 +565,12 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
                     if source_lane >= source.lane_count {
                         return Err(AkitaError::InvalidProof);
                     }
-                    lane_terms
-                        .get_mut(target_lane)
-                        .ok_or(AkitaError::InvalidProof)?
-                        .push(PreparedLaneTerm {
-                            factor: term.factor(),
-                            source_index,
-                            lane: source_lane,
-                        });
+                    packing.add_segment(target_lane, segment_index)?;
                 }
             }
         }
         Ok(Self {
-            lane_terms,
+            lane_weights: PreparedLaneWeights::Packing(packing),
             sources,
             live_lane_count,
             coeff_count,
@@ -628,7 +683,7 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
             }
         }
         Ok(Self {
-            lane_terms,
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
             sources,
             live_lane_count,
             coeff_count,
@@ -645,11 +700,36 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
         }
         let source_offset = self.sources.len();
         self.sources.extend(other.sources);
-        for (target, terms) in self.lane_terms.iter_mut().zip(other.lane_terms) {
-            target.extend(terms.into_iter().map(|mut term| {
-                term.source_index += source_offset;
-                term
-            }));
+        match (&mut self.lane_weights, other.lane_weights) {
+            (PreparedLaneWeights::Sparse(target), PreparedLaneWeights::Sparse(source)) => {
+                for (target, terms) in target.iter_mut().zip(source) {
+                    target.extend(terms.into_iter().map(|mut term| {
+                        term.source_index += source_offset;
+                        term
+                    }));
+                }
+            }
+            (PreparedLaneWeights::Packing(target), PreparedLaneWeights::Packing(mut source)) => {
+                let segment_offset = target.segments.len();
+                for segment in &mut source.segments {
+                    segment.source_index += source_offset;
+                }
+                target.segments.extend(source.segments);
+                for lane in 0..source.lane_to_segment.len() {
+                    if let Some(source_segments) = source.overlapping_segments.get(&lane) {
+                        for &source_segment in source_segments {
+                            target.add_segment(lane, source_segment + segment_offset)?;
+                        }
+                    } else if let Some(Some(source_segment)) = source.lane_to_segment.get(lane) {
+                        target.add_segment(lane, *source_segment + segment_offset)?;
+                    }
+                }
+            }
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "cannot merge different Stage 2 weight representations".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -657,35 +737,62 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
     #[inline]
     fn values_in_lane<const N: usize>(&self, lane: usize, coefficients: [usize; N]) -> [E; N] {
         let mut values = [E::zero(); N];
-        let Some(terms) = self.lane_terms.get(lane) else {
-            return values;
-        };
-        if let [term] = terms.as_slice() {
-            let Some(source) = self.sources.get(term.source_index) else {
-                return values;
-            };
-            let Some(source_lane_start) = term.lane.checked_mul(self.coeff_count) else {
-                return values;
-            };
-            for (value, coefficient) in values.iter_mut().zip(coefficients) {
-                if let Some(source_value) = source.values.get(source_lane_start + coefficient) {
-                    *value = term.factor * *source_value;
+        match &self.lane_weights {
+            PreparedLaneWeights::Dense(dense) => {
+                if self.coeff_count == 1 && coefficients.iter().all(|&coefficient| coefficient == 0)
+                {
+                    if let Some(&value) = dense.get(lane) {
+                        values.fill(value);
+                    }
                 }
+                values
             }
-            return values;
-        }
-        for term in terms {
-            let Some(source) = self.sources.get(term.source_index) else {
-                continue;
-            };
-            let source_lane_start = term.lane * self.coeff_count;
-            for (value, coefficient) in values.iter_mut().zip(coefficients) {
-                if let Some(source_value) = source.values.get(source_lane_start + coefficient) {
-                    *value += term.factor * *source_value;
+            PreparedLaneWeights::Packing(packing) => {
+                packing.for_each_segment(lane, |segment_index| {
+                    let Some(segment) = packing.segments.get(segment_index) else {
+                        return;
+                    };
+                    let Some(lane_offset) = lane.checked_sub(segment.target_lane_start) else {
+                        return;
+                    };
+                    if lane_offset >= segment.lane_count {
+                        return;
+                    }
+                    let Some(source) = self.sources.get(segment.source_index) else {
+                        return;
+                    };
+                    let source_lane = segment.source_lane_start + lane_offset;
+                    let source_lane_start = source_lane * self.coeff_count;
+                    for (value, coefficient) in values.iter_mut().zip(coefficients) {
+                        if let Some(source_value) =
+                            source.values.get(source_lane_start + coefficient)
+                        {
+                            *value += segment.factor * *source_value;
+                        }
+                    }
+                });
+                values
+            }
+            PreparedLaneWeights::Sparse(lane_terms) => {
+                let Some(terms) = lane_terms.get(lane) else {
+                    return values;
+                };
+                for term in terms {
+                    let Some(source) = self.sources.get(term.source_index) else {
+                        continue;
+                    };
+                    let source_lane_start = term.lane * self.coeff_count;
+                    for (value, coefficient) in values.iter_mut().zip(coefficients) {
+                        if let Some(source_value) =
+                            source.values.get(source_lane_start + coefficient)
+                        {
+                            *value += term.factor * *source_value;
+                        }
+                    }
                 }
+                values
             }
         }
-        values
     }
 
     #[inline]
@@ -742,7 +849,16 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
                 actual,
             });
         }
-        if self.lane_terms.len() != self.live_lane_count
+        let lane_shape_is_valid = match &self.lane_weights {
+            PreparedLaneWeights::Sparse(terms) => terms.len() == self.live_lane_count,
+            PreparedLaneWeights::Packing(packing) => {
+                packing.lane_to_segment.len() == self.live_lane_count
+            }
+            PreparedLaneWeights::Dense(values) => {
+                self.coeff_count == 1 && values.len() == self.live_lane_count
+            }
+        };
+        if !lane_shape_is_valid
             || self.sources.iter().any(|source| {
                 source.values.len() != source.lane_count.saturating_mul(self.coeff_count)
             })
@@ -797,25 +913,29 @@ impl<E: FieldCore> PreparedProverLinearTerms<E> {
     }
 
     pub(crate) fn fold_lanes(&mut self, challenge: E) {
-        let next_live_lane_count = self.live_lane_count.div_ceil(2);
-        let even_scale = E::one() - challenge;
-        let mut source_lanes = mem::take(&mut self.lane_terms).into_iter();
-        let mut folded = Vec::with_capacity(next_live_lane_count);
-        while let Some(mut even_terms) = source_lanes.next() {
-            for term in &mut even_terms {
-                term.factor *= even_scale;
-            }
-            if let Some(mut odd_terms) = source_lanes.next() {
-                for term in &mut odd_terms {
-                    term.factor *= challenge;
-                }
-                even_terms.reserve(odd_terms.len());
-                even_terms.append(&mut odd_terms);
-            }
-            folded.push(even_terms);
+        if !matches!(self.lane_weights, PreparedLaneWeights::Dense(_)) {
+            debug_assert_eq!(self.coeff_count, 1);
+            let dense = (0..self.live_lane_count)
+                .map(|lane| self.get(lane, 0, 1))
+                .collect();
+            self.lane_weights = PreparedLaneWeights::Dense(dense);
+            self.sources.clear();
         }
-        debug_assert_eq!(folded.len(), next_live_lane_count);
-        self.lane_terms = folded;
+        let next_live_lane_count = self.live_lane_count.div_ceil(2);
+        let PreparedLaneWeights::Dense(values) = &mut self.lane_weights else {
+            unreachable!("lane weights were materialized above");
+        };
+        let even_scale = E::one() - challenge;
+        for target in 0..next_live_lane_count {
+            let source = 2 * target;
+            let left = values[source];
+            values[target] = if let Some(&right) = values.get(source + 1) {
+                left + challenge * (right - left)
+            } else {
+                even_scale * left
+            }
+        }
+        values.truncate(next_live_lane_count);
         self.live_lane_count = next_live_lane_count;
     }
 

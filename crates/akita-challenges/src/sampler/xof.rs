@@ -1,9 +1,9 @@
 //! Streaming XOF cursor used by the signed-sparse fold-challenge sampler.
 //!
-//! Evaluation trace draws consume randomness from one SHAKE256 cursor. Packing
-//! draws split the transcript seed into fixed batches so independent batches
-//! can run in parallel. This module owns both derivations and the drawing
-//! primitives used inside each cursor.
+//! Rejection-filtered draws consume randomness from one SHAKE256 cursor.
+//! Draws without rejection split the transcript seed into fixed batches so
+//! independent batches can run in parallel. This module owns both derivations
+//! and the drawing primitives used inside each cursor.
 //!
 //! The cursor's `next_*` helpers use bitmask rejection sampling, so every
 //! returned value is uniform over the requested range with no modulo bias.

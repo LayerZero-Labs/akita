@@ -157,11 +157,10 @@ const MOD_WIRING_BEGIN: &str = "// @generated schedule module wiring begin";
 const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 // Schedule search is memory bound. Keep the default below host-wide
 // parallelism while allowing explicit tuning for large generation machines.
-// Packing search retains large exact suffix frontiers for the heaviest
-// generated rows. Two concurrent rows fit the observed developer-workstation
-// envelope; constrained jobs can override this through
-// `AKITA_SCHEDULE_GEN_JOBS` (the catalog-drift CI job uses one worker).
-const DEFAULT_OFFLINE_PLANNING_WORKERS: usize = 2;
+// Each row has a bounded exact-suffix cache. Three concurrent rows fit the
+// normal generation envelope; constrained jobs can still override this with
+// `AKITA_SCHEDULE_GEN_JOBS`.
+const DEFAULT_OFFLINE_PLANNING_WORKERS: usize = 3;
 
 /// Bound memory-heavy offline planner searches for generation and drift checks.
 pub fn offline_planning_worker_count(work_items: usize) -> usize {

@@ -6,16 +6,16 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw};
+use akita_challenges::LiveFoldDraw;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels;
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    append_digit_range_child_claims, AkitaStage1Proof, CoefficientPackingChallenges,
-    CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan, InnerCommitSecurityRoute,
-    OpeningClaimsLayout, OpeningFamily, OpeningMethod, SubringCoefficientPackingGeometry,
+    append_digit_range_child_claims, draw_group_fold_challenges, AkitaStage1Proof,
+    CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan, GroupFoldChallenges,
+    OpeningClaimsLayout,
 };
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
@@ -26,7 +26,8 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
     pub(crate) polynomial_coefficients: Vec<E>,
 }
 
-/// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
+/// Absorb the prover's `v` rows once, then sample one
+/// [`akita_challenges::Challenges`] set per
 /// commitment group in `OpeningClaims` order.
 ///
 /// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
@@ -35,20 +36,18 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
 /// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
 /// each group's native fold-challenge config and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
-/// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
+/// [`akita_challenges::Challenges`] set with
+/// `lp.num_live_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
 /// Returns an error if the group layout is malformed or challenge sampling fails.
-pub(crate) type VerifierGroupFoldChallenges =
-    OpeningFamily<Challenges, CoefficientPackingChallenges>;
-
 pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
     transcript: &mut T,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
     grind_nonce: u32,
-) -> Result<Vec<VerifierGroupFoldChallenges>, AkitaError>
+) -> Result<Vec<GroupFoldChallenges>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
     E: ExtField<F>,
@@ -57,75 +56,14 @@ where
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
-        let group_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-        let challenge_config = group_lp.fold_challenge_config();
-        let drawn = match group_lp.opening_method() {
-            OpeningMethod::EvaluationTrace => {
-                let rejection = matches!(
-                    group_lp.inner_commit_matrix_params().security_route(),
-                    InnerCommitSecurityRoute::L2 { .. }
-                )
-                .then(|| {
-                    akita_challenges::selective_l2_operator_norm_rejection(
-                        group_dims.d_a(),
-                        &challenge_config,
-                    )
-                })
-                .flatten();
-                OpeningFamily::EvaluationTrace(
-                    LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges_with_rejection(
-                        akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
-                        group_dims.d_a(),
-                        group_index,
-                        group_lp.num_live_blocks(),
-                        k_g,
-                        &challenge_config,
-                        grind_nonce,
-                        rejection,
-                    )?,
-                )
-            }
-            OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension,
-            } => {
-                if !matches!(
-                    group_lp.inner_commit_matrix_params().security_route(),
-                    InnerCommitSecurityRoute::Linf(_)
-                ) {
-                    return Err(AkitaError::InvalidSetup(
-                        "coefficient packing requires the L-infinity A security route".into(),
-                    ));
-                }
-                let geometry = SubringCoefficientPackingGeometry::try_new(
-                    E::EXT_DEGREE,
-                    group_dims.d_a(),
-                    challenge_subring_dimension,
-                )?;
-                if challenge_config != geometry.fold_challenge_config() {
-                    return Err(AkitaError::InvalidSetup(
-                        "coefficient-packing challenge config is not the audited production family"
-                            .into(),
-                    ));
-                }
-                let challenges = LiveFoldDraw::<F, T>::new(transcript)
-                    .draw_folding_challenges_with_rejection(
-                        akita_challenges::FoldChallengeDrawDomain::SubringCoefficientPacking {
-                            challenge_subring_dimension,
-                        },
-                        challenge_subring_dimension,
-                        group_index,
-                        group_lp.num_live_blocks(),
-                        k_g,
-                        &challenge_config,
-                        grind_nonce,
-                        None,
-                    )?;
-                OpeningFamily::SubringCoefficientPacking(CoefficientPackingChallenges::new(
-                    geometry, challenges,
-                )?)
-            }
-        };
+        let drawn = draw_group_fold_challenges::<F, E, _>(
+            &mut LiveFoldDraw::<F, T>::new(transcript),
+            group_lp,
+            group_index,
+            k_g,
+            grind_nonce,
+        )?;
         group_challenges.push(drawn);
     }
     Ok(group_challenges)

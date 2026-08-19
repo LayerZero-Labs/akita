@@ -77,6 +77,15 @@ pub(crate) struct PreparedRingRelation<F: FieldCore, E: FieldCore> {
 }
 
 impl<F: FieldCore, E: FieldCore> PreparedRelationGroup<F, E> {
+    pub(crate) const fn kind(
+        &self,
+    ) -> &OpeningFamily<
+        akita_types::PreparedOpeningPoint<F, E>,
+        akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    > {
+        &self.kind
+    }
+
     #[cfg(test)]
     pub(crate) fn coefficient_packing_for_test(
         point: akita_types::PreparedSubringCoefficientPackingPoint<E>,
@@ -88,15 +97,7 @@ impl<F: FieldCore, E: FieldCore> PreparedRelationGroup<F, E> {
         }
     }
 
-    pub(crate) fn evaluation_trace_point(
-        &self,
-    ) -> Option<&akita_types::PreparedOpeningPoint<F, E>> {
-        match &self.kind {
-            OpeningFamily::EvaluationTrace(point) => Some(point),
-            OpeningFamily::SubringCoefficientPacking(_) => None,
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) fn coefficient_packing_point(
         &self,
     ) -> Option<&akita_types::PreparedSubringCoefficientPackingPoint<E>> {
@@ -864,7 +865,7 @@ impl RingRelationProver {
                 ));
             }
             let GroupOpeningMaterial { e_hat, kind } = opening;
-            match (kind, output.challenges.into_family()) {
+            match (kind, output.challenges) {
                 (
                     OpeningFamily::EvaluationTrace(material),
                     OpeningFamily::EvaluationTrace(challenges),

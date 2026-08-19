@@ -5,6 +5,7 @@ mod extension_claim;
 mod single_field;
 
 use super::*;
+use crate::stages::stage2::Stage2OpeningSemantics;
 use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningFamily,
@@ -266,12 +267,7 @@ fn verify_stage2<F, E, T>(
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
     setup_claim: Option<E>,
-    evaluation_trace: Option<PreparedEvaluationTrace<E>>,
-    evaluation_trace_row_weight: E,
-    evaluation_trace_opening_claim: E,
-    relation: &RingRelationInstance<F>,
-    coefficient_packing_batch: Option<&akita_types::CoefficientPackingVerifierBatchSemantics<E>>,
-    coefficient_packing_scalar_openings: &[(usize, E)],
+    opening_semantics: Stage2OpeningSemantics<'_, E>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
@@ -279,46 +275,6 @@ where
     T: Transcript<F>,
 {
     let witness_eval = stage2.next_w_eval();
-    verify_stage2_kernel::<F, E, T>(
-        transcript,
-        setup,
-        stage2,
-        stage1,
-        rs,
-        relation_claim,
-        witness_eval,
-        setup_claim,
-        evaluation_trace,
-        evaluation_trace_row_weight,
-        evaluation_trace_opening_claim,
-        relation,
-        coefficient_packing_batch,
-        coefficient_packing_scalar_openings,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn verify_stage2_kernel<F, E, T>(
-    transcript: &mut T,
-    setup: &AkitaVerifierSetup<F>,
-    stage2: &AkitaStage2Proof<F, E>,
-    stage1: Stage1Replay<E>,
-    rs: &RingSwitchVerifyOutput<E>,
-    relation_claim: E,
-    witness_eval: E,
-    setup_claim: Option<E>,
-    evaluation_trace: Option<PreparedEvaluationTrace<E>>,
-    evaluation_trace_row_weight: E,
-    evaluation_trace_opening_claim: E,
-    relation: &RingRelationInstance<F>,
-    coefficient_packing_batch: Option<&akita_types::CoefficientPackingVerifierBatchSemantics<E>>,
-    coefficient_packing_scalar_openings: &[(usize, E)],
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
         stage1.batching_coeff,
         stage1.range_image_evaluation,
@@ -335,12 +291,7 @@ where
         rs.relation_address_geometry.relation_lane_variable_count(),
         rs.relation_address_geometry
             .relation_coefficient_variable_count(),
-        evaluation_trace,
-        evaluation_trace_row_weight,
-        evaluation_trace_opening_claim,
-        relation,
-        coefficient_packing_batch,
-        coefficient_packing_scalar_openings,
+        opening_semantics,
         stage1.physical_l2_claim,
         stage1.physical_l2_families,
     )?;
@@ -648,12 +599,7 @@ where
             actual: prepared.w_len,
         });
     }
-    let (
-        evaluation_trace,
-        evaluation_trace_weight,
-        evaluation_trace_opening_claim,
-        coefficient_packing_scalar_openings,
-    ) = if let Some(batch) = &coefficient_packing_batch {
+    let opening_semantics = if let Some(batch) = &coefficient_packing_batch {
         if prefix
             .prepared_points
             .iter()
@@ -685,7 +631,7 @@ where
         if authenticated_total != prefix.trace_eval_target {
             return Err(AkitaError::InvalidProof);
         }
-        (None, E::zero(), E::zero(), group_openings)
+        Stage2OpeningSemantics::packing(batch, &group_openings)?
     } else {
         let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
         let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
@@ -722,11 +668,10 @@ where
             basis: prepared.evaluation_trace_basis,
         })?;
         drop(trace_preparation_span);
-        (
-            Some(evaluation_trace),
+        Stage2OpeningSemantics::evaluation_trace(
+            evaluation_trace,
             evaluation_trace_weight,
             evaluation_trace_weight * prefix.trace_eval_target,
-            Vec::new(),
         )
     };
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
@@ -738,12 +683,7 @@ where
         &rs,
         relation_claim,
         setup_claim,
-        evaluation_trace,
-        evaluation_trace_weight,
-        evaluation_trace_opening_claim,
-        &relation_instance,
-        coefficient_packing_batch.as_ref(),
-        &coefficient_packing_scalar_openings,
+        opening_semantics,
     )
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed stage-2 replay failed: {error:?}"))

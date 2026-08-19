@@ -4,19 +4,19 @@ use crate::compute::{
     OpeningBatchKernel, OpeningFoldKernel, RootOpeningSource, RuntimeOpeningProveBackendFor,
     RuntimeOpeningSource,
 };
-use akita_challenges::{
-    Challenges, FoldChallengeDrawDomain, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
-};
+use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
+pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{
-    dyadic_block_ranges, golomb_rice_total_wire_bits, golomb_rice_values_within_cap,
-    golomb_rice_zigzag_width, CoefficientPackingChallenges, CommittedGroupParams,
+    draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
+    golomb_rice_values_within_cap, golomb_rice_zigzag_width, CommittedGroupParams,
     FoldLinfProtocolBinding, InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout,
-    OpeningFamily, OpeningMethod, SubringCoefficientPackingGeometry, TerminalCommittedGroupParams,
-    TerminalResponseShape,
+    TerminalCommittedGroupParams, TerminalResponseShape,
 };
+#[cfg(test)]
+use akita_types::{OpeningFamily, OpeningMethod};
 
 use super::ring_relation::{
     aggregate_decompose_fold_witnesses, build_point_decompose_fold_witness,
@@ -146,25 +146,6 @@ pub(crate) struct FoldProbeOutput<F: FieldCore> {
     pub(crate) witness: DecomposeFoldWitness<F>,
     pub(crate) coefficients: FoldChunkCoefficients,
     pub(crate) challenges: GroupFoldChallenges,
-}
-
-/// One sampled fold challenge with its method-specific algebraic views.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GroupFoldChallenges(GroupFoldChallengeViews);
-
-type GroupFoldChallengeViews = OpeningFamily<Challenges, CoefficientPackingChallenges>;
-
-impl GroupFoldChallenges {
-    pub(crate) fn ambient_a(&self) -> &Challenges {
-        match &self.0 {
-            OpeningFamily::EvaluationTrace(challenges) => challenges,
-            OpeningFamily::SubringCoefficientPacking(challenges) => challenges.ambient_a(),
-        }
-    }
-
-    pub(crate) fn into_family(self) -> GroupFoldChallengeViews {
-        self.0
-    }
 }
 
 pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {
@@ -408,79 +389,6 @@ fn first_jointly_accepted_nonce<T>(
         "fold grind exceeded {} joint attempts",
         max_grind_attempts
     )))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_group_fold_challenges<F: FieldCore, E: akita_field::ExtField<F>, D: FoldDraw>(
-    draw: &mut D,
-    params: &(impl LevelParamsLike + ?Sized),
-    group_index: usize,
-    num_claims: usize,
-    grind_nonce: u32,
-) -> Result<GroupFoldChallenges, AkitaError> {
-    let d_a = params.inner_commit_matrix_params().ring_dimension();
-    let config = params.fold_challenge_config();
-    match params.opening_method() {
-        OpeningMethod::EvaluationTrace => {
-            let rejection = matches!(
-                params.inner_commit_matrix_params().security_route(),
-                InnerCommitSecurityRoute::L2 { .. }
-            )
-            .then(|| akita_challenges::selective_l2_operator_norm_rejection(d_a, &config))
-            .flatten();
-            draw.draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::EvaluationTrace,
-                d_a,
-                group_index,
-                params.num_live_blocks(),
-                num_claims,
-                &config,
-                grind_nonce,
-                rejection,
-            )
-            .map(|challenges| GroupFoldChallenges(OpeningFamily::EvaluationTrace(challenges)))
-        }
-        OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } => {
-            if !matches!(
-                params.inner_commit_matrix_params().security_route(),
-                InnerCommitSecurityRoute::Linf(_)
-            ) {
-                return Err(AkitaError::InvalidSetup(
-                    "coefficient packing requires an L-infinity A security route".into(),
-                ));
-            }
-            let geometry = SubringCoefficientPackingGeometry::try_new(
-                E::EXT_DEGREE,
-                d_a,
-                challenge_subring_dimension,
-            )?;
-            if config != geometry.fold_challenge_config() {
-                return Err(AkitaError::InvalidSetup(
-                    "coefficient-packing challenge config is not the audited production family"
-                        .into(),
-                ));
-            }
-            let subring = draw.draw_folding_challenges_with_rejection(
-                FoldChallengeDrawDomain::SubringCoefficientPacking {
-                    challenge_subring_dimension,
-                },
-                challenge_subring_dimension,
-                group_index,
-                params.num_live_blocks(),
-                num_claims,
-                &config,
-                grind_nonce,
-                None,
-            )?;
-            Ok(GroupFoldChallenges(
-                OpeningFamily::SubringCoefficientPacking(CoefficientPackingChallenges::new(
-                    geometry, subring,
-                )?),
-            ))
-        }
-    }
 }
 
 /// Probe every group at its native A dimension as one transcript transaction
@@ -742,8 +650,7 @@ mod tests {
         let challenges =
             draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 3, 2, 7).unwrap();
         assert_eq!(draw.draws, 1);
-        let GroupFoldChallenges(OpeningFamily::SubringCoefficientPacking(challenges)) = challenges
-        else {
+        let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
         };
         assert_eq!(challenges.geometry().subring_embedding_stride(), 2);

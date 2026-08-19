@@ -1,6 +1,5 @@
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
     rs: &mut RingSwitchOutput<E>,

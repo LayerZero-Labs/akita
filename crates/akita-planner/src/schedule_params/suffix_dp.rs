@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap, VecDeque},
     num::NonZeroUsize,
     sync::Arc,
 };
@@ -30,10 +30,15 @@ mod terminal;
 
 #[cfg(test)]
 pub(super) use candidates::{packing_precommit_opening_products, state_allows_terminal_seed};
-use frontier::{consider_child_suffixes, FrontierProjection, ProjectedFrontier};
+use frontier::{consider_child_suffixes, ProjectedFrontier, Projection};
 use state::*;
 pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState};
 pub(crate) use terminal::try_terminal_direct_suffix_cost;
+
+const SETUP_AND_PAYLOAD_PROJECTIONS: &[Projection] =
+    &[Projection::FirstDirectSetup, Projection::Payload];
+const PAYLOAD_PROJECTION: &[Projection] = &[Projection::Payload];
+const SETUP_PROJECTION: &[Projection] = &[Projection::FirstDirectSetup];
 
 fn offloaded_witness_contracts(
     input_witness_len: usize,
@@ -385,11 +390,11 @@ fn price_terminal_candidate(
     frontiers: &mut StateFrontiers,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
-    let direct_projection =
+    let direct_projections =
         if state.incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0) {
-            FrontierProjection::Both
+            SETUP_AND_PAYLOAD_PROJECTIONS
         } else {
-            FrontierProjection::Payload
+            PAYLOAD_PROJECTION
         };
     if (ctx.level_zero_is_root && state.level == 0)
         || state.incoming_setup_prefix.is_some()
@@ -431,7 +436,7 @@ fn price_terminal_candidate(
         policy,
         ctx.diagnostics,
         candidate.clone(),
-        direct_projection,
+        direct_projections,
     )?;
     Ok(())
 }
@@ -455,11 +460,11 @@ fn price_level_candidate_with_children(
     // root setup projection. Ordinary direct suffixes are consumed solely
     // through the payload projection, so retaining a parallel setup winner
     // there duplicates frontier work and memo ownership with no observer.
-    let direct_projection =
+    let direct_projections =
         if state.incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0) {
-            FrontierProjection::Both
+            SETUP_AND_PAYLOAD_PROJECTIONS
         } else {
-            FrontierProjection::Payload
+            PAYLOAD_PROJECTION
         };
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
@@ -480,7 +485,7 @@ fn price_level_candidate_with_children(
                 &direct_edge,
                 candidates,
                 state.incoming_setup_prefix,
-                direct_projection,
+                direct_projections,
                 &mut frontiers.projected,
             )?;
         }
@@ -489,7 +494,7 @@ fn price_level_candidate_with_children(
                 &direct_edge,
                 choices.payload_candidates(),
                 state.incoming_setup_prefix,
-                direct_projection,
+                direct_projections,
                 &mut frontiers.projected,
             )?;
         }
@@ -504,14 +509,14 @@ fn price_level_candidate_with_children(
                 &offloaded_edge,
                 choices.setup_candidates(),
                 state.incoming_setup_prefix,
-                FrontierProjection::FirstDirectSetup,
+                SETUP_PROJECTION,
                 &mut frontiers.projected,
             )?;
             consider_child_suffixes(
                 &offloaded_edge,
                 choices.payload_candidates(),
                 state.incoming_setup_prefix,
-                FrontierProjection::Payload,
+                PAYLOAD_PROJECTION,
                 &mut frontiers.projected,
             )?;
         }

@@ -245,7 +245,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     a_cols: planned.z_cols,
                     b_rows: planned.physical_b.physical_rows(),
                     b_cols: planned.physical_b.physical_input_width(),
-                    d_active_cols: planned.d_col_range.len(),
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;

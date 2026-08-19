@@ -526,25 +526,22 @@ where
                             "setup-prefix source disagrees with coefficient-packing point".into(),
                         ));
                     }
-                    let source_len = rings.len().checked_mul(D).ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "coefficient-packing setup-prefix length overflow".into(),
-                        )
-                    })?;
                     let coordinates =
-                        crate::backend::coefficient_packing::partials_from_indexed_source::<F, E, D>(
+                        crate::backend::coefficient_packing::partials_from_position_source::<
+                            F,
+                            E,
+                            F,
+                            D,
+                        >(
                             plan,
                             RootPolyMeta::<F>::num_vars(*poly),
-                            source_len,
-                            |index| {
-                                let ring_index = index / D;
-                                let coefficient_index = index % D;
+                            |position| {
                                 rings
-                                    .get(ring_index)
-                                    .and_then(|ring| ring.coefficients().get(coefficient_index))
-                                    .copied()
+                                    .get(position)
+                                    .map(CyclotomicRing::coefficients)
                                     .ok_or(AkitaError::InvalidProof)
                             },
+                            |_, _, coefficient| coefficient,
                         )?;
                     outputs.push(SubringCoefficientPackingPartials::new(
                         plan.point.geometry(),

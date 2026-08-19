@@ -6,17 +6,17 @@ coefficient packing branch.
 
 - `base.tsv` is the 68-row selective L2 baseline snapshot. It was produced at
   the exact base commit with a reporting-only backport of the snapshot schema
-  and the base revision's canonical proof, setup, EOR, and digest functions.
+  and the base revision's canonical proof, setup, EOR, digest, and
+  first-direct-capacity functions.
 - `head.tsv` is the 71-row merged snapshot. It removes the unsupported fp128
   dense nv44 stress row and adds three bounded-dense scalar rows plus one
   grouped row with a bounded-dense precommit.
 - `comparison.tsv` is the complete logical-key union. It reports exact lookup
   and schedule digests, first-direct padded capacity, total setup fields, proof
   bytes, fold counts, successor witness lengths, per-level EOR bytes, opening
-  methods, packing geometry, and A security routes. The immutable legacy base
-  snapshot predates the first-direct column, so its comparison cells are empty;
-  current setup-first rows populate that coordinate. Proof-first rows use `-`
-  because first-direct capacity is not part of their selection order.
+  methods, packing geometry, and A security routes. The base and head snapshots
+  both include the padded first-direct capacity reconstructed by their own exact
+  materialized schedules. Missing values are comparison drift, not wildcards.
 
 Snapshots normally use family plus final and precommitted polynomial layouts as
 the cross-revision logical row key. When two current rows share those layouts,

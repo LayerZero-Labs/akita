@@ -10,27 +10,20 @@ use super::{
 };
 
 #[derive(Clone, Copy)]
-pub(super) enum FrontierProjection {
-    Both,
+pub(super) enum Projection {
     FirstDirectSetup,
     Payload,
 }
 
-impl FrontierProjection {
-    const fn includes_first_direct_setup(self) -> bool {
-        matches!(self, Self::Both | Self::FirstDirectSetup)
-    }
-
-    const fn includes_payload(self) -> bool {
-        matches!(self, Self::Both | Self::Payload)
-    }
+impl Projection {
+    const ALL: [Self; 2] = [Self::FirstDirectSetup, Self::Payload];
 }
 
 pub(super) fn consider_child_suffixes<'a>(
     edge: &super::ChildEdge<'_>,
     child_candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
     incoming_setup_prefix: Option<usize>,
-    projection: FrontierProjection,
+    projections: &[Projection],
     frontier: &mut ProjectedFrontier,
 ) -> Result<(), AkitaError> {
     let mut child_candidates = child_candidates.into_iter();
@@ -55,7 +48,7 @@ pub(super) fn consider_child_suffixes<'a>(
             edge.diagnostics,
             &parent_cost,
             candidate,
-            projection,
+            projections,
         )?;
     }
     Ok(())
@@ -165,14 +158,6 @@ impl ObjectiveChoices {
         self.setup.iter().map(|candidate| &candidate.schedule)
     }
 
-    fn setup_projected_candidates(&self) -> impl Iterator<Item = &ProjectedCandidate> {
-        self.setup.iter()
-    }
-
-    fn payload_projected_candidates(&self) -> impl Iterator<Item = &ProjectedCandidate> {
-        self.payload.iter()
-    }
-
     pub(super) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.payload.iter().map(|candidate| &candidate.schedule)
     }
@@ -182,6 +167,20 @@ impl ObjectiveChoices {
             .into_iter()
             .map(|candidate| candidate.schedule)
             .collect()
+    }
+
+    fn projected(&self, projection: Projection) -> &[ProjectedCandidate] {
+        match projection {
+            Projection::FirstDirectSetup => &self.setup,
+            Projection::Payload => &self.payload,
+        }
+    }
+
+    fn projected_mut(&mut self, projection: Projection) -> &mut Vec<ProjectedCandidate> {
+        match projection {
+            Projection::FirstDirectSetup => &mut self.setup,
+            Projection::Payload => &mut self.payload,
+        }
     }
 }
 
@@ -211,16 +210,7 @@ impl ProjectedFrontier {
         let Some(choices) = self.by_parent_cost.get(parent_cost) else {
             return false;
         };
-        recursive_direct_bound_is_dominated(
-            candidate_admission,
-            lower_bound,
-            choices
-                .setup_projected_candidates()
-                .map(|candidate| (candidate.admission, candidate.schedule.metrics())),
-            choices
-                .payload_projected_candidates()
-                .map(|candidate| (candidate.admission, candidate.schedule.metrics())),
-        )
+        recursive_direct_bound_is_dominated(candidate_admission, lower_bound, choices)
     }
 
     fn consider(
@@ -229,27 +219,27 @@ impl ProjectedFrontier {
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         parent_cost: ParentObservableKey,
         candidate: ScheduleCandidate,
-        projection: FrontierProjection,
+        projections: &[Projection],
     ) -> Result<(), AkitaError> {
         let admission = ParentAdmissionClass::for_candidate(&candidate);
         let metrics = candidate.metrics();
         let choices = self.by_parent_cost.get(&parent_cost);
-        let keep_setup = policy.selection_policy
-            == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
-            && projection.includes_first_direct_setup()
-            && !choices.is_some_and(|choices| {
-                choices.setup.iter().any(|existing| {
-                    setup_primary_strictly_dominates(
-                        setup_score(existing.schedule.metrics()),
-                        existing.admission,
-                        setup_score(metrics),
-                        admission,
-                    )
-                })
-            });
-        let keep_payload = projection.includes_payload()
-            && !choices.is_some_and(|choices| {
-                choices.payload.iter().any(|existing| {
+        let keep = |projection| match projection {
+            Projection::FirstDirectSetup => {
+                policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+                    && !choices.is_some_and(|choices| {
+                        choices.projected(projection).iter().any(|existing| {
+                            setup_primary_strictly_dominates(
+                                setup_score(existing.schedule.metrics()),
+                                existing.admission,
+                                setup_score(metrics),
+                                admission,
+                            )
+                        })
+                    })
+            }
+            Projection::Payload => !choices.is_some_and(|choices| {
+                choices.projected(projection).iter().any(|existing| {
                     payload_primary_strictly_dominates(
                         payload_score(existing.schedule.metrics()),
                         existing.admission,
@@ -257,8 +247,14 @@ impl ProjectedFrontier {
                         admission,
                     )
                 })
-            });
-        if !keep_setup && !keep_payload {
+            }),
+        };
+        let retained_projections = projections
+            .iter()
+            .copied()
+            .filter(|&projection| keep(projection))
+            .collect::<Vec<_>>();
+        if retained_projections.is_empty() {
             return Ok(());
         }
         let projected = ProjectedCandidate {
@@ -269,11 +265,16 @@ impl ProjectedFrontier {
             schedule: candidate,
         };
         let choices = self.by_parent_cost.entry(parent_cost).or_default();
-        if keep_setup {
-            insert_projected(&mut choices.setup, projected.clone(), setup_dominates);
-        }
-        if keep_payload {
-            insert_projected(&mut choices.payload, projected, payload_dominates);
+        for projection in retained_projections {
+            let dominates = match projection {
+                Projection::FirstDirectSetup => setup_dominates,
+                Projection::Payload => payload_dominates,
+            };
+            insert_projected(
+                choices.projected_mut(projection),
+                projected.clone(),
+                dominates,
+            );
         }
         Ok(())
     }
@@ -283,10 +284,10 @@ impl ProjectedFrontier {
         policy: &PlannerPolicy,
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         candidate: ScheduleCandidate,
-        projection: FrontierProjection,
+        projections: &[Projection],
     ) -> Result<(), AkitaError> {
         let parent_cost = first_parent_visible_cost(policy, &candidate)?;
-        self.consider(policy, diagnostics, parent_cost, candidate, projection)
+        self.consider(policy, diagnostics, parent_cost, candidate, projections)
     }
 
     fn consider_pending(
@@ -295,14 +296,14 @@ impl ProjectedFrontier {
         diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
         parent_cost: &ParentObservableKey,
         pending: PendingScheduleCandidate,
-        projection: FrontierProjection,
+        projections: &[Projection],
     ) -> Result<(), AkitaError> {
         self.consider(
             policy,
             diagnostics,
             parent_cost.clone(),
             pending.into_candidate(),
-            projection,
+            projections,
         )
     }
 }
@@ -310,18 +311,36 @@ impl ProjectedFrontier {
 fn recursive_direct_bound_is_dominated(
     candidate_admission: ParentAdmissionClass,
     lower_bound: CompleteObjectiveBound,
-    setup_incumbents: impl IntoIterator<Item = (ParentAdmissionClass, super::super::CandidateMetrics)>,
-    payload_incumbents: impl IntoIterator<Item = (ParentAdmissionClass, super::super::CandidateMetrics)>,
+    incumbents: &ObjectiveChoices,
 ) -> bool {
-    let setup_dominated = setup_incumbents.into_iter().any(|(admission, metrics)| {
+    Projection::ALL.into_iter().all(|projection| {
+        projection_bound_is_dominated(
+            projection,
+            candidate_admission,
+            lower_bound,
+            incumbents
+                .projected(projection)
+                .iter()
+                .map(|candidate| (candidate.admission, candidate.schedule.metrics())),
+        )
+    })
+}
+
+fn projection_bound_is_dominated(
+    projection: Projection,
+    candidate_admission: ParentAdmissionClass,
+    lower_bound: CompleteObjectiveBound,
+    incumbents: impl IntoIterator<Item = (ParentAdmissionClass, super::super::CandidateMetrics)>,
+) -> bool {
+    incumbents.into_iter().any(|(admission, metrics)| {
         admission.admits_every_parent_of(candidate_admission)
-            && lower_bound.is_strictly_worse_for_recursive_parent(metrics)
-    });
-    setup_dominated
-        && payload_incumbents.into_iter().any(|(admission, metrics)| {
-            admission.admits_every_parent_of(candidate_admission)
-                && lower_bound.is_strictly_worse_for_recursive_payload(metrics)
-        })
+            && match projection {
+                Projection::FirstDirectSetup => {
+                    lower_bound.is_strictly_worse_for_recursive_parent(metrics)
+                }
+                Projection::Payload => lower_bound.is_strictly_worse_for_recursive_payload(metrics),
+            }
+    })
 }
 
 fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
@@ -433,8 +452,9 @@ mod tests {
 
     use super::{
         payload_primary_strictly_dominates, payload_projection_dominates,
-        recursive_direct_bound_is_dominated, setup_primary_strictly_dominates,
-        setup_projection_dominates, DescriptorOrderContext, ParentAdmissionClass, ProjectionOrder,
+        projection_bound_is_dominated, setup_primary_strictly_dominates,
+        setup_projection_dominates, DescriptorOrderContext, ParentAdmissionClass, Projection,
+        ProjectionOrder,
     };
     use crate::schedule_params::{CandidateMetrics, CompleteObjectiveBound, SetupPrefixCapacity};
 
@@ -602,24 +622,29 @@ mod tests {
         };
         let setup_winner = (admission(2, 8), metrics(8, 100));
 
-        assert!(!recursive_direct_bound_is_dominated(
+        assert!(!projection_bound_is_dominated(
+            Projection::Payload,
             candidate_admission,
             lower_bound,
-            [setup_winner],
             [setup_winner],
         ));
 
-        assert!(recursive_direct_bound_is_dominated(
+        assert!(projection_bound_is_dominated(
+            Projection::FirstDirectSetup,
             candidate_admission,
             lower_bound,
             [setup_winner],
+        ));
+        assert!(projection_bound_is_dominated(
+            Projection::Payload,
+            candidate_admission,
+            lower_bound,
             [(admission(2, 8), metrics(8, 9))],
         ));
-
-        assert!(!recursive_direct_bound_is_dominated(
+        assert!(!projection_bound_is_dominated(
+            Projection::Payload,
             candidate_admission,
             lower_bound,
-            [setup_winner],
             [(admission(2, 8), metrics(8, 10))],
         ));
     }

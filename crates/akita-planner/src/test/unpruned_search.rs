@@ -23,20 +23,12 @@ fn packing_opening_domain(
     level: usize,
     extension_degree: usize,
     dimensions: CommitmentRingDims,
-) -> Vec<crate::schedule_params::PlannerOpeningCandidate> {
-    akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
-        .iter()
-        .copied()
-        .filter_map(|challenge_subring_dimension| {
-            crate::schedule_params::PlannerOpeningCandidate::coefficient_packing(
-                level,
-                extension_degree,
-                dimensions,
-                challenge_subring_dimension,
-            )
-            .ok()
-        })
-        .collect()
+) -> Result<Vec<crate::schedule_params::PlannerOpeningCandidate>, AkitaError> {
+    crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
+        level,
+        extension_degree,
+        dimensions,
+    )
 }
 
 fn enumerate_suffixes(
@@ -182,7 +174,7 @@ fn enumerate_suffixes(
             }
 
             let fold_work = if level <= 1 {
-                packing_opening_domain(level, policy.claim_ext_degree, candidate_dimensions)
+                packing_opening_domain(level, policy.claim_ext_degree, candidate_dimensions)?
                     .into_iter()
                     .map(|opening| (opening, 0))
                     .collect::<Vec<_>>()
@@ -318,7 +310,7 @@ pub(super) fn find_schedule(
                     continue;
                 }
                 let root_openings =
-                    packing_opening_domain(0, policy.claim_ext_degree, root_dimensions);
+                    packing_opening_domain(0, policy.claim_ext_degree, root_dimensions)?;
                 for root_opening in root_openings {
                     for (root_params, output_witness_len) in
                         crate::planner::root_level_candidates_for_basis(

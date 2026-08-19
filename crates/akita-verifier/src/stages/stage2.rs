@@ -15,8 +15,113 @@ use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
     CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
-    NegativeBinarySupport, RingRelationInstance,
+    NegativeBinarySupport, OpeningFamily,
 };
+
+pub(crate) struct EvaluationTraceStage2<E: FieldCore> {
+    pub(crate) trace: PreparedEvaluationTrace<E>,
+    pub(crate) row_weight: E,
+    pub(crate) opening_claim: E,
+}
+
+pub(crate) struct PackingStage2<'a, E: FieldCore> {
+    groups: &'a [CoefficientPackingVerifierGroupSemantics<E>],
+    opening_claim: E,
+}
+
+pub(crate) struct Stage2OpeningSemantics<'a, E: FieldCore>(
+    OpeningFamily<EvaluationTraceStage2<E>, PackingStage2<'a, E>>,
+);
+
+impl<'a, E: FieldCore> PackingStage2<'a, E> {
+    pub(crate) fn new(
+        batch: &'a CoefficientPackingVerifierBatchSemantics<E>,
+        scalar_openings: &[(usize, E)],
+    ) -> Result<Self, AkitaError> {
+        let groups = batch.groups();
+        if groups.is_empty() || scalar_openings.len() != groups.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut opening_claim = E::zero();
+        for semantics in groups {
+            let authenticated_opening = scalar_openings
+                .iter()
+                .find_map(|&(group, opening)| (group == semantics.group_index()).then_some(opening))
+                .ok_or(AkitaError::InvalidProof)?;
+            opening_claim += semantics.scalar_claim_weight() * authenticated_opening;
+        }
+        Ok(Self {
+            groups,
+            opening_claim,
+        })
+    }
+
+    fn weight_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        let evaluate_group = |semantics: &CoefficientPackingVerifierGroupSemantics<E>| {
+            let (relation, structured) = cfg_join!(
+                || {
+                    let _span =
+                        tracing::info_span!("coefficient_packing_relation_weight").entered();
+                    semantics
+                        .compact_factors()
+                        .evaluate_relation_at_point(point)
+                },
+                || {
+                    let _span =
+                        tracing::info_span!("coefficient_packing_structured_weight").entered();
+                    semantics.compact_factors().evaluate_stage2_at_point(point)
+                }
+            );
+            Ok::<_, AkitaError>(relation? + structured?)
+        };
+        if let [semantics] = self.groups {
+            return evaluate_group(semantics);
+        }
+        #[cfg(feature = "parallel")]
+        {
+            self.groups
+                .par_iter()
+                .map(evaluate_group)
+                .try_reduce(|| E::zero(), |left, right| Ok(left + right))
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            self.groups.iter().try_fold(E::zero(), |sum, semantics| {
+                Ok(sum + evaluate_group(semantics)?)
+            })
+        }
+    }
+}
+
+impl<'a, E: FieldCore> Stage2OpeningSemantics<'a, E> {
+    pub(crate) fn evaluation_trace(
+        trace: PreparedEvaluationTrace<E>,
+        row_weight: E,
+        opening_claim: E,
+    ) -> Self {
+        Self(OpeningFamily::EvaluationTrace(EvaluationTraceStage2 {
+            trace,
+            row_weight,
+            opening_claim,
+        }))
+    }
+
+    pub(crate) fn packing(
+        batch: &'a CoefficientPackingVerifierBatchSemantics<E>,
+        scalar_openings: &[(usize, E)],
+    ) -> Result<Self, AkitaError> {
+        Ok(Self(OpeningFamily::SubringCoefficientPacking(
+            PackingStage2::new(batch, scalar_openings)?,
+        )))
+    }
+
+    fn opening_claim(&self) -> E {
+        match &self.0 {
+            OpeningFamily::EvaluationTrace(trace) => trace.opening_claim,
+            OpeningFamily::SubringCoefficientPacking(packing) => packing.opening_claim,
+        }
+    }
+}
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
@@ -33,11 +138,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     alpha: E,
     num_rounds: usize,
     relation_claim: E,
-    evaluation_trace: Option<PreparedEvaluationTrace<E>>,
-    evaluation_trace_row_weight: E,
-    evaluation_trace_opening_claim: E,
-    coefficient_packing_groups: &'a [CoefficientPackingVerifierGroupSemantics<E>],
-    coefficient_packing_opening_claim: E,
+    opening_semantics: Stage2OpeningSemantics<'a, E>,
     physical_l2_claim: E,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
     _marker: std::marker::PhantomData<F>,
@@ -67,12 +168,7 @@ where
         relation_claim: E,
         col_bits: usize,
         ring_bits: usize,
-        evaluation_trace: Option<PreparedEvaluationTrace<E>>,
-        evaluation_trace_row_weight: E,
-        evaluation_trace_opening_claim: E,
-        relation: &RingRelationInstance<F>,
-        coefficient_packing_batch: Option<&'a CoefficientPackingVerifierBatchSemantics<E>>,
-        coefficient_packing_scalar_openings: &[(usize, E)],
+        opening_semantics: Stage2OpeningSemantics<'a, E>,
         physical_l2_claim: E,
         physical_l2_families: Vec<EqPairTensorFamily<E>>,
     ) -> Result<Self, AkitaError> {
@@ -88,39 +184,6 @@ where
         if physical_l2_families.is_empty() && !physical_l2_claim.is_zero() {
             return Err(AkitaError::InvalidProof);
         }
-        let coefficient_packing_groups = if let Some(batch) = coefficient_packing_batch {
-            batch.groups()
-        } else {
-            &[]
-        };
-        let expected_packing_groups = relation
-            .group_openings()
-            .iter()
-            .filter(|opening| opening.coefficient_packing_geometry().is_some())
-            .count();
-        if evaluation_trace.is_some() == (expected_packing_groups != 0) {
-            return Err(AkitaError::InvalidSetup(
-                "Stage 2 opening semantics disagree with the relation methods".into(),
-            ));
-        }
-        if coefficient_packing_groups.len() != expected_packing_groups {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient-packing verifier batch is incomplete".into(),
-            ));
-        }
-        let mut coefficient_packing_opening_claim = E::zero();
-        if coefficient_packing_scalar_openings.len() != coefficient_packing_groups.len() {
-            return Err(AkitaError::InvalidProof);
-        }
-        for semantics in coefficient_packing_groups {
-            let group_index = semantics.group_index();
-            let authenticated_opening = coefficient_packing_scalar_openings
-                .iter()
-                .find_map(|&(group, opening)| (group == group_index).then_some(opening))
-                .ok_or(AkitaError::InvalidProof)?;
-            coefficient_packing_opening_claim +=
-                semantics.scalar_claim_weight() * authenticated_opening;
-        }
         Ok(Self {
             batching_coeff,
             range_image_evaluation,
@@ -135,53 +198,11 @@ where
             alpha,
             num_rounds,
             relation_claim,
-            evaluation_trace,
-            evaluation_trace_row_weight,
-            evaluation_trace_opening_claim,
-            coefficient_packing_groups,
-            coefficient_packing_opening_claim,
+            opening_semantics,
             physical_l2_claim,
             physical_l2_families,
             _marker: std::marker::PhantomData,
         })
-    }
-
-    fn coefficient_packing_weight_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        let evaluate_group = |semantics: &CoefficientPackingVerifierGroupSemantics<E>| {
-            let (relation, structured) = cfg_join!(
-                || {
-                    let _span =
-                        tracing::info_span!("coefficient_packing_relation_weight").entered();
-                    semantics
-                        .compact_factors()
-                        .evaluate_relation_at_point(point)
-                },
-                || {
-                    let _span =
-                        tracing::info_span!("coefficient_packing_structured_weight").entered();
-                    semantics.compact_factors().evaluate_stage2_at_point(point)
-                }
-            );
-            Ok::<_, AkitaError>(relation? + structured?)
-        };
-        if let [semantics] = self.coefficient_packing_groups {
-            return evaluate_group(semantics);
-        }
-        #[cfg(feature = "parallel")]
-        {
-            self.coefficient_packing_groups
-                .par_iter()
-                .map(evaluate_group)
-                .try_reduce(|| E::zero(), |left, right| Ok(left + right))
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            self.coefficient_packing_groups
-                .iter()
-                .try_fold(E::zero(), |sum, semantics| {
-                    Ok(sum + evaluate_group(semantics)?)
-                })
-        }
     }
 }
 
@@ -201,8 +222,7 @@ where
     fn input_claim(&self) -> E {
         self.batching_coeff * self.range_image_evaluation
             + self.relation_claim
-            + self.evaluation_trace_opening_claim
-            + self.coefficient_packing_opening_claim
+            + self.opening_semantics.opening_claim()
             + self.physical_l2_claim
     }
 
@@ -222,15 +242,15 @@ where
                 self.setup_claim,
             )
         };
-        let (relation_weight, coefficient_packing_weight) =
-            if self.coefficient_packing_groups.is_empty() {
-                (evaluate_relation_weight()?, E::zero())
-            } else {
+        let (relation_weight, coefficient_packing_weight) = match &self.opening_semantics.0 {
+            OpeningFamily::EvaluationTrace(_) => (evaluate_relation_weight()?, E::zero()),
+            OpeningFamily::SubringCoefficientPacking(packing) => {
                 let (relation_weight, coefficient_packing_weight) =
-                    cfg_join!(evaluate_relation_weight, || self
-                        .coefficient_packing_weight_at_point(challenges));
+                    cfg_join!(evaluate_relation_weight, || packing
+                        .weight_at_point(challenges));
                 (relation_weight?, coefficient_packing_weight?)
-            };
+            }
+        };
         let compression_oracle = match (
             self.compression_relation_weights,
             self.negative_binary_support,
@@ -248,12 +268,12 @@ where
         };
         let relation_oracle =
             w_eval * (relation_weight + coefficient_packing_weight) + compression_oracle;
-        let trace_oracle = if let Some(evaluation_trace) = &self.evaluation_trace {
-            let _span = tracing::info_span!("stage2_trace_oracle").entered();
-            let trace_weight = evaluation_trace.evaluate_at_point(challenges)?;
-            self.evaluation_trace_row_weight * w_eval * trace_weight
-        } else {
-            E::zero()
+        let trace_oracle = match &self.opening_semantics.0 {
+            OpeningFamily::EvaluationTrace(trace) => {
+                let _span = tracing::info_span!("stage2_trace_oracle").entered();
+                trace.row_weight * w_eval * trace.trace.evaluate_at_point(challenges)?
+            }
+            OpeningFamily::SubringCoefficientPacking(_) => E::zero(),
         };
         let physical_l2_oracle = if self.physical_l2_families.is_empty() {
             E::zero()
@@ -296,8 +316,8 @@ mod tests {
         CoefficientPackingBatchSemanticInputs, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
         OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
         PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-        RelationWitnessGeometry, RingRelationGroupOpening, RingVec, SisModulusProfileId,
-        SubringCoefficientPackingGeometry, WitnessLayout,
+        RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance, RingVec,
+        SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
     };
     use std::sync::Arc;
 
@@ -459,18 +479,19 @@ mod tests {
             }),
             setup_plan_cache: Default::default(),
         };
-        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: 0,
-                setup_seed: [0u8; 32].into(),
-            },
-            FlatMatrix::from_flat_data(Vec::new()),
-        );
+        let setup: AkitaExpandedSetup<F> =
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                AkitaSetupDescriptor {
+                    max_num_vars: 0,
+                    max_num_batched_polys: 0,
+                    num_field_elements: 0,
+                    setup_seed: [0u8; 32].into(),
+                },
+                FlatMatrix::from_flat_data(Vec::new()),
+            );
         let domain = relation_address_geometry.digit_witness_domain();
         let scalar_opening = E::from_u64(19);
-        let verifier = AkitaStage2Verifier::new(
+        let verifier = AkitaStage2Verifier::<F, E>::new(
             E::zero(),
             E::zero(),
             E::from_u64(23),
@@ -485,12 +506,7 @@ mod tests {
             E::zero(),
             relation_address_geometry.relation_lane_variable_count(),
             relation_address_geometry.relation_coefficient_variable_count(),
-            None,
-            E::zero(),
-            E::zero(),
-            &relation,
-            Some(&batch),
-            &[(0, scalar_opening)],
+            Stage2OpeningSemantics::packing(&batch, &[(0, scalar_opening)]).unwrap(),
             E::zero(),
             Vec::new(),
         )
@@ -502,10 +518,12 @@ mod tests {
         let point = (0..domain.num_vars())
             .map(|index| E::from_u64(29 + index as u64))
             .collect::<Vec<_>>();
+        let OpeningFamily::SubringCoefficientPacking(packing) = &verifier.opening_semantics.0
+        else {
+            panic!("expected packing semantics");
+        };
         assert_eq!(
-            verifier
-                .coefficient_packing_weight_at_point(&point)
-                .unwrap(),
+            packing.weight_at_point(&point).unwrap(),
             batch.groups()[0]
                 .compact_factors()
                 .evaluate_relation_at_point(&point)
@@ -516,29 +534,9 @@ mod tests {
                     .unwrap()
         );
 
-        assert!(AkitaStage2Verifier::new(
-            E::zero(),
-            E::zero(),
-            E::one(),
-            vec![E::zero(); domain.num_vars()],
-            &evaluator,
-            None,
-            None,
-            None,
-            &setup,
-            alpha,
-            None,
-            E::zero(),
-            relation_address_geometry.relation_lane_variable_count(),
-            relation_address_geometry.relation_coefficient_variable_count(),
-            None,
-            E::zero(),
-            E::zero(),
-            &relation,
-            Some(&batch),
-            &[(0, scalar_opening), (0, scalar_opening)],
-            E::zero(),
-            Vec::new(),
+        assert!(Stage2OpeningSemantics::packing(
+            &batch,
+            &[(0, scalar_opening), (0, scalar_opening)]
         )
         .is_err());
     }

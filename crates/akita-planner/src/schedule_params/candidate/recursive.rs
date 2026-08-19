@@ -441,9 +441,10 @@ impl RecursiveCandidateContext<'_, '_> {
             let lower_bound_input = RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
                 ring_dimension: request.dimensions.d_a(),
-                opening_width: request
-                    .opening
-                    .physical_coefficient_width(request.dimensions.d_a()),
+                opening_width: request.opening.method().physical_coefficient_width(
+                    policy.claim_ext_degree,
+                    request.dimensions.d_a(),
+                )?,
                 reduced_vars: search.reduced_vars,
                 r,
                 delta_commit,

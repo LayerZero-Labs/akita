@@ -128,34 +128,49 @@ where
         witness_layout.clone(),
         opening_batch,
     )?;
-    let has_coefficient_packing = instance
-        .group_openings()
-        .iter()
-        .any(|opening| opening.coefficient_packing_geometry().is_some());
-    let relation_claim_coefficients = if has_coefficient_packing {
-        if opening_claim_coefficients.len() != opening_batch.num_total_polynomials() {
-            return Err(AkitaError::InvalidSize {
-                expected: opening_batch.num_total_polynomials(),
-                actual: opening_claim_coefficients.len(),
-            });
+    let prepared_coefficient_packing_points;
+    let opening_points = match prepared_relation_groups
+        .first()
+        .ok_or(AkitaError::InvalidProof)?
+        .kind()
+    {
+        akita_types::OpeningFamily::EvaluationTrace(_) => {
+            akita_types::OpeningFamily::EvaluationTrace(())
         }
-        opening_claim_coefficients
-    } else {
-        gamma
+        akita_types::OpeningFamily::SubringCoefficientPacking(_) => {
+            prepared_coefficient_packing_points = prepared_relation_groups
+                .iter()
+                .enumerate()
+                .map(|(group_index, group)| match group.kind() {
+                    akita_types::OpeningFamily::SubringCoefficientPacking(point) => {
+                        Ok((group_index, point))
+                    }
+                    akita_types::OpeningFamily::EvaluationTrace(_) => Err(
+                        AkitaError::InvalidSetup("ring-switch opening families are mixed".into()),
+                    ),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            akita_types::OpeningFamily::SubringCoefficientPacking(
+                prepared_coefficient_packing_points.as_slice(),
+            )
+        }
     };
-    let prepared_coefficient_packing_points = prepared_relation_groups
-        .iter()
-        .enumerate()
-        .filter_map(|(group_index, group)| {
-            group
-                .coefficient_packing_point()
-                .map(|point| (group_index, point))
-        })
-        .collect::<Vec<_>>();
+    let relation_claim_coefficients = match opening_points {
+        akita_types::OpeningFamily::EvaluationTrace(()) => gamma,
+        akita_types::OpeningFamily::SubringCoefficientPacking(_) => {
+            if opening_claim_coefficients.len() != opening_batch.num_total_polynomials() {
+                return Err(AkitaError::InvalidSize {
+                    expected: opening_batch.num_total_polynomials(),
+                    actual: opening_claim_coefficients.len(),
+                });
+            }
+            opening_claim_coefficients
+        }
+    };
 
     let prepare_relation_weight_factorization = || {
         let _span = tracing::info_span!("relation_weight_compilation").entered();
-        let (events, coefficient_packing_batch) =
+        let (events, opening_semantics) =
             build_relation_weight_events(RelationWeightEventInputs {
                 setup: RelationSetupSource::Matrix(setup),
                 instance,
@@ -166,7 +181,7 @@ where
                 opening_source_len,
                 opening_ring_dim,
                 relation_plan: &relation_plan,
-                prepared_coefficient_packing_points: &prepared_coefficient_packing_points,
+                opening_points,
             })?;
         let ordinary = events.factor_common_alpha()?;
         let compression = lp
@@ -185,7 +200,7 @@ where
                 )
             })
             .transpose()?;
-        Ok::<_, AkitaError>((ordinary, compression, coefficient_packing_batch))
+        Ok::<_, AkitaError>((ordinary, compression, opening_semantics))
     };
 
     #[cfg(feature = "parallel")]
@@ -210,7 +225,7 @@ where
         (relation_weight_factorization, w_compact)
     };
 
-    let (relation_weight_factorization, compression_relation_weights, coefficient_packing_batch) =
+    let (relation_weight_factorization, compression_relation_weights, opening_semantics) =
         relation_weight_factorization_result.map_err(|err| {
             AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
         })?;
@@ -236,6 +251,6 @@ where
             alpha,
         },
         relation_plan,
-        coefficient_packing_batch,
+        opening_semantics,
     })
 }

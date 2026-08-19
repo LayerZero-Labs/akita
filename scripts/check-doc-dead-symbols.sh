@@ -103,7 +103,7 @@ removed_api_patterns=(
   'SparseRingBatchView\b'
   'root_tensor_projection_enabled\b'
   'root_tensor_projection_enabled_for_width\b'
-  'ProveBackendFor\b'
+  '\bProveBackendFor\b'
   'ProjectBackendFor\b'
   'CommitmentConfig::D\b'
   'uniform_ring_dimension\b'

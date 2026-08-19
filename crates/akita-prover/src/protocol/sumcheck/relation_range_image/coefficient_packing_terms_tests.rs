@@ -8,7 +8,7 @@ use akita_types::{
     AkitaExpandedSetup, AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
     CoefficientPackingBatchSemantics, CoefficientPackingChallenges, CoefficientPackingStage2Source,
     CoefficientPackingVerifierBatchSemantics, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
-    OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OpeningFamily, OpeningMethod,
     PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
     RelationWeightEvent, RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance,
     RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
@@ -347,10 +347,13 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
-        prepared_coefficient_packing_points: &[(0, &fixture.prepared_point)],
+        opening_points: OpeningFamily::SubringCoefficientPacking(&[(0, &fixture.prepared_point)]),
     })
     .unwrap();
-    assert_eq!(built_batch.as_ref(), Some(&fixture.batch));
+    assert_eq!(
+        built_batch,
+        OpeningFamily::SubringCoefficientPacking(fixture.batch.clone())
+    );
 
     let shared = &fixture.relation_events;
     let shared_ranges = shared
@@ -417,7 +420,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
-        prepared_coefficient_packing_points: &[(0, &fixture.prepared_point)],
+        opening_points: OpeningFamily::SubringCoefficientPacking(&[(0, &fixture.prepared_point)]),
     })
     .unwrap();
     let e_ranges = fixture
@@ -455,7 +458,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         opening_source_len: domain.domain_len() / opening_ring_dim,
         opening_ring_dim,
         relation_plan: &fixture.relation_plan,
-        prepared_coefficient_packing_points: &[],
+        opening_points: OpeningFamily::EvaluationTrace(()),
     })
     .is_err());
     assert!(

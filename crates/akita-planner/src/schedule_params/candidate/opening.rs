@@ -27,13 +27,18 @@ impl PlannerOpeningCandidate {
         if absolute_level > 1 {
             return Ok(Vec::new());
         }
-        Ok(akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
-            .iter()
-            .copied()
-            .filter_map(|s| {
-                Self::coefficient_packing(absolute_level, extension_degree, dimensions, s).ok()
-            })
-            .collect())
+        let mut candidates = Vec::new();
+        for &challenge_subring_dimension in akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
+            if let Some(candidate) = Self::coefficient_packing(
+                absolute_level,
+                extension_degree,
+                dimensions,
+                challenge_subring_dimension,
+            )? {
+                candidates.push(candidate);
+            }
+        }
+        Ok(candidates)
     }
 
     /// Admit one coefficient-packing candidate before SIS lookup or sizing.
@@ -42,27 +47,30 @@ impl PlannerOpeningCandidate {
         extension_degree: usize,
         dimensions: CommitmentRingDims,
         challenge_subring_dimension: usize,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Option<Self>, AkitaError> {
         if absolute_level > 1 {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient packing is restricted to absolute fold levels zero and one".into(),
-            ));
+            return Ok(None);
         }
         dimensions.validate_role_projection()?;
+        if SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension).is_none() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "challenge subring dimension {challenge_subring_dimension} has no production challenge family"
+            )));
+        }
+        let partial_width = extension_degree
+            .checked_mul(challenge_subring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("partial opening width overflow".into()))?;
+        if !dimensions.d_a().is_multiple_of(partial_width)
+            || !partial_width.is_multiple_of(dimensions.d_d())
+        {
+            return Ok(None);
+        }
         let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
             extension_degree,
             dimensions.d_a(),
             challenge_subring_dimension,
         )?;
-        if !geometry
-            .partial_base_field_width()
-            .is_multiple_of(dimensions.d_d())
-        {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient-packing width must decompose into D-native subcolumns".into(),
-            ));
-        }
-        Ok(Self::SubringCoefficientPacking { geometry })
+        Ok(Some(Self::SubringCoefficientPacking { geometry }))
     }
 
     pub(crate) const fn method(self) -> akita_types::OpeningMethod {
@@ -94,13 +102,6 @@ impl PlannerOpeningCandidate {
         matches!(self, Self::SubringCoefficientPacking { .. })
     }
 
-    pub(crate) const fn physical_coefficient_width(self, ambient_dimension: usize) -> usize {
-        match self {
-            Self::EvaluationTrace { .. } => ambient_dimension,
-            Self::SubringCoefficientPacking { geometry } => geometry.partial_base_field_width(),
-        }
-    }
-
     pub(crate) fn validate_for(
         self,
         absolute_level: usize,
@@ -118,7 +119,12 @@ impl PlannerOpeningCandidate {
             extension_degree,
             dimensions,
             geometry.challenge_subring_dimension(),
-        )?;
+        )?
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "planner coefficient-packing geometry is not admitted at this level".into(),
+            )
+        })?;
         if self != expected {
             return Err(AkitaError::InvalidSetup(
                 "planner opening candidate disagrees with its checked geometry".into(),
@@ -144,6 +150,7 @@ mod tests {
             },
             64,
         )
+        .expect("valid packing request")
         .expect("registered two-subcolumn packing geometry");
         assert_eq!(
             admitted.method(),
@@ -163,7 +170,8 @@ mod tests {
             CommitmentRingDims::uniform(128),
             64
         )
-        .is_err());
+        .unwrap()
+        .is_none());
         assert!(PlannerOpeningCandidate::coefficient_packing(
             1,
             2,
@@ -177,7 +185,8 @@ mod tests {
             CommitmentRingDims::uniform(128),
             64
         )
-        .is_err());
+        .unwrap()
+        .is_none());
         assert!(PlannerOpeningCandidate::coefficient_packing(
             1,
             2,
@@ -188,7 +197,8 @@ mod tests {
             },
             64
         )
-        .is_err());
+        .unwrap()
+        .is_none());
     }
 
     #[test]

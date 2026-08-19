@@ -325,19 +325,22 @@ impl HonestFoldPolicySpec {
     /// Balanced sources follow the candidate basis. Unit one-hot sources keep
     /// their profile-owned sparse norm; the planner canonicalizes their
     /// already-single-digit representation without a basis sweep.
-    #[must_use]
     pub fn witness_norms_for_inner_basis(
         self,
         log_basis_inner: u32,
         ring_dimension: usize,
-    ) -> FoldWitnessNorms {
+    ) -> Result<FoldWitnessNorms, AkitaError> {
         match self {
             Self::BalancedSignedDigit(_) => {
-                FoldWitnessNorms::bounded(log_basis_inner, ring_dimension)
+                Ok(FoldWitnessNorms::bounded(log_basis_inner, ring_dimension))
             }
             Self::UnitOneHot(policy) => {
                 let classes = canonical_source_classes(ring_dimension, policy.source_chunk_size)
-                    .unwrap_or_default();
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "unit one-hot source geometry is unsupported or overflows".into(),
+                        )
+                    })?;
                 let infinity_norm = classes
                     .iter()
                     .map(|class| class.infinity_norm())
@@ -348,7 +351,7 @@ impl HonestFoldPolicySpec {
                     .filter_map(|class| class.l1_norm())
                     .max()
                     .unwrap_or(infinity_norm);
-                FoldWitnessNorms::new(infinity_norm, l1_norm)
+                Ok(FoldWitnessNorms::new(infinity_norm, l1_norm))
             }
         }
     }
