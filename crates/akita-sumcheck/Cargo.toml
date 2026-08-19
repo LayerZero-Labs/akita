@@ -20,13 +20,14 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [features]
 default = ["transcript-blake2b"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
-parallel = ["akita-algebra/parallel", "akita-field/parallel"]
+parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 
 [lints]
 workspace = true

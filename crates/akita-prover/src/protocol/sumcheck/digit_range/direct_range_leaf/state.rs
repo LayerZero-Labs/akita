@@ -2,7 +2,21 @@ use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
     /// Build the low-basis prover from the compact witness table.
-    pub(crate) fn new(
+    ///
+    /// `digit_witness` holds the `live_x_cols * 2^ring_bits` live digits in
+    /// flat column-major layout, `tau0` is the stage-1 equality point in
+    /// physical-address binding order (the coordinates of a
+    /// [`DigitRangeEqualityPoint`](akita_types::DigitRangeEqualityPoint)
+    /// over `col_bits + ring_bits` variables),
+    /// and `plan` must be a direct-leaf plan (basis 4 or 8, no product
+    /// stages).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the plan has product stages, if any declared
+    /// width overflows, or if the witness or `tau0` length disagrees with
+    /// the declared `(live_x_cols, col_bits, ring_bits)` shape.
+    pub fn new(
         digit_witness: std::sync::Arc<[i8]>,
         tau0: &[E],
         plan: DigitRangePlan,
@@ -71,7 +85,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     ///
     /// Panics if called before the virtual table has been fully folded to a
     /// single field element.
-    pub(crate) fn final_range_image_eval(&self) -> E {
+    pub fn final_range_image_eval(&self) -> E {
         match &self.range_image {
             LowBasisRangeImageStorage::Materialized(range_image) => {
                 assert_eq!(range_image.len(), 1, "range_image not fully folded");
