@@ -4,8 +4,9 @@
 |---|---|
 | Author(s) | Quang Dao |
 | Created | 2026-06-10 |
-| Status | implemented (#189), revised for the signed-sparse cutover |
+| Status | implemented |
 | PR | [#189](https://github.com/LayerZero-Labs/akita/pull/189) |
+| Book-chapter | book/src/how/security.md |
 
 ## Summary
 

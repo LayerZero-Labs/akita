@@ -4,7 +4,7 @@
 |-------------|--------------------------|
 | Author(s)   | Quang Dao                |
 | Created     | 2026-05-28               |
-| Status      | implemented              |
+| Status      | archived |
 | PR          | #134                     |
 
 ## Summary

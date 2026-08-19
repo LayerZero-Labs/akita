@@ -1583,7 +1583,7 @@ open review blockers are resolved.
 
 - [Lyubashevsky and Seiler, EUROCRYPT 2018](https://doi.org/10.1007/978-3-319-78381-9_8),
   Corollary 1.2 for partial splitting and short invertibility.
-- [B commitment slicing](commitment-slicing.md), PR 388 baseline and B planner
+- [B commitment slicing](archive/2026-Q3/commitment-slicing.md), PR 388 baseline and B planner
   interaction.
 - [Selective L2 fold sizing](https://github.com/LayerZero-Labs/akita/pull/369),
   planner objective, response sizing, and operator norm certificates.

@@ -9,7 +9,7 @@
 |---------------|---------------------------------------------|
 | Author(s)     | Quang Dao                                   |
 | Created       | 2026-07-21                                  |
-| Status        | active                                      |
+| Status        | archived                                      |
 | PR            | [#317](https://github.com/LayerZero-Labs/akita/pull/317) |
 | Supersedes    |                                             |
 | Superseded-by |                                             |

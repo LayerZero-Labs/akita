@@ -4,8 +4,9 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-05-17                     |
-| Status      | implemented                    |
+| Status      | historical                    |
 | PR          | #88                            |
+| Book-chapter | book/src/how/recursion.md |
 
 > **Historical topology note.** This spec records the PR #88 D-block cutover.
 > The current folded-only protocol is defined by

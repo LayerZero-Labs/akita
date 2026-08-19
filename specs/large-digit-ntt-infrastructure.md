@@ -4,13 +4,15 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-07-21 |
-| Status | active |
+| Status | implemented |
 | Branch | `codex/ntt-architecture` |
 | PR | [#358](https://github.com/LayerZero-Labs/akita/pull/358) |
-| Supersedes | the 2026-07 large-basis extension notes in `crt-ntt-accumulation-safety.md` |
+| Supersedes | the 2026-07 large-basis extension notes in `archive/2026-Q3/crt-ntt-accumulation-safety.md` |
 | Superseded-by | |
 | Book-chapter | book/src/foundations/ntt-crt.md |
 | Compatibility | internal API cutover and stricter terminal-proof validation; no proof or setup wire change |
+
+> **Shipped record.** The implementation landed in PR [#358](https://github.com/LayerZero-Labs/akita/pull/358). The planner search follow-up landed in PR [#355](https://github.com/LayerZero-Labs/akita/pull/355). This record remains in the root because the exact signed-digit and terminal NTT contract is still load-bearing.
 
 ## Summary
 
@@ -24,7 +26,8 @@ Akita's balanced inner commitment decomposition was artificially limited by an
 so `i8` is exact through `L = 8` and `i16` is exact through `L = 16`. This PR
 provides the complete arithmetic and prepared-setup infrastructure needed for
 large inner bases, with bases 10 and 11 as the immediate target. It does not
-change planner policy or generated schedules yet.
+change planner policy or generated schedules in PR #358 itself. The planner
+follow-up landed separately in PR #355 and is recorded below.
 
 The implementation also cuts the terminal verifier's `A * z` relation over to
 one signed-`i16` NTT matvec. Decoded terminal coefficients outside `i16` are
@@ -102,9 +105,10 @@ inside `(-P/2, P/2)`, which is the implemented condition
 For balanced base `2^L`, the canonical conservative bound is
 `B = 2^(L-1)`. For the terminal relation, all decoded coefficients are checked
 to fit `i16`, so `B = 2^15 = 32768` (`L = 16`). Capacity arithmetic must be
-overflow-safe and shared by preparation, warming, execution, tests, and any
-future planner capability check. There must not be separate wrapper formulas or
-weaker field/profile-specific approximations.
+overflow-safe and shared by preparation, warming, execution, tests, and cache
+capability checks. The planner shares the signed-digit storage envelope, but it
+does not call the field/ring/width CRT selector. Any future planner capacity
+gate must use that canonical selector rather than a weaker approximation.
 
 The canonical base profiles are:
 
@@ -343,9 +347,9 @@ it must preserve the single public cache contract and the exactness selector.
 
 ### Non-Goals
 
-1. Enabling planner emission of L10/L11 schedules or regenerating schedule
-   catalogs. That is a follow-up once the planner proves those schedules
-   Pareto-optimal under the canonical capability and security contracts.
+1. Changing planner emission or regenerating schedule catalogs as part of PR
+   #358. That follow-up was completed separately in PR #355; this record keeps
+   the implementation boundary explicit.
 2. Supporting balanced bases above 16 or coefficients wider than `i16` in the
    terminal relation.
 3. Adding the tail unconditionally to Q64/Q128 or to every `i16` operation.
@@ -359,8 +363,9 @@ it must preserve the single public cache contract and the exactness selector.
 7. Requiring AVX-512, AVX2, NEON, Metal, or CUDA for correctness.
 8. Standardizing a GPU buffer layout in this PR. The interface must permit one,
    but the CPU layout remains an implementation detail.
-9. Reworking planner/security pricing beyond exposing the one canonical
-   implementability contract needed by the follow-up planner PR.
+9. Reworking planner/security pricing beyond the basis capability needed by
+   PR #355. Exact field/ring/width CRT selection remains a runtime NTT
+   preparation concern.
 10. Adding a protocol-level benchmark fixture. This PR measures the NTT matvec
     kernel directly so rank, ring degree, accumulation width, digit storage,
     and exactness-tail selection can be varied independently.
@@ -518,18 +523,10 @@ Implementation criteria completed on the current branch:
       and accumulation width across the production i8/L8 path and unified i16
       L8/L10/L11 paths, without a protocol fixture.
 
-Final merge evidence still required:
-
-- [ ] Run complete generated-schedule drift checks and confirm this PR changes
-      capability tests but not catalog policy/output.
-- [x] Run every locally available cheap repository preflight check on the final
-      documentation head; record unavailable tools explicitly.
-- [x] Complete the three CI feature-matrix Clippy configurations on the final
-      implementation tree.
-- [ ] Complete focused, broader, no-panic, and relevant portability checks on
-      the final refactored head.
-- [ ] Update the spec header to the PR number and `implemented` only when every
-      required criterion is complete.
+The implementation and merge-gate evidence are complete. PR #358 passed the
+generated-schedule drift check, focused and full test suites, the no-panic and
+portability checks, the CI feature matrix, and the documentation guardrails.
+The header records the merged implementation as `implemented`.
 
 ### Testing Strategy
 
@@ -701,7 +698,7 @@ No future optimization may bake one common ring degree into the abstraction,
 make the tail unconditional, expose CPU storage through backend traits, or
 weaken the verifier no-panic boundary.
 
-### Validation status
+### Validation record
 
 - Formatting, focused algebra/prover/verifier/config tests, `single_poly_e2e`,
   documentation guardrails, and generated all-schedules drift completed during
@@ -718,8 +715,8 @@ weaken the verifier no-panic boundary.
 - `cargo machete --with-metadata` was attempted but could not run because
   `cargo-machete` is not installed in the local environment.
 - This documentation pass does not rerun the full test suite.
-- Full generated-schedule drift, broader tests, and portability remain
-  merge-gate evidence rather than claims of this documentation pass.
+- The merged PR supplied the full generated-schedule drift, broader test,
+  no-panic, and portability evidence listed above.
 
 All live commands used as final evidence must be polled to a real exit code.
 
@@ -773,7 +770,9 @@ optimization surface without serving a supported schedule.
 
 ## Documentation and Follow-Up
 
-This spec is the canonical in-flight design record for the PR. Before merge:
+This spec is the retained implementation record for the merged PR. The Book is
+the narrative source for readers, while this file keeps the exact arithmetic
+and terminal verification contract used by the implementation.
 
 - keep `book/src/foundations/gadget-decomposition.md` authoritative for the
   digit-width mapping;
@@ -784,15 +783,18 @@ This spec is the canonical in-flight design record for the PR. Before merge:
 - regenerate `docs/crt-ntt-capacity-profile.md` only from
   `scripts/gen_crt_capacity_profile.py`;
 - remove the superseded 2026-07 extension narrative from
-  `specs/crt-ntt-accumulation-safety.md`, leaving a pointer to this spec;
-- update this header with the PR number and final status; and
-- after the durable content is fully folded into the book, archive this spec
-  according to `specs/PRUNING.md`.
+  `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md`, leaving a pointer to this spec;
+- keep the merged PR and Book references above as the implementation history;
+  and
+- archive this record after the exact contract is no longer needed as a
+  load-bearing reference, according to `specs/PRUNING.md`.
 
-The planner follow-up must consume the same signed interval and exact-capacity
-primitive, remove artificial inner-basis caps, regenerate catalogs from the
-canonical generator, and report the L10/L11 schedule/security/performance
-tradeoff. It must not reproduce the capacity formula in planner-local code.
+The planner follow-up is complete. The proof-optimized configuration now
+searches inner bases through L10 for Q32 and L11 for Q64 and Q128, while the
+planner validates recursive balanced bases through the signed-i16 limit. The
+planner and NTT implementation share the signed-digit storage envelope, while
+the exact field/ring/width CRT selector remains in
+`akita-types::ntt_cache` and is used by prover and verifier preparation.
 
 ## Reviewer Map
 
@@ -811,11 +813,11 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 
 ## References
 
-- `specs/crt-ntt-accumulation-safety.md` — original exact chunking and
+- `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md` — original exact chunking and
   reconstruction contract (PR #134).
 - `book/src/foundations/ntt-crt.md` — production base-prime choices and CRT
   profile history.
-- `specs/terminal-direct-ring-relations-cutover.md` — direct terminal relation
+- `specs/archive/2026-Q3/terminal-direct-ring-relations-cutover.md` — direct terminal relation
   and predecessor-bound `t` semantics.
 - `specs/akita-compute-backend-metal.md` — downstream prepared-layout and
   backend-boundary requirements.

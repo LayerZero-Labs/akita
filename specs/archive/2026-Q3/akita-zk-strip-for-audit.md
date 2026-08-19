@@ -4,18 +4,18 @@
 |---------------|--------------------------------|
 | Author(s)     | Quang Dao                      |
 | Created       | 2026-06-25                     |
-| Status        | in-progress (slices 0–3 landed) |
+| Status        | historical |
 | PR            | [#218](https://github.com/LayerZero-Labs/akita/pull/218) |
 | Supersedes    |                                |
 | Superseded-by |                                |
-| Book-chapter  | roadmap/zero-knowledge.md      |
+| Book-chapter  | book/src/roadmap/zero-knowledge.md      |
 
 ## Summary
 
 The optional `zk` Cargo feature is **opt-in, prefix-only, and not actually
 zero-knowledge today** — enabling it produces sound, verifying proofs, not ZK
-proofs (the `sec:zk-joint-sigma` seam and suffix modulus switching are
-unimplemented; the tail is discharged by a plain opening). See
+proofs (the `sec:zk-joint-sigma` seam is unimplemented; the tail is discharged
+by a plain opening). See
 [`book/src/roadmap/zero-knowledge.md`](../book/src/roadmap/zero-knowledge.md) and
 [`specs/archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md).
 
@@ -125,7 +125,7 @@ Affected surfaces:
 - **No fix of the planner↔prover `zk_hiding_witness_len` drift** — it is
   confirmed harmless (conservative `≥` headroom) and is deleted with both
   functions.
-- **No completion of real ZK** (seam, suffix modulus switching, LNP22) — that is
+- **No completion of real ZK** (seam, LNP22) — that is
   post-audit, off the `zk-wip` branch.
 
 ## Evaluation
@@ -432,7 +432,7 @@ gated on **runtime** ring-dimension/`tier_split`, *orthogonal* to `zk`; the
    abstractions (backend kernel methods → standalone trait, setup matrices →
    optional extension, `zk_hiding` field → `Option`). Worse, the roadmap
    (`zero-knowledge.md:14-21`) says finished-ZK *replaces* the plain-opening prefix
-   with the `sec:zk-joint-sigma` seam + suffix modulus switching + LNP22 — the very
+   with the `sec:zk-joint-sigma` seam + LNP22 — the very
    structures the hook would freeze. Net: high cost, ossifies the wrong boundary,
    discarded post-seam.
 
@@ -479,7 +479,7 @@ gated on **runtime** ring-dimension/`tier_split`, *orthogonal* to `zk`; the
 - Prior council (Cursor, 2026-06-24): the 3-phase plan this spec sharpens — Phase 1
   (lhl_blinding, kept), Phase 2 (`akita-zk-prefix` crate, rejected here).
 - Roadmap: [`book/src/roadmap/zero-knowledge.md`](../book/src/roadmap/zero-knowledge.md)
-  — seam + suffix modulus switching are the remaining real-ZK steps.
+  — the seam is the remaining real-ZK step.
 - Design record: [`archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md`](archive/2026-Q2/akita-zk-sumcheck-hiding-plain.md),
   [`archive/2026-Q2/akita-zk-commitment-hiding.md`](archive/2026-Q2/akita-zk-commitment-hiding.md),
   [`archive/2026-Q2/akita-zk-v-hiding.md`](archive/2026-Q2/akita-zk-v-hiding.md).

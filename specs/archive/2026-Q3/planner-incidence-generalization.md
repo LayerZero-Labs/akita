@@ -13,8 +13,9 @@
 |---------------|--------------------------------|
 | Author(s)     |                                |
 | Created       | 2026-05-27                     |
-| Status        | active                         |
+| Status        | superseded                     |
 | PR            |                                |
+| Superseded-by | `specs/heterogeneous-group-source-contracts.md` |
 | Book-chapter  | book/src/how/configuration.md  |
 
 ## Goal

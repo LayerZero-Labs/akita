@@ -4,7 +4,7 @@
 |-------------|---------------------------------------------------|
 | Author(s)   | Quang Dao                                         |
 | Created     | 2026-06-01                                        |
-| Status      | proposed                                          |
+| Status      | historical |
 | PR          | https://github.com/LayerZero-Labs/akita/pull/142  |
 
 ## Summary

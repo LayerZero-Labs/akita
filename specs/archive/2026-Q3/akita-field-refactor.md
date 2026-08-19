@@ -3,7 +3,7 @@
 | Field     | Value                        |
 | --------- | ---------------------------- |
 | Author(s) | Taghi Badakhshan             |
-| Status    | proposal for this PR         |
+| Status    | historical |
 | Branch    | `taghi/refactor/akita-field` |
 
 ## Summary
