@@ -3,31 +3,13 @@
 The [semantic relations in an Akita fold](./akita-fold.md) start with one
 commitment group, one witness chunk, and one common ring dimension, while the
 [realizations page](./akita-fold-realizations.md) turns those relations into
-physical rows. This page extends that basic case along three independent layout
-axes:
+physical rows. This page develops the multi-group extension. It preserves the
+four semantic relation families and explains how group-local rows and witness
+segments combine with one level-owned D relation.
 
-1. multiple commitment groups add group-local relation rows and witness
-   segments to the root fold;
-2. multiple witness chunks partition the work and physical witness columns
-   within each group; and
-3. different ring dimensions let each physical row retain the native ring of
-   its matrix role.
-
-None of these extensions changes the four semantic relation families. They
-change which physical rows and columns belong to each group, chunk, or native
-ring. The physical opening-commitment relation remains distinct from the
-field-valued evaluation trace, just as in the basic setting.
-
-## Contents
-
-- [Multiple commitment groups](#multiple-commitment-groups)
-  - [Why multiple commitment groups](#why-multiple-commitment-groups)
-  - [Group-local folded responses and relations](#group-local-folded-responses-and-relations)
-  - [The shared opening-commitment relation](#the-shared-opening-commitment-relation)
-  - [Semantic relations and physical realizations](#semantic-relations-and-physical-realizations)
-  - [Return to the single-group recursion](#return-to-the-single-group-recursion)
-- [Multiple witness chunks](#multiple-witness-chunks)
-- [Different ring dimensions](#different-ring-dimensions)
+The physical opening-commitment relation remains distinct from the
+field-valued evaluation trace. The canonical pages for chunks and mixed ring
+dimensions are linked in [Related layouts](#related-layouts).
 
 ## Multiple commitment groups
 
@@ -262,36 +244,18 @@ responses or relation rows. If setup offloading is active, the next fold may
 also receive an independent setup-prefix group; that extra group does not
 preserve or recreate the original root grouping.
 
-## Multiple witness chunks
+## Related layouts
 
-> **Status:** stub. This section will derive how each group's live blocks are
-> partitioned among witness chunks, how chunk-local segments contribute to the
-> same group-level rows, and why all groups and chunks share one quotient tail.
+This page owns the multi-group relation layout. The other layout axes have
+canonical explanations elsewhere:
 
-**Sources to fold in**
-
-- `crates/akita-types/src/witness.rs` (`WitnessLayout`, `WitnessUnitLayout`).
-- `crates/akita-types/src/proof/ring_relation.rs` (`RingRelationInstance::segment_layout`).
-- `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` (group- and chunk-ordered witness emission).
-- [Opening points and digit-innermost layout](./opening-points-layout.md#chunks-and-tensor-challenges).
-- [The distributed prover](./distributed-prover.md).
-
-## Different ring dimensions
-
-> **Status:** stub. This section will distinguish each relation row's native
-> ring dimension from the common carrier dimension, then derive the mixed-row
-> quotient and ring-switch evaluation without assuming a common denominator
-> $X^D+1$.
-
-**Sources to fold in**
-
-- `crates/akita-types/src/proof/relation.rs` (`RelationRhsLayout::row_ring_dims`).
-- `crates/akita-types/src/proof/relation_address.rs` (`RelationAddressGeometry`).
-- `crates/akita-types/src/layout/params.rs` (`relation_witness_carrier_ring_dimension`).
-- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs`.
-- `crates/akita-verifier/src/protocol/ring_switch/prepared_relation_point.rs`.
-- `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
-
-With the logical relation layout established, [Opening points and
-digit-innermost layout](./opening-points-layout.md) specifies how its segments
-are flattened into the physical source and committed witness order.
+- [Chunks and fold challenges](./opening-points-layout.md#chunks-and-fold-challenges)
+  defines exact chunk ranges and opening-point coordinates.
+- [Canonical walk](../verifying/matrix_evaluation.md#canonical-walk) defines
+  chunk-major witness order and the shared quotient and compression suffix.
+- [Setup roles and mixed rings](../verifying/matrix_evaluation.md#setup-roles-and-mixed-rings)
+  explains native A, B, and D dimensions. The current address authority is
+  `RelationAddressGeometry`, including
+  `relation_coefficient_block_len()` and
+  `outgoing_witness_ring_dimension()` in
+  `crates/akita-types/src/proof/relation_address.rs`.
