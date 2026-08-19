@@ -10,7 +10,7 @@
 |-------------|--------------|
 | Author(s)   | @quangvdao   |
 | Created     | 2026-05-02   |
-| Status      | proposed     |
+| Status      | archived     |
 | PR          | #64          |
 
 ## Summary

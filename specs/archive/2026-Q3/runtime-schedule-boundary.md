@@ -4,10 +4,10 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-23 |
-| Status        | partially implemented |
+| Status        | superseded |
 | PR            | #327; remaining runtime policy split deferred to a stacked PR after #343 |
 | Supersedes    | Runtime-fallback portions of [`archive/2026-Q2/planner-refactor.md`](archive/2026-Q2/planner-refactor.md) and the deleted `schedule-catalog-ownership.md` |
-| Superseded-by | |
+| Superseded-by | `specs/heterogeneous-group-source-contracts.md` and `specs/setup-offloading-planner.md` |
 | Book-chapter  | book/src/how/configuration.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,

@@ -4,7 +4,7 @@
 |---------------|--------------------------------------------|
 | Author(s)     |                                            |
 | Created       | 2026-07-16                                 |
-| Status        | implemented                                |
+| Status        | superseded                                |
 | PR            |                                            |
 | Supersedes    |                                            |
 | Superseded-by | Setup-prefix content and capacity semantics superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md` |

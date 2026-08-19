@@ -8,7 +8,7 @@
 | PR            | |
 | Supersedes    | the SIS policy and table specs deleted in this cutover |
 | Superseded-by | |
-| Book-chapter  | how/security.md |
+| Book-chapter  | book/src/how/security.md |
 
 ## Summary
 

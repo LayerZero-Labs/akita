@@ -694,7 +694,7 @@ mod fp128_policy_tests {
         }
     }
 
-    /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus each catalog maximum.
+    /// Spot-check keys aligned with `specs/archive/2026-Q2/sis-euclidean-estimator.md` plus each catalog maximum.
     const CI_DENSE_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 32];
     const CI_ONEHOT_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 

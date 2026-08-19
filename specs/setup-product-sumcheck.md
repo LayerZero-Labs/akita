@@ -6,6 +6,7 @@
 | Created     | 2026-06-02                     |
 | Status      | proposed                       |
 | PR          |                                |
+| Book-chapter | book/src/how/proving/sumcheck-stages.md |
 
 > **Harness supersession (PR #311).** Setup-contribution mode is now owned by
 > the config-selected schedule, not a caller argument. The singleton Jolt
@@ -197,7 +198,7 @@ AKITA_MODE=onehot_fp128_d64_recursive AKITA_SETUP_MODE=recursive \
 ## References
 
 - `STACK.md` rows 03B (`setup-product-sumcheck`) and 04 (`setup-claim-offloading`).
-- `specs/setup-layout-repack.md`, `book/src/how/verifying/matrix_evaluation.md`.
+- `specs/archive/2026-Q3/setup-layout-repack.md`, `book/src/how/verifying/matrix_evaluation.md`.
 - `crates/akita-verifier/src/stages/stage3.rs`,
   `crates/akita-prover/src/protocol/sumcheck/setup_sumcheck.rs`.
 - Profiling: `profile/akita-recursion/README.md`.

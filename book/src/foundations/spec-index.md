@@ -1,45 +1,43 @@
 # Spec index
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+This index names the specifications that still define current behavior or
+unresolved work. Shipped and superseded records live in
+[`specs/archive/README.md`](../../../specs/archive/README.md). The lifecycle
+policy and the checker use the same live set in
+[`specs/PRUNING.md`](../../../specs/PRUNING.md) and
+`scripts/check-spec-references.sh`.
 
-A status-tagged index into `specs/`, so readers can find the design record behind
-a chapter and tell active design from historical record. Each entry: spec, one
-line, status (`active` / `implemented` / `superseded` / `archived`), and the book
-chapter it feeds. Keep this in sync with `specs/PRUNING.md` and the archive index.
+## Live specifications
 
-The active design frontier (keep as live specs):
-`flat-public-matrix-and-exact-ntt-cache`, `role-native-projected-digit-layout`,
-`setup-layout-repack`,
-`setup-offloading-planner`, `packed-sumcheck`,
-`planner-incidence-generalization`,
-`akita-field-refactor`, `akita-compute-backend-metal` (Metal tail),
-`large-digit-ntt-infrastructure`, and
-[`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md).
+| Spec | Status | Why it remains live |
+|------|--------|---------------------|
+| [`akita-compute-backend-metal`](../../../specs/akita-compute-backend-metal.md) | active | Metal and hybrid backend work remains open. |
+| [`dyadic-chunk-partition`](../../../specs/dyadic-chunk-partition.md) | active | Defines the current witness chunk partition contract. |
+| [`flat-public-matrix-and-exact-ntt-cache`](../../../specs/flat-public-matrix-and-exact-ntt-cache.md) | implemented | Load-bearing setup layout with follow-up provenance and artifact work. |
+| [`fold-linf-rejection`](../../../specs/fold-linf-rejection.md) | implemented | Its sizing formula is used by the SIS cap implementation. |
+| [`heterogeneous-group-source-contracts`](../../../specs/heterogeneous-group-source-contracts.md) | active | Defines current source-free group and fold-admission rules. |
+| [`large-digit-ntt-infrastructure`](../../../specs/large-digit-ntt-infrastructure.md) | active | Current large-digit NTT and terminal verification contract. |
+| [`packed-sumcheck`](../../../specs/packed-sumcheck.md) | approved | Ready for implementation, with Stage 1 and Stage 2 gates recorded. |
+| [`role-native-projected-digit-layout`](../../../specs/role-native-projected-digit-layout.md) | active | Normative witness and verifier layout source. |
+| [`runtime-ring-cutover`](../../../specs/runtime-ring-cutover.md) | implemented | Normative runtime ring contract cited by the architecture chapter. |
+| [`selective-l2-fold-security-sizing`](../../../specs/selective-l2-fold-security-sizing.md) | active | Current security sizing review remains open. |
+| [`setup-offloading-planner`](../../../specs/setup-offloading-planner.md) | active | Recursive setup selection policy remains under development. |
+| [`setup-product-sumcheck`](../../../specs/setup-product-sumcheck.md) | proposed | Unimplemented Stage 3 design. |
+| [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | Current 128-bit SIS security policy source. |
+| [`structured-e-term`](../../../specs/structured-e-term.md) | active | Current structured verifier E-term contract and acceptance record. |
+| [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
 
-The approved SIS security-policy frontier is
-`sis-quantum128-scalar-n-table`: a scalar, role-driven table using one ADPS16
-quantum LGSA policy at a 128-bit target.
+## Archived records
 
-Recent archived records include
-[`commitment-compression-cutover`](../../../specs/archive/2026-Q3/commitment-compression-cutover.md),
-and
-[`relation-range-image-sumcheck`](../../../specs/archive/2026-Q3/relation-range-image-sumcheck.md).
-Their durable compression and Stage 2 descriptions now live in the Akita fold
-realization and sumcheck stages chapters. Other recent archived records include
-[`group-local-opening-points`](../../../specs/archive/2026-Q3/group-local-opening-points.md),
-whose durable claim ownership and protocol dataflow now live in the architecture,
-verification, commitment API, and extension-opening chapters. The
-[`PR 375 prover optimization record`](../../../specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md)
-now lives in the same archive. Its durable source ownership, CPU resource, and
-NTT lifecycle rules live in the optimization and commitment API chapters. The
-[`profile-bench-coverage-matrix`](../../../specs/archive/2026-Q3/profile-bench-coverage-matrix.md),
-whose current benchmark contract now lives in the profiling chapter, is also
-archived.
-The historical root-EOR, field-geometry, and polynomial-backend records are
-also archived under `specs/archive/2026-Q3`; current suffix and terminal EOR
-behavior lives in the extension-opening-reduction chapter.
+The archive contains the historical design record for shipped work and the
+superseded alternatives that explain why the live contracts have their current
+shape. Update the owning Book chapter for current narrative text. Do not use an
+archived record as a source for new behavior.
 
-## Sources to fold in
+## Maintenance
 
-- `specs/PRUNING.md` (process + classification), `specs/archive/README.md`
-- Council specs-audit report (full classification table)
+When a PR changes a specification, update its status and links in the same PR.
+When a specification is shipped and its durable content is in the Book, move it
+to the archive and add an entry to the archive index. Run
+`scripts/check-spec-references.sh --all` during quarterly cleanup to find stale
+non-archive references.

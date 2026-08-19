@@ -4,8 +4,9 @@
 |-------------|--------------------------------|
 | Author(s)   |                                |
 | Created     | 2026-06-04                     |
-| Status      | proposed                       |
+| Status      | superseded                     |
 | PR          |                                |
+| Superseded-by | ../2026-Q3/commitment-slicing.md |
 
 ## Summary
 

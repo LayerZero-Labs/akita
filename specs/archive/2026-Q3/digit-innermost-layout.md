@@ -5,11 +5,13 @@
 | Author(s) | Quang Dao; Codex assistant |
 | Created | 2026-07-10 |
 | Revised | 2026-07-31 |
-| Status | active |
+| Status | superseded |
 | PR | #294 |
 | Supersedes | Root and recursive layout decisions in `setup-layout-repack.md` and `archive/2026-Q3/protocol-core-eor-consolidation.md`, plus the deleted `distributed-verifier-row-eval.md` (PR #296, closed unlanded) |
+| Superseded-by | `specs/role-native-projected-digit-layout.md` and `specs/dyadic-chunk-partition.md` |
 | Superseded by | |
-| Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
+| Book-chapter | book/src/how/proving/opening-points-layout.md |
+| Related-chapter | book/src/how/verifying/matrix_evaluation.md |
 
 This spec follows the lifecycle in [`PRUNING.md`](PRUNING.md). It replaces the first version of this file. That version used a power of two block count, a compact position count, and a second virtual opening address. This version reverses those choices.
 

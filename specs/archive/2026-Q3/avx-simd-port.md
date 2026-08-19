@@ -4,7 +4,7 @@
 | --------- | ---------------------------------------------------- |
 | Author(s) | Taghi Badakhshan                                     |
 | Created   | 2026-05-21                                           |
-| Status    | implemented, rebased on top of `#99` (`akita-fp31`)  |
+| Status    | archived |
 | PR        | `taghi/perf/avx-simd-port`                           |
 | Depends on| [`#99`](https://github.com/LayerZero-Labs/akita/pull/99) — provides MSRV 1.95 and `Fp32::<P>::SHIFT64_MOD_P` |
 

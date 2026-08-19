@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | active |
+| Status | historical |
 | Updated | 2026-08-12 |
 | PR | #355, #385 |
 | Historical record | `archive/2026-Q3/multi-group-batching-legacy.md` |

@@ -7,7 +7,7 @@
 | Status | active |
 | Branch | `codex/ntt-architecture` |
 | PR | [#358](https://github.com/LayerZero-Labs/akita/pull/358) |
-| Supersedes | the 2026-07 large-basis extension notes in `crt-ntt-accumulation-safety.md` |
+| Supersedes | the 2026-07 large-basis extension notes in `archive/2026-Q3/crt-ntt-accumulation-safety.md` |
 | Superseded-by | |
 | Book-chapter | book/src/foundations/ntt-crt.md |
 | Compatibility | internal API cutover and stricter terminal-proof validation; no proof or setup wire change |
@@ -784,7 +784,7 @@ This spec is the canonical in-flight design record for the PR. Before merge:
 - regenerate `docs/crt-ntt-capacity-profile.md` only from
   `scripts/gen_crt_capacity_profile.py`;
 - remove the superseded 2026-07 extension narrative from
-  `specs/crt-ntt-accumulation-safety.md`, leaving a pointer to this spec;
+  `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md`, leaving a pointer to this spec;
 - update this header with the PR number and final status; and
 - after the durable content is fully folded into the book, archive this spec
   according to `specs/PRUNING.md`.
@@ -811,11 +811,11 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 
 ## References
 
-- `specs/crt-ntt-accumulation-safety.md` — original exact chunking and
+- `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md` — original exact chunking and
   reconstruction contract (PR #134).
 - `book/src/foundations/ntt-crt.md` — production base-prime choices and CRT
   profile history.
-- `specs/terminal-direct-ring-relations-cutover.md` — direct terminal relation
+- `specs/archive/2026-Q3/terminal-direct-ring-relations-cutover.md` — direct terminal relation
   and predecessor-bound `t` semantics.
 - `specs/akita-compute-backend-metal.md` — downstream prepared-layout and
   backend-boundary requirements.

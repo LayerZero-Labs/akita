@@ -7,9 +7,10 @@
 | Revised | 2026-07-31 |
 | Status | active |
 | PR | #337 |
-| Supersedes | Projected-digit and outgoing-witness storage rules in `digit-innermost-layout.md`, `mixed-ring-dimension-per-level.md`, `distributed-setup-offloading.md`, and `archive/2026-Q3/relation-range-image-sumcheck.md` |
-| Superseded by | |
-| Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
+| Supersedes | Projected-digit and outgoing-witness storage rules in `archive/2026-Q3/digit-innermost-layout.md`, the deleted mixed-ring experiment, `archive/2026-Q3/distributed-setup-offloading.md`, and `archive/2026-Q3/relation-range-image-sumcheck.md` |
+| Superseded-by | |
+| Book-chapter | book/src/how/proving/opening-points-layout.md |
+| Related-chapter | book/src/how/verifying/matrix_evaluation.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
@@ -593,8 +594,8 @@ The cutover **MUST** delete or evolve away:
 
 - [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)
 - [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174)
-- [`digit-innermost-layout.md`](digit-innermost-layout.md)
-- [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md)
-- [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
+- [`archive/2026-Q3/digit-innermost-layout.md`](archive/2026-Q3/digit-innermost-layout.md)
+- The deleted mixed-ring experiment and its planner evidence are superseded by this layout and the flat public matrix spec.
+- [`archive/2026-Q3/distributed-setup-offloading.md`](archive/2026-Q3/distributed-setup-offloading.md)
 - [`relation-range-image-sumcheck.md`](archive/2026-Q3/relation-range-image-sumcheck.md)
-- [`setup-layout-repack.md`](setup-layout-repack.md)
+- [`archive/2026-Q3/setup-layout-repack.md`](archive/2026-Q3/setup-layout-repack.md)

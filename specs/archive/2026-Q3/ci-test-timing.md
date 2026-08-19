@@ -4,7 +4,7 @@
 |-------|-------|
 | Author(s) | Quang Dao |
 | Created | 2026-06-02 |
-| Status | implemented in PR #218, v2 single-pass cutover |
+| Status | archived |
 | Branch | `quang/zk-strip-impl` |
 | PR | [#218](https://github.com/LayerZero-Labs/akita/pull/218) |
 

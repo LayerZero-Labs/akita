@@ -122,21 +122,25 @@ dead_patterns=(
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
-# Synced with specs/PRUNING.md "Keep as live specs". CI scans only these unless --all.
+# Synced with specs/PRUNING.md and book/src/foundations/spec-index.md. CI scans
+# only these live design records unless --all.
 live_specs=(
-  specs/setup-layout-repack.md
-  specs/setup-offloading-planner.md
+  specs/akita-compute-backend-metal.md
+  specs/dyadic-chunk-partition.md
+  specs/flat-public-matrix-and-exact-ntt-cache.md
+  specs/fold-linf-rejection.md
+  specs/heterogeneous-group-source-contracts.md
+  specs/large-digit-ntt-infrastructure.md
   specs/packed-sumcheck.md
-  specs/planner-incidence-generalization.md
-  specs/multi-group-batching.md
-  specs/akita-pcs-crate-decomposition.md
-  specs/akita-field-refactor.md
-  specs/cross-repo-field-microbench.md
+  specs/role-native-projected-digit-layout.md
   specs/runtime-ring-cutover.md
+  specs/selective-l2-fold-security-sizing.md
+  specs/setup-offloading-planner.md
+  specs/setup-product-sumcheck.md
+  specs/sis-quantum128-scalar-n-table.md
+  specs/structured-e-term.md
   specs/subring-coefficient-packing.md
 )
-# Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:
-# specs/akita-compute-backend-metal.md
 
 missing_live=()
 for f in "${live_specs[@]}"; do

@@ -6,7 +6,7 @@
 | Created | 2026-08-06 |
 | Status | active |
 | PR | [#372](https://github.com/LayerZero-Labs/akita/pull/372) |
-| Supersedes | The residual chunk rules in `distributed-prover.md`, `distributed-planner.md`, and `digit-innermost-layout.md` |
+| Supersedes | The residual chunk rules in the distributed-prover design records and `archive/2026-Q3/digit-innermost-layout.md` |
 | Superseded-by | |
 | Book-chapter | book/src/how/proving/opening-points-layout.md |
 
@@ -176,8 +176,6 @@ spec pruning pass.
 
 ## References
 
-- [`distributed-prover.md`](distributed-prover.md)
-- [`distributed-planner.md`](distributed-planner.md)
-- [`digit-innermost-layout.md`](digit-innermost-layout.md)
+- [`archive/2026-Q3/digit-innermost-layout.md`](archive/2026-Q3/digit-innermost-layout.md)
 - [`commitment-compression-cutover.md`](archive/2026-Q3/commitment-compression-cutover.md)
 - [`book/src/how/proving/opening-points-layout.md`](../book/src/how/proving/opening-points-layout.md)

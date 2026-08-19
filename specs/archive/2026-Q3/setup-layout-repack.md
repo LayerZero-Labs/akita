@@ -10,7 +10,8 @@
 | Author(s) | Quang Dao |
 | Created   | 2026-05-27 |
 | Revised   | 2026-07-31 |
-| Status    | implemented |
+| Status    | superseded |
+| Superseded-by | `specs/flat-public-matrix-and-exact-ntt-cache.md` and `specs/role-native-projected-digit-layout.md` |
 | Suggested branch | `setup-layout-repack` |
 | PR         | #112, implemented by #132; verifier reuse revised by #318 |
 

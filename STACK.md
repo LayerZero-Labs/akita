@@ -9,7 +9,7 @@ layout cutover is the shared foundation, but most of setup offloading should be
 split into parallel lanes with explicit integration points.
 
 The witness and setup role order follows
-[`specs/digit-innermost-layout.md`](specs/digit-innermost-layout.md). Root and
+[`specs/archive/2026-Q3/digit-innermost-layout.md`](specs/archive/2026-Q3/digit-innermost-layout.md). Root and
 recursive folds use the same digit-innermost order.
 
 ## Invariants
@@ -69,7 +69,7 @@ not encode one person's ownership.
 
 | ID | Suggested branch | Base | Scope | Exit criterion |
 |----|--------|------|-------|----------------|
-| 00 | `setup-layout-repack` | `main` | Spec-only PR. Preserve the packed setup-layout design and this stack plan. | Diff contains only `STACK.md` and `specs/setup-layout-repack.md`. |
+| 00 | `setup-layout-repack` | `main` | Spec-only PR. Preserve the packed setup-layout design and this stack plan. | Diff contains only `STACK.md` and `specs/archive/2026-Q3/setup-layout-repack.md`. |
 | 01 | `setup-layout-repack-impl` | `main` after 00 lands | Full layout cutover: remove `max_stride`, introduce packed base A/B/D role views, split ZK B/D blinding out of base `S`, update all existing setup-matrix consumers, and keep direct verification/proving working. | No `setup.seed.max_stride` users remain; direct prover/verifier tests pass; no setup-prefix commitments or setup offloading proof objects. |
 | 02A | `setup-inner-product-oracle` | 01 | Express the direct setup contribution as `<S_{<=N}, omega_S>` with a materialized weight oracle and equivalence tests against the packed direct scan. | Materialized `<S, omega_S>` matches current packed setup contribution for root, recursive, batched, and A/J fixtures. |
 | 02B | `setup-prefix-ladder` | 01 | Add preprocessing metadata, prefix-slot policies, and commitment-hint storage for selected power-of-two prefixes of the flat setup coefficient vector. No offloading proof yet. | Setup metadata names available prefix slots; runtime can select the tightest eligible prover-ready slot; below-threshold or unavailable shapes fall back to direct scan or produce a configured missing-slot error. |
@@ -233,7 +233,7 @@ single witness opening plus the setup opening. The post-Stage-2 Stage-3 placemen
 first implementation step toward this; the relation-shift form is valid because
 the shifted relation work's witness claim is closed by the reduction (the
 alternative closure, carrying both openings into the next recursive incidence
-batch, also works). See `specs/setup-layout-repack.md` (Product Sumcheck
+batch, also works). See `specs/archive/2026-Q3/setup-layout-repack.md` (Product Sumcheck
 Placement) for the full schedule and cost.
 
 If there is no subsequent recursive fold, setup offloading is disabled for that
@@ -314,4 +314,4 @@ checks that were skipped before it is made ready for review.
 
 ## Current Review Frontier
 
-PR 00 is the spec-only cleanup in `specs/setup-layout-repack.md`.
+PR 00 is the spec-only cleanup in `specs/archive/2026-Q3/setup-layout-repack.md`.

@@ -4,11 +4,11 @@
 |---------------|--------------------------------|
 | Author(s)     | Quang Dao                      |
 | Created       | 2026-06-25                     |
-| Status        | in-progress (slices 0–3 landed) |
+| Status        | historical |
 | PR            | [#218](https://github.com/LayerZero-Labs/akita/pull/218) |
 | Supersedes    |                                |
 | Superseded-by |                                |
-| Book-chapter  | roadmap/zero-knowledge.md      |
+| Book-chapter  | book/src/roadmap/zero-knowledge.md      |
 
 ## Summary
 

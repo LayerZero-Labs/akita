@@ -41,7 +41,7 @@
         "book/src/how/proving/opening-points-layout.md",
         "book/src/usage/commitment-api.md",
         "book/src/how/architecture.md",
-        "specs/digit-innermost-layout.md"
+        "specs/archive/2026-Q3/digit-innermost-layout.md"
       ]
     },
     {
@@ -61,8 +61,8 @@
       "consider_updating": [
         "book/src/how/security.md",
         "book/src/foundations/lattices-sis.md",
-        "specs/akita-sis-*.md",
-        "specs/sis-euclidean-estimator.md",
+        "specs/archive/2026-Q2/akita-sis-*.md",
+        "specs/archive/2026-Q2/sis-euclidean-estimator.md",
         "specs/fold-linf-rejection.md",
         "docs/security-posture.md"
       ]
@@ -76,7 +76,7 @@
         "book/src/how/recursion.md",
         "specs/packed-sumcheck.md",
         "specs/setup-product-sumcheck.md",
-        "specs/terminal-fold-cutover.md",
+        "specs/archive/2026-Q3/terminal-fold-cutover.md",
         "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
@@ -89,7 +89,7 @@
         "book/src/how/proving/fold-path.md",
         "docs/verifier-contract.md",
         "docs/verifier-panic-audit.md",
-        "specs/security-hardening.md",
+        "specs/archive/2026-Q3/security-hardening.md",
         "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
@@ -128,9 +128,9 @@
         "book/src/foundations/rings-and-fields.md",
         "book/src/foundations/ntt-crt.md",
         "book/src/how/optimizations.md",
-        "specs/akita-field-refactor.md",
-        "specs/crt-ntt-*.md",
-        "specs/avx-simd-port.md"
+        "specs/archive/2026-Q3/akita-field-refactor.md",
+        "specs/archive/2026-Q3/crt-ntt-*.md",
+        "specs/archive/2026-Q3/avx-simd-port.md"
       ]
     },
     {
@@ -159,7 +159,7 @@
       "id": "ci-tooling",
       "description": "CI workflows and repo scripts",
       "code": [".github/workflows/**", "scripts/**"],
-      "consider_updating": ["docs/ci-test-timing.md", "docs/documentation.md", "specs/ci-test-timing.md"]
+      "consider_updating": ["docs/ci-test-timing.md", "docs/documentation.md", "specs/archive/2026-Q3/ci-test-timing.md"]
     },
     {
       "id": "book-tooling",

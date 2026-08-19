@@ -52,7 +52,7 @@ folded witness and the setup-prefix commitment selected by the preceding fold.
 
 This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
 generated `CommittedGroupProfile` and the independent-commit flow specified in
-[`multi-group-batching.md`](multi-group-batching.md); the earlier conservative
+[`archive/2026-Q3/multi-group-batching.md`](archive/2026-Q3/multi-group-batching.md); the earlier conservative
 config adapter has been removed. The ordinary `Cfg` resolves a direct-only
 schedule. Selecting the recursion adapter activates setup-aware planning for
 both scalar and genuine multi-group roots. Each family replays rows from its
@@ -139,7 +139,7 @@ selected recursive edge has a compatible preprocessed setup-prefix commitment.
 - **Grouped steps are nonterminal folds.** The last fold and structural terminal
   consume exactly one group. Any fold that consumes a setup-prefix group must
   itself have another fold as its successor. This is the canonical shape
-  defined by `specs/multi-group-batching.md`.
+  defined by `specs/archive/2026-Q3/multi-group-batching.md`.
 - **One setup-prefix identity.** `SetupPrefixSlotId` remains the canonical
   identity. `natural_len` and `n_prefix` identify the prefix domain;
   `level_params_digest` identifies the exact commitment params, including
@@ -183,7 +183,7 @@ selected recursive edge has a compatible preprocessed setup-prefix commitment.
 - Per-group D matrices or D commitments.
 - Distributed or multi-chunk setup offloading. (No longer a non-goal: the
   `W8R2` composition of recursive setup offloading with the multi-chunk witness
-  layout shipped in [`specs/distributed-setup-offloading.md`](distributed-setup-offloading.md).)
+  layout shipped in [`specs/archive/2026-Q3/distributed-setup-offloading.md`](archive/2026-Q3/distributed-setup-offloading.md).)
 - Composition of recursive and conservative config adapters in the first
   rollout.
 - Setup offloading for singular/scalar schedule keys.
@@ -358,7 +358,7 @@ The adapter rejects unsupported base configurations before planning a
 multi-group key. Recursive offloading uses the exact setup-prefix A and B
 dimensions chosen for the consuming fold. Distributed support is
 capability-specific. The shipped W8R2 family is governed by
-[`distributed-setup-offloading.md`](distributed-setup-offloading.md).
+[`archive/2026-Q3/distributed-setup-offloading.md`](archive/2026-Q3/distributed-setup-offloading.md).
 
 For example, an unsupported setup-prefix dimension is rejected by:
 
@@ -1258,12 +1258,12 @@ Update the statuses of related specs when their deferred work is completed.
 ## References
 
 - `STACK.md`
-- `specs/setup-layout-repack.md`
+- `specs/archive/2026-Q3/setup-layout-repack.md`
 - `specs/archive/2026-Q3/setup-prefix-ladder.md`
 - `specs/archive/2026-Q3/group-local-opening-points.md`
 - `specs/setup-product-sumcheck.md`
-- `specs/multi-group-batching.md`
-- `specs/planner-incidence-generalization.md`
+- `specs/archive/2026-Q3/multi-group-batching.md`
+- `specs/heterogeneous-group-source-contracts.md`
 - `crates/akita-types/src/proof/setup_prefix.rs`
 - `crates/akita-types/src/layout/params.rs`
 - `crates/akita-types/src/opening_claims.rs`

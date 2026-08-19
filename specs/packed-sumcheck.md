@@ -4,9 +4,9 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao (spec) → hand-off for implementation |
 | Created     | 2026-06-02                     |
-| Status      | ready for implementation (suffix/terminal EOR only; Stage 1/2 blocked) |
+| Status      | approved |
 | Pilot       | recursive suffix/terminal EOR, then stage1 / stage2 |
-| Related     | [`eor-streamed-prover.md`](archive/2026-Q3/eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
+| Related     | [`eor-streamed-prover.md`](archive/2026-Q3/eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](archive/2026-Q3/digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/archive/2026-Q3/cross-repo-field-microbench.md`) |
 
 ## Summary
 
@@ -388,7 +388,7 @@ The scalar path is the oracle: assert packed fold/round/accumulate equal the sca
 field-exactly, and that end-to-end proof bytes are byte-identical (the strongest guard).
 Reuse PR #142's `field_arith/kernel/packed_macc` micro-bench (`acc += eq[i]*poly[i]` via
 `pack_slice`) and add an EOR-prover-level bench so perf is gated on the real loop, not just
-`field_arith` rows (per `cross-repo-field-microbench.md:252-257`).
+`field_arith` rows (per `archive/2026-Q3/cross-repo-field-microbench.md:252-257`).
 
 ### Performance
 
@@ -436,7 +436,7 @@ span, then build the packed unreduced accumulator (Slice 2) for the univariate a
   `:504-553`, `packing_unpack_sum` `:117-120`, split-eq `:557-639`); `split_eq.rs:5-103`;
   storage-permutation design `crates/sub_protocols/src/air_sumcheck.rs:9-30`,
   `quotient_gkr/mod.rs:19-26`; `pack` reinterpretation `mle_group_ref.rs:81-92`.
-- **PR #142** (`quang/plonky3-field-microbench`): `specs/cross-repo-field-microbench.md`
+- **PR #142** (`quang/plonky3-field-microbench`): `specs/archive/2026-Q3/cross-repo-field-microbench.md`
   (numbers `:216-243`, deferred `mul_add` for EOR `:252-257`), `bench-data/field-microbench.md`,
   `crates/akita-pcs/benches/field_arith/kernel.rs:8-57` (`packed_macc`).
 - **akita-field packed** (this branch): traits `crates/akita-field/src/fields/packed.rs`
