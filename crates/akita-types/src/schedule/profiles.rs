@@ -137,6 +137,105 @@ impl CommittedGroupProfile {
         Ok(profile)
     }
 
+    /// Restrict an audited commitment profile to a smaller logical group.
+    ///
+    /// The returned profile preserves the source digit bases, ring dimensions,
+    /// matrix ranks, and SIS bounds. It recomputes the live-ring prefix, block
+    /// geometry, slice count, and A/B matrix widths for `group`. When the
+    /// logical source is shorter than one A ring, the unused coefficients of
+    /// the final physical ring are canonical zero padding and are not part of
+    /// the logical multilinear domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `group` is larger than the producer profile, the
+    /// producer uses an L2 A route, or the restricted matrix geometry is not
+    /// covered by the same audited SIS ranks.
+    pub fn try_restrict_to_group(self, group: PolynomialGroupLayout) -> Result<Self, AkitaError> {
+        group.validate()?;
+        if group.num_vars() > self.group.num_vars()
+            || group.num_polynomials() > self.group.num_polynomials()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "restricted commitment group must fit its producer profile".into(),
+            ));
+        }
+        if group == self.group {
+            self.validate_frozen_precommit(
+                self.inner_commit_matrix.sis_modulus_profile().field_bits(),
+            )?;
+            return Ok(self);
+        }
+        if self.inner_commit_matrix.coeff_linf_bound().is_none() {
+            return Err(AkitaError::InvalidSetup(
+                "restricted precommit profiles require an L-infinity A route".into(),
+            ));
+        }
+
+        let logical_len = 1usize
+            .checked_shl(u32::try_from(group.num_vars()).map_err(|_| {
+                AkitaError::InvalidSetup("restricted commitment variable count exceeds u32".into())
+            })?)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("restricted commitment domain overflows usize".into())
+            })?;
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
+        let num_live_ring_elements_per_claim = logical_len.div_ceil(inner_ring_dimension);
+        let num_positions_per_block = self
+            .num_positions_per_block
+            .min(num_live_ring_elements_per_claim);
+        let num_live_blocks = num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
+        let outer_slice_count = CommitmentSliceCount::ONE;
+
+        let inner_width = num_positions_per_block
+            .checked_mul(self.num_digits_inner)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("restricted commitment A width overflow".into())
+            })?;
+        let inner_commit_matrix = self.inner_commit_matrix.try_with_input_width(inner_width)?;
+        let slice_geometry = CommitmentSliceGeometry::try_new(
+            outer_slice_count,
+            num_live_blocks,
+            group.num_polynomials(),
+            inner_commit_matrix.output_rank(),
+            self.num_digits_outer,
+            inner_ring_dimension,
+            outer_ring_dimension,
+        )?;
+        let outer_key = self.outer_commit_matrix.sis_table_key();
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
+            outer_key.policy,
+            outer_key.table_digest,
+            outer_key.modulus_profile,
+            self.outer_commit_matrix.output_rank(),
+            slice_geometry.physical_input_width(),
+            outer_key.coeff_linf_bound,
+            outer_ring_dimension,
+        )?;
+        let profile = Self {
+            version: Self::VERSION,
+            group,
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+            outer_slice_count,
+            log_basis_inner: self.log_basis_inner,
+            num_digits_inner: self.num_digits_inner,
+            inner_commit_matrix,
+            log_basis_outer: self.log_basis_outer,
+            num_digits_outer: self.num_digits_outer,
+            outer_commit_matrix,
+        };
+        profile.validate_frozen_precommit(
+            profile
+                .inner_commit_matrix
+                .sis_modulus_profile()
+                .field_bits(),
+        )?;
+        Ok(profile)
+    }
+
     fn from_params_fields(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
         Self {
             version: Self::VERSION,
@@ -262,21 +361,14 @@ impl CommittedGroupProfile {
     pub fn validate_root_geometry(&self) -> Result<(), AkitaError> {
         let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
         let alpha = inner_ring_dimension.trailing_zeros() as usize;
-        let Some(source_field_len) = self
-            .num_live_ring_elements_per_claim
-            .checked_mul(inner_ring_dimension)
-        else {
-            return Err(AkitaError::InvalidSetup(
-                "commitment group layout geometry overflow".to_string(),
-            ));
-        };
         let num_vars = u32::try_from(self.group.num_vars()).map_err(|_| {
             AkitaError::InvalidSetup("commitment group variable count exceeds u32".to_string())
         })?;
         let expected_field_len = 1usize.checked_shl(num_vars).ok_or_else(|| {
             AkitaError::InvalidSetup("commitment group field length overflow".to_string())
         })?;
-        if source_field_len != expected_field_len
+        let expected_live_ring_elements = expected_field_len.div_ceil(inner_ring_dimension);
+        if self.num_live_ring_elements_per_claim != expected_live_ring_elements
             || self.num_positions_per_block == 0
             || !self.num_positions_per_block.is_power_of_two()
             || self.num_live_blocks
@@ -286,8 +378,9 @@ impl CommittedGroupProfile {
         {
             return Err(AkitaError::InvalidSetup(format!(
                 "precommitted group geometry does not match group.num_vars: \
-                 N={} L={} F={} alpha={} group.num_vars={}",
+                 N={} expected_N={} L={} F={} alpha={} group.num_vars={}",
                 self.num_live_ring_elements_per_claim,
+                expected_live_ring_elements,
                 self.num_positions_per_block,
                 self.num_live_blocks,
                 alpha,

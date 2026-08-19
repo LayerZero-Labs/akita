@@ -11,6 +11,7 @@ use catalog_policy_report::source_encoding_signature;
 use generation_output_path::resolved_output_path;
 use generation_output_path::validate_explicit_output_isolation;
 
+use akita_field::AkitaError;
 use akita_planner::emit::{
     bounded_parallel_filter_map, offline_planning_worker_count, MaterializationDiagnostics,
 };
@@ -20,7 +21,6 @@ use akita_planner::generated_families::{
 };
 use akita_planner::{
     publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
-    RingDimensionScheduleMode,
 };
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
@@ -95,15 +95,6 @@ fn family_by_name(name: &str) -> Option<&'static GeneratedFamily> {
     ALL_GENERATED_FAMILIES
         .iter()
         .find(|family| family.module_name == name)
-}
-
-fn explicit_family_is_d64(name: &str) -> bool {
-    family_by_name(name).is_some_and(|family| {
-        matches!(
-            (family.policy)().ring_dimension_schedule_mode,
-            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 }
-        )
-    })
 }
 
 fn parse_usize(raw: &str, context: &str) -> Result<usize, String> {
@@ -241,19 +232,6 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if !explicit_rows.precommitted_groups.is_empty() && explicit_rows.final_group.is_none() {
         return Err("--precommitted-group requires --final-group".to_string());
     }
-    let explicit_families = explicit_rows.family_names();
-    let mut non_d64_families = explicit_families
-        .iter()
-        .filter(|family| !explicit_family_is_d64(family.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    non_d64_families.sort();
-    if !non_d64_families.is_empty() {
-        return Err(format!(
-            "explicit rows require D64 schedule families; got {}",
-            non_d64_families.join(", ")
-        ));
-    }
     if let Some(final_group) = &explicit_rows.final_group {
         if !family_args.is_empty()
             && (family_args.len() != 1 || family_args[0] != final_group.family)
@@ -267,11 +245,7 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     let family_filter = if let Some(final_group) = &explicit_rows.final_group {
         Some(vec![final_group.family.clone()])
     } else if family_args.is_empty() {
-        if explicit_families.is_empty() {
-            None
-        } else {
-            Some(explicit_families.into_iter().collect())
-        }
+        None
     } else {
         Some(family_args)
     };
@@ -578,17 +552,6 @@ fn materialized_snapshot_rows(
 }
 
 impl ExplicitRows {
-    fn family_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        if let Some(final_group) = &self.final_group {
-            push_unique_name(&mut names, &final_group.family);
-        }
-        for group in &self.precommitted_groups {
-            push_unique_name(&mut names, &group.family);
-        }
-        names
-    }
-
     fn has_family(&self, family: &GeneratedFamily) -> bool {
         self.final_group
             .as_ref()
@@ -614,12 +577,6 @@ impl ExplicitRange {
     }
 }
 
-fn push_unique_name(names: &mut Vec<String>, name: &str) {
-    if !names.iter().any(|existing| existing == name) {
-        names.push(name.to_string());
-    }
-}
-
 fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: PolynomialGroupLayout) {
     if !layouts.contains(&layout) {
         layouts.push(layout);
@@ -639,6 +596,50 @@ fn push_unique_group_batch_key(
     if !keys.contains(&candidate) {
         keys.push(candidate);
     }
+}
+
+fn explicit_precommitted_profile(
+    family: &GeneratedFamily,
+    preplans: &GenerationPreplans,
+    group: PolynomialGroupLayout,
+) -> Result<
+    (
+        CommittedGroupProfile,
+        akita_types::sis::HonestFoldPolicySpec,
+    ),
+    AkitaError,
+> {
+    let min_commitment_vars =
+        akita_types::SUPPORTED_COMMITMENT_RING_DIMS[0].trailing_zeros() as usize;
+    if group.num_vars() >= min_commitment_vars {
+        match (family.explicit_precommitted_group)(preplans, group) {
+            Ok(profile) => return Ok(profile),
+            Err(AkitaError::UnsupportedSchedule(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    let mut producers = family
+        .scalar_keys
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            candidate.num_vars() > group.num_vars()
+                && candidate.num_polynomials() >= group.num_polynomials()
+        })
+        .collect::<Vec<_>>();
+    producers.sort_by_key(|candidate| (candidate.num_vars(), candidate.num_polynomials()));
+    for producer in producers {
+        let Ok((profile, policy)) = (family.explicit_precommitted_group)(preplans, producer) else {
+            continue;
+        };
+        if let Ok(restricted) = profile.try_restrict_to_group(group) {
+            return Ok((restricted, policy));
+        }
+    }
+    Err(AkitaError::UnsupportedSchedule(format!(
+        "no scalar producer profile can commit explicit group {group:?}"
+    )))
 }
 
 fn expand_precommitted_choices(
@@ -662,7 +663,7 @@ fn expand_precommitted_choices(
                 .layouts()
                 .into_iter()
                 .map(|layout| {
-                    (precommitted_family.explicit_precommitted_group)(preplans, layout)
+                    explicit_precommitted_profile(precommitted_family, preplans, layout)
                         .map_err(|e| format!("{}: explicit precommitted group: {e}", group.family))
                 })
                 .collect::<Result<Vec<_>, _>>()

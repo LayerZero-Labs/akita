@@ -22,7 +22,9 @@ use akita_prover::compute::{
 use akita_prover::{
     AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext, UniformProverStack,
 };
-use akita_types::{CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
+use akita_types::{
+    CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout, PolynomialGroupLayout,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Cfg = fp64::Dense;
@@ -242,4 +244,41 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     .expect_err("malformed explicit params must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn frozen_profile_commits_a_subring_logical_source() {
+    const SMALL_NUM_VARS: usize = 4;
+    let producer = Cfg::profile_without_precommitted_groups(PolynomialGroupLayout::singleton(
+        CONTRACT_NUM_VARS,
+    ))
+    .expect("scalar producer profile");
+    let profile = producer
+        .try_restrict_to_group(PolynomialGroupLayout::singleton(SMALL_NUM_VARS))
+        .expect("restricted precommit profile");
+    let evals = (0..1usize << SMALL_NUM_VARS)
+        .map(|index| F::from_u64(index as u64 + 1))
+        .collect::<Vec<_>>();
+    let poly =
+        DensePoly::<F>::from_field_evals(SMALL_NUM_VARS, &evals).expect("small logical polynomial");
+
+    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
+        .expect("setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack =
+        UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+            .expect("prover stack");
+    let output = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
+        std::slice::from_ref(&poly),
+        setup.expanded.as_ref(),
+        &stack,
+        GroupContext::frozen_precommit(&profile),
+    )
+    .expect("frozen-profile commitment");
+
+    assert_eq!(*output.committed_group.profile(), profile);
+    assert_eq!(profile.num_live_ring_elements_per_claim, 1);
 }

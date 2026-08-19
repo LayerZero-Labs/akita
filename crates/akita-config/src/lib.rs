@@ -375,6 +375,24 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             .final_group)
     }
 
+    /// Resolve the unique frozen commitment profile for a group that will be
+    /// opened as part of a later multi-group root.
+    ///
+    /// Unlike [`Self::profile_without_precommitted_groups`], this does not
+    /// require the group to have a standalone opening schedule. The profile
+    /// must be authorized by this configuration's generated catalog.
+    fn precommit_profile(
+        group: akita_types::PolynomialGroupLayout,
+    ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
+        Self::validate_sis_modulus_profile()?;
+        akita_schedules::resolve_generated_precommit_profile(
+            group,
+            &policy_of::<Self>(),
+            Self::ring_challenge_config,
+            Self::schedule_catalog(),
+        )
+    }
+
     /// Resolve the generated row accepted for exact committed profiles.
     ///
     /// This is an honest-prover operation. Verification must instead resolve

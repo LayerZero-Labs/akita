@@ -123,8 +123,42 @@ fn explicit_scalar_sweep_replaces_default_catalog_work() {
 }
 
 #[test]
+fn explicit_precommit_uses_restricted_scalar_producer() {
+    let family = family_by_name("fp64_dense").expect("known family");
+    let (profile, _) = explicit_precommitted_profile(
+        family,
+        &GenerationPreplans::default(),
+        PolynomialGroupLayout::singleton(4),
+    )
+    .expect("derive a small native precommit profile");
+
+    assert_eq!(profile.group, PolynomialGroupLayout::singleton(4));
+    assert_eq!(profile.num_live_ring_elements_per_claim, 1);
+    profile
+        .validate_frozen_precommit(64)
+        .expect("restricted profile remains fully audited");
+}
+
+#[test]
 fn explicit_group_rejects_source_metadata() {
     assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
+}
+
+#[test]
+fn explicit_rows_accept_adaptive_families() {
+    let args = parse_args_from(vec![
+        "/tmp/akita-adaptive-explicit-test".into(),
+        "--final-group".into(),
+        "fp64_dense:8:1".into(),
+        "--precommitted-group".into(),
+        "fp64_dense:0:1".into(),
+    ])
+    .expect("adaptive explicit family");
+
+    assert_eq!(
+        args.family_filter.as_deref(),
+        Some(&["fp64_dense".into()][..])
+    );
 }
 
 #[cfg(feature = "catalog-check")]

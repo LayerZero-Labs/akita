@@ -307,6 +307,47 @@ pub fn resolve_generated_schedule_selection(
     })
 }
 
+/// Resolve the unique frozen producer profile for one precommitted group.
+///
+/// Scalar rows contribute their final-group profile. Grouped rows contribute
+/// every precommitted profile embedded in the generated row. Repeated equal
+/// profiles are accepted; conflicting profiles for the same logical group are
+/// rejected so commitment identity never depends on catalog scan order.
+pub fn resolve_generated_precommit_profile(
+    group: akita_types::PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    catalog: Option<GeneratedScheduleTable>,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    group.validate()?;
+    validate_policy(policy)?;
+    let table = catalog.ok_or_else(|| {
+        AkitaError::UnsupportedSchedule("schedule catalog is not enabled".to_string())
+    })?;
+    let catalog = materialized_catalog(table, policy, &ring_challenge_config)?;
+    let mut resolved = None;
+    for row in &catalog.rows_by_digest {
+        let profiles = row.profiles();
+        let candidates = profiles
+            .precommitteds
+            .iter()
+            .chain((profiles.precommitteds.is_empty()).then_some(&profiles.final_group));
+        for candidate in candidates.filter(|candidate| candidate.group == group) {
+            if resolved.is_some_and(|existing| existing != *candidate) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "generated catalog contains conflicting precommit profiles for {group:?}"
+                )));
+            }
+            resolved = Some(*candidate);
+        }
+    }
+    resolved.ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "no generated precommit profile for group {group:?}"
+        ))
+    })
+}
+
 fn resolve_generated_catalog_row_matching(
     key: &AkitaScheduleLookupKey,
     exact_profiles: Option<&CommittedGroupBatchProfile>,
