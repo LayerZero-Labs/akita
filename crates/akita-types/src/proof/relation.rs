@@ -393,7 +393,11 @@ fn build_relation_rhs_layout(
         layout.validate()?;
         return Ok(layout);
     }
-    let final_role_dims = lp.group_role_dims_geometry(opening_batch, final_group_index)?;
+    // `validate_opening_batch_geometry` above already checked every group.
+    // Resolve the native A/B dimensions directly so relation construction is
+    // linear, rather than revalidating the entire batch once per group.
+    let final_role_dims = lp.role_dims();
+    final_role_dims.validate_role_projection()?;
     let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
     let mut group_indices = Vec::with_capacity(lp.precommitted_group_count() + 1);
     let mut group_plans = Vec::with_capacity(lp.precommitted_group_count() + 1);
@@ -416,7 +420,8 @@ fn build_relation_rhs_layout(
         )?);
     }
     for (group_index, group) in lp.precommitted_group_iter().enumerate() {
-        let role_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
+        let role_dims = group.role_dims(lp.open_commit_matrix.ring_dimension());
+        role_dims.validate_role_projection()?;
         groups.push(RelationGroupRows {
             group_index,
             role_dims,

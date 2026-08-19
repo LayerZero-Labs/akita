@@ -761,10 +761,20 @@ pub(crate) fn next_source_moment(
         quotient_depth,
     )?;
     let mut logical_components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
+    let final_group_index = opening_layout.root_final_group_index()?;
 
     for unit in layout.units() {
         let group_index = unit.group_index();
-        let group_params = params.group_params_geometry(opening_layout, group_index)?;
+        // Relation and witness geometry construction already validated the
+        // complete opening batch. Resolve the group directly here instead of
+        // repeating that validation for every group-and-chunk unit.
+        let group_params: &dyn akita_types::LevelParamsLike = if group_index == final_group_index {
+            params
+        } else {
+            params
+                .precommitted_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+        };
         let group_source = source_groups
             .get(group_index)
             .copied()

@@ -520,6 +520,7 @@ impl WitnessLayout {
             ));
         }
         let relation_group_order = opening_batch.root_group_order()?;
+        let final_group_index = opening_batch.root_final_group_index()?;
 
         let mut units = Vec::with_capacity(
             num_groups
@@ -530,9 +531,23 @@ impl WitnessLayout {
         let group_geometry = relation_group_order
             .iter()
             .map(|&group_index| {
-                let params = lp.group_params_geometry(opening_batch, group_index)?;
+                // `RelationWitnessGeometry::for_level` above already validated
+                // the complete grouped batch. Avoid quadratic revalidation
+                // while resolving its per-group witness views.
+                let (params, role_dims): (&dyn LevelParamsLike, _) =
+                    if group_index == final_group_index {
+                        (lp, lp.role_dims())
+                    } else {
+                        let params = lp
+                            .precommitted_group_params(group_index)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        (
+                            params,
+                            params.role_dims(lp.open_commit_matrix.ring_dimension()),
+                        )
+                    };
+                role_dims.validate_role_projection()?;
                 let group = opening_batch.group_layout(group_index)?;
-                let role_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
                 let opening_geometry = relation_geometry.group_opening_geometry(group_index)?;
                 let num_claims = group.num_polynomials();
                 let depth_witness = params.num_digits_inner();

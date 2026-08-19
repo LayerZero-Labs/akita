@@ -1055,14 +1055,28 @@ fn active_setup_projection_geometry(
     level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<crate::SetupProjectionGeometry, AkitaError> {
-    opening_batch.check()?;
-    level_params.validate_opening_batch(opening_batch)?;
+    let final_group_index = level_params.validate_opening_batch(opening_batch)?;
 
     let d_physical_cols = level_params.open_commit_matrix.input_width();
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_params = level_params.group_params(opening_batch, group_index)?;
-        let group_role_dims = level_params.group_role_dims(opening_batch, group_index)?;
+        // The batch-wide validation above already checked every precommitted
+        // group and its layout. Resolving each view through `group_params` and
+        // `group_role_dims` would repeat that full validation twice per group,
+        // making setup sizing quadratic in the number of grouped openings.
+        let (group_params, group_role_dims): (&dyn crate::LevelParamsLike, _) =
+            if group_index == final_group_index {
+                (level_params, level_params.role_dims())
+            } else {
+                let group_params = level_params
+                    .precommitted_group_params(group_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                (
+                    group_params,
+                    group_params.role_dims(level_params.open_commit_matrix.ring_dimension()),
+                )
+            };
+        group_role_dims.validate_role_projection()?;
         let a_cols = group_params
             .num_positions_per_block()
             .checked_mul(group_params.num_digits_inner())
