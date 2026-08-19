@@ -344,6 +344,8 @@ pub(crate) fn validate_entry_key(
 // @generated schedule module wiring begin
 #[cfg(feature = "fp128-dense")]
 pub mod fp128_dense;
+#[cfg(feature = "fp128-dense-bounded")]
+pub mod fp128_dense_bounded;
 #[cfg(feature = "fp128-dense-multi-chunk")]
 pub mod fp128_dense_multi_chunk;
 #[cfg(feature = "fp128-onehot")]
@@ -372,6 +374,14 @@ pub fn fp128_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_dense::FP128_DENSE_SCHEDULES,
         identity: fp128_dense::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-dense-bounded")]
+pub fn fp128_dense_bounded_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_dense_bounded::FP128_DENSE_BOUNDED_SCHEDULES,
+        identity: fp128_dense_bounded::CATALOG_IDENTITY,
     }
 }
 

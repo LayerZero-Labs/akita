@@ -105,6 +105,19 @@ where
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         self.source_view()
     }
+
+    /// A unit one-hot source stores hot *positions*, so every coefficient it
+    /// commits is `0` or `1` by construction and no scan is possible or needed.
+    fn committed_centered_reach(
+        &self,
+        _modulus: u128,
+        _centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: akita_field::CanonicalField,
+    {
+        Ok((0, 1))
+    }
 }
 
 impl<F, const D: usize, I> RootOpeningSource<F, D> for OneHotPoly<F, I>

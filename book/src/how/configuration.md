@@ -80,8 +80,11 @@ because it has no product-stage prefix.
 The planner estimates the squared norm of the actual recursive witness. It
 applies the following rules.
 
-* A dense root uses the deterministic maximum squared digit energy for every
-  coefficient. A one-hot root uses the canonical coefficient table: each
+* A balanced signed-digit root uses the deterministic maximum squared digit
+  energy for every coefficient, summed over the digit planes its declared
+  source bound needs. A bounded source stops short of the field width, so its
+  final plane is charged only the range the bound leaves rather than a full
+  `log_basis`. A one-hot root uses the canonical coefficient table: each
   policy-owned source chunk contributes at most one coefficient of magnitude
   one, distinct chunks occupy distinct coefficients, and the peak coefficient
   square is one.

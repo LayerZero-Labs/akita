@@ -98,7 +98,7 @@
       "description": "Fiat-Shamir transcript and instance binding",
       "code": [
         "crates/akita-transcript/**",
-        "crates/akita-types/src/instance_descriptor.rs"
+        "crates/akita-types/src/instance_descriptor/**"
       ],
       "consider_updating": [
         "book/src/how/transcript.md",

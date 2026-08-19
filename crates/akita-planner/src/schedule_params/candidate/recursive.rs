@@ -120,10 +120,8 @@ impl RecursiveCandidateContext<'_, '_> {
             return Ok(None);
         };
         let d_a = dimensions.d_a();
-        let fold_policy = BalancedSignedDigitFoldPolicy::universal(
-            policy.decomposition.field_bits(),
-            FoldWitnessNorms::bounded(log_basis_inner, d_a),
-        );
+        let fold_policy =
+            BalancedSignedDigitFoldPolicy::universal(policy.decomposition.field_bits());
         let num_fold_coeffs = width_s
             .checked_mul(d_a)
             .and_then(|count| count.checked_mul(num_chunks))

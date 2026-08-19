@@ -213,7 +213,21 @@ fn audit_committed_params(
         log_basis: params.log_basis_open,
         ..policy.decomposition
     });
-    if params.num_digits_inner == 0
+    // A generated row stores its own `num_digits_inner` and expansion replays it
+    // verbatim, so pin it to the depth the declared committed-source bound
+    // demands at this level's selected A basis. At the root that bound is
+    // `log_commit_bound` — the one place a bounded source differs from a
+    // full-field one — and at a recursive level it collapses to the level's own
+    // `log_basis`. Precommitted groups are audited separately: they are frozen
+    // under a possibly different producer bound and are not covered here.
+    let expected_inner_digits = num_digits_inner(
+        DecompositionParams {
+            log_basis: params.log_basis_inner,
+            ..policy.decomposition
+        },
+        fold_level == 0,
+    );
+    if params.num_digits_inner != expected_inner_digits
         || params.num_digits_fold == 0
         || params.num_digits_outer != expected_outer_digits
         || params.num_digits_open != expected_open_digits

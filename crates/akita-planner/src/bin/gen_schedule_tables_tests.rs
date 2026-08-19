@@ -118,7 +118,7 @@ fn explicit_scalar_sweep_replaces_default_catalog_work() {
     .expect("explicit emit spec");
 
     assert_eq!(spec.keys, vec![PolynomialGroupLayout::new(14, 1)]);
-    assert!(spec.group_batch_keys.is_empty());
+    assert!(spec.grouped_requests.is_empty());
     assert_eq!(spec.generator_command, "generator command");
 }
 
@@ -132,7 +132,8 @@ fn explicit_group_rejects_source_metadata() {
 fn catalog_comparison_reports_complete_key_union() {
     let family = family_by_name("fp32_dense").expect("known family");
     let table = (family.schedule_catalog)().expect("compiled fp32 dense table");
-    let spec = wiring_emit_spec(family, PathBuf::from("generated"));
+    let spec = wiring_emit_spec(family, PathBuf::from("generated"))
+        .expect("shipped family declares a valid producer contract");
     let entries = table
         .entries
         .iter()
@@ -165,7 +166,7 @@ fn catalog_comparison_reports_complete_key_union() {
         })
         .collect::<Vec<_>>();
 
-    let equal = compare_materialized_catalog(&spec, table, &entries).expect("equal report");
+    let equal = compare_catalog_rows(&spec, table, &entries).expect("equal report");
     assert_eq!(equal.changed_rows, 0);
     assert_eq!(equal.report.matches("\tequal\t").count(), entries.len());
     assert!(CATALOG_DRIFT_REPORT_HEADER.ends_with("compiled_policy\tregenerated_policy\n"));
@@ -174,8 +175,8 @@ fn catalog_comparison_reports_complete_key_union() {
         .lines()
         .all(|line| line.split('\t').count() == 13));
 
-    let removed = compare_materialized_catalog(&spec, table, &entries[..entries.len() - 1])
-        .expect("removed report");
+    let removed =
+        compare_catalog_rows(&spec, table, &entries[..entries.len() - 1]).expect("removed report");
     assert_eq!(removed.changed_rows, 1);
     assert!(removed.report.contains("\tremoved\t"));
 
@@ -183,20 +184,18 @@ fn catalog_comparison_reports_complete_key_union() {
         entries: &[],
         identity: table.identity,
     };
-    let added =
-        compare_materialized_catalog(&spec, empty_table, &entries[..1]).expect("added report");
+    let added = compare_catalog_rows(&spec, empty_table, &entries[..1]).expect("added report");
     assert_eq!(added.changed_rows, 1);
     assert!(added.report.contains("\tadded\t"));
 
     let mut changed_entries = entries.clone();
     changed_entries[0].1.root.input_witness_len += 1;
-    let changed =
-        compare_materialized_catalog(&spec, table, &changed_entries).expect("changed report");
+    let changed = compare_catalog_rows(&spec, table, &changed_entries).expect("changed report");
     assert_eq!(changed.changed_rows, 1);
     assert!(changed.report.contains("\tchanged\t"));
 
     let snapshot = catalog_snapshot::write_snapshot(
-        materialized_snapshot_rows(&spec, &entries).expect("snapshot rows"),
+        catalog_snapshot_rows(&spec, &entries).expect("snapshot rows"),
     )
     .expect("write snapshot");
     let parsed = catalog_snapshot::parse_snapshot(&snapshot).expect("parse snapshot");
@@ -219,7 +218,8 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     assert_eq!(table.entries.len(), 1);
     let entry = table.entries[0];
     let key = entry.to_runtime_lookup_key();
-    let spec = wiring_emit_spec(family, PathBuf::from("generated"));
+    let spec = wiring_emit_spec(family, PathBuf::from("generated"))
+        .expect("shipped family declares a valid producer contract");
     let expand = || {
         akita_schedules::schedule_from_entry(&entry, &key, &spec.policy, spec.ring_challenge_config)
             .expect("expand W8R2 row")

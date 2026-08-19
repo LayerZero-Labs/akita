@@ -114,7 +114,7 @@ pub fn render_generated_outputs_with_validation(
     if diagnostics.row_progress {
         let row_count = specs
             .iter()
-            .map(|spec| spec.keys.len() + spec.group_batch_keys.len())
+            .map(|spec| spec.keys.len() + spec.grouped_requests.len())
             .sum::<usize>();
         eprintln!(
             "schedule generation phase: materialize {row_count} rows across {} families",
@@ -229,10 +229,14 @@ mod tests {
             .iter()
             .find(|family| family.module_name == "fp32_dense")
             .expect("known selected family");
-        let selected_specs = vec![wiring_emit_spec(selected, dir.clone())];
+        let selected_specs = vec![wiring_emit_spec(selected, dir.clone())
+            .expect("shipped families declare a valid producer contract")];
         let wiring_specs = ALL_GENERATED_FAMILIES
             .iter()
-            .map(|family| wiring_emit_spec(family, dir.clone()))
+            .map(|family| {
+                wiring_emit_spec(family, dir.clone())
+                    .expect("shipped families declare a valid producer contract")
+            })
             .collect::<Vec<_>>();
 
         let outputs = render_generated_outputs(&selected_specs, &wiring_specs, Some(&mod_path))

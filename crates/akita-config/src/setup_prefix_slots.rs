@@ -119,10 +119,13 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    if !Cfg::recursive_setup_planning()
-        || Cfg::decomposition().log_commit_bound != 1
-        || max_num_batched_polys == 0
-    {
+    // Gated on recursive setup planning alone: the body is a pure catalog
+    // enumeration and does not depend on the committed-source class. The former
+    // extra `log_commit_bound != 1` test was an implicit "is one-hot" filter that
+    // was always true for the recursive configs (every one delegates its
+    // decomposition to a one-hot base), and would have silently returned an
+    // empty capacity for a recursive family over any other source bound.
+    if !Cfg::recursive_setup_planning() || max_num_batched_polys == 0 {
         return Ok(Vec::new());
     }
 

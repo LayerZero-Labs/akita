@@ -1271,13 +1271,15 @@ The checked revision report compares base
 [base snapshot](evidence/subring-coefficient-packing/base.tsv),
 [head snapshot](evidence/subring-coefficient-packing/head.tsv), and
 [complete comparison](evidence/subring-coefficient-packing/comparison.tsv)
-contain a 68-row base and a 67-row head across all 12 generated families. The
-logical-key union has zero additions and one intentional removal. The removed
-row is the unsupported fp128 dense `final=44:1` catalog stress point. All 67
-remaining rows change exact schedule identity, as expected for this breaking
-protocol and planner-policy cutover.
+contain a 68-row base and a 71-row head across all 13 generated families. The
+logical-key union has four additions and one intentional removal. The additions
+are the three bounded-dense scalar rows and the grouped one-hot row with a
+bounded-dense precommit merged from PR 407. The removed row is the unsupported
+fp128 dense `final=44:1` catalog stress point. All 67 retained rows change exact
+schedule identity, as expected for this breaking protocol and planner-policy
+cutover.
 
-Across the 67 supported logical keys, setup improves on 32 rows, is equal on
+Across the 67 retained logical keys, setup improves on 32 rows, is equal on
 five, and regresses on 30. Its sum falls from 7,022,341,504 to 3,496,910,272
 field elements, a 50.20% reduction. Proof payload improves on 44 rows, is equal
 on 15, and regresses on eight. Its sum falls from 4,965,430 to 4,681,064 bytes,
@@ -1482,8 +1484,8 @@ The planner MUST keep the search bounded in the following ways.
       L0/L1 EOR removal in actual serialized proof breakdowns.
 - [x] The one removed fp128 dense nv44 stress row and every retained-row
       regression are explicit in the checked base-to-head report.
-- [x] The checked head contains 67 rows across 12 families. The complete
-      comparison contains zero additions, one removal, and 67 changed rows.
+- [x] The checked head contains 71 rows across 13 families. The complete
+      comparison contains four additions, one removal, and 67 changed rows.
 - [x] Subring packing setup prefix edges use Linf. Reports for later evaluation trace
       edges preserve PR 369's existing L2 admission result.
 

@@ -80,7 +80,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let direct_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let direct = find_schedule(
         &direct_key,
-        OneHot::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<OneHot>(),
         &[],
         &direct_policy,
         OneHot::ring_challenge_config,
@@ -96,7 +96,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
         AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
     let scalar_recursive = find_schedule(
         &scalar_recursive_key,
-        Recursive::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Recursive>(),
         &[],
         &recursive_policy,
         Recursive::ring_challenge_config,
@@ -110,7 +110,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let independent = find_schedule(
         &AkitaScheduleLookupKey::single(precommit_layout),
-        OneHot::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<OneHot>(),
         &[],
         &direct_policy,
         OneHot::ring_challenge_config,
@@ -124,12 +124,12 @@ fn main() -> Result<(), akita_field::AkitaError> {
         precommitteds: vec![descriptor, descriptor],
     };
     let precommitted_honest_fold_policies = vec![
-        OneHot::root_honest_fold_policy(),
-        OneHot::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<OneHot>(),
+        akita_config::honest_fold_policy_of::<OneHot>(),
     ];
     let adaptive_recursive = find_schedule(
         &recursive_key,
-        Recursive::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Recursive>(),
         &precommitted_honest_fold_policies,
         &recursive_policy,
         Recursive::ring_challenge_config,

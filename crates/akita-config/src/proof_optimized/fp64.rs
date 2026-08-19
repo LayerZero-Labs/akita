@@ -35,7 +35,7 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q64Offset59,
     64,
     64,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
+    source = balanced_digits,
     schedules = ("schedules-fp64-dense", "fp64_dense", fp64_dense_table),
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );
@@ -46,7 +46,7 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q64Offset59,
     64,
     1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    source = unit_one_hot,
     schedules = ("schedules-fp64-onehot", "fp64_onehot", fp64_onehot_table),
     ring_dimension_schedule_mode = ADAPTIVE_RING_DIMENSION_MODE
 );

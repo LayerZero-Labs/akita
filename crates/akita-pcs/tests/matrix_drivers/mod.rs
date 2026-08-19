@@ -150,9 +150,20 @@ pub(super) fn prove_verify_dense_roundtrip<Cfg>(nv_values: &[usize], label: &[u8
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
+    prove_verify_dense_roundtrip_with_evals::<Cfg>(nv_values, label, dense_field_evals);
+}
+
+/// Dense prove/verify round trip over a caller-supplied evaluation source.
+pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
+    nv_values: &[usize],
+    label: &[u8],
+    evals_for: impl Fn(usize, u64) -> Vec<F>,
+) where
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+{
     for &nv in nv_values {
         let seed = 0x7e57_0000_u64 ^ nv as u64;
-        let evals = dense_field_evals(nv, seed);
+        let evals = evals_for(nv, seed);
         let poly = DensePoly::<F>::from_field_evals(nv, &evals).expect("dense poly");
         let pt = random_point(nv, seed ^ 0xcafe_0000);
         // Independent oracle: raw evaluations folded against the point.

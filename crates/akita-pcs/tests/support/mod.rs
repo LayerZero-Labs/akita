@@ -147,26 +147,24 @@ fn universal_fold_digit_depth(
         .checked_mul(d_a)
         .and_then(|count| count.checked_mul(num_chunks))
         .ok_or_else(|| AkitaError::InvalidSetup("synthetic fold response overflow".into()))?;
-    BalancedSignedDigitFoldPolicy::universal(field_bits, witness_norms).num_digits_fold(
-        HonestFoldSizingQuery {
-            ring_dimension: d_a,
-            challenge_dimension: match params.opening_method() {
-                akita_types::OpeningMethod::EvaluationTrace => d_a,
-                akita_types::OpeningMethod::SubringCoefficientPacking {
-                    challenge_subring_dimension,
-                } => challenge_subring_dimension,
-            },
-            num_claims,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim(),
-            num_live_blocks: params.num_live_blocks(),
-            num_positions_per_block: params.num_positions_per_block(),
-            num_chunks,
-            num_fold_coeffs,
-            witness_norms,
-            log_basis_response: params.log_basis_open(),
-            challenge_config: &challenge_config,
+    BalancedSignedDigitFoldPolicy::universal(field_bits).num_digits_fold(HonestFoldSizingQuery {
+        ring_dimension: d_a,
+        challenge_dimension: match params.opening_method() {
+            akita_types::OpeningMethod::EvaluationTrace => d_a,
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => challenge_subring_dimension,
         },
-    )
+        num_claims,
+        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim(),
+        num_live_blocks: params.num_live_blocks(),
+        num_positions_per_block: params.num_positions_per_block(),
+        num_chunks,
+        num_fold_coeffs,
+        witness_norms,
+        log_basis_response: params.log_basis_open(),
+        challenge_config: &challenge_config,
+    })
 }
 
 fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
@@ -207,23 +205,22 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
         let response_width = a_width.checked_mul(terminal_d).ok_or_else(|| {
             AkitaError::InvalidSetup("synthetic terminal response overflow".into())
         })?;
-        let fold_digit_count = BalancedSignedDigitFoldPolicy::universal(
-            policy.decomposition.field_bits(),
-            terminal_witness_norms,
-        )
-        .num_digits_fold(HonestFoldSizingQuery {
-            ring_dimension: terminal_d,
-            challenge_dimension: terminal_d,
-            num_claims: 1,
-            num_live_ring_elements_per_claim: terminal_witness.num_live_ring_elements_per_claim,
-            num_live_blocks,
-            num_positions_per_block: positions_per_block,
-            num_chunks: 1,
-            num_fold_coeffs: response_width,
-            witness_norms: terminal_witness_norms,
-            log_basis_response: terminal_witness.fold_log_basis,
-            challenge_config: &terminal.params.sparse_challenge_config,
-        })?;
+        let fold_digit_count =
+            BalancedSignedDigitFoldPolicy::universal(policy.decomposition.field_bits())
+                .num_digits_fold(HonestFoldSizingQuery {
+                    ring_dimension: terminal_d,
+                    challenge_dimension: terminal_d,
+                    num_claims: 1,
+                    num_live_ring_elements_per_claim: terminal_witness
+                        .num_live_ring_elements_per_claim,
+                    num_live_blocks,
+                    num_positions_per_block: positions_per_block,
+                    num_chunks: 1,
+                    num_fold_coeffs: response_width,
+                    witness_norms: terminal_witness_norms,
+                    log_basis_response: terminal_witness.fold_log_basis,
+                    challenge_config: &terminal.params.sparse_challenge_config,
+                })?;
         let Some(a_bound) = akita_types::sis::rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
@@ -752,8 +749,8 @@ where
         Base::inner_basis_range()
     }
 
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-        Base::root_honest_fold_policy()
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        Base::committed_source_class()
     }
 
     fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
@@ -827,8 +824,8 @@ where
         Base::inner_basis_range()
     }
 
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-        Base::root_honest_fold_policy()
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        Base::committed_source_class()
     }
 
     fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
@@ -949,8 +946,8 @@ where
         Envelope::inner_basis_range()
     }
 
-    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-        Envelope::root_honest_fold_policy()
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        Envelope::committed_source_class()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -974,10 +971,10 @@ where
             )
         };
         let precommitted_honest_fold_policies =
-            vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
+            vec![akita_config::honest_fold_policy_of::<Envelope>(); key.precommitteds.len()];
         let schedule = akita_planner::find_schedule(
             key,
-            Envelope::root_honest_fold_policy(),
+            akita_config::honest_fold_policy_of::<Envelope>(),
             &precommitted_honest_fold_policies,
             &policy,
             ring_challenge_config,

@@ -83,6 +83,20 @@ impl<const DD: usize> RootCommitSource<F, DD> for ContractRootPoly {
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         Ok(ContractCommitView { poly: self })
     }
+
+    /// A downstream source must answer the bounded-commitment question too; this
+    /// one wraps a dense poly, so it delegates to the dense scan.
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError> {
+        RootCommitSource::<F, DD>::committed_centered_reach(
+            &self.dense,
+            modulus,
+            centering_threshold,
+        )
+    }
 }
 
 /// Downstream-owned backend: delegates row work to [`CpuBackend`] but carries

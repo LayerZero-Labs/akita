@@ -12,7 +12,8 @@ use generation_output_path::resolved_output_path;
 use generation_output_path::validate_explicit_output_isolation;
 
 use akita_planner::emit::{
-    bounded_parallel_filter_map, offline_planning_worker_count, MaterializationDiagnostics,
+    bounded_parallel_filter_map, offline_planning_worker_count, GroupedGenerationRequest,
+    MaterializationDiagnostics, PrecommittedProducer,
 };
 use akita_planner::generated_families::{
     emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
@@ -440,12 +441,13 @@ fn catalog_snapshot_row(
     spec: &EmitSpec,
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
+    logical_key: String,
 ) -> Result<catalog_snapshot::CatalogSnapshotRow, String> {
     let metrics = catalog_row_metrics(spec, key, schedule)?;
     Ok(catalog_snapshot::CatalogSnapshotRow {
         schema: catalog_snapshot::SnapshotSchema::Current,
         family: spec.module_name.to_string(),
-        logical_key: catalog_logical_key(key),
+        logical_key,
         lookup_key_digest: catalog_lookup_key_digest(key),
         setup_fields: metrics.setup_fields,
         first_direct_setup_capacity: metrics.first_direct_setup_capacity,
@@ -477,6 +479,18 @@ fn compare_materialized_catalog(
     spec: &EmitSpec,
     table: akita_schedules::GeneratedScheduleTable,
     entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<CatalogComparison, String> {
+    let rows = entries
+        .iter()
+        .map(|entry| (entry.key(), entry.schedule().clone()))
+        .collect::<Vec<_>>();
+    compare_catalog_rows(spec, table, &rows)
+}
+
+fn compare_catalog_rows(
+    spec: &EmitSpec,
+    table: akita_schedules::GeneratedScheduleTable,
+    entries: &[(AkitaScheduleLookupKey, FoldSchedule)],
 ) -> Result<CatalogComparison, String> {
     let mut old_rows = table
         .entries
@@ -571,9 +585,64 @@ fn materialized_snapshot_rows(
     spec: &EmitSpec,
     entries: &[akita_planner::emit::MaterializedEntry],
 ) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
+    let mut logical_key_counts = std::collections::BTreeMap::new();
+    for entry in entries {
+        *logical_key_counts
+            .entry(catalog_logical_key(&entry.key()))
+            .or_insert(0usize) += 1;
+    }
     entries
         .iter()
-        .map(|(key, schedule)| catalog_snapshot_row(spec, key, schedule))
+        .map(|entry| {
+            let key = entry.key();
+            let mut logical_key = catalog_logical_key(&key);
+            let is_ambiguous = logical_key_counts
+                .get(&logical_key)
+                .copied()
+                .unwrap_or_default()
+                > 1;
+            let producers_match_family = entry
+                .precommitted_producers()
+                .iter()
+                .all(|producer| producer.source_contract() == spec.source_contract);
+            if is_ambiguous && !producers_match_family {
+                use std::fmt::Write as _;
+                logical_key.push_str(";producer_contracts=");
+                for (index, producer) in entry.precommitted_producers().iter().enumerate() {
+                    if index != 0 {
+                        logical_key.push(',');
+                    }
+                    let contract = producer.source_contract();
+                    match contract.class() {
+                        akita_types::sis::CommittedSourceClass::UnitOneHot {
+                            source_chunk_size,
+                        } => write!(
+                            logical_key,
+                            "onehot(chunk={source_chunk_size},bound={})",
+                            contract.decomposition().log_commit_bound,
+                        ),
+                        akita_types::sis::CommittedSourceClass::BalancedSignedDigit => write!(
+                            logical_key,
+                            "balanced(bound={})",
+                            contract.decomposition().log_commit_bound,
+                        ),
+                    }
+                    .map_err(|error| format!("write producer contract key: {error}"))?;
+                }
+            }
+            catalog_snapshot_row(spec, &key, entry.schedule(), logical_key)
+        })
+        .collect()
+}
+
+#[cfg(all(test, feature = "catalog-check"))]
+fn catalog_snapshot_rows(
+    spec: &EmitSpec,
+    entries: &[(AkitaScheduleLookupKey, FoldSchedule)],
+) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
+    entries
+        .iter()
+        .map(|(key, schedule)| catalog_snapshot_row(spec, key, schedule, catalog_logical_key(key)))
         .collect()
 }
 
@@ -627,14 +696,8 @@ fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: Polynomi
 }
 
 fn push_unique_group_batch_key(
-    keys: &mut Vec<(
-        AkitaScheduleLookupKey,
-        Vec<akita_types::sis::HonestFoldPolicySpec>,
-    )>,
-    candidate: (
-        AkitaScheduleLookupKey,
-        Vec<akita_types::sis::HonestFoldPolicySpec>,
-    ),
+    keys: &mut Vec<GroupedGenerationRequest>,
+    candidate: GroupedGenerationRequest,
 ) {
     if !keys.contains(&candidate) {
         keys.push(candidate);
@@ -644,15 +707,7 @@ fn push_unique_group_batch_key(
 fn expand_precommitted_choices(
     preplans: &GenerationPreplans,
     groups: &[ExplicitGroup],
-) -> Result<
-    Vec<
-        Vec<(
-            CommittedGroupProfile,
-            akita_types::sis::HonestFoldPolicySpec,
-        )>,
-    >,
-    String,
-> {
+) -> Result<Vec<Vec<PrecommittedProducer>>, String> {
     groups
         .iter()
         .map(|group| {
@@ -671,28 +726,19 @@ fn expand_precommitted_choices(
 }
 
 fn push_precommitted_combinations(
-    choices: &[Vec<(
-        CommittedGroupProfile,
-        akita_types::sis::HonestFoldPolicySpec,
-    )>],
+    choices: &[Vec<PrecommittedProducer>],
     index: usize,
-    profiles: &mut Vec<CommittedGroupProfile>,
-    policies: &mut Vec<akita_types::sis::HonestFoldPolicySpec>,
-    out: &mut Vec<(
-        Vec<CommittedGroupProfile>,
-        Vec<akita_types::sis::HonestFoldPolicySpec>,
-    )>,
+    producers: &mut Vec<PrecommittedProducer>,
+    out: &mut Vec<Vec<PrecommittedProducer>>,
 ) {
     if index == choices.len() {
-        out.push((profiles.clone(), policies.clone()));
+        out.push(producers.clone());
         return;
     }
-    for (profile, policy) in &choices[index] {
-        profiles.push(*profile);
-        policies.push(*policy);
-        push_precommitted_combinations(choices, index + 1, profiles, policies, out);
-        policies.pop();
-        profiles.pop();
+    for producer in &choices[index] {
+        producers.push(*producer);
+        push_precommitted_combinations(choices, index + 1, producers, out);
+        producers.pop();
     }
 }
 
@@ -711,7 +757,8 @@ fn emit_spec_with_overrides(
     // Explicit sweeps replace the catalog key set. Start from the cheap wiring
     // shape so a one-key diagnostic does not first plan every default grouped
     // root merely to discard those rows below.
-    let mut spec = wiring_emit_spec(family, base_dir);
+    let mut spec = wiring_emit_spec(family, base_dir)
+        .map_err(|e| format!("{}: producer contract: {e}", family.module_name))?;
     spec.generator_command = generator_command;
 
     let final_group = explicit_rows
@@ -719,7 +766,7 @@ fn emit_spec_with_overrides(
         .as_ref()
         .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
     spec.keys.clear();
-    spec.group_batch_keys.clear();
+    spec.grouped_requests.clear();
     let final_layouts = final_group.layouts();
 
     if explicit_rows.precommitted_groups.is_empty() {
@@ -738,21 +785,14 @@ fn emit_spec_with_overrides(
         &precommitted_choices,
         0,
         &mut Vec::new(),
-        &mut Vec::new(),
         &mut precommitted_combinations,
     );
 
-    for (precommitteds, precommitted_honest_fold_policies) in precommitted_combinations {
+    for producers in precommitted_combinations {
         for final_layout in &final_layouts {
             push_unique_group_batch_key(
-                &mut spec.group_batch_keys,
-                (
-                    AkitaScheduleLookupKey {
-                        final_group: *final_layout,
-                        precommitteds: precommitteds.clone(),
-                    },
-                    precommitted_honest_fold_policies.clone(),
-                ),
+                &mut spec.grouped_requests,
+                GroupedGenerationRequest::new(*final_layout, producers.clone()),
             );
         }
     }
@@ -801,7 +841,7 @@ fn main() -> Result<(), String> {
                 family_count,
                 family.module_name,
                 spec.keys.len(),
-                spec.group_batch_keys.len(),
+                spec.grouped_requests.len(),
                 family_started.elapsed(),
             );
             Ok(Some(spec))
@@ -816,8 +856,11 @@ fn main() -> Result<(), String> {
     let mod_path = args.base_dir.join("mod.rs");
     let wiring_specs = ALL_GENERATED_FAMILIES
         .iter()
-        .map(|family| wiring_emit_spec(family, args.base_dir.clone()))
-        .collect::<Vec<_>>();
+        .map(|family| {
+            wiring_emit_spec(family, args.base_dir.clone())
+                .map_err(|error| format!("{}: producer contract: {error}", family.module_name))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mod_path = if mod_path.exists() {
         Some(mod_path)
     } else if args.wiring_only {

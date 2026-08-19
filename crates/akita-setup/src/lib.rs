@@ -629,8 +629,8 @@ mod tests {
             Cfg::inner_basis_range()
         }
 
-        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-            Cfg::root_honest_fold_policy()
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            Cfg::committed_source_class()
         }
     }
 

@@ -6,11 +6,13 @@ use crate::compute::{
     RuntimeCommitSource, UniformProverStack,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
+use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
 };
+use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims,
@@ -309,11 +311,95 @@ fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usi
     })
 }
 
+/// Reject a group whose logical source representation differs from the class
+/// whose honest-response bounds the schedule uses.
+fn ensure_sources_match_declared_class<F, P>(
+    polys: &[P],
+    contract: CommittedSourceContract,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    P: RootPolyMeta<F>,
+{
+    let Some(required_chunk_size) = contract.class().required_onehot_chunk_size() else {
+        return Ok(());
+    };
+    for poly in polys {
+        match RootPolyMeta::<F>::onehot_chunk_size(poly) {
+            Some(chunk_size) if chunk_size == required_chunk_size => {}
+            Some(chunk_size) => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "committed source is a unit one-hot representation with chunk size \
+                     {chunk_size}, but this schedule is priced for one hot position per \
+                     {required_chunk_size} coefficients"
+                )))
+            }
+            None => {
+                return Err(AkitaError::InvalidInput(format!(
+                    "committed source is not a unit one-hot representation, but this schedule \
+                     is priced for one hot position per {required_chunk_size} coefficients; \
+                     a dense source can satisfy the digit envelope while carrying far more \
+                     energy than the frozen response caps allow"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reject coefficients outside the intersection of the source declaration and
+/// the exact balanced-digit interval committed by this row.
+fn ensure_sources_fit_accepted_interval<F, P, const D: usize>(
+    polys: &[P],
+    plan: CommitInnerPlan,
+    contract: CommittedSourceContract,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    P: RootCommitSource<F, D>,
+{
+    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let threshold =
+        decompose_centering_threshold(plan.num_digits_inner, plan.log_basis_inner, modulus);
+    let (negative_reach, positive_reach) =
+        contract.accepted_bounds(plan.log_basis_inner, plan.num_digits_inner);
+    let exceeds = |negative_abs: u128, positive: u128| {
+        negative_reach.is_some_and(|reach| negative_abs > reach)
+            || positive_reach.is_some_and(|reach| positive > reach)
+    };
+    if !exceeds(modulus.saturating_sub(threshold + 1), threshold) {
+        return Ok(());
+    }
+    let render_reach = |reach: Option<u128>| match reach {
+        Some(value) => value.to_string(),
+        None => ">2^128".to_string(),
+    };
+    for poly in polys {
+        let (negative_abs, positive) =
+            RootCommitSource::<F, D>::committed_centered_reach(poly, modulus, threshold)?;
+        if exceeds(negative_abs, positive) {
+            return Err(AkitaError::InvalidInput(format!(
+                "committed source exceeds the scheduled bound: centered coefficients reach \
+                 [-{negative_abs}, {positive}] but a source declared at \
+                 log_commit_bound = {} and committed as {} balanced base-2^{} digits accepts \
+                 only [-{}, {}]",
+                contract.decomposition().log_commit_bound,
+                plan.num_digits_inner,
+                plan.log_basis_inner,
+                render_reach(negative_reach),
+                render_reach(positive_reach),
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn commit_with_validated_geometry<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
     geometry: CommitmentGeometry<'_>,
     slice_geometry: &akita_types::CommitmentSliceGeometry,
+    contract: CommittedSourceContract,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore
@@ -352,6 +438,7 @@ where
         F,
         dims.d_a(),
         |D_A| {
+            ensure_sources_fit_accepted_interval::<F, P, D_A>(polys, plan, contract)?;
             dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Outer),
                 F,
@@ -540,6 +627,9 @@ where
             (params, scheduled_row.profiles().final_group)
         };
 
+    let contract = Cfg::committed_source_contract()?;
+    ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
+
     let slice_geometry =
         validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
     let geometry: CommitmentGeometry<'_> = params.into();
@@ -553,6 +643,7 @@ where
         stack.commit(),
         geometry,
         &slice_geometry,
+        contract,
     )?;
 
     Ok(CommitOutput {

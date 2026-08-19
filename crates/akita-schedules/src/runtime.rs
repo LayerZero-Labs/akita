@@ -269,6 +269,11 @@ pub const MAX_RECURSION_DEPTH: usize = 12;
 /// Validate runtime policy values used by schedule expansion and validation.
 pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
+    // The same check descriptor deserialization applies, so a policy reaching the
+    // planner or the runtime row audit cannot carry a basis or committed-source
+    // bound the digit math is unable to represent. Defense in depth: a schedule
+    // resolved from an in-process policy never passes through `SetupSection`.
+    policy.decomposition.validate()?;
     if !akita_types::sis::SUPPORTED_SIS_SECURITY_POLICIES.contains(&policy.sis_security_policy) {
         return Err(AkitaError::InvalidSetup(format!(
             "unsupported SIS security policy {:?}",

@@ -2,12 +2,10 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+#[derive(Clone)]
 enum PlanningRequest {
     Scalar(PolynomialGroupLayout),
-    Grouped {
-        key: AkitaScheduleLookupKey,
-        honest_fold_policies: Vec<HonestFoldPolicySpec>,
-    },
+    Grouped(GroupedGenerationRequest),
 }
 
 struct IndexedPlanningRequest {
@@ -16,7 +14,35 @@ struct IndexedPlanningRequest {
     request: PlanningRequest,
 }
 
-pub type MaterializedEntry = (AkitaScheduleLookupKey, FoldSchedule);
+/// One planned schedule with the generation request that produced it.
+pub struct MaterializedEntry {
+    request: PlanningRequest,
+    schedule: FoldSchedule,
+}
+
+impl MaterializedEntry {
+    #[must_use]
+    pub fn key(&self) -> AkitaScheduleLookupKey {
+        match &self.request {
+            PlanningRequest::Scalar(group) => AkitaScheduleLookupKey::single(*group),
+            PlanningRequest::Grouped(request) => request.key(),
+        }
+    }
+
+    #[must_use]
+    pub const fn schedule(&self) -> &FoldSchedule {
+        &self.schedule
+    }
+
+    /// Producer declarations for the frozen groups in opening order.
+    #[must_use]
+    pub fn precommitted_producers(&self) -> &[PrecommittedProducer] {
+        match &self.request {
+            PlanningRequest::Scalar(_) => &[],
+            PlanningRequest::Grouped(request) => request.precommitted_producers(),
+        }
+    }
+}
 
 enum MaterializedRequestOutcome {
     Planned(MaterializedEntry),
@@ -34,7 +60,7 @@ struct MaterializationCounters {
 fn compact_request_label(request: &PlanningRequest) -> String {
     let key = match request {
         PlanningRequest::Scalar(layout) => AkitaScheduleLookupKey::single(*layout),
-        PlanningRequest::Grouped { key, .. } => key.clone(),
+        PlanningRequest::Grouped(request) => request.key(),
     };
     let digest = akita_types::instance_descriptor::digest_descriptor_bytes(
         &key.canonical_descriptor_bytes(),
@@ -58,7 +84,7 @@ pub(crate) fn materialized_entries_for_specs(
 ) -> Result<Vec<Vec<MaterializedEntry>>, String> {
     let request_count = specs
         .iter()
-        .map(|spec| spec.keys.len() + spec.group_batch_keys.len())
+        .map(|spec| spec.keys.len() + spec.grouped_requests.len())
         .sum();
     let mut requests = Vec::with_capacity(request_count);
     for (spec_index, spec) in specs.iter().enumerate() {
@@ -67,16 +93,13 @@ pub(crate) fn materialized_entries_for_specs(
             request_index: 0,
             request: PlanningRequest::Scalar(key),
         }));
-        requests.extend(spec.group_batch_keys.iter().cloned().map(
-            |(key, honest_fold_policies)| IndexedPlanningRequest {
+        requests.extend(spec.grouped_requests.iter().cloned().map(|request| {
+            IndexedPlanningRequest {
                 spec_index,
                 request_index: 0,
-                request: PlanningRequest::Grouped {
-                    key,
-                    honest_fold_policies,
-                },
-            },
-        ));
+                request: PlanningRequest::Grouped(request),
+            }
+        }));
     }
     for (request_index, request) in requests.iter_mut().enumerate() {
         request.request_index = request_index;
@@ -107,25 +130,25 @@ pub(crate) fn materialized_entries_for_specs(
         if let Some((started, label)) = progress {
             let counters = &counters.as_ref().expect("progress counters")[indexed.spec_index];
             match &outcome {
-                Ok(MaterializedRequestOutcome::Planned((_, schedule))) => {
+                Ok(MaterializedRequestOutcome::Planned(entry)) => {
                     counters.planned.fetch_add(1, Ordering::Relaxed);
                     eprintln!(
                         "planned schedule row {}/{}: {} {label} levels={} in {:.2?}",
                         indexed.request_index + 1,
                         requests.len(),
                         spec.module_name,
-                        schedule.num_fold_levels(),
+                        entry.schedule().num_fold_levels(),
                         started.elapsed(),
                     );
                 }
-                Ok(MaterializedRequestOutcome::ReusedPreplan((_, schedule))) => {
+                Ok(MaterializedRequestOutcome::ReusedPreplan(entry)) => {
                     counters.reused_preplans.fetch_add(1, Ordering::Relaxed);
                     eprintln!(
                         "reused schedule row {}/{}: {} {label} levels={} in {:.2?}",
                         indexed.request_index + 1,
                         requests.len(),
                         spec.module_name,
-                        schedule.num_fold_levels(),
+                        entry.schedule().num_fold_levels(),
                         started.elapsed(),
                     );
                 }
@@ -170,7 +193,7 @@ pub(crate) fn materialized_entries_for_specs(
             eprintln!(
                 "schedule row summary {}: requested={} reused={} planned={} unsupported={}",
                 spec.module_name,
-                spec.keys.len() + spec.group_batch_keys.len(),
+                spec.keys.len() + spec.grouped_requests.len(),
                 counters.reused_preplans.load(Ordering::Relaxed),
                 counters.planned.load(Ordering::Relaxed),
                 counters.unsupported.load(Ordering::Relaxed),
@@ -184,8 +207,8 @@ pub(crate) fn materialized_entries_for_specs(
         entries_by_spec[spec_index].push(entry);
     }
     for entries in &mut entries_by_spec {
-        entries.sort_by(|(left, _), (right, _)| {
-            akita_schedules::runtime_schedule_key_cmp(left, right)
+        entries.sort_by(|left, right| {
+            akita_schedules::runtime_schedule_key_cmp(&left.key(), &right.key())
         });
     }
     Ok(entries_by_spec)
@@ -206,20 +229,20 @@ fn materialized_entry(
                 preplanned.map_or_else(|| (spec.regen)(*key), |(_, schedule)| Ok(schedule.clone()));
             (lookup, result, preplanned.is_some())
         }
-        PlanningRequest::Grouped {
-            key,
-            honest_fold_policies,
-        } => (
-            key.clone(),
-            (spec.regen_group_batch)(key.clone(), honest_fold_policies.clone()),
-            false,
-        ),
+        PlanningRequest::Grouped(request) => {
+            let key = request.key();
+            (key, (spec.regen_group_batch)(request.clone()), false)
+        }
+    };
+    let entry = |schedule| MaterializedEntry {
+        request: request.clone(),
+        schedule,
     };
     match result {
         Ok(schedule) if reused_preplan => {
-            Ok(MaterializedRequestOutcome::ReusedPreplan((key, schedule)))
+            Ok(MaterializedRequestOutcome::ReusedPreplan(entry(schedule)))
         }
-        Ok(schedule) => Ok(MaterializedRequestOutcome::Planned((key, schedule))),
+        Ok(schedule) => Ok(MaterializedRequestOutcome::Planned(entry(schedule))),
         Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {
             Ok(MaterializedRequestOutcome::Unsupported)
         }

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_types::sis::HonestFoldPolicySpec;
+use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile, FoldSchedule,
     OpenCommitMatrixParams, PolynomialGroupLayout, ScheduledSetupPrefix, WitnessPartition,
@@ -20,6 +20,7 @@ use crate::PlannerPolicy;
 mod materialize;
 mod publish;
 mod render;
+mod source_annotations;
 use akita_schedules::expected_catalog_identity;
 use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
@@ -34,6 +35,7 @@ pub use publish::publish_generated_outputs;
 pub use render::{
     render_generated_outputs, render_generated_outputs_with_validation, GeneratedOutput,
 };
+use source_annotations::{emit_bounded_source_banner, precommitted_source_note};
 
 /// Optional observability for the offline row-materialization queue.
 ///
@@ -41,6 +43,94 @@ pub use render::{
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MaterializationDiagnostics {
     pub row_progress: bool,
+}
+
+/// One frozen precommit descriptor with its canonical producer facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrecommittedProducer {
+    descriptor: CommittedGroupProfile,
+    contract: CommittedSourceContract,
+    fold_policy: HonestFoldPolicySpec,
+}
+
+impl PrecommittedProducer {
+    /// Capture the producer contract and its offline sizing projection together.
+    #[cfg(feature = "catalog-gen")]
+    pub fn from_config<Cfg: akita_config::CommitmentConfig>(
+        descriptor: CommittedGroupProfile,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            descriptor,
+            contract: Cfg::committed_source_contract()?,
+            fold_policy: akita_config::honest_fold_policy_of::<Cfg>(),
+        })
+    }
+
+    const fn descriptor(self) -> CommittedGroupProfile {
+        self.descriptor
+    }
+
+    const fn contract(self) -> CommittedSourceContract {
+        self.contract
+    }
+
+    /// Producer declaration used to disambiguate otherwise identical grouped
+    /// catalog layouts in revision evidence.
+    #[must_use]
+    pub const fn source_contract(self) -> CommittedSourceContract {
+        self.contract
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    const fn fold_policy(self) -> HonestFoldPolicySpec {
+        self.fold_policy
+    }
+}
+
+/// One grouped generation request whose lookup key is derived from its producers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupedGenerationRequest {
+    final_group: PolynomialGroupLayout,
+    precommitted_producers: Vec<PrecommittedProducer>,
+}
+
+impl GroupedGenerationRequest {
+    #[must_use]
+    pub fn new(
+        final_group: PolynomialGroupLayout,
+        precommitted_producers: Vec<PrecommittedProducer>,
+    ) -> Self {
+        Self {
+            final_group,
+            precommitted_producers,
+        }
+    }
+
+    #[must_use]
+    pub fn key(&self) -> AkitaScheduleLookupKey {
+        AkitaScheduleLookupKey {
+            final_group: self.final_group,
+            precommitteds: self
+                .precommitted_producers
+                .iter()
+                .copied()
+                .map(PrecommittedProducer::descriptor)
+                .collect(),
+        }
+    }
+
+    fn precommitted_producers(&self) -> &[PrecommittedProducer] {
+        &self.precommitted_producers
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    pub(crate) fn fold_policies(&self) -> Vec<HonestFoldPolicySpec> {
+        self.precommitted_producers
+            .iter()
+            .copied()
+            .map(PrecommittedProducer::fold_policy)
+            .collect()
+    }
 }
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
@@ -51,14 +141,14 @@ pub struct EmitSpec {
     pub family_name: &'static str,
     pub schedule_feature: &'static str,
     pub policy: PlannerPolicy,
+    pub source_contract: CommittedSourceContract,
     pub keys: Vec<PolynomialGroupLayout>,
-    pub group_batch_keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
+    pub grouped_requests: Vec<GroupedGenerationRequest>,
     /// Exact successful scalar results already needed to construct grouped keys.
     pub preplanned_scalar: Vec<(PolynomialGroupLayout, FoldSchedule)>,
     pub output_dir: PathBuf,
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
-    pub regen_group_batch:
-        fn(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>) -> Result<FoldSchedule, AkitaError>,
+    pub regen_group_batch: fn(GroupedGenerationRequest) -> Result<FoldSchedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub generator_command: &'static str,
 }
@@ -458,6 +548,7 @@ fn emit_schedule_entry(
     out: &mut String,
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
+    precommitted_producers: &[PrecommittedProducer],
 ) -> Result<(), String> {
     let entry = generated_entry(key, schedule)?;
     writeln!(out, "    GeneratedFoldScheduleEntry {{").map_err(|e| e.to_string())?;
@@ -480,8 +571,20 @@ fn emit_schedule_entry(
     if entry.root.precommitted_groups.is_empty() {
         writeln!(out, "            precommitted_groups: &[],").map_err(|e| e.to_string())?;
     } else {
+        if precommitted_producers.len() != entry.root.precommitted_groups.len() {
+            return Err(format!(
+                "grouped key {key:?} carries {} producer records for {} precommitted groups",
+                precommitted_producers.len(),
+                entry.root.precommitted_groups.len(),
+            ));
+        }
         writeln!(out, "            precommitted_groups: &[").map_err(|e| e.to_string())?;
-        for group in entry.root.precommitted_groups {
+        for (index, group) in entry.root.precommitted_groups.iter().enumerate() {
+            out.push_str(&precommitted_source_note(
+                group.descriptor.log_basis_inner,
+                group.descriptor.num_digits_inner,
+                precommitted_producers[index].contract().class(),
+            ));
             writeln!(
                 out,
                 "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, opening_method: {} }},",
@@ -719,6 +822,7 @@ pub(super) fn emit_family_module_from_entries(
     let mut out = String::new();
     let const_name = spec.const_name;
     writeln!(out, "// Generated by `{}`", spec.generator_command).map_err(|e| e.to_string())?;
+    out.push_str(&emit_bounded_source_banner(spec.source_contract));
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
         out,
@@ -744,9 +848,15 @@ pub(super) fn emit_family_module_from_entries(
     )
     .map_err(|e| e.to_string())?;
 
-    for (key, schedule) in materialized {
-        emit_schedule_entry(&mut out, &key, &schedule)?;
-        memory_entries.push(generated_entry(&key, &schedule)?);
+    for entry in materialized {
+        let key = entry.key();
+        emit_schedule_entry(
+            &mut out,
+            &key,
+            entry.schedule(),
+            entry.precommitted_producers(),
+        )?;
+        memory_entries.push(generated_entry(&key, entry.schedule())?);
     }
     debug_assert!(akita_schedules::catalog_entries_sorted_for_lookup(
         &memory_entries
@@ -798,7 +908,8 @@ mod preplanned_scalar_tests {
         let key = PolynomialGroupLayout::new(14, 1);
         let schedule = (family.regen)(key).expect("scalar schedule");
         REGEN_SCHEDULE.get_or_init(|| schedule.clone());
-        let mut cached = wiring_emit_spec(family, PathBuf::from("generated"));
+        let mut cached = wiring_emit_spec(family, PathBuf::from("generated"))
+            .expect("shipped families declare a valid producer contract");
         cached.keys = vec![key];
         cached.preplanned_scalar = vec![(key, schedule)];
         cached.regen = counted_regen;

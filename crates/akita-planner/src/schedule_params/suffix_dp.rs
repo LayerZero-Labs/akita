@@ -622,7 +622,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                                     )
                                 })?,
                                 precommitted_honest_fold_policies,
-                                policy.decomposition.field_bits(),
+                                policy.decomposition,
                             )?
                         } else if let Some(natural_prefix_len) = incoming_setup_prefix {
                             let prefix_params =

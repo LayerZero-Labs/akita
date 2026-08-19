@@ -214,6 +214,10 @@ jobs:
       - name: One-hot multi-chunk catalog wiring
         run: |
           cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-onehot-multi-chunk,transcript-blake2b -- --exact fp128_onehot_mc_catalog_resolves
+      - name: Bounded dense source PCS e2e
+        run: |
+          cargo test --release -p akita-pcs --test akita_fp128_e2e --no-default-features --features parallel,schedules-default,schedules-fp128-dense-bounded,transcript-blake2b -- heterogeneous::bounded_
+          cargo test --release -p akita-config --features all-schedules --test bounded_dense_source
       - name: Schedule catalog wiring
         run: |
           cargo test --release -p akita-config --no-default-features --features transcript-blake2b --test schedule_catalog_feature_off

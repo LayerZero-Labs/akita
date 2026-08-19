@@ -46,24 +46,32 @@ pub trait HonestFoldPolicy {
 }
 
 /// Distribution-free sizing rule for balanced signed-digit witnesses.
+///
+/// This is the sizing rule for every source whose committed plane is balanced
+/// base-`2^log_basis_inner` digits, which is the whole
+/// `1 < log_commit_bound <= field_bits` range: a bounded source and a full-field
+/// source decompose into the same digit alphabet and differ only in how many
+/// digit planes they need. The declared source bound therefore does not appear
+/// here — it is carried by
+/// [`crate::DecompositionParams::log_commit_bound`] and consumed by the
+/// A-role digit depth. The per-block source norms this policy sizes against
+/// come from the query
+/// ([`HonestFoldSizingQuery::witness_norms`], built by
+/// [`HonestFoldPolicySpec::witness_norms_for_inner_basis`]), which describes one
+/// balanced digit plane and is independent of the bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BalancedSignedDigitFoldPolicy {
     field_bits: u32,
-    witness: FoldWitnessNorms,
 }
 
 impl BalancedSignedDigitFoldPolicy {
-    /// Construct the distribution-free policy.
+    /// Construct the distribution-free policy for one field width.
     #[must_use]
-    pub const fn universal(field_bits: u32, witness: FoldWitnessNorms) -> Self {
-        Self {
-            field_bits,
-            witness,
-        }
+    pub const fn universal(field_bits: u32) -> Self {
+        Self { field_bits }
     }
 
     fn universal_cap(&self, query: HonestFoldSizingQuery<'_>) -> Result<u128, AkitaError> {
-        self.witness.validate()?;
         validate_query(query)?;
         // This policy is the frozen pre-chunking baseline. Preserve its
         // logical single-fold geometry even though the query reports every

@@ -1,7 +1,7 @@
 //! The multilinear-polynomial wrapper enum, its borrowed dispatch views, and
 //! the source-trait impls. The `CpuBackend` kernel impls live in [`super::ops`].
 
-use akita_field::{AkitaError, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
@@ -161,6 +161,28 @@ where
 
     fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
         Ok(MultilinearPolynomialView { poly: self })
+    }
+
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: CanonicalField,
+    {
+        match self {
+            Self::Dense(poly) => RootCommitSource::<F, D>::committed_centered_reach(
+                poly,
+                modulus,
+                centering_threshold,
+            ),
+            Self::OneHot(poly) => RootCommitSource::<F, D>::committed_centered_reach(
+                poly,
+                modulus,
+                centering_threshold,
+            ),
+        }
     }
 }
 

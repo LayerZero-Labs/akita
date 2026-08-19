@@ -394,10 +394,10 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
         precommitteds: vec![pre_profile],
     };
-    let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
+    let precommitted_honest_fold_policies = vec![akita_config::honest_fold_policy_of::<Cfg>()];
     let planned = find_schedule(
         &key,
-        Cfg::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Cfg>(),
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -470,22 +470,12 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     };
 
     let precommitted_honest_fold_policies = vec![
-        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-            akita_types::sis::UnitOneHotFoldPolicy::canonical(
-                Cfg::decomposition().field_bits(),
-                256,
-            ),
-        ),
-        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
-            akita_types::sis::BalancedSignedDigitFoldPolicy::universal(
-                Cfg::decomposition().field_bits(),
-                akita_types::sis::FoldWitnessNorms::bounded(3, 256),
-            ),
-        ),
+        akita_config::honest_fold_policy_of::<Cfg>(),
+        akita_config::honest_fold_policy_of::<fp128::Dense>(),
     ];
     let planned = find_schedule(
         &key,
-        Cfg::root_honest_fold_policy(),
+        akita_config::honest_fold_policy_of::<Cfg>(),
         &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

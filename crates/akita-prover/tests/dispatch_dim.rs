@@ -10,7 +10,7 @@ use akita_types::{
 };
 
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
-    let group = match Cfg::root_honest_fold_policy() {
+    let group = match akita_config::honest_fold_policy_of::<Cfg>() {
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
             PolynomialGroupLayout::singleton(num_vars)
         }

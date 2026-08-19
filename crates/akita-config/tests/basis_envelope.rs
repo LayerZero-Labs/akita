@@ -34,7 +34,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             root.num_digits_inner, 1,
             "one-hot root must remain a single digit at nv={nv}"
         );
-        let honest_policy = Cfg::root_honest_fold_policy();
+        let honest_policy = akita_config::honest_fold_policy_of::<Cfg>();
         let num_fold_coeffs = root
             .num_positions_per_block
             .checked_mul(root.num_digits_inner)

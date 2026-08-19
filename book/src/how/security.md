@@ -122,6 +122,41 @@ model error. The planner freezes the resulting cap into the schedule. The
 verifier enforces that exact cap. A model error can make proving fail more
 often, but it cannot make the verifier accept a response above the cap.
 
+### The accepted committed-source space
+
+A committed level stores `num_digits_inner` balanced base-`2^log_basis_inner`
+digits per source coefficient. `CommittedSourceContract::accepted_bounds`
+computes the accepted centered interval for a balanced signed digit source. It
+intersects what those digits can represent with the declared
+`DecompositionParams::log_commit_bound` that the schedule was priced for.
+
+The source class and numeric bound are independent. The class selects either the
+unit one-hot structural contract or the balanced signed digit contract. The bound
+selects the digit depth for either class. A balanced signed digit source may use
+any valid bound, including `1` and the field width. A unit one-hot source remains
+unit one-hot at any valid bound.
+
+The intersection matters because the depth rounds up, so the representable
+envelope is strictly wider than the declaration — by 256x at some shipped
+geometries. The declaration is the binding side, because the planner prices a
+bounded source's final digit plane at only the range its bound leaves.
+
+A smaller bound is a smaller accepted witness space, not a weaker commitment. The
+A-role collision bounds above are computed from the same digit envelope the
+verifier admits, so a bounded family is priced for exactly what it accepts. The
+unit one-hot class has a separate structural admission check. The declared bound
+is inside `DecompositionParams`, which is hashed into the generated catalog
+identity and serialized into the instance descriptor, so a proof cannot be
+replayed against a family with a different bound.
+
+The obligation the smaller space creates is on the *producer*, and it has two
+halves. Committing above the representable envelope would bind a truncation,
+because the decomposition keeps only the scheduled digits. Committing above the
+declared bound would instead inflate the level-1 witness past the L2 response caps
+frozen into the recursion suffix, because those caps were priced from the
+declaration. `commit` rejects both. See
+[Bounded committed sources](./configuration.md#bounded-committed-sources).
+
 The fold nonce does not incur a fixed 12-bit soundness loss. Every nonce trial
 is another random-oracle query, so the Fiat-Shamir reduction charges it through
 the adversary's total query budget. See
@@ -184,3 +219,7 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction
   and optional L2 route).
+- `crates/akita-types/src/config.rs` (`DecompositionParams::log_commit_bound`) and
+  `crates/akita-prover/src/api/commitment.rs`
+  (`ensure_sources_fit_accepted_interval`) own the declared
+  committed-source bound and the producer-side range check.
