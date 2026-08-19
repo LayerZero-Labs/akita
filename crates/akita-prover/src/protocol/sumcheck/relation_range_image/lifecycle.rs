@@ -45,7 +45,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             lane_bits,
             coefficient_bits,
             E::zero(),
-            PreparedProverEvaluationTrace::zero(live_lane_count, coeff_count),
+            PreparedProverLinearTerms::zero(live_lane_count, coeff_count),
             E::zero(),
             None,
         )
