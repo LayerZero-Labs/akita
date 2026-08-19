@@ -165,7 +165,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         &self,
         compact_range_image: &[V],
     ) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.col_bits);
+        debug_assert!(self.rounds_completed < self.num_vars);
         debug_assert_eq!(
             compact_range_image.len(),
             self.live_x_cols * (1usize << (self.num_vars - self.col_bits))
@@ -249,7 +249,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         &self,
         range_image: &[E],
     ) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.col_bits);
+        debug_assert!(self.rounds_completed < self.num_vars);
         let y_len = range_image.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();

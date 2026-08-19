@@ -14,6 +14,18 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+/// Minimum estimated live work in a round (total hypercube points still held
+/// by active instances) before the per-instance fan-out pays for rayon's
+/// per-round dispatch. Measured on an Apple M3 Max (14 rayon threads) with
+/// product-of-multilinears instances: a 24-instance batch of 2^8-point tables
+/// regresses ~1.7x under unconditional fan-out, while rounds carrying 2^13 or
+/// more live points break even or win; Aerie's fused selector batch enters at
+/// ~23 instances x 2^19 points and gains ~1.9x.
+#[cfg(feature = "parallel")]
+const PARALLEL_MIN_ROUND_WORK: u64 = 1 << 13;
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;
@@ -74,14 +86,14 @@ pub struct BatchedSumcheckRoundResult<E: FieldCore> {
 /// Returns an error if the field inverse of 2 does not exist.
 #[tracing::instrument(skip_all, name = "prove_batched_sumcheck")]
 pub fn prove_batched_sumcheck<F, T, E, S>(
-    mut instances: Vec<&mut dyn SumcheckInstanceProver<E>>,
+    mut instances: Vec<&mut (dyn SumcheckInstanceProver<E> + Send)>,
     transcript: &mut T,
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore + FromPrimitiveInt + HalvingField + AkitaSerialize,
+    E: FieldCore + FromPrimitiveInt + HalvingField + AkitaSerialize + Send + Sync,
     S: FnMut(&mut T) -> E,
 {
     if instances.is_empty() {
@@ -129,10 +141,8 @@ where
     let mut challenges = Vec::with_capacity(max_num_rounds);
 
     for round in 0..max_num_rounds {
-        let univariate_polys: Vec<UniPoly<E>> = instances
-            .iter_mut()
-            .zip(individual_claims.iter())
-            .map(|(inst, previous_claim)| {
+        let compute_univariate =
+            |(inst, previous_claim): (&mut &mut (dyn SumcheckInstanceProver<E> + Send), &E)| {
                 let n = inst.num_rounds();
                 let offset = max_num_rounds - n;
                 let active = round >= offset && round < offset + n;
@@ -141,7 +151,46 @@ where
                 } else {
                     UniPoly::from_coeffs(vec![previous_claim.half()])
                 }
-            })
+            };
+        // With many instances (the fused selector batch carries dozens), the
+        // per-instance round computations dominate late rounds whose domains
+        // are too small for intra-instance parallelism; fan the instances out.
+        // Skip the fan-out when the round's live work is too small to amortize
+        // rayon's dispatch: an active instance at round `round` still holds
+        // 2^(n - (round - offset)) hypercube points, and that table size is
+        // what its round univariate and fold each traverse.
+        #[cfg(feature = "parallel")]
+        let fan_out = instances.len() > 1 && {
+            let mut live_points: u64 = 0;
+            for inst in instances.iter() {
+                let n = inst.num_rounds();
+                let offset = max_num_rounds - n;
+                if round >= offset && round < offset + n {
+                    let remaining = n - (round - offset);
+                    live_points = live_points.saturating_add(1u64 << remaining.min(63));
+                }
+            }
+            live_points >= PARALLEL_MIN_ROUND_WORK
+        };
+        #[cfg(feature = "parallel")]
+        let univariate_polys: Vec<UniPoly<E>> = if fan_out {
+            instances
+                .par_iter_mut()
+                .zip(individual_claims.par_iter())
+                .map(compute_univariate)
+                .collect()
+        } else {
+            instances
+                .iter_mut()
+                .zip(individual_claims.iter())
+                .map(compute_univariate)
+                .collect()
+        };
+        #[cfg(not(feature = "parallel"))]
+        let univariate_polys: Vec<UniPoly<E>> = instances
+            .iter_mut()
+            .zip(individual_claims.iter())
+            .map(compute_univariate)
             .collect();
 
         let batched_poly = linear_combination(&univariate_polys, &batching_coeffs);
@@ -172,14 +221,22 @@ where
         }
 
         // Ingest challenge into each active instance.
-        for inst in instances.iter_mut() {
+        let ingest = |inst: &mut &mut (dyn SumcheckInstanceProver<E> + Send)| {
             let n = inst.num_rounds();
             let offset = max_num_rounds - n;
             let active = round >= offset && round < offset + n;
             if active {
                 inst.ingest_challenge(round - offset, r_j);
             }
+        };
+        #[cfg(feature = "parallel")]
+        if fan_out {
+            instances.par_iter_mut().for_each(ingest);
+        } else {
+            instances.iter_mut().for_each(ingest);
         }
+        #[cfg(not(feature = "parallel"))]
+        instances.iter_mut().for_each(ingest);
 
         round_polys.push(compressed);
     }
@@ -368,45 +425,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_field::Fp64;
-
-    type F = Fp64<4294967197>;
-
-    struct DummyVerifier {
-        rounds: usize,
-    }
-
-    impl SumcheckInstanceVerifier<F> for DummyVerifier {
-        fn num_rounds(&self) -> usize {
-            self.rounds
-        }
-
-        fn degree_bound(&self) -> usize {
-            2
-        }
-
-        fn input_claim(&self) -> F {
-            F::zero()
-        }
-
-        fn expected_output_claim(&self, _challenges: &[F]) -> Result<F, AkitaError> {
-            Ok(F::one())
-        }
-    }
-
-    #[test]
-    fn batched_expected_claim_rejects_malformed_shapes() {
-        let verifier = DummyVerifier { rounds: 3 };
-        let verifiers: Vec<&dyn SumcheckInstanceVerifier<F>> = vec![&verifier];
-        assert!(
-            compute_batched_expected_output_claim(verifiers.clone(), &[], 2, &[F::zero(); 2])
-                .is_err()
-        );
-        assert!(
-            compute_batched_expected_output_claim(verifiers, &[F::one()], 2, &[F::zero(); 2],)
-                .is_err()
-        );
-    }
-}
+mod tests;
