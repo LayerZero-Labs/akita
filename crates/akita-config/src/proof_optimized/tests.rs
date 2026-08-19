@@ -1,5 +1,33 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Default)]
+struct NoCatalog;
+
+crate::impl_proof_optimized_preset!(
+    NoCatalog,
+    akita_field::Prime64Offset59,
+    akita_field::Ext2<akita_field::Prime64Offset59>,
+    akita_types::SisModulusProfileId::Q64Offset59,
+    64,
+    18,
+    source = balanced_digits,
+    schedules = none,
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::UniformDimension {
+        ring_dimension: 128
+    }
+);
+
+#[test]
+fn exported_preset_can_fail_closed_without_a_catalog() {
+    use crate::CommitmentConfig;
+
+    assert!(NoCatalog::schedule_catalog().is_none());
+    assert_eq!(
+        NoCatalog::committed_source_class(),
+        akita_types::sis::CommittedSourceClass::BalancedSignedDigit
+    );
+}
+
 #[cfg(feature = "schedules-default")]
 use crate::proof_optimized::{fp128, fp32, fp64};
 #[cfg(feature = "schedules-default")]

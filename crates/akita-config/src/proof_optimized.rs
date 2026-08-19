@@ -378,6 +378,7 @@ fn ensure_required_setup_field_elements(
 /// dependencies.
 #[macro_export]
 macro_rules! impl_proof_optimized_preset {
+    (@schedule_catalog none) => {};
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
             #[cfg(feature = $feat)]
@@ -405,13 +406,13 @@ macro_rules! impl_proof_optimized_preset {
             akita_types::sis::CommittedSourceClass::BalancedSignedDigit
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
-        $crate::impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedules = $schedules:tt, ring_dimension_schedule_mode = $mode:expr) => {
+        $crate::impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $schedules, ring_dimension_schedule_mode = $mode);
     };
     (@options ring_dimension_schedule_mode = $mode:expr) => {
         $crate::impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, table, $feat:literal, $family_name:literal, $table:ident, $($options:tt)*) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, $schedules:tt, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -464,7 +465,7 @@ macro_rules! impl_proof_optimized_preset {
 
             $crate::impl_proof_optimized_preset!(@committed_source_class $source);
 
-            $crate::impl_proof_optimized_preset!(@schedule_catalog ($feat, $family_name, $table));
+            $crate::impl_proof_optimized_preset!(@schedule_catalog $schedules);
         }
     };
 }
