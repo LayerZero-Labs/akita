@@ -329,7 +329,6 @@ pub(super) fn find_schedule(
                             root_dimensions,
                             root_opening,
                             &[],
-                            input_witness_len,
                             inner_basis,
                             log_basis,
                             true,
