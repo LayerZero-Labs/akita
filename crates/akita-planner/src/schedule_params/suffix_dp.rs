@@ -692,10 +692,18 @@ pub(crate) fn derive_selected_suffix_schedule(
                 &mut frontiers,
             )?;
         }
-        let candidates = prune::level_candidates(
-            current_opening_layout,
-            attach_source_moments(fold_candidates)?,
-        )?;
+        let candidates_with_source = attach_source_moments(fold_candidates)?;
+        // Complete-root candidates are traversed in exact lower-bound order
+        // below. Building a local high-dimensional Pareto frontier first is
+        // counterproductive for wide grouped openings: their many distinct
+        // response moments are incomparable locally, while the first complete
+        // schedules provide much stronger global bounds. Recursive states do
+        // not have that global admission rule and retain local pruning.
+        let candidates = if root_level_key.is_some() {
+            candidates_with_source
+        } else {
+            prune::level_candidates(current_opening_layout, candidates_with_source)?
+        };
         if let Some(diagnostics) = diagnostics {
             diagnostics.record_candidates(
                 generated_candidate_count,
