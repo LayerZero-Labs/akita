@@ -11,7 +11,7 @@ use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
     append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point, BasisMode,
     CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    TerminalCommittedGroupParams,
+    TerminalFoldParams,
 };
 
 pub(in crate::protocol::core) fn absorb_protocol_opening_points<F, E, T>(
@@ -35,7 +35,7 @@ pub(in crate::protocol::core) fn prepare_single_field_terminal_suffix<F, E, T>(
     protocol_point: &[E],
     basis: BasisMode,
     opening: &E,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     transcript: &mut T,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where

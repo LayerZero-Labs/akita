@@ -36,7 +36,7 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {
             params.n_ring_elems().expect("ring elements") * params.d_a()
         );
     }
-    assert!(allowed_dims.contains(&schedule.terminal.params.witness.d_a()));
+    assert!(allowed_dims.contains(&schedule.terminal.d_a()));
 }
 
 #[test]

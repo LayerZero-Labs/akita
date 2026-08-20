@@ -47,12 +47,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let t_bytes = t_field_elems.saturating_mul(field_sz);
         let z_wire_bytes = tail_bytes.saturating_sub(e_bytes.saturating_add(t_bytes));
         let z_prefix_bytes = z_wire_bytes.saturating_sub(z_golomb_bytes);
-        let z_budget_bytes = schedule
-            .terminal
-            .params
-            .response_shape
-            .layout
-            .z_payload_bytes();
+        let z_budget_bytes = schedule.terminal.response_shape.layout.z_payload_bytes();
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = terminal_response_z_fold_stats(segment, schedule, field_bits).ok();
         let z_linf_cap = segment
@@ -89,7 +84,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             final_w_num_elems = num_elems,
             final_w_encoding = "terminal_response",
             final_w_policy = "non_zk_default",
-            tail_log_basis_inner = schedule.terminal.params.witness.inner.digits.log_basis,
+            tail_log_basis_inner = schedule.terminal.inner.digits.log_basis,
             tail_z_prefix_bytes = z_prefix_bytes,
             tail_z_golomb_bytes = z_golomb_bytes,
             tail_z_bytes = z_wire_bytes,
@@ -143,7 +138,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         eprintln!(
             "[{label}]   final_w: encoding=terminal_response (non-zk default), total={tail_bytes} bytes, \
              logical_elems={num_elems}, inner_log_basis={}{}",
-            schedule.terminal.params.witness.inner.digits.log_basis,
+            schedule.terminal.inner.digits.log_basis,
             golomb_line,
         );
         eprintln!(
@@ -165,7 +160,7 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     schedule: &FoldSchedule,
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
-    let params = &schedule.terminal.params.witness;
+    let params = &schedule.terminal;
     let group = witness
         .layout
         .groups
@@ -914,12 +909,11 @@ pub(crate) fn emit_runtime_schedule_summary(
 
     let terminal_level = levels - 1;
     let terminal = &schedule.terminal;
-    let witness = &terminal.params.witness;
-    let challenge = &terminal.params.sparse_challenge_config;
+    let witness = &terminal;
+    let challenge = &terminal.fold_challenge_config;
     let security_route = witness.inner.matrix.security_route();
     let response_l2_sq_cap = witness.response_l2_sq_cap();
     let z_linf_cap = terminal
-        .params
         .response_shape
         .layout
         .groups
@@ -1315,7 +1309,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
             } else if let Some(fold) = schedule.recursive_folds.get(level_idx - 1) {
                 fold.params.d_a()
             } else {
-                schedule.terminal.params.witness.d_a()
+                schedule.terminal.d_a()
             }
         })
     };

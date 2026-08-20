@@ -9,7 +9,7 @@ use akita_types::sis::{
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    GroupOpenPhaseParams, TerminalCommittedGroupParams, TerminalResponseShape,
+    GroupOpenPhaseParams, TerminalFoldParams, TerminalResponseShape,
 };
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
@@ -337,7 +337,7 @@ struct TerminalL2ModelState {
 }
 
 fn audit_terminal(
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     response_shape: &TerminalResponseShape,
     model_state: TerminalL2ModelState,
@@ -546,9 +546,9 @@ pub(crate) fn audit_resolved_schedule(
         )?;
     }
     audit_terminal(
-        &schedule.terminal.params.witness,
-        &schedule.terminal.params.sparse_challenge_config,
-        &schedule.terminal.params.response_shape,
+        &schedule.terminal,
+        &schedule.terminal.fold_challenge_config,
+        &schedule.terminal.response_shape,
         TerminalL2ModelState {
             fold_level: schedule.recursive_folds.len() + 1,
         },

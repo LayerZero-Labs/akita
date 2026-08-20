@@ -491,7 +491,7 @@ fn terminal_cap_has_exactly_one_implementation() {
             let mut lp = test_lp();
             lp.inner_commit_matrix = matrix;
             lp.fold_challenge_config = sparse;
-            let terminal = crate::TerminalCommittedGroupParams::from_expanded_group(lp);
+            let terminal = crate::TerminalFoldParams::from_expanded_group(lp);
             assert_eq!(
                 terminal
                     .certified_response_linf_cap(&sparse)

@@ -5,8 +5,8 @@ use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
     FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY,
-    MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
+    TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS,
+    MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
 
@@ -463,7 +463,7 @@ pub struct CandidateFoldStep {
 #[derive(Clone, Debug)]
 /// Fully priced terminal response awaiting schedule materialization.
 pub struct CandidateTerminalResponse {
-    pub params: akita_types::TerminalCommittedGroupParams,
+    pub params: akita_types::TerminalFoldParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
     pub input_witness_len: usize,
     pub estimated_direct_payload_bytes: usize,
@@ -600,8 +600,8 @@ pub fn expanded_schedule_proof_payload_bytes(
     )?;
     let terminal_response = akita_types::terminal_response_planner_bytes(
         field_bits,
-        &schedule.terminal.params.response_shape,
-        schedule.terminal.params.witness.response_l2_sq_cap(),
+        &schedule.terminal.response_shape,
+        schedule.terminal.response_l2_sq_cap(),
     );
     total
         .checked_add(akita_types::FOLD_GRIND_NONCE_BYTES)
@@ -675,13 +675,11 @@ pub fn materialize_candidate_schedule(
                 }
             })
             .collect(),
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                sparse_challenge_config: terminal_response.sparse_challenge_config,
-                witness: terminal_response.params,
-                response_shape: terminal_response.response_shape,
-            },
+        terminal: TerminalFoldParams {
+            fold_challenge_config: terminal_response.sparse_challenge_config,
+            response_shape: terminal_response.response_shape,
             input_witness_len: terminal_response.input_witness_len,
+            ..terminal_response.params
         },
     };
     let first_direct_setup_field_len = match selection_policy {

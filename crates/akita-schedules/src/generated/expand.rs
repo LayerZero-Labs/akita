@@ -27,7 +27,7 @@ use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommitmentSliceCount,
     CommitmentSliceGeometry, CommittedGroupParams, CommittedSourceEncoding, DecompositionParams,
     GroupOpenPhaseParams, InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    TerminalCommittedGroupParams,
+    TerminalFoldParams,
 };
 
 fn sis_key(
@@ -755,7 +755,7 @@ impl GeneratedTerminalFold {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
         input_witness_len: usize,
-    ) -> Result<TerminalCommittedGroupParams, AkitaError> {
+    ) -> Result<TerminalFoldParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
         if ring_dimension == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -884,7 +884,16 @@ impl GeneratedTerminalFold {
                 ring_dimension,
             )?
         };
-        let terminal = TerminalCommittedGroupParams {
+        let terminal = TerminalFoldParams {
+            fold_challenge_config: sparse,
+            response_shape: akita_types::TerminalResponseShape {
+                layout: akita_types::TailSegmentLayout {
+                    ring_dimension,
+                    groups: Vec::new(),
+                    logical_num_elems: 0,
+                },
+            },
+            input_witness_len: 0,
             blocks: akita_types::BlockGeometry::new(
                 num_live_ring_elements_per_claim,
                 num_positions_per_block,

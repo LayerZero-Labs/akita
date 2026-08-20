@@ -167,7 +167,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         previous = current;
     }
     assert_eq!(
-        schedule.terminal.params.witness.d_a(),
+        schedule.terminal.d_a(),
         ADAPTIVE_SUFFIX_RING_DIMENSION,
         "the shipped adaptive schedule must terminate in the audited suffix dimension"
     );
@@ -441,13 +441,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
         )
     }));
     assert!(
-        selected
-            .schedule
-            .terminal
-            .params
-            .witness
-            .response_l2_sq_cap()
-            .is_some(),
+        selected.schedule.terminal.response_l2_sq_cap().is_some(),
         "terminal-only planning must preserve the PR369 selective-L2 route",
     );
 }

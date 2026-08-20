@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::{absorb_protocol_opening_points, FoldClaimMaterial, PreparedFoldOpeningPoint};
-use akita_types::{dispatch_for_field, TerminalCommittedGroupParams};
+use akita_types::{dispatch_for_field, TerminalFoldParams};
 
 pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
@@ -379,7 +379,7 @@ pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>
     opening: &E,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where

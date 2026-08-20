@@ -131,10 +131,8 @@ where
         let current_lp = &step.params;
         let next_step = schedule.recursive_folds.get(offset + 1);
         let next_params = next_step.map(|next| &next.params);
-        let next_witness_ring_dim = next_params.map_or(
-            schedule.terminal.params.witness.d_a(),
-            CommittedGroupParams::d_a,
-        );
+        let next_witness_ring_dim =
+            next_params.map_or(schedule.terminal.d_a(), CommittedGroupParams::d_a);
         let current_commitment = match &current_state.witness {
             SuffixWitnessState::Commitment(commitment) => *commitment,
             SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
@@ -225,7 +223,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     if terminal.terminal_response().num_elems()
-        != schedule.terminal.params.response_shape.logical_num_elems()
+        != schedule.terminal.response_shape.logical_num_elems()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -234,7 +232,7 @@ where
         setup,
         transcript,
         &current_state,
-        &schedule.terminal.params,
+        &schedule.terminal,
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!(
@@ -260,7 +258,7 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let params = &scheduled.witness;
+    let params = &scheduled;
     let t_state = match &current_state.witness {
         SuffixWitnessState::TerminalT(bytes) if !bytes.is_empty() => bytes,
         _ => return Err(AkitaError::InvalidProof),
@@ -280,7 +278,7 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     if scheduled.response_shape.layout.groups.len() != 1
         || params
-            .validate_terminal_linf_cap(&scheduled.sparse_challenge_config, group.z_linf_cap)
+            .validate_terminal_linf_cap(&scheduled.fold_challenge_config, group.z_linf_cap)
             .is_err()
     {
         return Err(AkitaError::InvalidProof);
@@ -336,7 +334,7 @@ where
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(
                 params.d_a(),
-                &scheduled.sparse_challenge_config,
+                &scheduled.fold_challenge_config,
             )
             .ok_or(AkitaError::InvalidProof)?,
         )
@@ -349,7 +347,7 @@ where
         0,
         params.blocks.live_blocks,
         1,
-        &scheduled.sparse_challenge_config,
+        &scheduled.fold_challenge_config,
         proof.fold_grind_nonce,
         operator_rejection,
     )?;
@@ -359,7 +357,7 @@ where
         &challenges,
         &prepared_points[0].ring_multiplier_point,
         params,
-        &scheduled.sparse_challenge_config,
+        &scheduled.fold_challenge_config,
         proof.terminal_response(),
     )
     .map_err(|error| {

@@ -229,7 +229,7 @@ pub fn canonical_base_field_proof_shape(
         recursive_folds,
         terminal: TerminalLevelProofShape {
             extension_opening_reduction: None,
-            terminal_response: schedule.terminal.params.response_shape.clone(),
+            terminal_response: schedule.terminal.response_shape.clone(),
         },
     })
 }

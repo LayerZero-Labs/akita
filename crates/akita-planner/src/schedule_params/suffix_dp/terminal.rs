@@ -75,7 +75,7 @@ pub(crate) fn terminal_direct_suffix_cost(
         ));
     }
     let (mut terminal_params, certified_linf_cap) =
-        akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
+        akita_types::TerminalFoldParams::try_from_expanded_group(terminal_lp.clone())?;
     let mut sparse_challenge_config = terminal_lp.fold_challenge_config;
     if let Some(l2_challenge) =
         akita_challenges::selective_l2_challenge_config(terminal_params.d_a())

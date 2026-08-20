@@ -16,7 +16,7 @@ use crate::golomb_rice::{
 use crate::layout::field_bytes;
 use crate::proof::{DigitBlocks, RingVec, TerminalWitnessTranscriptParts};
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
-use crate::{CommittedGroupParams, TerminalCommittedGroupParams, WitnessLayout, WitnessUnitLayout};
+use crate::{CommittedGroupParams, TerminalFoldParams, WitnessLayout, WitnessUnitLayout};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,10 +320,7 @@ impl TerminalResponseShape {
     /// `encoding_scale` selects the frozen Golomb parameters and payload byte
     /// budget. It is also the verifier cap for a Linf route. An L2 route emits
     /// no Linf cap and enforces only its complete response energy.
-    pub fn derive(
-        params: &TerminalCommittedGroupParams,
-        encoding_scale: u128,
-    ) -> Result<Self, AkitaError> {
+    pub fn derive(params: &TerminalFoldParams, encoding_scale: u128) -> Result<Self, AkitaError> {
         if encoding_scale == 0 {
             return Err(AkitaError::InvalidSetup(
                 "terminal response encoding scale must be nonzero".to_string(),
@@ -1001,7 +998,7 @@ where
 /// Build the scalar raw terminal response selected by the typed terminal
 /// schedule. Neither `e` nor `t` is gadget decomposed.
 pub fn build_terminal_response<F>(
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     scheduled_shape: &TerminalResponseShape,
     e_folded: &RingVec<F>,

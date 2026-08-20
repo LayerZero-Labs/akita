@@ -172,7 +172,7 @@ pub(super) fn catalog_policy_signature(
     let terminal_source = akita_types::CommittedSourceEncoding::for_producer(
         akita_types::OpeningMethod::EvaluationTrace,
         spec.policy.claim_ext_degree,
-        schedule.terminal.params.witness.d_a(),
+        schedule.terminal.d_a(),
         akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
             .map_err(|error| format!("derive terminal source arity: {error}"))?,
         false,
@@ -182,16 +182,8 @@ pub(super) fn catalog_policy_signature(
         "/T[method=ET,src={},eor={terminal_eor},input={},dA={},sec={}]",
         source_encoding_signature(terminal_source),
         schedule.terminal.input_witness_len,
-        schedule.terminal.params.witness.d_a(),
-        security_route_signature(
-            schedule
-                .terminal
-                .params
-                .witness
-                .inner
-                .matrix
-                .security_route(),
-        ),
+        schedule.terminal.d_a(),
+        security_route_signature(schedule.terminal.inner.matrix.security_route(),),
     )
     .map_err(|error| format!("write catalog policy signature: {error}"))?;
     Ok(signature)

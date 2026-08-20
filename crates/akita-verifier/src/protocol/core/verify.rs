@@ -112,7 +112,7 @@ where
         validate_nonterminal(fold, &step.params, next, binding)?;
     }
 
-    let terminal_shape = &schedule.terminal.params.response_shape;
+    let terminal_shape = &schedule.terminal.response_shape;
     if !terminal_shape
         .layout
         .admits_realized(&proof.terminal.terminal_response().layout)
@@ -172,9 +172,7 @@ where
         basis,
         &root_step.params,
         first_recursive_params,
-        first_recursive_params.map_or(schedule.terminal.params.witness.d_a(), |step| {
-            step.params.d_a()
-        }),
+        first_recursive_params.map_or(schedule.terminal.d_a(), |step| step.params.d_a()),
         root_t_state.as_deref(),
     )
     .map_err(|error| {

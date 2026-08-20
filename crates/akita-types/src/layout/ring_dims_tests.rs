@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     CommittedGroupParams, FoldParams, FoldSchedule, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    TerminalFoldParams, TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
 
@@ -20,7 +20,7 @@ fn committed(ring_dimension: usize) -> CommittedGroupParams {
 }
 
 fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldSchedule {
-    let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(terminal);
+    let terminal_witness = TerminalFoldParams::from_expanded_group(terminal);
     let ring_dimension = terminal_witness.d_a();
     FoldSchedule {
         root: FoldParams {
@@ -29,26 +29,24 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
             output_witness_len: ring_dimension,
         },
         recursive_folds: Vec::new(),
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                witness: terminal_witness,
-                sparse_challenge_config: SparseChallengeConfig::pm1_only(ring_dimension.max(31)),
-                response_shape: TerminalResponseShape {
-                    layout: TailSegmentLayout {
-                        ring_dimension,
-                        groups: vec![TailSegmentGroupLayout {
-                            z_coords: ring_dimension,
-                            e_field_elems: ring_dimension,
-                            t_field_elems: ring_dimension,
-                            z_linf_cap: Some(1),
-                            z_payload_bytes: 1,
-                            z_rice_low_bits: 0,
-                        }],
-                        logical_num_elems: 3 * ring_dimension,
-                    },
+        terminal: TerminalFoldParams {
+            fold_challenge_config: SparseChallengeConfig::pm1_only(ring_dimension.max(31)),
+            response_shape: TerminalResponseShape {
+                layout: TailSegmentLayout {
+                    ring_dimension,
+                    groups: vec![TailSegmentGroupLayout {
+                        z_coords: ring_dimension,
+                        e_field_elems: ring_dimension,
+                        t_field_elems: ring_dimension,
+                        z_linf_cap: Some(1),
+                        z_payload_bytes: 1,
+                        z_rice_low_bits: 0,
+                    }],
+                    logical_num_elems: 3 * ring_dimension,
                 },
             },
             input_witness_len: ring_dimension,
+            ..terminal_witness
         },
     }
 }

@@ -808,11 +808,7 @@ mod fp128_policy_tests {
         });
         assert!(!root_input_error.to_string().is_empty());
         let transition_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
-            let alignment = schedule
-                .root
-                .params
-                .d_a()
-                .max(schedule.terminal.params.witness.d_a());
+            let alignment = schedule.root.params.d_a().max(schedule.terminal.d_a());
             schedule.root.output_witness_len -= alignment;
             if let Some(next) = schedule.recursive_folds.first_mut() {
                 next.input_witness_len -= alignment;
@@ -841,7 +837,7 @@ mod fp128_policy_tests {
                 if schedule.recursive_folds.len() > 1 {
                     schedule.recursive_folds[1].params.d_a()
                 } else {
-                    schedule.terminal.params.witness.d_a()
+                    schedule.terminal.d_a()
                 },
             );
             schedule.recursive_folds[0].output_witness_len -= alignment;

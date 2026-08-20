@@ -119,13 +119,19 @@ impl FoldParams {
 /// needed to audit a calibrated L2 route. It has no outer/open commitment
 /// matrix and no outer/open response decomposition.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalCommittedGroupParams {
+pub struct TerminalFoldParams {
     /// Exact `(N, M, B)` block split of the terminal source.
     pub blocks: crate::BlockGeometry,
     /// A/source role: gadget decomposition and audited matrix identity.
     pub inner: crate::InnerRoleParams,
     /// Response basis and depth this terminal fold was planned against.
     pub fold: crate::GadgetDigits,
+    /// Fold-challenge family for the terminal response.
+    pub fold_challenge_config: akita_challenges::SparseChallengeConfig,
+    /// Shape of the clear terminal response payload.
+    pub response_shape: TerminalResponseShape,
+    /// Witness field length entering the terminal fold.
+    pub input_witness_len: usize,
 }
 
 /// Minimum fraction of the unconstrained terminal-response target that a
@@ -135,17 +141,24 @@ pub struct TerminalCommittedGroupParams {
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM: u128 = 1;
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN: u128 = 2;
 
-impl TerminalCommittedGroupParams {
-    /// Canonical byte encoding used to order semantically distinct terminal candidates.
-    #[must_use]
-    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
+impl TerminalFoldParams {
+    /// Project a fold's params into terminal parameters.
+    ///
+    /// `response_shape` and `input_witness_len` are placeholders: the response
+    /// shape is derived from the admission cap this projection computes, so it
+    /// cannot be known here. Callers assemble it and assign both, mirroring the
+    /// existing `params_only` then `with_decomp` idiom on `CommittedGroupParams`.
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
+            fold_challenge_config: params.fold_challenge_config,
+            response_shape: TerminalResponseShape {
+                layout: crate::TailSegmentLayout {
+                    ring_dimension: params.d_a(),
+                    groups: Vec::new(),
+                    logical_num_elems: 0,
+                },
+            },
+            input_witness_len: 0,
             blocks: params.blocks(),
             inner: crate::RoleParams::new(
                 crate::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
@@ -278,7 +291,7 @@ impl TerminalCommittedGroupParams {
     /// interleave the A basis, the fold decomposition, the A matrix, the block
     /// triple, and the A depth; it now writes geometry, then the A role as
     /// `basis, depth, matrix`, then the fold decomposition.
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+    pub(crate) fn append_group_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         self.blocks.append_descriptor_bytes(bytes);
         self.inner.append_descriptor_bytes(bytes);
         self.fold.append_descriptor_bytes(bytes);
@@ -286,23 +299,10 @@ impl TerminalCommittedGroupParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalFoldParams {
-    pub witness: TerminalCommittedGroupParams,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub response_shape: TerminalResponseShape,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalFoldStep {
-    pub params: TerminalFoldParams,
-    pub input_witness_len: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldSchedule {
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,
-    pub terminal: TerminalFoldStep,
+    pub terminal: TerminalFoldParams,
 }
 
 /// Borrowed nonterminal step used to encode a checked planner candidate
@@ -313,15 +313,6 @@ pub struct FoldScheduleDescriptorStep<'a> {
     pub payload_mode: crate::CommitmentPayloadMode,
     pub input_witness_len: usize,
     pub output_witness_len: usize,
-}
-
-/// Borrowed terminal step used by canonical schedule descriptor encoding.
-#[derive(Clone, Copy)]
-pub struct TerminalFoldDescriptor<'a> {
-    pub witness: &'a TerminalCommittedGroupParams,
-    pub sparse_challenge_config: &'a akita_challenges::SparseChallengeConfig,
-    pub response_shape: &'a TerminalResponseShape,
-    pub input_witness_len: usize,
 }
 
 impl FoldSchedule {
@@ -388,8 +379,8 @@ impl FoldSchedule {
             self.recursive_folds.first().map_or_else(
                 || {
                     Ok((
-                        self.terminal.params.witness.d_a(),
-                        self.terminal.params.witness.recursive_opening_num_vars()?,
+                        self.terminal.d_a(),
+                        self.terminal.recursive_opening_num_vars()?,
                     ))
                 },
                 |step| Ok((step.params.d_a(), step.params.recursive_opening_num_vars()?)),
@@ -445,8 +436,8 @@ impl FoldSchedule {
                 self.recursive_folds.get(index + 1).map_or_else(
                     || {
                         Ok((
-                            self.terminal.params.witness.d_a(),
-                            self.terminal.params.witness.recursive_opening_num_vars()?,
+                            self.terminal.d_a(),
+                            self.terminal.recursive_opening_num_vars()?,
                         ))
                     },
                     |next| Ok((next.params.d_a(), next.params.recursive_opening_num_vars()?)),
@@ -460,7 +451,7 @@ impl FoldSchedule {
             )?;
         }
         if self.terminal.input_witness_len == 0
-            || self.terminal.params.response_shape.logical_num_elems() == 0
+            || self.terminal.response_shape.logical_num_elems() == 0
         {
             return Err(AkitaError::InvalidSetup(
                 "terminal fold and response lengths must be nonzero".to_string(),

@@ -341,7 +341,7 @@ where
 #[derive(Clone, Copy)]
 pub(in crate::protocol::core) enum FoldSuccessorParams<'a> {
     Recursive(&'a FoldParams),
-    Terminal(&'a TerminalCommittedGroupParams),
+    Terminal(&'a TerminalFoldParams),
 }
 
 impl<'a> FoldSuccessorParams<'a> {

@@ -332,7 +332,7 @@ fn expected_same_point_batched_shape(
     assert_eq!(schedule.terminal.input_witness_len, input_witness_len);
     let terminal = TerminalLevelProofShape {
         extension_opening_reduction: None,
-        terminal_response: schedule.terminal.params.response_shape.clone(),
+        terminal_response: schedule.terminal.response_shape.clone(),
     };
     AkitaBatchedProofShape {
         root: root_shape,

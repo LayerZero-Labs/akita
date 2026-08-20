@@ -322,13 +322,12 @@ fn generated_entry(
         .collect::<Vec<_>>();
     let terminal_group = schedule
         .terminal
-        .params
         .response_shape
         .layout
         .groups
         .first()
         .ok_or_else(|| "terminal response shape has no group".to_string())?;
-    if schedule.terminal.params.response_shape.layout.groups.len() != 1 {
+    if schedule.terminal.response_shape.layout.groups.len() != 1 {
         return Err("generated scalar terminal response must have exactly one group".to_string());
     }
     Ok(GeneratedFoldScheduleEntry {
@@ -350,40 +349,26 @@ fn generated_entry(
         recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),
         terminal: GeneratedTerminalFold {
             geometry: GeneratedBlockGeometry {
-                live_ring_elements_per_claim: schedule
-                    .terminal
-                    .params
-                    .witness
-                    .blocks
-                    .live_ring_elements_per_claim
+                live_ring_elements_per_claim: schedule.terminal.blocks.live_ring_elements_per_claim
                     as u64,
-                positions_per_block: schedule.terminal.params.witness.blocks.positions_per_block
-                    as u64,
-                live_blocks: schedule.terminal.params.witness.blocks.live_blocks as u64,
+                positions_per_block: schedule.terminal.blocks.positions_per_block as u64,
+                live_blocks: schedule.terminal.blocks.live_blocks as u64,
             },
             inner_commit_matrix: GeneratedInnerCommitMatrix {
-                ring_dimension: schedule
-                    .terminal
-                    .params
-                    .witness
-                    .inner
-                    .matrix
-                    .ring_dimension() as u32,
-                log_basis: schedule.terminal.params.witness.inner.digits.log_basis,
+                ring_dimension: schedule.terminal.inner.matrix.ring_dimension() as u32,
+                log_basis: schedule.terminal.inner.digits.log_basis,
             },
-            num_digits_inner: schedule.terminal.params.witness.inner.digits.num_digits as u32,
-            fold_log_basis: schedule.terminal.params.witness.fold.log_basis,
-            fold_digit_count: schedule.terminal.params.witness.fold.num_digits as u32,
-            inner_output_rank: schedule.terminal.params.witness.inner.matrix.output_rank() as u32,
+            num_digits_inner: schedule.terminal.inner.digits.num_digits as u32,
+            fold_log_basis: schedule.terminal.fold.log_basis,
+            fold_digit_count: schedule.terminal.fold.num_digits as u32,
+            inner_output_rank: schedule.terminal.inner.matrix.output_rank() as u32,
             inner_coeff_linf_bound: schedule
                 .terminal
-                .params
-                .witness
                 .inner
                 .matrix
                 .coeff_linf_bound()
                 .unwrap_or(0),
-            response_l2_sq_cap: schedule.terminal.params.witness.response_l2_sq_cap(),
+            response_l2_sq_cap: schedule.terminal.response_l2_sq_cap(),
             z_linf_cap: terminal_group.z_linf_cap,
             z_rice_low_bits: terminal_group.z_rice_low_bits,
             z_payload_bytes: terminal_group.z_payload_bytes as u64,

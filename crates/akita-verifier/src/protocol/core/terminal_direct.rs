@@ -9,7 +9,7 @@ use akita_field::{
 use akita_types::{
     decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
     AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    TerminalCommittedGroupParams, TerminalResponse,
+    TerminalFoldParams, TerminalResponse,
 };
 
 fn sparse_challenge_mul_accumulate<F, const D: usize>(
@@ -135,7 +135,7 @@ pub(super) fn verify_terminal_ring_relations<F>(
     setup: &AkitaVerifierSetup<F>,
     challenges: &Challenges,
     multiplier: &RingMultiplierOpeningPoint<F>,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     terminal_response: &TerminalResponse<F>,
 ) -> Result<(), AkitaError>
@@ -325,7 +325,7 @@ where
 #[tracing::instrument(skip_all, name = "terminal_direct_trace")]
 pub(super) fn verify_terminal_trace<F, E>(
     multiplier: &RingMultiplierOpeningPoint<F>,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     terminal_response: &TerminalResponse<F>,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],

@@ -6,7 +6,7 @@ use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
 use crate::{
     CommitmentSliceCount, CommittedGroupParams, CompressionChainPlan, FoldSchedule,
     InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
-    SetupPrefixSlotId, SisModulusProfileId, TerminalCommittedGroupParams,
+    SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
 };
 
 /// Compute the exact maximum reusable setup-matrix field prefix required by
@@ -31,10 +31,7 @@ pub fn setup_matrix_field_elements_for_schedule(
     for fold in &schedule.recursive_folds {
         accumulate_matrix_field_elements_for_level(&fold.params, &mut max_field_elements)?;
     }
-    accumulate_terminal_matrix_field_elements(
-        &schedule.terminal.params.witness,
-        &mut max_field_elements,
-    )?;
+    accumulate_terminal_matrix_field_elements(&schedule.terminal, &mut max_field_elements)?;
     Ok(max_field_elements)
 }
 
@@ -54,10 +51,7 @@ pub fn verifier_setup_matrix_capacity_for_schedule(
     schedule.validate_structure()?;
 
     let mut num_field_elements = 1usize;
-    accumulate_terminal_matrix_field_elements(
-        &schedule.terminal.params.witness,
-        &mut num_field_elements,
-    )?;
+    accumulate_terminal_matrix_field_elements(&schedule.terminal, &mut num_field_elements)?;
     accumulate_compression_matrix_field_elements_for_level(
         &schedule.root.params,
         &mut num_field_elements,
@@ -233,7 +227,7 @@ fn accumulate_compression_matrix_field_elements_for_level(
 
 /// Extend a physical setup footprint with the terminal inner matrix.
 pub fn accumulate_terminal_matrix_field_elements(
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     max_field_elements: &mut usize,
 ) -> Result<(), AkitaError> {
     include_matrix_field_elements(

@@ -6,8 +6,7 @@ use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, CommitmentRingDims,
     CommittedGroupParams, FoldParams, FoldSchedule, RingRole, RingView, SisModulusProfileId,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalFoldParams, TerminalResponseShape,
 };
 
 #[test]
@@ -61,7 +60,7 @@ fn params(ring_dimension: usize) -> CommittedGroupParams {
 #[test]
 fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
     let root = params(128);
-    let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(params(64));
+    let terminal_witness = TerminalFoldParams::from_expanded_group(params(64));
     let schedule = FoldSchedule {
         root: FoldParams {
             params: root.clone(),
@@ -69,28 +68,26 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
             output_witness_len: 64,
         },
         recursive_folds: Vec::new(),
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                witness: terminal_witness,
-                sparse_challenge_config:
-                    akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
-                        .expect("terminal challenge"),
-                response_shape: TerminalResponseShape {
-                    layout: TailSegmentLayout {
-                        ring_dimension: 64,
-                        groups: vec![TailSegmentGroupLayout {
-                            z_coords: 64,
-                            e_field_elems: 64,
-                            t_field_elems: 64,
-                            z_linf_cap: Some(1),
-                            z_payload_bytes: 1,
-                            z_rice_low_bits: 0,
-                        }],
-                        logical_num_elems: 192,
-                    },
+        terminal: TerminalFoldParams {
+            fold_challenge_config:
+                akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+                    .expect("terminal challenge"),
+            response_shape: TerminalResponseShape {
+                layout: TailSegmentLayout {
+                    ring_dimension: 64,
+                    groups: vec![TailSegmentGroupLayout {
+                        z_coords: 64,
+                        e_field_elems: 64,
+                        t_field_elems: 64,
+                        z_linf_cap: Some(1),
+                        z_payload_bytes: 1,
+                        z_rice_low_bits: 0,
+                    }],
+                    logical_num_elems: 192,
                 },
             },
             input_witness_len: 64,
+            ..terminal_witness
         },
     };
     validate_schedule_ring_dims(&schedule)

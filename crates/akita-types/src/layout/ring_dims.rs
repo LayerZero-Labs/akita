@@ -199,10 +199,10 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
         }
         Ok(())
     };
-    let root_next_d = schedule.recursive_folds.first().map_or_else(
-        || schedule.terminal.params.witness.d_a(),
-        |next| next.params.d_a(),
-    );
+    let root_next_d = schedule
+        .recursive_folds
+        .first()
+        .map_or_else(|| schedule.terminal.d_a(), |next| next.params.d_a());
     validate_step(
         &schedule.root.params,
         schedule.root.input_witness_len,
@@ -236,10 +236,10 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
         validate_role_dims(group.role_dims(shared_d))?;
     }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        let next_ring_d = schedule.recursive_folds.get(index + 1).map_or_else(
-            || schedule.terminal.params.witness.d_a(),
-            |next| next.params.d_a(),
-        );
+        let next_ring_d = schedule
+            .recursive_folds
+            .get(index + 1)
+            .map_or_else(|| schedule.terminal.d_a(), |next| next.params.d_a());
         validate_step(
             &step.params,
             step.input_witness_len,
@@ -247,7 +247,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
             Some(next_ring_d),
         )?;
     }
-    let terminal = &schedule.terminal.params.witness;
+    let terminal = &schedule.terminal;
     let terminal_d = terminal.d_a();
     if terminal_d == 0
         || !SUPPORTED_COMMITMENT_RING_DIMS.contains(&terminal_d)

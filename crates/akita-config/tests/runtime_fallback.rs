@@ -49,7 +49,7 @@ fn assert_schedule_eq(
         "{label}: terminal witness lengths diverge"
     );
     assert_eq!(
-        lhs.terminal.params.response_shape, rhs.terminal.params.response_shape,
+        lhs.terminal.response_shape, rhs.terminal.response_shape,
         "{label}: terminal witness shapes diverge"
     );
 }
@@ -242,27 +242,22 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 
     let mut mutations = Vec::new();
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.ring_dimension += 1;
+    mutated.terminal.response_shape.layout.ring_dimension += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].z_coords += 1;
+    mutated.terminal.response_shape.layout.groups[0].z_coords += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].e_field_elems += 1;
+    mutated.terminal.response_shape.layout.groups[0].e_field_elems += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].t_field_elems += 1;
+    mutated.terminal.response_shape.layout.groups[0].t_field_elems += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated
-        .terminal
-        .params
-        .response_shape
-        .layout
-        .logical_num_elems += 1;
+    mutated.terminal.response_shape.layout.logical_num_elems += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].z_payload_bytes = 0;
+    mutated.terminal.response_shape.layout.groups[0].z_payload_bytes = 0;
     mutations.push(mutated);
 
     for mutated in mutations {

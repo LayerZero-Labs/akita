@@ -237,7 +237,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
             .expect("shipped fp32 schedule")
             .into_schedule();
-        let terminal_params = &schedule.terminal.params.witness;
+        let terminal_params = &schedule.terminal;
         let response_l2_sq_cap = terminal_params.response_l2_sq_cap();
 
         let poly = fp32_l2_onehot_poly(&schedule.root.params, 9);

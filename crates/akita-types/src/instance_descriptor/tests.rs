@@ -1,8 +1,7 @@
 use super::*;
 use crate::{
     CommittedGroupParams, FoldParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape,
+    OpeningScheduleSelection, ScheduleRowDigest, TerminalFoldParams, TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -30,7 +29,7 @@ fn sample_schedule() -> FoldSchedule {
         inner.ring_dimension(),
     );
     let (terminal_witness, admission_cap) =
-        TerminalCommittedGroupParams::try_from_expanded_group(committed.clone())
+        TerminalFoldParams::try_from_expanded_group(committed.clone())
             .expect("terminal response bounds");
     let response_shape =
         TerminalResponseShape::derive(&terminal_witness, admission_cap).expect("terminal shape");
@@ -41,13 +40,11 @@ fn sample_schedule() -> FoldSchedule {
             output_witness_len: 256,
         },
         recursive_folds: Vec::new(),
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                witness: terminal_witness,
-                sparse_challenge_config: sparse,
-                response_shape,
-            },
+        terminal: TerminalFoldParams {
+            fold_challenge_config: sparse,
+            response_shape,
             input_witness_len: 256,
+            ..terminal_witness
         },
     }
 }
@@ -301,7 +298,7 @@ fn terminal_topology_changes_plan_binding() {
 fn terminal_sparse_sampler_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    second.terminal.params.sparse_challenge_config = SparseChallengeConfig::pm1_only(4);
+    second.terminal.fold_challenge_config = SparseChallengeConfig::pm1_only(4);
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),
         PlanSection::from_schedule(sample_selection(), &second)

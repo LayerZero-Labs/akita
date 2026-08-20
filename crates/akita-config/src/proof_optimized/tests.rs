@@ -36,7 +36,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
     .expect("generated one-hot schedule")
     .into_schedule();
     schedule.validate_structure().expect("typed topology");
-    assert!(schedule.terminal.params.witness.inner_width() > 0);
+    assert!(schedule.terminal.inner_width() > 0);
     assert_eq!(
         schedule.terminal.input_witness_len,
         schedule
@@ -134,13 +134,13 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         step.params.inner_commit_matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     )));
-    let terminal = &schedule.terminal.params;
+    let terminal = &schedule.terminal;
     assert_eq!(
-        terminal.sparse_challenge_config,
+        terminal.fold_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(798_341_908));
-    assert_eq!(terminal.witness.inner.matrix.output_rank(), 6);
+    assert_eq!(terminal.response_l2_sq_cap(), Some(798_341_908));
+    assert_eq!(terminal.inner.matrix.output_rank(), 6);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
@@ -180,8 +180,8 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
         .into_schedule();
     assert_eq!(
         (
-            schedule.terminal.params.witness.fold.log_basis,
-            schedule.terminal.params.witness.fold.num_digits,
+            schedule.terminal.fold.log_basis,
+            schedule.terminal.fold.num_digits,
         ),
         (
             entry.terminal.fold_log_basis,
@@ -190,13 +190,7 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
         "expanded terminal must preserve its generated selective-L2 fold geometry"
     );
     assert!(matches!(
-        schedule
-            .terminal
-            .params
-            .witness
-            .inner
-            .matrix
-            .security_route(),
+        schedule.terminal.inner.matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     ));
 }
@@ -230,13 +224,7 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             }) || matches!(
-                schedule
-                    .terminal
-                    .params
-                    .witness
-                    .inner
-                    .matrix
-                    .security_route(),
+                schedule.terminal.inner.matrix.security_route(),
                 akita_types::InnerCommitSecurityRoute::L2 { .. }
             )
         });
@@ -273,7 +261,7 @@ fn setup_capacity_includes_terminal_inner_matrix() {
     .expect("generated fp128 schedule")
     .into_schedule();
     let envelope = setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
-    let terminal = &schedule.terminal.params.witness;
+    let terminal = &schedule.terminal;
     let terminal_a = terminal
         .inner
         .matrix
@@ -313,7 +301,7 @@ fn validate_table_terminal_exact_cache_plans<Cfg: CommitmentConfig>(
             Cfg::ring_challenge_config,
         )
         .expect("shipped entry should materialize");
-        let terminal = &schedule.terminal.params.witness;
+        let terminal = &schedule.terminal;
         let width = terminal.inner_width();
         let requires_i16_tail = akita_types::dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),

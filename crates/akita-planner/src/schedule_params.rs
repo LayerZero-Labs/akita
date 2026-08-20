@@ -368,13 +368,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
     let started = diagnostics.map(|_| std::time::Instant::now());
     let result = (|| {
         if choice.folds.is_empty() {
-            return Ok(akita_types::TerminalFoldDescriptor {
-                witness: &choice.terminal.params,
-                sparse_challenge_config: &choice.terminal.sparse_challenge_config,
-                response_shape: &choice.terminal.response_shape,
-                input_witness_len: choice.terminal.input_witness_len,
-            }
-            .canonical_descriptor_bytes());
+            return Ok(choice.terminal.params.canonical_descriptor_bytes());
         }
         let carrier_prefix_len = choice.folds.len().min(2);
         let mut bytes = Vec::new();
@@ -398,12 +392,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
                 output_witness_len: fold.output_witness_len,
             }
         });
-        let terminal = akita_types::TerminalFoldDescriptor {
-            witness: &choice.terminal.params,
-            sparse_challenge_config: &choice.terminal.sparse_challenge_config,
-            response_shape: &choice.terminal.response_shape,
-            input_witness_len: choice.terminal.input_witness_len,
-        };
+        let terminal = &choice.terminal.params;
         akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
             &mut bytes,
             descriptor_steps,

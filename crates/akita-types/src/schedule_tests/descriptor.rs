@@ -27,12 +27,7 @@ fn borrowed_schedule_descriptor_matches_materialized_schedule() {
                 output_witness_len: fold.output_witness_len,
             }),
     );
-    let terminal = TerminalFoldDescriptor {
-        witness: &schedule.terminal.params.witness,
-        sparse_challenge_config: &schedule.terminal.params.sparse_challenge_config,
-        response_shape: &schedule.terminal.params.response_shape,
-        input_witness_len: schedule.terminal.input_witness_len,
-    };
+    let terminal = &schedule.terminal;
     let mut borrowed_descriptor = Vec::new();
     FoldSchedule::append_descriptor_bytes_from_steps(
         &mut borrowed_descriptor,

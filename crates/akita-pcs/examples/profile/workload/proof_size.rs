@@ -95,7 +95,6 @@ where
 {
     schedule
         .terminal
-        .params
         .response_shape
         .layout
         .z_payload_bytes()

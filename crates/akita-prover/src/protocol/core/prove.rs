@@ -230,7 +230,7 @@ where
     }
     let (next_params, next_binding) = schedule.recursive_folds.first().map_or(
         (
-            super::fold::FoldSuccessorParams::Terminal(&schedule.terminal.params.witness),
+            super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
             akita_types::NextWitnessBindingPolicy::TerminalInnerState,
         ),
         |step| {

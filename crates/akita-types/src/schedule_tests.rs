@@ -222,9 +222,8 @@ fn recursive_schedule(
         crate::scheduled_setup_prefix(natural_len, commitment_params)
     });
     successor.setup_prefix = incoming_setup_prefix;
-    let terminal = TerminalCommittedGroupParams::from_expanded_group(committed_params(
-        successor_ring_dimension,
-    ));
+    let terminal =
+        TerminalFoldParams::from_expanded_group(committed_params(successor_ring_dimension));
     let terminal_response_len = 3 * successor_ring_dimension;
     let root_handoff_len = predecessor_ring_dimension.max(successor_ring_dimension);
 
@@ -242,26 +241,24 @@ fn recursive_schedule(
             input_witness_len: root_handoff_len,
             output_witness_len: successor_ring_dimension,
         }],
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                witness: terminal,
-                sparse_challenge_config: SparseChallengeConfig::pm1_only(3),
-                response_shape: TerminalResponseShape {
-                    layout: TailSegmentLayout {
-                        ring_dimension: successor_ring_dimension,
-                        groups: vec![TailSegmentGroupLayout {
-                            z_coords: successor_ring_dimension,
-                            e_field_elems: successor_ring_dimension,
-                            t_field_elems: successor_ring_dimension,
-                            z_linf_cap: Some(1),
-                            z_payload_bytes: 1,
-                            z_rice_low_bits: 0,
-                        }],
-                        logical_num_elems: terminal_response_len,
-                    },
+        terminal: TerminalFoldParams {
+            fold_challenge_config: SparseChallengeConfig::pm1_only(3),
+            response_shape: TerminalResponseShape {
+                layout: TailSegmentLayout {
+                    ring_dimension: successor_ring_dimension,
+                    groups: vec![TailSegmentGroupLayout {
+                        z_coords: successor_ring_dimension,
+                        e_field_elems: successor_ring_dimension,
+                        t_field_elems: successor_ring_dimension,
+                        z_linf_cap: Some(1),
+                        z_payload_bytes: 1,
+                        z_rice_low_bits: 0,
+                    }],
+                    logical_num_elems: terminal_response_len,
                 },
             },
             input_witness_len: successor_ring_dimension,
+            ..terminal
         },
     }
 }
@@ -451,9 +448,11 @@ fn schedule_rejects_recursive_stage2_point_wider_than_terminal() {
     let mut schedule = recursive_schedule(64, 64, false);
     let narrow_terminal = committed_params_with_geometry(64, 1, 1);
     schedule.recursive_folds[0].output_witness_len = 128;
+    // Replace the terminal first: after the three-type merge `input_witness_len`
+    // lives on the same value, so assigning it before the replacement would be
+    // silently discarded.
+    schedule.terminal = TerminalFoldParams::from_expanded_group(narrow_terminal);
     schedule.terminal.input_witness_len = 128;
-    schedule.terminal.params.witness =
-        TerminalCommittedGroupParams::from_expanded_group(narrow_terminal);
 
     let err = schedule
         .validate_structure()
@@ -611,8 +610,8 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
     );
     let expected_inner = committed.inner_commit_matrix;
 
-    let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
-        .expect("terminal projection");
+    let (terminal, response_cap) =
+        TerminalFoldParams::try_from_expanded_group(committed).expect("terminal projection");
     assert_eq!(terminal.inner.matrix, expected_inner);
     assert_eq!(
         response_cap,
@@ -1271,12 +1270,7 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
 
     for field in ["cap", "rice", "budget"] {
         let mut changed_schedule = schedule.clone();
-        let group = &mut changed_schedule
-            .terminal
-            .params
-            .response_shape
-            .layout
-            .groups[0];
+        let group = &mut changed_schedule.terminal.response_shape.layout.groups[0];
         match field {
             "cap" => {
                 group.z_linf_cap = Some(group.z_linf_cap.unwrap_or_default() + 1);

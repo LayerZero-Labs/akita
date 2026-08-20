@@ -3,8 +3,7 @@
 use akita_field::AkitaError;
 use akita_types::{
     centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,
-    NttCacheKey, NttTransformDomain, SetupPrefixSlotId, SisModulusProfileId,
-    TerminalCommittedGroupParams,
+    NttCacheKey, NttTransformDomain, SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
 };
 
 /// Compute cluster that owns one public-matrix transform request.
@@ -141,10 +140,7 @@ impl NttExecutionRequirements {
             )?;
         }
 
-        requirements.add_terminal(
-            schedule.recursive_folds.len(),
-            &schedule.terminal.params.witness,
-        )?;
+        requirements.add_terminal(schedule.recursive_folds.len(), &schedule.terminal)?;
         Ok(requirements)
     }
 
@@ -419,7 +415,7 @@ impl NttExecutionRequirements {
     fn add_terminal(
         &mut self,
         level: usize,
-        params: &TerminalCommittedGroupParams,
+        params: &TerminalFoldParams,
     ) -> Result<(), AkitaError> {
         let key = NttCacheKey::from_matrix_shape(
             params.inner.matrix.ring_dimension(),
@@ -699,7 +695,7 @@ mod tests {
                 .expect("recursive witness requirements");
         } else {
             expected_root_level_commits
-                .add_terminal(0, &schedule.terminal.params.witness)
+                .add_terminal(0, &schedule.terminal)
                 .expect("terminal witness requirements");
         }
         let actual_root_level_commits = requirements
@@ -727,7 +723,7 @@ mod tests {
         assert!(requirements.entries().iter().any(|entry| {
             entry.fold_level == schedule.recursive_folds.len()
                 && entry.cluster == NttOperationCluster::Commit
-                && entry.key.ring_d == schedule.terminal.params.witness.d_a()
+                && entry.key.ring_d == schedule.terminal.d_a()
                 && entry.key.domain == NttTransformDomain::Negacyclic
         }));
     }

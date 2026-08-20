@@ -12,8 +12,8 @@ pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{
     draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, CommittedGroupParams,
-    FoldLinfProtocolBinding, InnerCommitSecurityRoute, OpeningClaimsLayout,
-    TerminalCommittedGroupParams, TerminalResponseShape,
+    FoldLinfProtocolBinding, InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams,
+    TerminalResponseShape,
 };
 #[cfg(test)]
 use akita_types::{OpeningFamily, OpeningMethod};
@@ -160,7 +160,7 @@ pub(crate) fn sample_terminal_fold_response<F, P, B, T>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     poly: &P,
     shape: &TerminalResponseShape,

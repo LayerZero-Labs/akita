@@ -1,7 +1,4 @@
-use super::{
-    FoldSchedule, FoldScheduleDescriptorStep, GroupCommitPhaseParams, TerminalFoldDescriptor,
-    TerminalFoldStep,
-};
+use super::{FoldSchedule, FoldScheduleDescriptorStep, GroupCommitPhaseParams, TerminalFoldParams};
 use crate::descriptor_bytes::push_usize;
 use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::CommittedGroupParams;
@@ -28,7 +25,7 @@ impl FoldSchedule {
     pub fn append_descriptor_bytes_from_steps<'a>(
         bytes: &mut Vec<u8>,
         mut folds: impl ExactSizeIterator<Item = FoldScheduleDescriptorStep<'a>>,
-        terminal: TerminalFoldDescriptor<'_>,
+        terminal: &TerminalFoldParams,
     ) -> Result<(), AkitaError> {
         let root = folds.next().ok_or_else(|| {
             AkitaError::UnsupportedSchedule(
@@ -167,37 +164,23 @@ fn append_recursive_fold_descriptor_bytes(
     push_usize(bytes, output_witness_len);
 }
 
-impl TerminalFoldStep {
+impl TerminalFoldParams {
     /// Canonical ordering descriptor for a terminal suffix.
+    ///
+    /// Byte order is unchanged by the three-type merge: tag, the terminal
+    /// group's own bytes, the challenge family, the response shape, then the
+    /// input length. `TerminalFoldDescriptor` was a borrowed view over exactly
+    /// these five and is deleted.
     pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         self.append_descriptor_bytes(&mut bytes);
         bytes
     }
 
-    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        TerminalFoldDescriptor {
-            witness: &self.params.witness,
-            sparse_challenge_config: &self.params.sparse_challenge_config,
-            response_shape: &self.params.response_shape,
-            input_witness_len: self.input_witness_len,
-        }
-        .append_descriptor_bytes(bytes);
-    }
-}
-
-impl TerminalFoldDescriptor<'_> {
-    /// Canonical ordering descriptor for a borrowed terminal suffix.
-    pub fn canonical_descriptor_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
-    fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(3);
-        self.witness.append_descriptor_bytes(bytes);
-        append_schedule_sparse_challenge_descriptor_bytes(bytes, self.sparse_challenge_config);
+        self.append_group_descriptor_bytes(bytes);
+        append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         self.response_shape.append_descriptor_bytes(bytes);
         push_usize(bytes, self.input_witness_len);
     }

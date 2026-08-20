@@ -4,7 +4,7 @@ use crate::compute::compression::{execute_compression_chains, CompressionExecuti
 use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
-    dispatch_for_field, CommittedSourceEncoding, CompressionChainPlan, TerminalCommittedGroupParams,
+    dispatch_for_field, CommittedSourceEncoding, CompressionChainPlan, TerminalFoldParams,
 };
 
 /// Public state bound for the witness produced by one intermediate fold.
@@ -200,7 +200,7 @@ where
 /// commitment state. No outer digits or outer commitment are computed.
 #[inline(never)]
 pub fn commit_terminal_w<Cfg, B>(
-    commit_params: &TerminalCommittedGroupParams,
+    commit_params: &TerminalFoldParams,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
     logical_w: &RecursiveWitnessFlat,

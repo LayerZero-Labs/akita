@@ -129,7 +129,7 @@ where
         let successor = schedule.recursive_folds.get(recursive_index + 1);
         let (next_params, next_binding) = successor.map_or(
             (
-                super::fold::FoldSuccessorParams::Terminal(&schedule.terminal.params.witness),
+                super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
                 akita_types::NextWitnessBindingPolicy::TerminalInnerState,
             ),
             |next| {
@@ -199,7 +199,7 @@ where
         stacks.prove_stack_at_level(level),
         transcript,
         current_state,
-        &schedule.terminal.params,
+        &schedule.terminal,
     )?;
 
     Ok(RecursiveSuffixOutcome {
@@ -278,7 +278,7 @@ where
         .unwrap_or_else(|| Arc::clone(&witness));
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_source = RecursiveFoldSource::witness(logical_witness);
-    let params = &scheduled.witness;
+    let params = &scheduled;
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if sumcheck_challenges.len() > recursive_num_vars {
@@ -367,7 +367,7 @@ where
                 Some(stack.opening().prepared()),
                 transcript,
                 params,
-                &scheduled.sparse_challenge_config,
+                &scheduled.fold_challenge_config,
                 &witness_source,
                 &scheduled.response_shape,
             )?;
@@ -380,7 +380,7 @@ where
     )?;
     let terminal_response = akita_types::build_terminal_response(
         params,
-        &scheduled.sparse_challenge_config,
+        &scheduled.fold_challenge_config,
         &scheduled.response_shape,
         &e_folded,
         t_state,
