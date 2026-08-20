@@ -38,10 +38,10 @@ mod physical_l2;
 
 pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
-    sis_table_key_for_linf_bound, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
-    SisTableDigest, SisTableKey, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY,
-    SUPPORTED_SIS_SECURITY_POLICIES,
+    sis_table_key_for_linf_bound, InnerCommitMatrixParams, LinfCommitMatrix, LinfMatrixRole, Open,
+    OpenCommitMatrixParams, Outer, OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole,
+    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, SisTableKey, COEFF_LINF_BUCKETS,
+    DEFAULT_SIS_SECURITY_POLICY, SUPPORTED_SIS_SECURITY_POLICIES,
 };
 pub use committed_source::{CommittedSourceClass, CommittedSourceContract};
 pub use coverage::{

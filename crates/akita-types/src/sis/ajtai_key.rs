@@ -747,189 +747,245 @@ impl InnerCommitMatrixParams {
     }
 }
 
-macro_rules! define_commit_matrix_params {
-    ($name:ident, $role:expr, $description:literal) => {
-        #[doc = $description]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        pub struct $name {
-            pub(crate) output_rank: usize,
-            pub(crate) input_width: usize,
-            pub(crate) sis_table_key: SisTableKey,
-        }
-
-        impl $name {
-            #[allow(clippy::too_many_arguments)]
-            pub fn try_new(
-                policy: SisSecurityPolicyId,
-                table_digest: SisTableDigest,
-                sis_modulus_profile: SisModulusProfileId,
-                output_rank: usize,
-                input_width: usize,
-                coeff_linf_bound: u128,
-                ring_dimension: usize,
-            ) -> Result<Self, AkitaError> {
-                let fields = audit_commit_matrix_fields(
-                    $role,
-                    policy,
-                    table_digest,
-                    sis_modulus_profile,
-                    output_rank,
-                    input_width,
-                    coeff_linf_bound,
-                    ring_dimension,
-                )?;
-                Ok(Self {
-                    output_rank: fields.output_rank,
-                    input_width: fields.input_width,
-                    sis_table_key: fields.sis_table_key,
-                })
-            }
-
-            pub fn try_new_with_min_rank(
-                key: SisTableKey,
-                input_width: usize,
-            ) -> Result<Self, AkitaError> {
-                let fields = min_rank_commit_matrix_fields($role, key, input_width)?;
-                Ok(Self {
-                    output_rank: fields.output_rank,
-                    input_width: fields.input_width,
-                    sis_table_key: fields.sis_table_key,
-                })
-            }
-
-            /// Re-audit all security-sensitive matrix fields against the
-            /// canonical SIS table and rank floor.
-            pub fn validate(&self) -> Result<(), AkitaError> {
-                let fields = audit_commit_matrix_fields(
-                    $role,
-                    self.security_policy(),
-                    self.sis_table_key.table_digest,
-                    self.sis_modulus_profile(),
-                    self.output_rank(),
-                    self.input_width(),
-                    self.coeff_linf_bound(),
-                    self.ring_dimension(),
-                )?;
-                if fields.sis_table_key != self.sis_table_key {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "{} matrix SIS table key is not canonical",
-                        $role.name()
-                    )));
-                }
-                Ok(())
-            }
-
-            #[allow(clippy::too_many_arguments)]
-            pub const fn new_unchecked(
-                policy: SisSecurityPolicyId,
-                table_digest: SisTableDigest,
-                sis_modulus_profile: SisModulusProfileId,
-                output_rank: usize,
-                input_width: usize,
-                coeff_linf_bound: u128,
-                ring_dimension: usize,
-            ) -> Self {
-                Self {
-                    output_rank,
-                    input_width,
-                    sis_table_key: SisTableKey {
-                        policy,
-                        table_digest,
-                        modulus_profile: sis_modulus_profile,
-                        role: $role,
-                        ring_dimension: ring_dimension as u32,
-                        coeff_linf_bound,
-                    },
-                }
-            }
-
-            #[inline]
-            pub fn output_rank(&self) -> usize {
-                self.output_rank
-            }
-
-            #[inline]
-            pub fn input_width(&self) -> usize {
-                self.input_width
-            }
-
-            #[inline]
-            pub fn security_policy(&self) -> SisSecurityPolicyId {
-                self.sis_table_key.policy
-            }
-
-            #[inline]
-            pub fn coeff_linf_bound(&self) -> u128 {
-                self.sis_table_key.coeff_linf_bound
-            }
-
-            #[inline]
-            pub fn sis_modulus_profile(&self) -> SisModulusProfileId {
-                self.sis_table_key.modulus_profile
-            }
-
-            #[inline]
-            pub fn sis_table_key(&self) -> SisTableKey {
-                self.sis_table_key
-            }
-
-            #[inline]
-            pub fn ring_dimension(&self) -> usize {
-                self.sis_table_key.ring_dimension as usize
-            }
-
-            /// Input dimension after expanding module coordinates into raw ring coefficients.
-            #[inline]
-            pub fn raw_input_dimension(&self) -> Option<usize> {
-                self.input_width.checked_mul(self.ring_dimension())
-            }
-
-            /// Output dimension after expanding module coordinates into raw ring coefficients.
-            #[inline]
-            pub fn raw_output_dimension(&self) -> Option<usize> {
-                self.output_rank.checked_mul(self.ring_dimension())
-            }
-
-            #[must_use]
-            pub fn max_secure_collision_linf(&self) -> Option<u128> {
-                COEFF_LINF_BUCKETS
-                    .iter()
-                    .copied()
-                    .take_while(|&bound| {
-                        let key = SisTableKey {
-                            coeff_linf_bound: bound,
-                            ..self.sis_table_key
-                        };
-                        min_secure_rank(key, self.input_width as u64)
-                            .is_some_and(|rank| rank <= self.output_rank)
-                    })
-                    .last()
-            }
-
-            pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-                bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
-                bytes.push(self.security_policy().tag());
-                bytes.push(self.sis_table_key.role.tag());
-                bytes.extend_from_slice(&self.sis_table_key.table_digest.0);
-                bytes.extend_from_slice(&self.sis_table_key.ring_dimension.to_le_bytes());
-                push_usize(bytes, self.output_rank());
-                push_usize(bytes, self.input_width());
-                push_u128(bytes, self.coeff_linf_bound());
-            }
-        }
-    };
+mod sealed {
+    /// Prevents downstream crates from inventing a table-keyed matrix role.
+    pub trait Sealed {}
 }
 
-define_commit_matrix_params!(
-    OuterCommitMatrixParams,
-    SisMatrixRole::Outer,
-    "Parameters for the outer commitment matrix (B)."
-);
-define_commit_matrix_params!(
-    OpenCommitMatrixParams,
-    SisMatrixRole::Open,
-    "Parameters for the opening commitment matrix (D)."
-);
+/// A commitment-matrix role whose identity is a plain audited SIS table key.
+///
+/// Only the B and D roles qualify. The A role carries an
+/// [`InnerCommitSecurityRoute`] instead, so its `sis_table_key` and
+/// `coeff_linf_bound` are optional and its `validate` branches on the route;
+/// forcing it into this generic would reintroduce exactly the `Option`-shaped
+/// tag that the parameter-consolidation plan rejects. What the three roles share
+/// is the audit code, which they already do:
+/// [`audit_commit_matrix_fields`] and [`min_rank_commit_matrix_fields`] serve all
+/// three.
+pub trait LinfMatrixRole: sealed::Sealed {
+    /// The protocol role this marker stands for.
+    const ROLE: SisMatrixRole;
+}
+
+/// Marker for the outer commitment matrix (B).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Outer;
+
+/// Marker for the opening commitment matrix (D).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Open;
+
+impl sealed::Sealed for Outer {}
+impl sealed::Sealed for Open {}
+
+impl LinfMatrixRole for Outer {
+    const ROLE: SisMatrixRole = SisMatrixRole::Outer;
+}
+
+impl LinfMatrixRole for Open {
+    const ROLE: SisMatrixRole = SisMatrixRole::Open;
+}
+
+/// One audited L-infinity Ajtai matrix identity.
+///
+/// Replaces two byte-identical macro expansions. The role moves from the type
+/// *name* into a type *parameter*, so the ~170 lines of constructors, accessors,
+/// validation, and encoding exist once instead of twice.
+///
+/// This does not change what the type system enforces. The macro already emitted
+/// two distinct structs, so a B matrix could never be passed where a D matrix was
+/// required; `LinfCommitMatrix<Outer>` and `LinfCommitMatrix<Open>` are equally
+/// distinct. What changes is that the shared behaviour has one definition, and
+/// that [`LinfMatrixRole`] is sealed, so the set of table-keyed roles cannot grow
+/// outside this module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LinfCommitMatrix<R: LinfMatrixRole> {
+    pub(crate) output_rank: usize,
+    pub(crate) input_width: usize,
+    pub(crate) sis_table_key: SisTableKey,
+    role: core::marker::PhantomData<R>,
+}
+
+/// Parameters for the outer commitment matrix (B).
+///
+/// Kept as a permanent alias: the name documents the protocol role at every
+/// signature and at each generated static-table construction site.
+pub type OuterCommitMatrixParams = LinfCommitMatrix<Outer>;
+
+/// Parameters for the opening commitment matrix (D).
+///
+/// Kept as a permanent alias, for the same reason as
+/// [`OuterCommitMatrixParams`].
+pub type OpenCommitMatrixParams = LinfCommitMatrix<Open>;
+
+impl<R: LinfMatrixRole> LinfCommitMatrix<R> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Result<Self, AkitaError> {
+        let fields = audit_commit_matrix_fields(
+            R::ROLE,
+            policy,
+            table_digest,
+            sis_modulus_profile,
+            output_rank,
+            input_width,
+            coeff_linf_bound,
+            ring_dimension,
+        )?;
+        Ok(Self::from_audited(fields))
+    }
+
+    pub fn try_new_with_min_rank(key: SisTableKey, input_width: usize) -> Result<Self, AkitaError> {
+        // `min_rank_commit_matrix_fields` rejects `key.role != R::ROLE`, so a
+        // caller cannot smuggle another role's key into this slot.
+        let fields = min_rank_commit_matrix_fields(R::ROLE, key, input_width)?;
+        Ok(Self::from_audited(fields))
+    }
+
+    #[inline]
+    fn from_audited(fields: AuditedCommitMatrixFields) -> Self {
+        Self {
+            output_rank: fields.output_rank,
+            input_width: fields.input_width,
+            sis_table_key: fields.sis_table_key,
+            role: core::marker::PhantomData,
+        }
+    }
+
+    /// Re-audit all security-sensitive matrix fields against the
+    /// canonical SIS table and rank floor.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        let fields = audit_commit_matrix_fields(
+            R::ROLE,
+            self.security_policy(),
+            self.sis_table_key.table_digest,
+            self.sis_modulus_profile(),
+            self.output_rank(),
+            self.input_width(),
+            self.coeff_linf_bound(),
+            self.ring_dimension(),
+        )?;
+        if fields.sis_table_key != self.sis_table_key {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{} matrix SIS table key is not canonical",
+                R::ROLE.name()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Assemble a matrix identity without auditing it.
+    ///
+    /// `const` because the generated schedule tables construct these in `static`
+    /// position. `PhantomData` is zero-sized and `const`-constructible, so the
+    /// emitted literals keep the shape the emitter already writes.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new_unchecked(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Self {
+        Self {
+            output_rank,
+            input_width,
+            sis_table_key: SisTableKey {
+                policy,
+                table_digest,
+                modulus_profile: sis_modulus_profile,
+                role: R::ROLE,
+                ring_dimension: ring_dimension as u32,
+                coeff_linf_bound,
+            },
+            role: core::marker::PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn output_rank(&self) -> usize {
+        self.output_rank
+    }
+
+    #[inline]
+    pub fn input_width(&self) -> usize {
+        self.input_width
+    }
+
+    #[inline]
+    pub fn security_policy(&self) -> SisSecurityPolicyId {
+        self.sis_table_key.policy
+    }
+
+    #[inline]
+    pub fn coeff_linf_bound(&self) -> u128 {
+        self.sis_table_key.coeff_linf_bound
+    }
+
+    #[inline]
+    pub fn sis_modulus_profile(&self) -> SisModulusProfileId {
+        self.sis_table_key.modulus_profile
+    }
+
+    #[inline]
+    pub fn sis_table_key(&self) -> SisTableKey {
+        self.sis_table_key
+    }
+
+    #[inline]
+    pub fn ring_dimension(&self) -> usize {
+        self.sis_table_key.ring_dimension as usize
+    }
+
+    /// Input dimension after expanding module coordinates into raw ring coefficients.
+    #[inline]
+    pub fn raw_input_dimension(&self) -> Option<usize> {
+        self.input_width.checked_mul(self.ring_dimension())
+    }
+
+    /// Output dimension after expanding module coordinates into raw ring coefficients.
+    #[inline]
+    pub fn raw_output_dimension(&self) -> Option<usize> {
+        self.output_rank.checked_mul(self.ring_dimension())
+    }
+
+    #[must_use]
+    pub fn max_secure_collision_linf(&self) -> Option<u128> {
+        COEFF_LINF_BUCKETS
+            .iter()
+            .copied()
+            .take_while(|&bound| {
+                let key = SisTableKey {
+                    coeff_linf_bound: bound,
+                    ..self.sis_table_key
+                };
+                min_secure_rank(key, self.input_width as u64)
+                    .is_some_and(|rank| rank <= self.output_rank)
+            })
+            .last()
+    }
+
+    /// Byte-identical to the two macro expansions it replaces.
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
+        bytes.push(self.security_policy().tag());
+        bytes.push(self.sis_table_key.role.tag());
+        bytes.extend_from_slice(&self.sis_table_key.table_digest.0);
+        bytes.extend_from_slice(&self.sis_table_key.ring_dimension.to_le_bytes());
+        push_usize(bytes, self.output_rank());
+        push_usize(bytes, self.input_width());
+        push_u128(bytes, self.coeff_linf_bound());
+    }
+}
 
 #[cfg(test)]
 #[path = "ajtai_key/artifact_tests.rs"]
@@ -942,3 +998,70 @@ mod l2_tests;
 #[cfg(test)]
 #[path = "ajtai_key/table_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod linf_matrix_tests {
+    use super::*;
+
+    /// The generated tables build these in `static` position, so the constructor
+    /// must stay usable in a const context with the `PhantomData` field present.
+    const STATIC_OUTER: OuterCommitMatrixParams = OuterCommitMatrixParams::new_unchecked(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        128,
+        7,
+        64,
+    );
+
+    #[test]
+    fn role_markers_stamp_their_protocol_role() {
+        assert_eq!(<Outer as LinfMatrixRole>::ROLE, SisMatrixRole::Outer);
+        assert_eq!(<Open as LinfMatrixRole>::ROLE, SisMatrixRole::Open);
+        assert_eq!(STATIC_OUTER.sis_table_key().role, SisMatrixRole::Outer);
+    }
+
+    #[test]
+    fn const_construction_is_zero_sized_in_the_role_parameter() {
+        // `PhantomData` must not widen the value: a role-parameterised matrix has
+        // to stay the same size as the untagged fields it carries, or the
+        // generated tables grow for nothing.
+        assert_eq!(
+            core::mem::size_of::<OuterCommitMatrixParams>(),
+            core::mem::size_of::<OpenCommitMatrixParams>()
+        );
+        assert_eq!(core::mem::size_of::<Outer>(), 0);
+        assert_eq!(core::mem::size_of::<Open>(), 0);
+    }
+
+    #[test]
+    fn min_rank_construction_rejects_another_roles_key() {
+        // The D slot must not accept a B-role table key. This is the check the
+        // sealed role parameter makes unambiguous.
+        let outer_key = STATIC_OUTER.sis_table_key();
+        assert!(OpenCommitMatrixParams::try_new_with_min_rank(outer_key, 128).is_err());
+        assert!(OuterCommitMatrixParams::try_new_with_min_rank(outer_key, 128).is_ok());
+    }
+
+    #[test]
+    fn descriptor_bytes_carry_the_role_tag() {
+        // The role tag is part of the descriptor, so two roles with otherwise
+        // identical fields must not encode alike.
+        let open = OpenCommitMatrixParams::new_unchecked(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            128,
+            7,
+            64,
+        );
+        let mut outer_bytes = Vec::new();
+        STATIC_OUTER.append_descriptor_bytes(&mut outer_bytes);
+        let mut open_bytes = Vec::new();
+        open.append_descriptor_bytes(&mut open_bytes);
+        assert_eq!(outer_bytes.len(), open_bytes.len());
+        assert_ne!(outer_bytes, open_bytes);
+    }
+}
