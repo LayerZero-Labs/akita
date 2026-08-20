@@ -156,7 +156,7 @@ overrides for those values.
 1. **`artifact`** resolves the selected catalog row, runs setup, commit, and
    `batched_prove` over a deterministic synthetic OneHot polynomial, verifies
    it on the host, and serializes its case identity, verifier setup, proof
-   shape, and proof with [`AkitaJoltInputs::write_to_bytes`](glue/src/lib.rs).
+   shape, and proof with [`AkitaJoltInputs::write_to_bytes`](glue/src/wire/mod.rs).
    The older grouped case uses the same envelope with three ordered groups.
 2. **`host`** strictly decodes and verifies every blob before benchmark
    replay. For fp128 it also derives and self-checks the terminal scalar Q128
@@ -188,27 +188,29 @@ overrides for those values.
    feature list to `guest`. A production recursion circuit must use strict
    setup validation or bind an externally checked setup commitment.
 
-## Trusted fp128 field decode
+## Trusted field decode
 
-Blob version 4 puts an explicit, bounded zero-padding record before the setup
-matrix. The host chooses the smallest padding that aligns the matrix payload
-inside Jolt's Postcard-encoded byte-slice input. The decoder checks the padding
-count, every padding byte, and the alignment calculation before it reads the
-matrix. This keeps transcript domains independent of memory layout.
+Blob version 4 introduced an explicit, bounded zero-padding record before the
+setup matrix. Version 5 retains that record and adds the case tag used for guest
+dispatch; version 4 artifacts are intentionally rejected at the magic boundary.
+The host chooses the smallest padding that aligns the matrix payload inside
+Jolt's Postcard-encoded byte-slice input. The decoder checks the padding count,
+every padding byte, and the alignment calculation before it reads the matrix.
+This keeps transcript domains independent of memory layout.
 
-The trusted benchmark decoder validates every fp128 value canonically. It
-views the checked matrix payload as pairs of little-endian `u64` words. When
-the payload address is eight-byte aligned, the decoder reads it directly and
-the RISC V loop uses two aligned loads per field. When an outer input ABI
-places the same bytes at a different alignment, the decoder uses unaligned
-reads directly without a payload-sized staging allocation. Alignment therefore
-selects the load primitive; it does not decide whether otherwise valid wire
-bytes are accepted or change the memory envelope.
+The trusted benchmark decoders validate every field value canonically. On
+aligned input, fp32 uses one `u32` source word, fp64 uses one `u64` source word,
+and fp128 uses two little-endian `u64` words. The resulting RISC V loops use one
+`lw`, one `ld`, and two `ld` instructions per field respectively. When an outer
+input ABI places the same bytes at a different alignment, each decoder uses
+unaligned reads directly without a payload-sized staging allocation. Alignment
+therefore selects the load primitive; it does not decide whether otherwise
+valid wire bytes are accepted or change the memory envelope.
 
 The specialized decoder is used only by the explicitly trusted cached-matrix
 path. Strict setup decoding remains unchanged and still derives the public
-matrix from its seed. Tests sweep all eight possible payload alignments,
-exercise both load paths, and include a valid value with both limbs populated.
+matrix from its seed. Tests sweep every possible payload alignment for each
+word width, exercise both load paths, and include the largest canonical value.
 
 ## Prepared terminal cache
 

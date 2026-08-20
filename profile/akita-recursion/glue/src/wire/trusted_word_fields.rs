@@ -214,11 +214,11 @@ mod tests {
 
                         let mut rest = encoded_at_offset;
                         let decoded = AkitaJoltInputs::<TestF, TEST_D>::
-                            deserialize_trusted_word_setup_matrix(
-                                &mut rest,
-                                expected.num_field_elements(),
-                            )
-                            .expect("trusted matrix decode");
+                                                    deserialize_trusted_word_setup_matrix(
+                                                        &mut rest,
+                                                        expected.num_field_elements(),
+                                                    )
+                                                    .expect("trusted matrix decode");
                         assert!(rest.is_empty());
                         assert_eq!(decoded, expected);
                     }
@@ -230,18 +230,19 @@ mod tests {
                 #[test]
                 fn rejects_noncanonical_fields_without_consuming_payload() {
                     let (expected, mut encoded) = encoded_matrix();
-                    encoded[std::mem::size_of::<u64>()..]
-                        [..std::mem::size_of::<$word>()]
+                    encoded[std::mem::size_of::<u64>()..][..std::mem::size_of::<$word>()]
                         .fill(0xff);
                     let original_len = encoded.len();
                     let mut rest = encoded.as_slice();
-                    let error = AkitaJoltInputs::<TestF, TEST_D>::
-                        deserialize_trusted_word_setup_matrix(
+                    let error =
+                        AkitaJoltInputs::<TestF, TEST_D>::deserialize_trusted_word_setup_matrix(
                             &mut rest,
                             expected.num_field_elements(),
                         )
                         .expect_err("noncanonical field value must fail");
-                    assert!(error.to_string().contains(concat!($field_name, " out of range")));
+                    assert!(error
+                        .to_string()
+                        .contains(concat!($field_name, " out of range")));
                     assert_eq!(rest.len(), original_len - std::mem::size_of::<u64>());
                 }
             }
