@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao, Codex |
 | Created | 2026-05-22 |
 | Status | proposed |
-| PR | |
+| PR | [#417](https://github.com/LayerZero-Labs/akita/pull/417) |
 | Supersedes | Unmerged transcript grinding design at `5057456` |
 | Superseded-by | |
 | Book-chapter | |
@@ -18,12 +18,14 @@ in all capitals.
 ## Summary
 
 Akita will add transcript proof-of-work before Fiat-Shamir challenge queries
-whose algebraic soundness loss reduces their nominal 128-bit challenge
-security. Each such query has a public zero-bit target. The prover supplies a
-nonce that makes that many low bits of a separate transcript predicate equal
-zero. The verifier checks the same predicate before drawing the actual protocol
-challenge. This restores 128 bits of classical random-oracle work per protected
-query without changing the challenge distribution.
+whose algebraic loss makes a bad challenge easier to find than Akita's nominal
+128-bit challenge-capacity convention allows. Each protected query has a public
+zero-bit target. The prover supplies a nonce that makes that many low bits of a
+separate transcript predicate zero. The verifier checks the same predicate
+before drawing the protocol challenge. For a site with bad fraction at most
+`L / |E|`, the policy makes one accepted bad candidate cost about
+`2^g |E| / L` classical random-oracle trials. It does not change the challenge
+distribution.
 
 All transcript search nonces will move into one proof-level bit stream. The
 stream also replaces the current fixed `u32` fields used by fold-response
@@ -33,12 +35,22 @@ response that fits a scheduled norm bound. The existing sparse fold challenge
 families already provide at least 128 bits of challenge support, so they do not
 receive an additional proof-of-work check.
 
-The stream is decoded in a canonical order derived from the public schedule,
-proof shape, opening layout, field tower, and one descriptor-bound grinding
-policy. A nonce with `g` proof-of-work bits uses exactly `g + 7` wire bits. The
-current fold-response nonce uses exactly 12 wire bits. Nonces are packed
-without byte alignment, so small queries do not pay for a fixed `u16` or
-`u32` slot.
+The same pull request will also repair the sparse fold challenge interface used
+by both `EvaluationTrace` and `SubringCoefficientPacking`. The current code
+squeezes one transcript seed per commitment group and expands the complete
+claim-major block vector from a shared XOF stream. That does not expose the
+coordinatewise forks required by the current CWSS extraction argument. The new
+sampler keeps the group root seed and each coordinate's challenge law, but
+derives every claim-major block coordinate through its own domain-separated
+indexed oracle query. The sampler change itself adds no proof bytes or
+transcript sponge squeezes.
+
+The nonce stream is decoded in a canonical order derived from the public
+schedule, opening layout, field tower, protocol configuration, and one
+descriptor-bound grinding policy. A nonce with `g` proof-of-work bits uses
+exactly `g + 7` wire bits. The current fold-response nonce uses exactly 12 wire
+bits. Nonces are packed without byte alignment, so small queries do not pay for
+a fixed `u16` or `u32` slot.
 
 ## Current state
 
@@ -65,6 +77,18 @@ error at most `d / |E|`. The goal of this feature is to charge about
 `2^ceil(log2(d))` work before that challenge, so finding an accepted bad challenge again
 costs about `2^128` classical random-oracle trials.
 
+The sparse fold path has a separate security mismatch. For each commitment
+group, `FoldDraw::draw_folding_challenges_with_rejection` absorbs the group
+context and the shared fold-response nonce, squeezes one 32-byte seed, and
+expands `num_claims * num_live_blocks` sparse challenges. The signed-sparse
+path uses batches of 128 challenges per SHAKE stream. The operator-rejected
+path uses one SHAKE stream for the complete vector. A rewind of the seed changes
+the complete vector. The CWSS argument in
+[`specs/subring-coefficient-packing.md`](subring-coefficient-packing.md), and
+the same argument for `EvaluationTrace`, instead requires forks that change one
+coordinate while all other coordinates stay fixed. PR #394 identified this
+gap and left it open.
+
 The old unmerged design proposed one `u16` per nonzero query, a nine-bit cap,
 and a new byte-granular transcript squeeze cursor. The current code makes those
 choices unnecessary:
@@ -86,7 +110,9 @@ This specification uses those current boundaries.
 Add one schedule-derived `GrindingPlan`, one canonical
 `TranscriptNonceStream`, and one transcript proof-of-work primitive, then route
 every current Fiat-Shamir query through the plan. The same stream will carry
-the existing fold-response nonces in 12 bits each.
+the existing fold-response nonces in 12 bits each. Replace the shared sparse
+challenge XOF stream with indexed coordinate queries so the implemented fold
+challenge structure matches the existing CWSS extraction theorem.
 
 ### Terminology
 
@@ -94,24 +120,28 @@ This document uses these terms precisely:
 
 | Term | Meaning |
 |---|---|
-| challenge query | One logical Fiat-Shamir draw or consecutive block of draws with no intervening prover message |
+| challenge site | The smallest scalar or tuple of Fiat-Shamir draws covered by one public conditional bad-set bound |
+| pre-query history | All public transcript state and prover messages fixed before a candidate nonce is selected |
 | loss factor `L` | Public upper bound such that a query's conditional algebraic error is at most `L / |E|` |
 | grind bits `g` | Public proof-of-work target assigned to a query |
 | nonce bits `w` | Number of proof bits reserved for the bounded nonce search |
 | proof-of-work query | A query that checks a zero-bit predicate before drawing the protocol challenge |
 | fold-response query | Existing rejection sampling that changes the sparse challenge until the honest response fits |
 | zero-bit query | A catalogued query with `g = 0`; it consumes no nonce and makes no transcript change |
+| fold coordinate | One sparse challenge at a canonical `(group, claim, block)` position |
 
 ### Invariants
 
 1. **One public plan.** Prover, verifier, proof shape, descriptor, serializer,
    and proof-size accounting MUST consume the same `GrindingPlan`. No callsite
    may reconstruct a competing nonce width or loss bound.
-2. **Logical query boundaries.** One extension-field challenge is one query,
-   not one query per base-field limb. One multilinear point is one query when
-   its coordinates are consecutive and no prover message intervenes. Each
-   sumcheck round is a separate query because a prover round message
-   intervenes.
+2. **Conditional query boundaries.** Each plan site MUST have one stated bound
+   on its bad challenge fraction for every fixed pre-query history. One
+   extension-field element is not split into base-field limbs. One
+   multilinear point remains one tuple when one joint bound covers the point.
+   Each sumcheck round is separate because its round polynomial fixes a new bad
+   set. The absence of an ordinary prover message is not enough to merge two
+   sites: a nonzero grinding nonce is itself an adaptive prover message.
 3. **Public acceptance.** A proof-of-work query with target `g` accepts exactly
    when the first `g` bits of its public 32-byte predicate block are zero.
 4. **Separate predicate and challenge.** The predicate block MUST NOT be reused
@@ -137,9 +167,13 @@ This document uses these terms precisely:
     from an unvalidated length.
 11. **Positional transcript.** Production labels remain diagnostics. The fixed
     proof-of-work payload enters the sponge. A semantic label does not.
-12. **Fold behavior is preserved.** Moving a fold-response nonce into the
-    stream MUST preserve its current transcript payload, challenge law,
-    4096-candidate bound, prover acceptance rule, and verifier response check.
+12. **Fold response behavior is preserved.** The fold-response nonce remains
+    one jointly searched value per fold, shared by all commitment groups. Its
+    numeric value still enters each group root payload as little-endian `u32`.
+    The 4096-candidate bound, prover acceptance rule, verifier response check,
+    and each coordinate's marginal challenge law remain unchanged. Indexed
+    coordinate derivation intentionally changes deterministic challenge test
+    vectors and may change which nonce an honest prover accepts.
 13. **Sparse support is not double charged.** The signed sparse challenge and
     operator-rejected sparse families retain their current certified support.
     They have no proof-of-work query merely because a fold-response nonce is
@@ -147,13 +181,24 @@ This document uses these terms precisely:
 14. **No compatibility path.** The proof and descriptor wire formats change in
     place. Akita provides no backward proof compatibility, so there is no
     legacy decoder or duplicate verifier replay.
+15. **Coordinatewise CWSS queries.** Every sparse fold coordinate MUST be an
+    independently domain-separated oracle query. Reprogramming one coordinate
+    with the group root and fold-response nonce fixed MUST leave every other
+    coordinate and the live transcript state unchanged.
+16. **One derivation direction.** Public schedule, normalized opening layout,
+    field metadata, and protocol configuration derive the `GrindingPlan`. The
+    plan derives `nonce_stream_bits`, which is then supplied to
+    `AkitaBatchedProofShape`. Plan derivation MUST NOT consume the completed
+    proof shape.
 
 ### Non-goals
 
 This feature does not do any of the following:
 
-1. It does not change the sparse fold challenge distribution or its 128-bit
-   support analysis.
+1. It does not change the marginal sparse fold challenge distribution, its
+   support certificate, the LS18 unit-difference argument, or the response
+   norm policy. It does change the deterministic mapping from a group root seed
+   to a challenge vector.
 2. It does not use proof-of-work to price SIS or MSIS security.
 3. It does not treat the fold-response nonce as evidence that a response is
    short. The verifier still checks the scheduled response representation and
@@ -165,13 +210,16 @@ This feature does not do any of the following:
    Fiat-Shamir accounting uses a classical online random-oracle query bound.
    A QROM theorem, including quantum search against the predicate, is separate
    work.
-6. It does not close the full-vector forking and multi-fork extraction gap in
-   [`specs/subring-coefficient-packing.md`](subring-coefficient-packing.md).
-   Grinding the later `alpha` polynomial check only prices that check.
-7. It does not add `spongefish-pow`, replace the transcript backend, or switch
+6. It does not prove a new extraction theorem for a vector expanded from one
+   shared XOF stream. The implementation instead exposes the product challenge
+   structure assumed by the existing coordinatewise CWSS theorem.
+7. It does not add proof-of-work to sparse fold challenges. Their certified
+   challenge families and existing schedule accounting remain the source of
+   their 128-bit target.
+8. It does not add `spongefish-pow`, replace the transcript backend, or switch
    Akita to another challenger interface.
-8. It does not add a general transcript journal or a byte-level squeeze cursor.
-9. It does not preserve the old unmerged fixed-`u16` proposal.
+9. It does not add a general transcript journal or a byte-level squeeze cursor.
+10. It does not preserve the old unmerged fixed-`u16` proposal.
 
 ## Security model
 
@@ -205,41 +253,72 @@ For current production profiles this simplifies to
 g = ceil_log2(L).
 ```
 
-One candidate passes the predicate with probability `2^-g`. A classical
-attacker who needs a challenge in a bad set of fraction at most `L / |E|`
-therefore expects about
+For every fixed pre-query history, one candidate passes the predicate with
+probability `2^-g`, and its separate protocol challenge lands in the bad set
+with probability at most `L / |E|`. A classical attacker therefore expects
+about
 
 ```text
 2^g * |E| / L
 ```
 
-random-oracle work. Under the nominal capacity convention, this reaches the
-`2^128` target when `C = 128`. Exact field cardinality remains visible in the
-displayed expression and in complete concrete accounting.
+random-oracle work per accepted bad candidate. Under the nominal capacity
+convention, this meets the 128-bit target when `C = 128`. Exact field
+cardinality remains visible in the displayed expression and in complete
+concrete accounting.
 
 This is computational work accounting. It is not a claim that the interactive
 soundness error changed from `L / |E|` to `1 / |E|`. The proof-of-work
 predicate and the protocol challenge use separate random-oracle outputs so the
 challenge remains uniform after predicate acceptance.
 
-### Query composition
+### Grinding-aware classical ROM bound
 
-The target is applied to each logical query. The implementation MUST NOT add a
-blanket `ceil_log2(number_of_queries)` surcharge to every site. Such a rule
-would multiply honest prover work even though the existing Fiat-Shamir theorem
-already accounts for the adversary's total oracle-query budget `Q` and the
-protocol proof accounts for its own sum of challenge errors.
-
-The final security statement still includes both of these terms:
+The grinding claim uses a direct online random-oracle bound. For site `i`, let
+`B_i(h)` be the bad set after fixing any reachable pre-query history `h`. The
+site's canonical loss helper MUST establish
 
 ```text
-interactive challenge error = sum of the protocol's query errors
-Fiat-Shamir knowledge error <= (Q + 1) * interactive challenge error
+Pr[c_i in B_i(h) | h] <= L_i / |E_i|
 ```
 
-Grinding changes the work required to realize one of those errors. It does not
-erase the sum and it does not erase `Q`. Reusing the current online
-random-oracle statement avoids counting nonce freedom twice.
+for every such `h`, including histories containing earlier accepted grinding
+nonces. The prover message that fixes `B_i(h)` MUST be absorbed before the
+candidate nonce. The predicate and protocol challenge MUST be distinct
+consecutive outputs in the ideal duplex or random-oracle model. Production
+labels remain diagnostic; consuming the complete predicate squeeze before the
+challenge squeeze provides the separation.
+
+If an adversary makes `q_i` distinct candidate queries at site `i`, then a
+union bound gives
+
+```text
+Pr[accepted predicate and bad challenge at site i]
+  <= q_i * 2^(-g_i) * L_i / |E_i|.
+```
+
+Repeated or malformed candidates do not improve this bound. Summing over
+protected sites gives
+
+```text
+Pr[any grinding-priced bad challenge]
+  <= sum_i q_i * 2^(-g_i) * L_i / |E_i|.
+```
+
+With `g_i = max(0, 128 + ceil_log2(L_i) - C_i)`, the nominalized term
+`q_i * 2^-g_i * L_i / 2^C_i` is at most `q_i * 2^-128`. The exact term keeps
+`|E_i|` in the denominator and reports the small pseudo-Mersenne deficit. The
+total online query count remains explicit. The policy does not hide it inside
+every honest prover target and MUST NOT add a blanket
+`ceil_log2(number of sites)` surcharge.
+
+This lemma is the normative justification for the grinding gain. The existing
+unground Fiat-Shamir statement `(Q + 1) * kappa` remains a valid background
+bound, but it does not prove the `2^-g` admission factor and MUST NOT be cited as
+if it did. The final Akita security statement lists the grinding-priced terms,
+CWSS extraction error, sumcheck error, transcript collision terms, honest
+exhaustion, and MSIS assumptions separately before applying any outer union
+bound.
 
 ### Bounded nonce search
 
@@ -274,12 +353,12 @@ implementation bound, not a security limit. It lets candidate arithmetic use a
 checked `u32` while the wire still uses exactly `w` bits. A schedule requesting
 more than 25 grind bits fails during plan derivation and verifier setup.
 
-### Current loss rules
+### Current loss rules and site boundaries
 
 The central query catalog uses these rules. `ceil_log2(0)` is never evaluated.
 A singleton or absent check has `L = 1` and `g = 0`.
 
-| Query family | Query boundary | Loss factor `L` | Production `g` |
+| Query family | Conditional site boundary | Loss factor `L` | Production `g` |
 |---|---|---:|---:|
 | degree `d` polynomial identity | one scalar challenge | `max(1, d)` | `ceil_log2(max(1, d))` |
 | sumcheck round of degree `d` | one round after its prover message | `max(1, d)` | `ceil_log2(max(1, d))` |
@@ -288,7 +367,7 @@ A singleton or absent check has `L = 1` and `g = 0`.
 | independent random coefficients | one consecutive coefficient vector | `1` | `0` |
 | one random linear merge | one scalar | `1` | `0` |
 | subring packing consistency at `alpha` | one scalar | `2s - 1` | `ceil_log2(2s - 1)` |
-| signed sparse fold challenge | one 32-byte seed | certified support at least 128 bits | `0` |
+| signed sparse fold coordinate | one indexed coordinate query after a group root | certified support at least 128 bits | `0` |
 
 For an ordinary evaluation-trace ring relation, the alpha loss MUST come from
 one canonical degree-bound helper owned by the relation description. For a
@@ -304,6 +383,85 @@ length. It receives zero grind bits. By contrast, batching with powers
 `1, gamma, ..., gamma^(m-1)` creates a degree `m - 1` polynomial and receives
 `ceil_log2(m - 1)` bits.
 
+`alpha`, `tau0`, and `tau1` are separate conditional sites even when no
+ordinary prover payload lies between their current draws. If a site has
+nonzero `g`, its accepted nonce becomes part of the history for every later
+site. The alpha degree helper bounds the bad set after the complete relation
+payload is fixed. The multilinear point helper bounds each complete `tau`
+tuple for every fixed prior history. Tests MUST verify the precise order
+`alpha`, `tau0`, `tau1` on paths where all three exist. A future refactor may
+group them only by adding one canonical joint loss bound and revising the plan
+policy.
+
+### Sparse fold CWSS structure
+
+Let `m_g = num_claims_g * num_live_blocks_g` for commitment group `g`. The
+current sampler makes one transcript query for a 32-byte group root and then
+consumes the complete vector from one or more shared SHAKE streams. This gives
+the required marginal sparse challenge family, but it does not give the CWSS
+extractor transcripts that differ at exactly one coordinate.
+
+The new derivation keeps the existing group-root transcript transition. For
+each canonical flattened coordinate
+
+```text
+j = claim_index * num_live_blocks_g + block_index,
+```
+
+it initializes a fresh SHAKE256 cursor with the exact byte string
+
+```text
+b"akita/sparse-challenge-prg"
+|| b"akita/fold-challenge-coordinate/v1"
+|| group_root_seed_32
+|| j_as_le_u64.
+```
+
+`j` MUST be less than `m_g`, and every checked conversion and multiplication
+MUST fail before allocation or sampling. The group root already binds the fold
+level's method, group index, claim and block counts, ring dimension, sparse
+configuration, optional operator-rejection policy, and shared fold-response
+nonce. The fixed coordinate domain and `j` make the inner queries disjoint.
+The coordinate queries do not mutate the live transcript. Group roots continue
+to be squeezed in current group order.
+
+In the classical multi-oracle ROM, the transcript backend and indexed SHAKE
+call are modeled as independent domain-separated oracles. This is equivalent
+to one ideal oracle with disjoint domains for the security accounting used
+here. Conditional on a fixed group root, distinct coordinates are independent
+queries with the same sparse challenge law as one current draw. An extractor
+may reprogram coordinate `j` while holding the group root, fold-response nonce,
+every other coordinate query, and the live transcript state fixed. The central
+vector plus one fork per coordinate therefore has the product structure
+required by the existing CWSS set. The existing LS18 argument then makes every
+nonzero coordinate difference a unit. This applies to both `EvaluationTrace`
+and `SubringCoefficientPacking`; it does not rely on a new full-vector rank
+theorem.
+
+The proof also carries the ordinary bad events that two 32-byte group roots
+collide or that a root is guessed by a prior coordinate-oracle query. With
+`Q_root` root queries and `Q_coord` coordinate queries, the union-bound term is
+at most
+
+```text
+(Q_root choose 2) / 2^256 + Q_root * Q_coord / 2^256.
+```
+
+It is listed separately and is below the 128-bit target for the same bounded
+online-query regime used by the existing Fiat-Shamir statement.
+
+The operator-rejected challenge path also starts one cursor per coordinate and
+runs the existing bounded inner rejection loop on that cursor. This preserves
+the admitted marginal distribution and its support certificate. The ordinary
+signed-sparse path does the same without operator rejection. Implementations
+MAY parallelize coordinates, but output order is always claim-major block
+order.
+
+The shared fold-response nonce remains an honest-prover abort and retry value,
+not proof-of-work. For a fixed accepting proof it is part of the pre-challenge
+prefix. Coordinate forks hold it fixed. Its online attempts remain covered by
+the existing random-oracle query accounting.
+
 ### Quantum scope
 
 The PCS is intended for post-quantum use and its SIS tables target 128-bit
@@ -318,17 +476,20 @@ reason to double every current grind target without a theorem.
 ## Query catalog and order
 
 `GrindingPlan` is an ordered replay program, not just a total bit count. It
-contains every logical challenge query, including zero-bit queries, so an audit
-can explain why each challenge is protected or exempt. Only entries with a
-nonce width consume stream bits.
+contains every conditional challenge site, including zero-bit sites, and a
+compact run for every group-root and fold-coordinate derivation. Only entries
+with a nonce width consume stream bits. Runs avoid allocating one plan object
+per sparse coordinate while still expanding to one deterministic audit event
+per coordinate.
 
 The current protocol order is:
 
 1. Opening claim and evaluation batching.
 2. Optional extension-opening reduction point, claim batching, and per-round
    sumcheck challenges.
-3. One fold-response query for the sparse witness-fold challenge.
-4. Ring-switch `alpha`, then the consecutive `tau0` and `tau1` point draws that
+3. One fold-response entry for the fold, then one group-root entry and one
+   claim-major coordinate run for each commitment group.
+4. Ring-switch `alpha`, then the `tau0` and `tau1` point sites that
    exist for that fold shape.
 5. Stage 1 tree sumcheck rounds. Each tree stage is followed by its powers-of
    gamma interstage batching query when child claims exist.
@@ -350,7 +511,8 @@ not the byte label alone, select the rule.
 | `CHALLENGE_SUMCHECK_BATCH` | Stage 2 relation merge | one linear merge, `g = 0` |
 | `CHALLENGE_EOR_CLAIM_BATCH` | independent EOR claim coefficients | independent coefficient vector, `g = 0` |
 | `CHALLENGE_SUMCHECK_ROUND` | EOR, Stage 1, Stage 2, and Stage 3 rounds | round degree from the canonical sumcheck shape |
-| `CHALLENGE_SPARSE_CHALLENGE` | sparse witness fold seed | fold-response entry of 12 nonce bits, no proof-of-work |
+| `CHALLENGE_SPARSE_CHALLENGE` | one sparse group root | zero-bit group-root entry after the fold-response entry |
+| indexed fold-coordinate domain | one claim-major block coordinate | zero-bit coordinate run with certified sparse support |
 | `CHALLENGE_RING_SWITCH` | ring-relation evaluation at `alpha` | relation degree bound |
 | `CHALLENGE_TAU0` | Stage 1 multilinear point | number of point coordinates |
 | `CHALLENGE_TAU1` | relation multilinear point | number of point coordinates |
@@ -371,26 +533,37 @@ The plan MUST mirror the actual branch structure. In particular:
 1. A direct or absent protocol component contributes no phantom queries.
 2. Terminal replay contributes no `tau0` query because terminal ring switching
    has no Stage 1 point.
-3. A consecutive extension-field vector is one catalog entry even though
+3. A consecutive extension-field tuple is one catalog entry when one
+   conditional bad-set helper covers the complete tuple, even though
    `sample_ext_challenge` currently squeezes one base-field limb at a time.
 4. A powers batching site is one entry before its scalar `gamma` draw.
 5. A sumcheck contributes one entry per round because each round polynomial is
    absorbed before the next challenge.
-6. The fold-response entry appears exactly where the existing nonce is
-   absorbed into the sparse challenge context.
+6. The fold-response entry appears once per fold exactly where the existing
+   shared nonce is selected. It precedes all group roots for that fold.
+7. Each live group contributes one root entry and one coordinate run with
+   multiplicity `num_claims * num_live_blocks`. Group and coordinate indices
+   use checked `u32` and `u64` canonical encodings even when Rust call sites use
+   `usize`.
 
 The first implementation MUST include an audit test that records every
-challenge label reached by each production schedule and proves that it matches
-the plan entries in the same order. A challenge draw that bypasses the catalog
-is a test failure even when its assigned grind bits would be zero.
+challenge label and indexed fold-coordinate event reached by each production
+schedule and proves that it matches the expanded plan in the same order. A
+challenge draw that bypasses the catalog is a test failure even when its
+assigned grind bits would be zero.
 
 ## Design
 
 ### Public policy and plan
 
-`akita-types` will own the schedule-facing types because it already owns
-`FoldSchedule`, `OpeningClaimsLayout`, proof shapes, and descriptor sections.
-The intended public model is:
+`akita-types` owns the validated plan, fixed-width site identifiers, descriptor
+section, nonce stream, and proof shape. `akita-config` owns the one canonical
+plan constructor because it already combines `CommitmentConfig`, the effective
+`FoldSchedule`, and the normalized `OpeningClaimsLayout` for both prover and
+verifier. The planner calls that constructor directly. No protocol crate
+rebuilds loss factors or query order.
+
+The semantic model is:
 
 ```rust
 pub const TRANSCRIPT_SECURITY_BITS: u8 = 128;
@@ -401,14 +574,23 @@ pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 pub enum GrindingQueryKind {
     ProofOfWork,
     FoldResponse,
+    FoldChallengeRoot,
+    FoldChallengeCoordinates,
 }
 
 pub enum GrindingSite {
     EvaluationBatch,
     ExtensionOpeningPoint,
     ExtensionOpeningClaimBatch,
-    SumcheckRound { protocol: SumcheckProtocol, round: usize },
+    SumcheckRound {
+        protocol: SumcheckProtocol,
+        level: usize,
+        stage: usize,
+        round: usize,
+    },
     FoldResponse { level: usize },
+    FoldChallengeRoot { level: usize, group: usize },
+    FoldChallengeCoordinates { level: usize, group: usize },
     RingSwitchAlpha { level: usize },
     Tau0Point { level: usize },
     Tau1Point { level: usize },
@@ -420,55 +602,126 @@ pub enum GrindingSite {
     Stage2Batch { level: usize },
 }
 
-pub struct GrindingQuery {
+pub struct GrindingRun {
     pub site: GrindingSite,
     pub kind: GrindingQueryKind,
-    pub loss_factor: usize,
+    pub loss_factor: u64,
     pub grind_bits: u8,
     pub nonce_bits: u8,
+    pub multiplicity: u64,
 }
 
 pub struct GrindingPlan {
-    pub queries: Vec<GrindingQuery>,
+    pub runs: Vec<GrindingRun>,
     pub total_nonce_bits: usize,
 }
 ```
 
 The exact Rust layout MAY change to avoid recursive or oversized enums. The
-semantic fields and one canonical derivation MUST remain. A plan constructor
-takes the public schedule, opening layout, field tower metadata, and proof
-shape. It validates every checked addition, query count, loss factor, grind
-target, and total stream length before proving or decoding.
+semantic fields and one canonical derivation MUST remain. The constructor takes
+the public schedule, normalized opening layout, field tower metadata, basis,
+and protocol configuration. It validates every checked addition, query count,
+loss factor, grind target, multiplicity, and total stream length before proving
+or decoding. It returns the plan before `AkitaBatchedProofShape` is built:
+
+```text
+schedule + normalized opening layout + field/config metadata
+  -> GrindingPlan
+  -> nonce_stream_bits
+  -> AkitaBatchedProofShape.
+```
 
 Zero-bit proof-of-work entries have `nonce_bits = 0`. Nonzero proof-of-work
 entries have `nonce_bits = grind_bits + 7`. Fold-response entries have
 `grind_bits = 0` and `nonce_bits = 12`. This makes the shared storage explicit
-without confusing the security meanings.
+without confusing the security meanings. Fold root and coordinate runs have
+zero loss, grind, and nonce fields. Their multiplicities affect the expanded
+audit schedule but not the stream size.
+
+Proof-of-work, fold-response, and group-root runs have multiplicity one. A fold
+coordinate run has multiplicity `num_claims * num_live_blocks`. The plan checks
+
+```text
+total_nonce_bits = sum(run.nonce_bits * run.multiplicity)
+```
+
+with checked arithmetic, even though every current nonzero-width run has
+multiplicity one. Only proof-of-work runs may have `loss_factor >= 1`.
+Fold-response, group-root, and coordinate runs encode `loss_factor = 0`.
 
 ### Descriptor binding
 
 `FoldLinfProtocolBinding` will be replaced by a protocol-wide
-`TranscriptGrindingBinding`. The current binding contains at least:
+`TranscriptGrindingBinding`. `AkitaInstanceDescriptor` gains this dedicated
+field immediately after `plan`; `SetupSection.fold_linf` is removed. The
+binding contains exactly:
 
 ```text
-encoding version                 = 1
-target security bits             = 128
-proof-of-work slack bits         = 7
-maximum proof-of-work bits       = 25
-predicate bytes                  = 32
-predicate bit order              = little-endian
-fold-response attempt bits       = 12
-fold-response attempts           = 4096
-query-policy revision            = 1
+encoding version                 = le_u16(1)
+target security bits             = le_u16(128)
+proof-of-work slack bits         = u8(7)
+maximum proof-of-work bits       = u8(25)
+predicate bytes                  = u8(32)
+predicate bit-order tag          = u8(0)  // little-endian
+fold-response attempt bits       = u8(12)
+fold-response attempts           = le_u32(4096)
+query-policy revision            = le_u16(1)
+fold-coordinate oracle revision  = le_u16(1)
+plan digest                       = 32 raw Blake2b-256 bytes
 ```
 
-`AkitaInstanceDescriptor` will bind this policy and the canonical digest of
-the complete `GrindingPlan`. A dedicated grinding section is preferable to
-placing call-specific plan data inside `PlanSection`, because the plan depends
-on both the schedule and `OpeningClaimsLayout`.
+The descriptor serializes these fields in the displayed order with no length
+prefix or padding. Validation requires exact equality with the active policy,
+except that the plan digest is recomputed from the public call data and compared
+in constant length.
+
+The canonical plan digest input starts with
+`b"akita/grinding-plan/v1"`, followed by the policy fields above except the
+digest, then `run_count_as_le_u32`, then every run in replay order. Each run is
+encoded as
+
+```text
+kind_tag_as_u8
+|| site_tag_as_u8
+|| site_payload
+|| loss_factor_as_le_u64
+|| grind_bits_as_u8
+|| nonce_bits_as_u8
+|| multiplicity_as_le_u64.
+```
+
+Kind tags are `0` proof-of-work, `1` fold response, `2` fold challenge root,
+and `3` fold challenge coordinates. Site tags and payloads are fixed as follows.
+
+| Tag | Site | Payload fields, all little-endian `u32` |
+|---:|---|---|
+| 0 | `EvaluationBatch` | none |
+| 1 | `ExtensionOpeningPoint` | none |
+| 2 | `ExtensionOpeningClaimBatch` | none |
+| 3 | `SumcheckRound` | protocol, level, stage, round |
+| 4 | `FoldResponse` | level |
+| 5 | `FoldChallengeRoot` | level, group |
+| 6 | `FoldChallengeCoordinates` | level, group |
+| 7 | `RingSwitchAlpha` | level |
+| 8 | `Tau0Point` | level |
+| 9 | `Tau1Point` | level |
+| 10 | `Stage1InterstageBatch` | level, stage |
+| 11 | `L2SubclaimBatch` | level |
+| 12 | `L2NormMerge` | level |
+| 13 | `L2VirtualBatch` | level |
+| 14 | `CompressionBinary` | level |
+| 15 | `Stage2Batch` | level |
+
+Sumcheck protocol tags are `0` extension-opening reduction, `1` Stage 1, `2`
+physical L2, `3` Stage 2, and `4` Stage 3. A site payload contains only the
+listed fields in the listed order. A level value of `u32::MAX` identifies the
+root-global extension-opening path; no other sentinel is allowed. Rust
+`usize`, enum memory layout, generic sequence encodings, and debug strings MUST
+NOT enter these bytes. Blake2b-256 uses the existing
+`digest_descriptor_bytes` primitive.
 
 The plan itself is not serialized in the proof. Prover and verifier derive it
-from public inputs and compare its digest through the descriptor preamble.
+from public inputs and bind its digest through the descriptor preamble.
 Changing a loss rule, query boundary, or encoding rule is therefore a protocol
 revision, not an unbound local choice.
 
@@ -486,12 +739,22 @@ level proof.
 
 The headerless proof body serializes the nonce stream first, then the current
 root, recursive, and terminal payloads. The stream has no length header. The
-canonical `AkitaBatchedProofShape` gains `nonce_stream_bits`, derived from the
-same `GrindingPlan`. Its byte length is
+canonical `AkitaBatchedProofShape` gains `nonce_stream_bits`, supplied from the
+already validated `GrindingPlan` when the shape is constructed. Its byte
+length is
 
 ```text
 nonce_stream_bytes = ceil(nonce_stream_bits / 8).
 ```
+
+The canonical serialized shape places
+`nonce_stream_bits_as_le_u64` first, followed by the existing `root`,
+`recursive_folds`, and `terminal` encodings in their current order. Shape
+construction rejects a plan total that does not fit `u64`. Shape decoding
+checks conversion from `u64` to `usize`, checked ceiling division by eight,
+and `nonce_stream_bytes <= available_proof_bytes` before allocation or proof
+decode. The decoded value also MUST equal the plan-derived total before the
+nonce stream is read.
 
 Bits are appended in plan order. For an entry value `x` with width `w`, stream
 bit `j` receives
@@ -509,10 +772,14 @@ expose random access by site. The plan cursor checks the next expected
 `GrindingSite` and `GrindingQueryKind` before reading or writing. The verifier
 checks exact completion once protocol replay ends.
 
-The stream stores values, not attempts. A proof-of-work value must fit in its
-`w` bits. A fold-response value must be less than 4096. The prover uses a
-checked wider loop counter so the `w = 32` endpoint does not overflow a `u32`
-range expression.
+The stream stores values, not attempts. A proof-of-work writer rejects a value
+that does not fit in `w` bits. The verifier always decodes exactly `w` bits, so
+an over-wide value is not a distinct wire condition. A fold-response value
+must be less than 4096. The prover uses a checked wider loop counter so the
+`w = 32` endpoint does not overflow a `u32` range expression. The enclosing
+headerless proof decoder derives the exact stream byte count from context and
+rejects trailing bytes at the whole-proof boundary. It cannot identify an
+"extra stream byte" separately from an extra proof byte.
 
 ### Transcript proof-of-work primitive
 
@@ -560,6 +827,35 @@ proof-of-work check. The event contains the diagnostic site label, `g`, `w`,
 the nonce value or its digest, and predicate length. Prover and verifier event
 streams must remain identical. Zero-bit queries emit no grind event.
 
+### Indexed sparse fold challenge derivation
+
+`akita-challenges` keeps `FoldDraw` as the single owner of group-root transcript
+payloads. Its live and preview implementations still squeeze one root per
+group. `sample_batched_challenges_from_seed` and the one-cursor operator path
+are replaced at this call site by one canonical indexed sampler. The sampler
+takes the group root, checked coordinate index, ring dimension, sparse config,
+and optional operator-rejection policy. It initializes the cursor from the
+exact coordinate-oracle byte string specified above and samples one challenge.
+
+`Challenges` keeps its current claim-major block layout. Sequential and
+parallel execution MUST return byte-identical vectors. Both opening methods and
+both ordinary and operator-rejected families call the same indexed primitive.
+The implementation SHOULD reuse one buffer and `SignedSparseScratch` per
+sequential sampler or Rayon worker, reinitializing only the SHAKE256 state for
+each coordinate. It MUST NOT allocate the current 4 KiB XOF buffer once per
+coordinate. Buffer reuse does not join the oracle streams because every reset
+absorbs the complete fresh indexed input before any bytes are read.
+The generic public `sample_sparse_challenges` API either moves to this primitive
+or is removed if no live caller remains; a second legacy vector expander MUST
+NOT survive beside the fold path.
+
+The live transcript records one group-root squeeze and diagnostic coordinate
+events. The coordinate events do not absorb or squeeze the transcript sponge.
+The preview path collects the same group-root payloads it does today, derives
+the same roots as live replay, and then runs indexed coordinate sampling. This
+keeps the fold-response search interface and its transcript permutation count
+unchanged.
+
 ### Fold-response migration
 
 The current fold-response search remains in
@@ -568,16 +864,18 @@ The current fold-response search remains in
 accepted value into 12 stream bits. The verifier reads the same entry and
 expands it to `u32` for the existing challenge sampler.
 
-The sparse sampler continues to absorb
+For every candidate, the sparse sampler continues to absorb in each group
 
 ```text
 challenge context || nonce_as_le_u32
 ```
 
-and then squeeze the current 32-byte sparse challenge seed. There is no
-proof-of-work predicate before this seed. A given accepted numeric nonce must
-therefore produce the same sparse challenge as it did before this proof-format
-cutover.
+and then squeeze the current 32-byte group root. There is no proof-of-work
+predicate before this root. Moving an accepted numeric nonce from a `u32` field
+to 12 stream bits MUST preserve the root for an otherwise identical transcript
+prefix. The indexed sampler intentionally changes the vector derived from that
+root, so old sparse challenge vectors and accepted nonce values are not
+compatibility fixtures.
 
 The new `TranscriptGrindingBinding` owns the 12-bit and 4096-attempt constants.
 `FoldLinfProtocolBinding` and its fixed four-byte field are removed. The
@@ -599,11 +897,13 @@ operation in that closure. `akita-sumcheck` therefore does not need to depend
 on `akita-types` or learn Akita's schedule. Its round-message ordering remains
 unchanged.
 
-Consecutive challenge vectors use one plan entry and one optional predicate
-before their first draw. Examples are EOR split points, independent row
-coefficients, `tau0`, and `tau1`. The cursor advances once for the logical
-vector. The current limb-level `sample_ext_challenge` calls remain ordinary
-transcript squeezes inside that block.
+Challenge tuples use one plan entry and one optional predicate before their
+first draw when one conditional bad-set helper covers the tuple. Examples are
+EOR split points, independent row coefficients, `tau0`, and `tau1`. The cursor
+advances once for the tuple. The current limb-level `sample_ext_challenge`
+calls remain ordinary transcript squeezes inside that site. `alpha`, `tau0`,
+and `tau1` remain separate sites and consume separate nonces when their targets
+are nonzero.
 
 Every prover and verifier mirror MUST consume the same site at the same point.
 Tests compare both the ordinary transcript event stream and the plan-consume
@@ -641,9 +941,13 @@ generated output.
 
 ### Acceptance criteria
 
-- [ ] `akita-types` exposes one validated `GrindingPlan` whose ordered entries
-      cover every logical challenge query for every production schedule and
-      opening shape.
+- [ ] `akita-types` exposes one validated `GrindingPlan` whose ordered runs
+      cover every conditional challenge site, sparse group root, and expanded
+      fold coordinate for every production schedule and opening layout.
+- [ ] `akita-config` derives that plan from schedule, normalized opening
+      layout, field metadata, basis, and protocol configuration before proof
+      shape construction. `AkitaBatchedProofShape` consumes the resulting
+      `nonce_stream_bits`; no reverse dependency exists.
 - [ ] The plan derives `g = max(0, 128 + ceil_log2(L) - C)`, uses `w = g + 7`
       for nonzero proof-of-work queries, rejects `g > 25`, and proves the stated
       `exp(-128)` per-query exhaustion bound in unit tests.
@@ -651,22 +955,47 @@ generated output.
       multilinear points, powers batching, independent coefficient vectors,
       sparse challenge draws, and fold-response search using the loss rules in
       this specification.
+- [ ] A security test or executable table checks for every admitted site that
+      `2^-g * L / 2^C <= 2^-128` under the nominal convention and separately
+      reports the exact `2^-g * L / |E|` value and pseudo-Mersenne deficit. The
+      exact deficit does not silently add a blanket grind bit. The security
+      documentation states the separate
+      `sum_i q_i 2^-g_i L_i / |E_i|` classical ROM bound and its conditional
+      bad-set premise.
 - [ ] Every current challenge label reached by a production proof has exactly
       one matching logical plan entry. Zero-bit entries remain visible to the
       audit but consume no stream bits and make no transcript change.
-- [ ] `TranscriptGrindingBinding` replaces `FoldLinfProtocolBinding` and binds
-      the policy constants, query-policy revision, and canonical plan digest in
-      `AkitaInstanceDescriptor`.
+- [ ] `TranscriptGrindingBinding` replaces `FoldLinfProtocolBinding` in the
+      dedicated descriptor field after `PlanSection` and binds the exact policy
+      constants, oracle revision, and Blake2b-256 plan digest specified above.
+      Golden bytes cover every kind, site, and sumcheck protocol discriminator.
 - [ ] `AkitaBatchedProof` carries one leading `TranscriptNonceStream`.
       `FoldLevelProof` and `TerminalLevelProof` no longer carry individual
       `u32` nonce fields.
-- [ ] `AkitaBatchedProofShape` derives the exact stream bit count. The codec is
-      headerless, packs entries little-endian without per-entry alignment, and
-      rejects truncation, extra bytes, nonzero final padding, over-wide values,
-      wrong query kinds, wrong sites, and incomplete replay.
+- [ ] `AkitaBatchedProofShape` carries the exact plan-derived stream bit count.
+      Its canonical bytes start with `nonce_stream_bits_as_le_u64`, followed by
+      the existing root, recursive-fold, and terminal fields. Checked conversion,
+      byte-bound, and equality-to-plan validation occur before proof allocation.
+      The codec is headerless, packs entries little-endian without per-entry
+      alignment, and rejects truncation, nonzero final padding, wrong query
+      kinds, wrong sites, and incomplete replay. The writer rejects over-wide
+      values, and the enclosing exact proof decoder rejects trailing bytes.
 - [ ] Existing fold-response nonces consume exactly 12 stream bits, retain the
-      4096-attempt cap, and produce the same sparse challenge for the same
-      transcript prefix and numeric nonce as before the wire cutover.
+      4096-attempt cap, remain one shared value per fold across all groups, and
+      produce the same group root for the same transcript prefix and numeric
+      nonce across the wire cutover.
+- [ ] Every fold group derives exactly `num_claims * num_live_blocks` challenges
+      from fresh indexed SHAKE256 cursors using the normative coordinate input
+      and claim-major block order. Reprogramming a test oracle at coordinate
+      `j` changes only `j`.
+- [ ] Indexed sampling preserves the certified marginal challenge law for the
+      signed-sparse and operator-rejected families. Their support, LS18 unit
+      difference, and norm-policy tests remain green for `EvaluationTrace` and
+      `SubringCoefficientPacking`.
+- [ ] The subring coefficient-packing spec and Book security text no longer
+      list full-vector CWSS structure as an open blocker. They state the
+      coordinatewise construction and complete multi-fork accounting used by
+      both opening methods.
 - [ ] `akita-transcript` exposes one canonical 32-byte proof-of-work predicate
       transition with the exact payload and low-bit test specified above.
 - [ ] The prover preview tests candidates without mutating the live transcript.
@@ -678,22 +1007,24 @@ generated output.
 - [ ] Every protected sumcheck round grinds after absorbing its round
       polynomial and before sampling that round's challenge.
 - [ ] Every protected consecutive challenge vector grinds once before its
-      first coordinate. No extension-field limb or point coordinate receives a
-      separate stream entry.
+      first coordinate when one conditional bad-set bound covers the complete
+      tuple. No extension-field limb receives a separate stream entry.
 - [ ] Independent random coefficient vectors and single linear merges receive
       zero grind bits. Powers-of-gamma batching receives
       `ceil_log2(m - 1)` bits when `m > 2`.
 - [ ] Ring-switch alpha uses the canonical relation degree helper. Subring
-      coefficient packing uses `L = 2s - 1`. This change does not mark the
-      packing extraction blocker resolved.
+      coefficient packing uses `L = 2s - 1`. `alpha`, `tau0`, and `tau1` are
+      replayed as separate conditional sites in that order.
 - [ ] Sparse fold challenges receive no proof-of-work predicate. Their only
       stream entry is the existing 12-bit fold-response search value.
 - [ ] Logging tests show identical prover and verifier transcript events and
       identical ordered plan-consumption events. Zero-bit sites emit no grind
       event.
-- [ ] Mutating any used nonce bit causes explicit verifier rejection or changes
-      the checked fold response so verification rejects. Mutating only unused
-      final padding also rejects.
+- [ ] Verifier acceptance of a proof-of-work nonce equals recomputation of the
+      public predicate. Fixed known nonpassing mutations reject. A mutated
+      nonce may pass only when its own predicate passes. Fold-response mutations
+      still require the checked response to match. Nonzero final padding
+      rejects.
 - [ ] Root, recursive, terminal, direct, extension-opening, subring-packing,
       physical-L2, compressed, and setup-prefix paths have end-to-end coverage
       for their selected query schedules.
@@ -705,6 +1036,13 @@ generated output.
       updated before the implementation is marked complete.
 - [ ] All verifier-reachable failures obey the no-panic contract under malformed
       proof, shape, descriptor, and stream inputs.
+- [ ] Base-to-head performance evidence includes
+      `cargo bench -p akita-challenges --bench sparse_challenge` and the exact
+      direct, recursive, fp32, fp64, fp128, and multi-group case matrix in
+      `.github/workflows/profile-bench.yml`. Proof and setup bytes MUST NOT grow
+      because of indexed fold derivation. Any statistically credible increase
+      above 1% in complete prove or verify time requires an explicit reviewer
+      decision and an optimization attempt that keeps coordinate independence.
 
 ### Testing strategy
 
@@ -721,11 +1059,21 @@ New focused tests are grouped by owner.
 6. predicate output and following challenge are separate blocks;
 7. Blake2b and Keccak parity at the protocol event level.
 
+`akita-challenges`:
+
+1. exact coordinate-oracle bytes and checked index bounds;
+2. deterministic claim-major ordering in sequential and parallel modes;
+3. changing one injected coordinate-oracle answer changes only that challenge;
+4. marginal support and rejection-policy tests for D64 and D128;
+5. one root per group and one shared fold-response nonce per fold;
+6. golden vectors for both opening methods and both rejection modes.
+
 `akita-types` and `akita-serialization`:
 
 1. bit-stream round trips across byte boundaries;
 2. all-zero and nonzero final padding behavior;
-3. truncated, extended, and mismatched stream rejection;
+3. truncated and mismatched stream rejection, final padding rejection, and
+   whole-proof trailing-byte rejection;
 4. 12-bit fold-response bounds and 32-bit proof-of-work endpoint handling;
 5. plan derivation snapshots for every production schedule family;
 6. descriptor digest changes when any policy or plan entry changes;
@@ -737,7 +1085,8 @@ Protocol crates:
 2. one entry per consecutive vector rather than per limb or coordinate;
 3. query coverage for EOR, ring switching, digit range, physical L2, Stage 2,
    Stage 3, compression, root, recursion, and terminal replay;
-4. same-nonce sparse challenge regression across the fold stream migration;
+4. same-nonce group-root regression across the fold stream migration and new
+   indexed sparse challenge golden vectors;
 5. proof tampering at each query kind;
 6. prover and verifier plan exhaustion at the same final cursor position.
 
@@ -760,6 +1109,9 @@ features, profile, and sharding.
 Verifier overhead is one 32-byte transcript squeeze for each nonzero
 proof-of-work query. It performs no nonce search. Stream decoding is linear in
 the number of stream bits and uses bounded storage derived before proof decode.
+Indexed sparse derivation retains one transcript squeeze per commitment group.
+It replaces shared XOF cursors with independently initialized SHAKE256 cursors,
+which may run in parallel.
 
 Expected prover predicate work is `2^g` per protected query. The intended
 production targets are small because they pay only for public algebraic loss.
@@ -769,11 +1121,14 @@ explicit review, not because it is unsound, but because it implies at least
 4096 expected predicate trials at that site.
 
 The packed stream is always no larger than byte-aligning each entry and is
-strictly smaller than keeping one `u32` per fold. The exact before and after
-proof sizes will be recorded with the existing profile and schedule census
-commands after the plan is implemented. No fixed byte estimate is normative
-before that measurement because current proof shapes vary by field, schedule,
-opening layout, and optional security route.
+strictly smaller than keeping one `u32` per fold. Indexed challenge derivation
+adds no proof or setup bytes. The exact before and after proof sizes and timings
+will be recorded with `cargo bench -p akita-challenges --bench
+sparse_challenge` and the merge-base comparison matrix in
+`.github/workflows/profile-bench.yml`. The matrix covers fp32, fp64, fp128,
+direct, recursive, multi-group, and distributed schedules. No fixed byte or
+timing estimate is normative before that measurement because current proof
+shapes vary by field, schedule, opening layout, and optional security route.
 
 ## Alternatives considered
 
@@ -822,6 +1177,33 @@ The sparse families already have at least 128 bits of certified support. Their
 nonce exists to find an acceptable honest response. Adding a zero predicate
 would duplicate work without restoring any missing challenge bits.
 
+### Keep one shared sparse challenge stream and prove full-vector extraction
+
+This preserves the current sampler, but it requires a new theorem. A rewind
+changes every coordinate, so subtracting two accepted relations leaves one
+equation in many unknown openings. Extraction would need enough full-vector
+forks plus a rank theorem for the resulting sparse challenge-difference matrix,
+with its own failure probability and random-oracle forking loss. That is more
+proof risk than exposing the coordinatewise product structure already assumed
+by Akita's CWSS argument.
+
+### Squeeze one stateful transcript seed per sparse coordinate
+
+This gives distinct transcript outputs, but a stateful fork at coordinate `j`
+also changes every later sponge state and challenge. A triangular extractor may
+be possible, but it is not the coordinatewise CWSS theorem Akita currently
+uses. It also adds one transcript permutation per coordinate. Indexed queries
+from the fixed group root keep all other coordinates and the live transcript
+state unchanged without adding proof bytes or transcript squeezes.
+
+### Retain batches larger than one in the sparse XOF
+
+Batching amortizes XOF initialization, but every challenge after the first in a
+batch shares a cursor and cannot be independently reprogrammed. Parallelizing
+fresh indexed coordinate cursors is the allowed performance optimization. The
+security boundary forbids restoring a shared cursor, even if a microbenchmark
+is faster.
+
 ### Charge the maximum query loss to every challenge
 
 This is easy to state but unnecessarily expensive. The schedule already knows
@@ -849,21 +1231,49 @@ Exit condition: reviewers can evaluate the security model, wire format,
 ownership, query catalog, and later slice boundaries without relying on the old
 unmerged branch.
 
-### Slice 1: Canonical policy, loss helpers, and plan
+### Slice 1: Coordinatewise sparse fold challenges
 
-1. Add the grinding policy constants and query types in `akita-types`.
-2. Add the one canonical relation alpha degree helper.
-3. Derive the complete ordered plan from schedule, opening layout, field tower,
-   and proof shape.
-4. Add query coverage snapshots for all generated production schedules.
-5. Replace `FoldLinfProtocolBinding` with `TranscriptGrindingBinding` and bind
-   the plan digest in `AkitaInstanceDescriptor`.
+1. Add the fixed fold-coordinate domain and indexed SHAKE256 cursor constructor
+   in `akita-challenges`.
+2. Add the one-coordinate signed-sparse and operator-rejected sampler.
+3. Replace shared vector cursors in `FoldDraw` for `EvaluationTrace` and
+   `SubringCoefficientPacking`, preserving one transcript root per group and
+   one shared fold-response nonce per fold.
+4. Add injected-oracle coordinate-fork tests, checked index tests, parallel
+   determinism, marginal support tests, preview and live parity, and new golden
+   vectors.
+5. Run the sparse challenge microbenchmark and the profile benchmark matrix
+   against the merge base. Optimize independent coordinate sampling if the
+   complete prove or verify regression is statistically credible.
+6. Update the active subring packing spec and Book security note to replace the
+   full-vector blocker with the implemented coordinatewise CWSS argument.
+
+Exit condition: changing one coordinate-oracle response changes only that
+coordinate, both fold methods use the indexed sampler, proof and setup sizes
+are unchanged, transcript sponge counts are unchanged, and the CWSS structure
+blocker from PR #394 is closed without a new full-vector theorem.
+
+### Slice 2: Canonical policy, loss helpers, and plan
+
+1. Add the grinding policy constants, fixed-width query types, and canonical
+   run encoding in `akita-types`.
+2. Add the one canonical conditional loss helper for every site, including the
+   relation alpha degree helper.
+3. Derive the complete ordered plan in `akita-config` from schedule, normalized
+   opening layout, field metadata, basis, and protocol configuration.
+4. Expand fold root and coordinate runs in query coverage snapshots for all
+   generated production schedules.
+5. Replace `FoldLinfProtocolBinding` with the dedicated
+   `TranscriptGrindingBinding`, bind the canonical plan digest in
+   `AkitaInstanceDescriptor`, and add descriptor golden bytes.
+6. Construct `AkitaBatchedProofShape` only after the plan and pass in its exact
+   `nonce_stream_bits`.
 
 Exit condition: prover-independent code can derive and validate one plan, its
-exact stream bit length, and its descriptor digest. No proof wire change has
-landed yet.
+exact stream bit length, expanded audit order, and descriptor digest with no
+plan and proof-shape ownership cycle. No proof wire change has landed yet.
 
-### Slice 2: Packed stream and fold-response cutover
+### Slice 3: Packed stream and fold-response cutover
 
 1. Implement `TranscriptNonceStream` plus checked reader and writer cursors.
 2. Add `nonce_stream_bits` to `AkitaBatchedProofShape`.
@@ -874,10 +1284,10 @@ landed yet.
 6. Update exact proof-size accounting and Jolt shape serialization.
 
 Exit condition: all existing proofs use the packed stream for fold-response
-nonces, sparse challenge replay is unchanged for equal numeric nonces, and no
-proof-of-work query is active yet.
+nonces, equal numeric nonces produce equal group roots across the storage
+cutover, and no proof-of-work query is active yet.
 
-### Slice 3: Transcript predicate and prover preview
+### Slice 4: Transcript predicate and prover preview
 
 1. Add the canonical payload, 32-byte predicate, and low-bit checker in
    `akita-transcript`.
@@ -889,7 +1299,7 @@ proof-of-work query is active yet.
 Exit condition: a focused prover and verifier test can search, serialize,
 decode, and check one proof-of-work entry without protocol integration.
 
-### Slice 4: Protocol query integration
+### Slice 5: Protocol query integration
 
 Integrate in dependency order so lower-level drivers are exercised before full
 fold replay:
@@ -910,7 +1320,7 @@ Exit condition: every live challenge draw is catalogued, all nonzero sites
 check proof-of-work, every zero site is a transcript no-op, and the final plan
 and stream cursors are exactly exhausted.
 
-### Slice 5: Planner, generated schedules, and reporting
+### Slice 6: Planner, generated schedules, and reporting
 
 1. Add exact stream bytes and expected predicate work to candidate pricing.
 2. Add plan revision to schedule and catalog identity.
@@ -921,7 +1331,7 @@ and stream cursors are exactly exhausted.
 Exit condition: generated catalog drift checks pass and serialized proof sizes
 match planner estimates for every production profile fixture.
 
-### Slice 6: End-to-end hardening and documentation
+### Slice 7: End-to-end hardening and documentation
 
 1. Add bit-level tamper tests, malformed shape tests, and no-panic verifier
    tests.
@@ -930,7 +1340,10 @@ match planner estimates for every production profile fixture.
    text.
 4. Update `fold-linf-rejection.md` to describe its 12-bit stream entry without
    changing its soundness argument.
-5. Update `AGENTS.md`, verifier contract, and crate graph only where the final
+5. Record the grinding-aware ROM bound, the coordinatewise CWSS accounting,
+   and base-to-head benchmark results in the durable security and profiling
+   owners.
+6. Update `AGENTS.md`, verifier contract, and crate graph only where the final
    implementation changes their owned contracts.
 
 Exit condition: every acceptance criterion is checked, the final CI-fidelity
@@ -946,15 +1359,18 @@ The expected primary surfaces are:
 | transcript trait and sponge | `crates/akita-transcript/src/lib.rs`, `sponge.rs` | predicate transition and preview |
 | transcript diagnostics | `crates/akita-transcript/src/labels.rs`, `logging.rs` | grind labels and events |
 | proof objects and shapes | `crates/akita-types/src/proof/levels.rs`, `shapes.rs` | top-level stream and exact bit shape |
-| plan and policy | new focused module under `crates/akita-types/src/` | single query catalog and derivation |
-| descriptor | `crates/akita-types/src/instance_descriptor/` | policy and plan digest binding |
+| plan and policy types | new focused module under `crates/akita-types/src/` | validated runs, canonical bytes, stream length |
+| plan derivation | `crates/akita-config/src/transcript_binding.rs`, new focused sibling module | single schedule and call-data constructor |
+| descriptor | `crates/akita-types/src/instance_descriptor/` | dedicated policy and plan digest binding |
 | fold response search | `crates/akita-prover/src/protocol/fold_grind.rs` | 12-bit stream writer |
-| sparse replay | `crates/akita-challenges/src/sampler/mod.rs` | preserve numeric nonce transcript input |
+| sparse fold draw | `crates/akita-challenges/src/fold_draw.rs` | one root per group and indexed coordinates |
+| sparse sampling | `crates/akita-challenges/src/sampler/mod.rs`, `xof.rs` | fresh cursor per coordinate for both rejection modes |
 | sumcheck drivers | `crates/akita-sumcheck/src/drivers/`, callers in prover and verifier | captured grind cursor in challenge closures |
 | ring switching | `crates/akita-prover/src/protocol/ring_switch/`, `crates/akita-verifier/src/protocol/ring_switch.rs` | alpha and point query integration |
 | fold stages | `crates/akita-prover/src/protocol/core/`, `crates/akita-verifier/src/protocol/core/` | shared cursor replay |
 | proof size | `crates/akita-types/src/proof_size.rs`, layout sizing | exact packed bytes |
 | planning | `crates/akita-planner/`, `crates/akita-schedules/` | pricing, reporting, identity, generation |
+| CWSS design record | `specs/subring-coefficient-packing.md`, `book/src/how/security.md` | close full-vector blocker with coordinate forks |
 
 No new crate dependency is expected. If implementation changes that, update
 `docs/crate-graph.md` in the same slice.
@@ -986,10 +1402,18 @@ owner, mark this spec implemented, and archive it according to
 3. [`specs/fold-linf-rejection.md`](fold-linf-rejection.md) for current
    fold-response rejection sampling.
 4. [`specs/subring-coefficient-packing.md`](subring-coefficient-packing.md) for
-   the `2s - 1` alpha bound and the separate extraction blocker.
+   the `2s - 1` alpha bound, LS18 unit differences, and CWSS extraction
+   obligation.
 5. `crates/akita-transcript/src/sponge.rs` for the current 32-byte squeeze and
    prover preview mechanism.
 6. `crates/akita-types/src/proof/shapes.rs` for headerless proof shape
    derivation.
 7. Historical unmerged design at commit `5057456`, path
    `specs/transcript-grinding.md`.
+8. [Fenzi, Moghaddas, and Nguyen, *Lattice-Based Polynomial Commitments:
+   Towards Asymptotic and Concrete
+   Efficiency*](https://eprint.iacr.org/2023/846.pdf), Definitions 2.29 and 2.30
+   and Lemma 5.16, for the coordinatewise CWSS set and extraction premise.
+9. [PR #394](https://github.com/LayerZero-Labs/akita/pull/394) for the review
+   that identified the mismatch between that premise and Akita's one-seed
+   full-vector implementation.

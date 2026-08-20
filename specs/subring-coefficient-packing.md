@@ -35,6 +35,13 @@ The remaining unchecked acceptance items below stay open until their points are
 fixed and reviewed. The record has been restored to active status for that
 work.
 
+Draft PR [#417](https://github.com/LayerZero-Labs/akita/pull/417) owns the
+concrete repair for item 1. It keeps one transcript-derived root seed per
+commitment group, but replaces the shared vector XOF with one domain-separated
+indexed query per claim-major block coordinate. The same change applies to
+`EvaluationTrace`. This spec remains active and the acceptance item remains
+unchecked until that implementation and its multi-fork accounting land.
+
 ### Reader guide
 
 This document is the formal design record. It defines the coefficient layout,
@@ -826,6 +833,14 @@ packing candidate at levels 0 or 1 in this feature.
 
 ### Forking extraction
 
+The planned transcript structure is specified normatively in
+[`specs/transcript-grinding.md`](transcript-grinding.md). For a fixed group root
+and the fixed shared fold-response nonce, coordinate `(claim, block)` is a
+separate indexed random-oracle query. Reprogramming it leaves every other fold
+coordinate and the live transcript state unchanged. Thus the implementation
+will supply the coordinatewise CWSS transcripts assumed below without relying
+on extraction from full-vector forks.
+
 Consider two accepting transcripts with the same pre-challenge commitments and
 different challenge at one claim/block position. Let
 
@@ -852,9 +867,11 @@ of `e_hat`, A binding of the folded source, range proof for all digit planes,
 and quotient checks then give the same weak-opening/MSIS reduction as the
 current fold.
 
-The implementation security note MUST spell out how the standard multi-fork
-argument isolates all claim/block positions. It MUST NOT claim extraction from
-challenge entropy alone.
+The implementation security note MUST account for the central accepting vector
+and one coordinatewise fork for every claim and block position, the complete
+CWSS and random-oracle forking loss, and every existing schedule error term. It
+MUST NOT claim extraction from challenge entropy alone or from two arbitrary
+full-vector forks.
 
 ### Ring-switch polynomial check
 
