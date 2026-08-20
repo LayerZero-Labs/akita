@@ -124,12 +124,14 @@ struct IndexedChallengeWorker {
 }
 
 impl IndexedChallengeWorker {
-    fn new(seed: &[u8], cfg: &SparseChallengeConfig, policy: &IndexedSamplingPolicy) -> Self {
-        let prefix = IndexedXofPrefix::new(seed);
-        let cursor = XofCursor::from_indexed_prefix(&prefix, 0);
+    fn new(
+        prefix: &IndexedXofPrefix,
+        cfg: &SparseChallengeConfig,
+        policy: &IndexedSamplingPolicy,
+    ) -> Self {
         Self {
-            prefix,
-            cursor,
+            prefix: prefix.clone(),
+            cursor: XofCursor::new(),
             scratch: SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2),
             policy: policy.clone(),
         }
@@ -182,6 +184,8 @@ pub(crate) fn sample_indexed_challenges_from_seed(
         AkitaError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
     })?;
     let policy = IndexedSamplingPolicy::new(ring_d, cfg, rejection)?;
+    let prefix =
+        IndexedXofPrefix::new(seed).map_err(|message| AkitaError::InvalidSetup(message.into()))?;
     #[cfg(feature = "parallel")]
     {
         let work = n
@@ -191,7 +195,7 @@ pub(crate) fn sample_indexed_challenges_from_seed(
             return (0..n)
                 .into_par_iter()
                 .map_init(
-                    || IndexedChallengeWorker::new(seed, cfg, &policy),
+                    || IndexedChallengeWorker::new(&prefix, cfg, &policy),
                     |worker, index| {
                         let coordinate_index = u64::try_from(index).map_err(|_| {
                             AkitaError::InvalidSetup(
@@ -204,17 +208,17 @@ pub(crate) fn sample_indexed_challenges_from_seed(
                 .collect();
         }
     }
-    sample_indexed_challenges_sequential(seed, ring_d, n, cfg, &policy)
+    sample_indexed_challenges_sequential(&prefix, ring_d, n, cfg, &policy)
 }
 
 fn sample_indexed_challenges_sequential(
-    seed: &[u8],
+    prefix: &IndexedXofPrefix,
     ring_d: usize,
     n: usize,
     cfg: &SparseChallengeConfig,
     policy: &IndexedSamplingPolicy,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
-    let mut worker = IndexedChallengeWorker::new(seed, cfg, policy);
+    let mut worker = IndexedChallengeWorker::new(prefix, cfg, policy);
     (0..n)
         .map(|index| {
             let coordinate_index = u64::try_from(index).map_err(|_| {
@@ -273,14 +277,15 @@ mod tests {
     fn pm1_only_matches_pm2_zero_sampler() {
         let ring_d = 128;
         let seed = [7u8; 32];
+        let prefix = IndexedXofPrefix::new(&seed).unwrap();
         let legacy = {
-            let mut cursor = XofCursor::from_seed(&seed);
+            let mut cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut scratch = SignedSparseScratch::new(31, 0);
             scratch.sample(&mut cursor, ring_d, 31, 0).unwrap();
             scratch.take_challenge()
         };
         let unified = {
-            let mut cursor = XofCursor::from_seed(&seed);
+            let mut cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut scratch = SignedSparseScratch::new(31, 0);
             scratch.sample(&mut cursor, ring_d, 31, 0).unwrap();
             scratch.take_challenge()
@@ -299,9 +304,10 @@ mod tests {
             sample_indexed_challenges_from_seed(&seed, ring_d, challenge_count, &cfg, None)
                 .unwrap();
         let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
+        let prefix = IndexedXofPrefix::new(&seed).unwrap();
         let expected = (0..challenge_count)
             .map(|index| {
-                IndexedChallengeWorker::new(&seed, &cfg, &policy)
+                IndexedChallengeWorker::new(&prefix, &cfg, &policy)
                     .sample(index as u64, ring_d, &cfg)
                     .unwrap()
             })
@@ -320,7 +326,8 @@ mod tests {
             sample_indexed_challenges_from_seed(&seed, ring_d, 12, &cfg, None).unwrap();
         let before = challenges.clone();
         let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
-        let mut worker = IndexedChallengeWorker::new(&alternate_seed, &cfg, &policy);
+        let alternate_prefix = IndexedXofPrefix::new(&alternate_seed).unwrap();
+        let mut worker = IndexedChallengeWorker::new(&alternate_prefix, &cfg, &policy);
         challenges[7] = worker.sample(7, ring_d, &cfg).unwrap();
         assert_ne!(challenges[7], before[7]);
         for index in (0..challenges.len()).filter(|&index| index != 7) {
@@ -347,9 +354,10 @@ mod tests {
                 sample_indexed_challenges_from_seed(&seed, ring_d, 8, &cfg, Some(rejection))
                     .unwrap();
             let policy = IndexedSamplingPolicy::new(ring_d, &cfg, Some(rejection)).unwrap();
+            let prefix = IndexedXofPrefix::new(&seed).unwrap();
             let individual = (0..8)
                 .map(|index| {
-                    IndexedChallengeWorker::new(&seed, &cfg, &policy)
+                    IndexedChallengeWorker::new(&prefix, &cfg, &policy)
                         .sample(index, ring_d, &cfg)
                         .unwrap()
                 })
@@ -374,8 +382,9 @@ mod tests {
             sample_indexed_challenges_from_seed(&seed, ring_d, challenge_count, &cfg, None)
                 .unwrap();
         let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
+        let prefix = IndexedXofPrefix::new(&seed).unwrap();
         let sequential =
-            sample_indexed_challenges_sequential(&seed, ring_d, challenge_count, &cfg, &policy)
+            sample_indexed_challenges_sequential(&prefix, ring_d, challenge_count, &cfg, &policy)
                 .unwrap();
         assert_eq!(parallel, sequential);
     }

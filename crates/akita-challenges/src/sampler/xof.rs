@@ -1,13 +1,10 @@
 //! Streaming XOF cursor used by the signed-sparse fold-challenge sampler.
 //!
 //! Every fold coordinate gets a fresh indexed SHAKE256 stream. A sampler may
-//! reset this cursor between coordinates to reuse its 4 KiB allocation.
+//! reset this cursor between coordinates and reuse its small squeeze buffer.
 //!
 //! The cursor's `next_*` helpers use bitmask rejection sampling, so every
 //! returned value is uniform over the requested range with no modulo bias.
-
-use sha3::digest::{ExtendableOutput, Update, XofReader};
-use sha3::Shake256;
 
 /// Domain separator absorbed into the SHAKE256 instance before the
 /// transcript-derived seed. Distinct from any transcript-layer domain tag so
@@ -15,64 +12,142 @@ use sha3::Shake256;
 const SPARSE_PRG_DOMAIN: &[u8] = b"akita/sparse-challenge-prg";
 const FOLD_CHALLENGE_COORDINATE_DOMAIN: &[u8] = b"akita/fold-challenge-coordinate/v1";
 
-type ShakeReader = <Shake256 as ExtendableOutput>::Reader;
+const SHAKE256_RATE: usize = 136;
+const SHAKE_DOMAIN_SUFFIX: u8 = 0x1f;
 
 /// SHAKE256 state after absorbing the fixed domains and one group root.
 /// Cloning this state gives each coordinate a fresh XOF without repeating the
 /// common prefix absorption.
-pub(crate) struct IndexedXofPrefix(Shake256);
+#[derive(Clone)]
+pub(crate) struct IndexedXofPrefix {
+    state: [u64; 25],
+    coordinate_offset: usize,
+    padding_offset: usize,
+}
 
 impl IndexedXofPrefix {
-    pub(crate) fn new(seed: &[u8]) -> Self {
-        let mut xof = Shake256::default();
-        xof.update(SPARSE_PRG_DOMAIN);
-        xof.update(FOLD_CHALLENGE_COORDINATE_DOMAIN);
-        xof.update(seed);
-        Self(xof)
+    pub(crate) fn new(seed: &[u8]) -> Result<Self, &'static str> {
+        let coordinate_offset = SPARSE_PRG_DOMAIN
+            .len()
+            .checked_add(FOLD_CHALLENGE_COORDINATE_DOMAIN.len())
+            .and_then(|length| length.checked_add(seed.len()))
+            .ok_or("indexed sparse challenge prefix length overflow")?;
+        let padding_offset = coordinate_offset
+            .checked_add(size_of::<u64>())
+            .ok_or("indexed sparse challenge input length overflow")?;
+        if padding_offset >= SHAKE256_RATE {
+            return Err("indexed sparse challenge input exceeds one SHAKE256 rate block");
+        }
+        let mut state = [0u64; 25];
+        absorb_bytes(&mut state, 0, SPARSE_PRG_DOMAIN);
+        absorb_bytes(
+            &mut state,
+            SPARSE_PRG_DOMAIN.len(),
+            FOLD_CHALLENGE_COORDINATE_DOMAIN,
+        );
+        absorb_bytes(
+            &mut state,
+            SPARSE_PRG_DOMAIN.len() + FOLD_CHALLENGE_COORDINATE_DOMAIN.len(),
+            seed,
+        );
+        Ok(Self {
+            state,
+            coordinate_offset,
+            padding_offset,
+        })
     }
 
-    fn reader(&self, coordinate_index: u64) -> ShakeReader {
-        let mut xof = self.0.clone();
-        xof.update(&coordinate_index.to_le_bytes());
-        xof.finalize_xof()
+    fn reader(&self, coordinate_index: u64) -> IndexedShakeReader {
+        let mut state = self.state;
+        absorb_bytes(
+            &mut state,
+            self.coordinate_offset,
+            &coordinate_index.to_le_bytes(),
+        );
+        xor_state_byte(&mut state, self.padding_offset, SHAKE_DOMAIN_SUFFIX);
+        xor_state_byte(&mut state, SHAKE256_RATE - 1, 0x80);
+        keccak::f1600(&mut state);
+        IndexedShakeReader { state, pos: 0 }
     }
 }
 
-/// Internal buffer size (~30 SHAKE256 rate blocks) used to amortise XOF
-/// squeezes across many small reads.
-const XOF_BUF_SIZE: usize = 4096;
-/// One coordinate normally consumes well below one SHAKE256 rate block. Fill
-/// the reusable allocation in bounded chunks so resetting a short coordinate
-/// does not squeeze 4 KiB that will be discarded.
-const XOF_REFILL_SIZE: usize = 128;
+fn absorb_bytes(state: &mut [u64; 25], offset: usize, bytes: &[u8]) {
+    for (index, &byte) in bytes.iter().enumerate() {
+        xor_state_byte(state, offset + index, byte);
+    }
+}
 
-/// Streaming cursor backed by a SHAKE256 XOF with a 4 KB internal buffer
-/// (~30 rate blocks) to amortize squeeze calls.
+fn xor_state_byte(state: &mut [u64; 25], index: usize, byte: u8) {
+    state[index / 8] ^= u64::from(byte) << (8 * (index % 8));
+}
+
+struct IndexedShakeReader {
+    state: [u64; 25],
+    pos: usize,
+}
+
+impl IndexedShakeReader {
+    fn read(&mut self, out: &mut [u8]) {
+        let mut written = 0;
+        while written < out.len() {
+            if self.pos == SHAKE256_RATE {
+                keccak::f1600(&mut self.state);
+                self.pos = 0;
+            }
+            let available = SHAKE256_RATE - self.pos;
+            let take = available.min(out.len() - written);
+            let end = self.pos + take;
+            while self.pos < end {
+                let lane = self.state[self.pos / 8].to_le_bytes();
+                let lane_offset = self.pos % 8;
+                let lane_take = (8 - lane_offset).min(end - self.pos);
+                out[written..written + lane_take]
+                    .copy_from_slice(&lane[lane_offset..lane_offset + lane_take]);
+                self.pos += lane_take;
+                written += lane_take;
+            }
+        }
+    }
+}
+
+/// One coordinate normally consumes well below one SHAKE256 rate block. Fill
+/// a bounded buffer so resetting a short coordinate does not squeeze bytes
+/// that will be discarded.
+const XOF_BUFFER_SIZE: usize = 128;
+
+/// Streaming cursor backed by a SHAKE256 XOF and a reusable sub-rate buffer.
 pub(crate) struct XofCursor {
-    reader: ShakeReader,
-    buf: Box<[u8; XOF_BUF_SIZE]>,
+    reader: IndexedShakeReader,
+    buf: [u8; XOF_BUFFER_SIZE],
     pos: usize,
     len: usize,
 }
 
 impl XofCursor {
-    /// Build a cursor by absorbing the static domain separator followed by the
-    /// transcript-derived `seed` into a fresh SHAKE256 instance.
-    #[cfg(test)]
-    pub(crate) fn from_seed(seed: &[u8]) -> Self {
-        Self::from_seed_parts(seed, &[])
+    /// Allocate reusable cursor storage before its first indexed reset.
+    pub(crate) fn new() -> Self {
+        Self {
+            reader: IndexedShakeReader {
+                state: [0u64; 25],
+                pos: SHAKE256_RATE,
+            },
+            buf: [0u8; XOF_BUFFER_SIZE],
+            pos: 0,
+            len: 0,
+        }
     }
 
     /// Build the canonical stream for one claim-major fold coordinate.
+    #[cfg(test)]
     pub(crate) fn from_indexed_prefix(prefix: &IndexedXofPrefix, coordinate_index: u64) -> Self {
         let mut xof = prefix.reader(coordinate_index);
-        let mut buf = Box::new([0u8; XOF_BUF_SIZE]);
-        xof.read(&mut buf[..XOF_REFILL_SIZE]);
+        let mut buf = [0u8; XOF_BUFFER_SIZE];
+        xof.read(&mut buf);
         Self {
             reader: xof,
             buf,
             pos: 0,
-            len: XOF_REFILL_SIZE,
+            len: XOF_BUFFER_SIZE,
         }
     }
 
@@ -88,29 +163,11 @@ impl XofCursor {
         self.refill();
     }
 
-    #[cfg(test)]
-    fn from_seed_parts(seed: &[u8], suffixes: &[&[u8]]) -> Self {
-        let mut xof = Shake256::default();
-        xof.update(SPARSE_PRG_DOMAIN);
-        xof.update(seed);
-        for suffix in suffixes {
-            xof.update(suffix);
-        }
-        let mut cursor = Self {
-            reader: xof.finalize_xof(),
-            buf: Box::new([0u8; XOF_BUF_SIZE]),
-            pos: 0,
-            len: 0,
-        };
-        cursor.refill();
-        cursor
-    }
-
     #[inline]
     fn refill(&mut self) {
-        self.reader.read(&mut self.buf[..XOF_REFILL_SIZE]);
+        self.reader.read(&mut self.buf);
         self.pos = 0;
-        self.len = XOF_REFILL_SIZE;
+        self.len = XOF_BUFFER_SIZE;
     }
 
     #[inline]
@@ -197,6 +254,8 @@ impl XofCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use sha3::Shake256;
 
     #[test]
     fn indexed_cursor_uses_the_canonical_coordinate_input() {
@@ -208,20 +267,48 @@ mod tests {
         expected_xof.update(&seed);
         expected_xof.update(&index.to_le_bytes());
         let mut expected_reader = expected_xof.finalize_xof();
-        let mut expected = [0u8; 96];
+        let mut expected = [0u8; 384];
         expected_reader.read(&mut expected);
 
-        let prefix = IndexedXofPrefix::new(&seed);
+        let prefix = IndexedXofPrefix::new(&seed).unwrap();
         let mut cursor = XofCursor::from_indexed_prefix(&prefix, index);
-        let mut actual = [0u8; 96];
+        let mut actual = [0u8; 384];
         cursor.fill_bytes(&mut actual);
         assert_eq!(actual, expected);
     }
 
     #[test]
+    fn indexed_prefix_rejects_inputs_that_need_a_second_absorb_block() {
+        let fixed_len =
+            SPARSE_PRG_DOMAIN.len() + FOLD_CHALLENGE_COORDINATE_DOMAIN.len() + size_of::<u64>();
+        let largest_one_block_seed = vec![0u8; SHAKE256_RATE - fixed_len - 1];
+        let index = u64::MAX;
+        let mut expected_xof = Shake256::default();
+        expected_xof.update(SPARSE_PRG_DOMAIN);
+        expected_xof.update(FOLD_CHALLENGE_COORDINATE_DOMAIN);
+        expected_xof.update(&largest_one_block_seed);
+        expected_xof.update(&index.to_le_bytes());
+        let mut expected_reader = expected_xof.finalize_xof();
+        let mut expected = [0u8; 256];
+        expected_reader.read(&mut expected);
+
+        let prefix = IndexedXofPrefix::new(&largest_one_block_seed).unwrap();
+        let mut cursor = XofCursor::from_indexed_prefix(&prefix, index);
+        let mut actual = [0u8; 256];
+        cursor.fill_bytes(&mut actual);
+        assert_eq!(actual, expected);
+
+        let oversized_seed = vec![0u8; SHAKE256_RATE - fixed_len];
+        assert_eq!(
+            IndexedXofPrefix::new(&oversized_seed).err(),
+            Some("indexed sparse challenge input exceeds one SHAKE256 rate block")
+        );
+    }
+
+    #[test]
     fn resetting_an_indexed_cursor_matches_a_fresh_cursor() {
         let seed = [0xabu8; 32];
-        let prefix = IndexedXofPrefix::new(&seed);
+        let prefix = IndexedXofPrefix::new(&seed).unwrap();
         let mut reused = XofCursor::from_indexed_prefix(&prefix, 0);
         reused.reset_indexed_prefix(&prefix, u64::MAX);
         let mut fresh = XofCursor::from_indexed_prefix(&prefix, u64::MAX);
