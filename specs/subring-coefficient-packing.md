@@ -32,7 +32,7 @@ are now repaired.
 
 Draft PR [#417](https://github.com/LayerZero-Labs/akita/pull/417) owns the
 concrete repair for item 1. It keeps one transcript-derived root seed per
-commitment group, but replaces the shared vector XOF with one domain-separated
+commitment group, but replaces the shared vector XOF with one fixed-width
 indexed query per claim-major block coordinate. The same change applies to
 `EvaluationTrace`, including operator-norm-rejected draws.
 

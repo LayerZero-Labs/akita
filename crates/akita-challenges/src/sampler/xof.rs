@@ -6,65 +6,32 @@
 //! The cursor's `next_*` helpers use bitmask rejection sampling, so every
 //! returned value is uniform over the requested range with no modulo bias.
 
-/// Domain separator absorbed into the SHAKE256 instance before the
-/// transcript-derived seed. Distinct from any transcript-layer domain tag so
-/// that the PRG output cannot be mistaken for a transcript challenge.
-const SPARSE_PRG_DOMAIN: &[u8] = b"akita/sparse-challenge-prg";
-const FOLD_CHALLENGE_COORDINATE_DOMAIN: &[u8] = b"akita/fold-challenge-coordinate/v1";
-
 const SHAKE256_RATE: usize = 136;
 const SHAKE_DOMAIN_SUFFIX: u8 = 0x1f;
+const GROUP_ROOT_LEN: usize = 32;
+const COORDINATE_INPUT_LEN: usize = GROUP_ROOT_LEN + size_of::<u64>();
 
-/// SHAKE256 state after absorbing the fixed domains and one group root.
-/// Cloning this state gives each coordinate a fresh XOF without repeating the
-/// common prefix absorption.
+/// SHAKE256 state after absorbing one dedicated group root. Cloning this state
+/// gives each coordinate a fresh XOF without repeating the root absorption.
 #[derive(Clone)]
 pub(crate) struct IndexedXofPrefix {
     state: [u64; 25],
-    coordinate_offset: usize,
-    padding_offset: usize,
 }
 
 impl IndexedXofPrefix {
     pub(crate) fn new(seed: &[u8]) -> Result<Self, &'static str> {
-        let coordinate_offset = SPARSE_PRG_DOMAIN
-            .len()
-            .checked_add(FOLD_CHALLENGE_COORDINATE_DOMAIN.len())
-            .and_then(|length| length.checked_add(seed.len()))
-            .ok_or("indexed sparse challenge prefix length overflow")?;
-        let padding_offset = coordinate_offset
-            .checked_add(size_of::<u64>())
-            .ok_or("indexed sparse challenge input length overflow")?;
-        if padding_offset >= SHAKE256_RATE {
-            return Err("indexed sparse challenge input exceeds one SHAKE256 rate block");
+        if seed.len() != GROUP_ROOT_LEN {
+            return Err("indexed sparse challenge group root must be exactly 32 bytes");
         }
         let mut state = [0u64; 25];
-        absorb_bytes(&mut state, 0, SPARSE_PRG_DOMAIN);
-        absorb_bytes(
-            &mut state,
-            SPARSE_PRG_DOMAIN.len(),
-            FOLD_CHALLENGE_COORDINATE_DOMAIN,
-        );
-        absorb_bytes(
-            &mut state,
-            SPARSE_PRG_DOMAIN.len() + FOLD_CHALLENGE_COORDINATE_DOMAIN.len(),
-            seed,
-        );
-        Ok(Self {
-            state,
-            coordinate_offset,
-            padding_offset,
-        })
+        absorb_bytes(&mut state, 0, seed);
+        Ok(Self { state })
     }
 
     fn reader(&self, coordinate_index: u64) -> IndexedShakeReader {
         let mut state = self.state;
-        absorb_bytes(
-            &mut state,
-            self.coordinate_offset,
-            &coordinate_index.to_le_bytes(),
-        );
-        xor_state_byte(&mut state, self.padding_offset, SHAKE_DOMAIN_SUFFIX);
+        absorb_bytes(&mut state, GROUP_ROOT_LEN, &coordinate_index.to_le_bytes());
+        xor_state_byte(&mut state, COORDINATE_INPUT_LEN, SHAKE_DOMAIN_SUFFIX);
         xor_state_byte(&mut state, SHAKE256_RATE - 1, 0x80);
         keccak::f1600(&mut state);
         IndexedShakeReader { state, pos: 0 }
@@ -262,8 +229,6 @@ mod tests {
         let seed = [0x5au8; 32];
         let index = 0x0102_0304_0506_0708u64;
         let mut expected_xof = Shake256::default();
-        expected_xof.update(b"akita/sparse-challenge-prg");
-        expected_xof.update(b"akita/fold-challenge-coordinate/v1");
         expected_xof.update(&seed);
         expected_xof.update(&index.to_le_bytes());
         let mut expected_reader = expected_xof.finalize_xof();
@@ -278,30 +243,14 @@ mod tests {
     }
 
     #[test]
-    fn indexed_prefix_rejects_inputs_that_need_a_second_absorb_block() {
-        let fixed_len =
-            SPARSE_PRG_DOMAIN.len() + FOLD_CHALLENGE_COORDINATE_DOMAIN.len() + size_of::<u64>();
-        let largest_one_block_seed = vec![0u8; SHAKE256_RATE - fixed_len - 1];
-        let index = u64::MAX;
-        let mut expected_xof = Shake256::default();
-        expected_xof.update(SPARSE_PRG_DOMAIN);
-        expected_xof.update(FOLD_CHALLENGE_COORDINATE_DOMAIN);
-        expected_xof.update(&largest_one_block_seed);
-        expected_xof.update(&index.to_le_bytes());
-        let mut expected_reader = expected_xof.finalize_xof();
-        let mut expected = [0u8; 256];
-        expected_reader.read(&mut expected);
-
-        let prefix = IndexedXofPrefix::new(&largest_one_block_seed).unwrap();
-        let mut cursor = XofCursor::from_indexed_prefix(&prefix, index);
-        let mut actual = [0u8; 256];
-        cursor.fill_bytes(&mut actual);
-        assert_eq!(actual, expected);
-
-        let oversized_seed = vec![0u8; SHAKE256_RATE - fixed_len];
+    fn indexed_prefix_requires_the_canonical_root_width() {
         assert_eq!(
-            IndexedXofPrefix::new(&oversized_seed).err(),
-            Some("indexed sparse challenge input exceeds one SHAKE256 rate block")
+            IndexedXofPrefix::new(&[0u8; GROUP_ROOT_LEN - 1]).err(),
+            Some("indexed sparse challenge group root must be exactly 32 bytes")
+        );
+        assert_eq!(
+            IndexedXofPrefix::new(&[0u8; GROUP_ROOT_LEN + 1]).err(),
+            Some("indexed sparse challenge group root must be exactly 32 bytes")
         );
     }
 

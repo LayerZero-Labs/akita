@@ -41,8 +41,8 @@ squeezes one transcript seed per commitment group and expands the complete
 claim-major block vector from a shared XOF stream. That does not expose the
 coordinatewise forks required by the current CWSS extraction argument. The new
 sampler keeps the group root seed and each coordinate's challenge law, but
-derives every claim-major block coordinate through its own domain-separated
-indexed oracle query. The sampler change itself adds no proof bytes or
+derives every claim-major block coordinate through its own fixed-width indexed
+oracle query. The sampler change itself adds no proof bytes or
 transcript sponge squeezes.
 
 The nonce stream is decoded in a canonical order derived from the public
@@ -181,8 +181,8 @@ This document uses these terms precisely:
 14. **No compatibility path.** The proof and descriptor wire formats change in
     place. Akita provides no backward proof compatibility, so there is no
     legacy decoder or duplicate verifier replay.
-15. **Coordinatewise CWSS queries.** Every sparse fold coordinate MUST be an
-    independently domain-separated oracle query. Reprogramming one coordinate
+15. **Coordinatewise CWSS queries.** Every sparse fold coordinate MUST be a
+    distinct fixed-width indexed oracle query. Reprogramming one coordinate
     with the group root and fold-response nonce fixed MUST leave every other
     coordinate and the live transcript state unchanged.
 16. **One derivation direction.** Public schedule, normalized opening layout,
@@ -408,12 +408,10 @@ each canonical flattened coordinate
 j = claim_index * num_live_blocks_g + block_index,
 ```
 
-it initializes a fresh SHAKE256 cursor with the exact byte string
+it initializes a fresh SHAKE256 cursor with the exact 40-byte string
 
 ```text
-b"akita/sparse-challenge-prg"
-|| b"akita/fold-challenge-coordinate/v1"
-|| group_root_seed_32
+group_root_seed_32
 || j_as_le_u64.
 ```
 
@@ -421,14 +419,17 @@ b"akita/sparse-challenge-prg"
 MUST fail before allocation or sampling. The group root already binds the fold
 level's method, group index, claim and block counts, ring dimension, sparse
 configuration, optional operator-rejection policy, and shared fold-response
-nonce. The fixed coordinate domain and `j` make the inner queries disjoint.
+nonce. The root has fixed width and is dedicated to fold-coordinate expansion;
+the fixed-width `j` makes the inner queries distinct without another tag.
 The coordinate queries do not mutate the live transcript. Group roots continue
 to be squeezed in current group order.
 
 In the classical multi-oracle ROM, the transcript backend and indexed SHAKE
-call are modeled as independent domain-separated oracles. This is equivalent
-to one ideal oracle with disjoint domains for the security accounting used
-here. Conditional on a fixed group root, distinct coordinates are independent
+call are modeled as separate ideal oracles. The concrete transcript already
+binds the protocol, session, instance, complete fold context, and replay
+position before producing this dedicated root; production transcript labels
+are diagnostic and are not absorbed. Conditional on a fixed group root,
+distinct fixed-width coordinate inputs are independent
 queries with the same sparse challenge law as one current draw. An extractor
 may reprogram coordinate `j` while holding the group root, fold-response nonce,
 every other coordinate query, and the live transcript state fixed. The central
@@ -512,7 +513,7 @@ not the byte label alone, select the rule.
 | `CHALLENGE_EOR_CLAIM_BATCH` | independent EOR claim coefficients | independent coefficient vector, `g = 0` |
 | `CHALLENGE_SUMCHECK_ROUND` | EOR, Stage 1, Stage 2, and Stage 3 rounds | round degree from the canonical sumcheck shape |
 | `CHALLENGE_SPARSE_CHALLENGE` | one sparse group root | zero-bit group-root entry after the fold-response entry |
-| indexed fold-coordinate domain | one claim-major block coordinate | zero-bit coordinate run with certified sparse support |
+| indexed fold-coordinate query | one claim-major block coordinate | zero-bit coordinate run with certified sparse support |
 | `CHALLENGE_RING_SWITCH` | ring-relation evaluation at `alpha` | relation degree bound |
 | `CHALLENGE_TAU0` | Stage 1 multilinear point | number of point coordinates |
 | `CHALLENGE_TAU1` | relation multilinear point | number of point coordinates |
@@ -844,7 +845,8 @@ The implementation SHOULD reuse one buffer and `SignedSparseScratch` per
 sequential sampler or Rayon worker, reinitializing only the SHAKE256 state for
 each coordinate. It MUST NOT allocate the current 4 KiB XOF buffer once per
 coordinate. Buffer reuse does not join the oracle streams because every reset
-absorbs the complete fresh indexed input before any bytes are read.
+absorbs the complete fresh `group_root_seed_32 || j_as_le_u64` input before any
+bytes are read.
 The generic public `sample_sparse_challenges` API either moves to this primitive
 or is removed if no live caller remains; a second legacy vector expander MUST
 NOT survive beside the fold path.
@@ -1233,8 +1235,8 @@ unmerged branch.
 
 ### Slice 1: Coordinatewise sparse fold challenges
 
-1. Add the fixed fold-coordinate domain and indexed SHAKE256 cursor constructor
-   in `akita-challenges`.
+1. Add the fixed-width indexed SHAKE256 cursor constructor in
+   `akita-challenges`.
 2. Add the one-coordinate signed-sparse and operator-rejected sampler.
 3. Replace shared vector cursors in `FoldDraw` for `EvaluationTrace` and
    `SubringCoefficientPacking`, preserving one transcript root per group and
