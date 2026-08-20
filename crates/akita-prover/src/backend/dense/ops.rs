@@ -13,8 +13,9 @@ use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::SubfieldMultiplierOpeningPoint;
 
 impl<F> DensePoly<F>

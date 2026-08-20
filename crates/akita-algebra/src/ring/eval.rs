@@ -1,7 +1,7 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
-use crate::AkitaError;
+use akita_error::AkitaError;
 use akita_field::fft::field_pow;
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, MulBase, MulBaseUnreduced, Zero};

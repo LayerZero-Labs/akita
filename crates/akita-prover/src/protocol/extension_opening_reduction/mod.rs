@@ -7,12 +7,13 @@
 use akita_algebra::poly::fold_evals_in_place;
 use akita_algebra::uni_poly::UniPoly;
 use akita_algebra::EqPolynomial;
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, ExtField, FieldCore, Zero};
+use akita_field::{ExtField, FieldCore, Zero};
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{
-    checked_table_len, extension_opening_reduction_claim, num_rounds_from_table_len,
-    project_tensor_factor_value, tensor_opening_split, validate_reduction_tables,
+    extension_opening_reduction_claim, num_rounds_from_table_len, project_tensor_factor_value,
+    reduction_table_len, tensor_opening_split, validate_reduction_tables,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 #[cfg(feature = "parallel")]

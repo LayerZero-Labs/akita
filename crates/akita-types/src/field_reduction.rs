@@ -6,9 +6,10 @@
 
 use crate::dispatch_for_field;
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_field::{
-    AkitaError, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FpExt4MulBackend, FpExt8,
-    FpExt8MulBackend, FromPrimitiveInt, Invertible,
+    CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend,
+    FromPrimitiveInt, Invertible,
 };
 use akita_serialization::Valid;
 use std::array::from_fn;

@@ -3,7 +3,8 @@
 use crate::protocol::ring_relation::CompressionWitnessMaterialization;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use akita_types::{
     AkitaCommitmentHint, CoefficientPackingFoldProduct, CommitmentRingDims, DigitBlocks,
     OpeningFamily, RingRole, RingVec,

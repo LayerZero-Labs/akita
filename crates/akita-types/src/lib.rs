@@ -48,10 +48,10 @@ pub use compression::{
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
-    check_extension_opening_reduction_output, checked_table_len,
-    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
-    extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
-    num_rounds_from_table_len, project_tensor_factor_value, tensor_column_partials_from_base_evals,
+    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim,
+    derive_tensor_extension_opening_claim_from_partials, extension_opening_reduction_claim,
+    extension_opening_reduction_eval_at_point, num_rounds_from_table_len,
+    project_tensor_factor_value, reduction_table_len, tensor_column_partials_from_base_evals,
     tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
     tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,

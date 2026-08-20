@@ -1,6 +1,7 @@
 //! Target cache construction for persistent and recursive verifiers.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     build_riscv64_scalar_q128_cache_artifact, dispatch_for_field, setup_seed_digest,
     AkitaVerifierSetup, FoldSchedule, PreparedVerifierNttCacheBinding, ScheduleRowDigest,

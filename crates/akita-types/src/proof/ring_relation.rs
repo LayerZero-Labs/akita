@@ -11,7 +11,8 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 use challenge_validation::validate_packing_challenge_weights;
 

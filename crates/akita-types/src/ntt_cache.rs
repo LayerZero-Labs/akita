@@ -11,11 +11,12 @@ use akita_algebra::{
     CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, I16TailParams, Ifma52NttMatrix, Ifma52Params,
     MontCoeff,
 };
+use akita_error::AkitaError;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
-    cfg_iter, AkitaError, CanonicalField, FieldCore, Prime128Offset159, Prime128Offset2355,
-    Prime128OffsetA7F7, PseudoMersenneField,
+    cfg_iter, CanonicalField, FieldCore, Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7,
+    PseudoMersenneField,
 };
 use std::any::Any;
 use std::collections::HashMap;

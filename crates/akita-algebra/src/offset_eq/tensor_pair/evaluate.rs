@@ -2,7 +2,8 @@
 
 use super::{charge_work, checked_axis_offset, EqPairTensorFamily, EqPairTensorWeights};
 use crate::offset_eq::eq_eval_at_index;
-use crate::{AkitaError, FieldCore};
+use crate::FieldCore;
+use akita_error::AkitaError;
 use std::collections::BTreeMap;
 
 /// Evaluate tensor-native paired Boolean-basis families.

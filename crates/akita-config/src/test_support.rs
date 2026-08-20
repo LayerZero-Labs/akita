@@ -7,7 +7,7 @@
 //! [`CommitmentConfig::resolve_catalog_row_for_opening`] directly and never
 //! need this module.
 //!
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
 
 use crate::CommitmentConfig;

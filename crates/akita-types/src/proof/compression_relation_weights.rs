@@ -6,9 +6,8 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBaseUnreduced};
 use std::ops::Range;
 
 use crate::{

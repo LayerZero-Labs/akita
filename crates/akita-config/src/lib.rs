@@ -7,9 +7,8 @@
 //! invoking planner search.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
 use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
@@ -43,7 +42,7 @@ macro_rules! impl_multi_chunk_companion {
             }
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 <$base as $crate::CommitmentConfig>::ring_challenge_config(d)
             }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
@@ -52,7 +51,7 @@ macro_rules! impl_multi_chunk_companion {
             fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<$cfg>(
                     max_num_vars,
                     max_num_batched_polys,

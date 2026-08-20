@@ -485,56 +485,32 @@ fn build_group_role_tensors<E: FieldCore>(
     let source_lanes = group.a_relation_ratio;
     let a_relation_ring_stride = source_lanes;
 
-    let d_block_setup_stride = checked_mul(
-        d_subcolumns,
-        group.depth_open,
-        "setup D block stride overflow",
-    )?;
-    let opening_relation_lanes = checked_mul(
-        d_subcolumns,
-        group.d_relation_ratio,
-        "setup D opening lane count overflow",
-    )?;
-    let d_block_relation_stride = checked_mul(
-        group.depth_open,
-        opening_relation_lanes,
-        "setup D relation stride overflow",
-    )?;
-    let d_subcolumn_relation_stride = checked_mul(
-        group.depth_open,
-        group.d_relation_ratio,
-        "setup D subcolumn relation stride overflow",
-    )?;
-    let b_a_row_setup_stride = checked_mul(
-        group.depth_commit,
-        b_subcolumns,
-        "setup B A-row stride overflow",
-    )?;
-    let b_block_setup_stride = checked_mul(
-        group.n_a,
-        b_a_row_setup_stride,
-        "setup B block stride overflow",
-    )?;
-    let b_a_row_relation_stride = checked_mul(
-        group.depth_commit,
-        source_lanes,
-        "setup B relation A-row stride overflow",
-    )?;
-    let b_subcolumn_relation_stride = checked_mul(
-        group.depth_commit,
-        group.b_relation_ratio,
-        "setup B subcolumn relation stride overflow",
-    )?;
-    let b_block_relation_stride = checked_mul(
-        group.n_a,
-        b_a_row_relation_stride,
-        "setup B relation block stride overflow",
-    )?;
-    let a_relation_column_stride = checked_mul(
-        group.fold_gadget.len(),
-        a_relation_ring_stride,
-        "setup A relation column stride overflow",
-    )?;
+    let d_block_setup_stride = checked::product([d_subcolumns, group.depth_open])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D block stride overflow".into()))?;
+    let opening_relation_lanes = checked::product([d_subcolumns, group.d_relation_ratio])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D opening lane count overflow".into()))?;
+    let d_block_relation_stride = checked::product([group.depth_open, opening_relation_lanes])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D relation stride overflow".into()))?;
+    let d_subcolumn_relation_stride = checked::product([group.depth_open, group.d_relation_ratio])
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("setup D subcolumn relation stride overflow".into())
+        })?;
+    let b_a_row_setup_stride = checked::product([group.depth_commit, b_subcolumns])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B A-row stride overflow".into()))?;
+    let b_block_setup_stride = checked::product([group.n_a, b_a_row_setup_stride])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B block stride overflow".into()))?;
+    let b_a_row_relation_stride = checked::product([group.depth_commit, source_lanes])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B relation A-row stride overflow".into()))?;
+    let b_subcolumn_relation_stride =
+        checked::product([group.depth_commit, group.b_relation_ratio]).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup B subcolumn relation stride overflow".into())
+        })?;
+    let b_block_relation_stride = checked::product([group.n_a, b_a_row_relation_stride])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B relation block stride overflow".into()))?;
+    let a_relation_column_stride =
+        checked::product([group.fold_gadget.len(), a_relation_ring_stride]).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup A relation column stride overflow".into())
+        })?;
     let fold_weights = group
         .fold_gadget
         .iter()

@@ -1,8 +1,9 @@
 use super::CpuPreparedSetup;
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
 use std::array::from_fn;
 

@@ -1,7 +1,7 @@
 //! Shared fold-nonce wire contract bound into every transcript preamble.
 
 use crate::sis::MAX_FOLD_GRIND_ATTEMPTS;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };

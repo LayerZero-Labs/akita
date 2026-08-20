@@ -1,4 +1,5 @@
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{
     prewarm_ntt_requirements, CpuBackend, NttExecutionRequirements, UniformProverStack,
 };

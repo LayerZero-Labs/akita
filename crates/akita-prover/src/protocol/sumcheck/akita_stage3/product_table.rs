@@ -4,8 +4,9 @@ use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, pr
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::uni_poly::UniPoly;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBaseUnreduced, Zero};
+use akita_field::{FieldCore, FromPrimitiveInt, MulBaseUnreduced, Zero};
 
 /// One dense factored setup-product term
 /// `sum_{left,right} table[left,right] * left_factor[left] * right_factor[right]`.

@@ -1,8 +1,9 @@
 //! Sparse compact-geometry relation and restricted-binary terms.
 
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros, UniPoly};
+use akita_error::AkitaError;
 use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
+use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::reduce_signed_accum;
 use std::cmp::Ordering;
 use std::ops::Range;

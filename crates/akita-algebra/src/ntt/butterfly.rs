@@ -16,9 +16,7 @@ use super::NttKernelPlan;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
 fn use_x86_i32_transform_ntt<W: PrimeWidth, const D: usize>(plan: NttKernelPlan) -> bool {
-    // D32 uses a dedicated small-degree kernel. D64+ uses the generic AVX2
-    // transform loop.
-    D >= 32 && std::mem::size_of::<W>() == std::mem::size_of::<i32>() && plan.uses_x86_transform()
+    D >= 64 && std::mem::size_of::<W>() == std::mem::size_of::<i32>() && plan.uses_x86_transform()
 }
 
 /// Precomputed twiddle factors for a specific prime and degree `D`.

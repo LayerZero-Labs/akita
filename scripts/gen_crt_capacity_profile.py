@@ -125,9 +125,12 @@ def main() -> int:
     print("# CRT/NTT Capacity Profile")
     print()
     print(
-        "This artifact pins the single-CRT-lift capacity of the prime profiles used by"
+        "This artifact pins the single-CRT-lift capacity of the portable prime profiles"
     )
-    print("the prover i8 kernels. Regenerate the table with:")
+    print("used by the prover i8 kernels. It does not enumerate the host-dependent")
+    print("AVX-512IFMA exact cache. That 50-bit u64 representation is documented in")
+    print("book/src/foundations/ntt-crt.md and specs/large-digit-ntt-infrastructure.md.")
+    print("Regenerate the table with:")
     print()
     print("```bash")
     print("python3 scripts/gen_crt_capacity_profile.py > docs/crt-ntt-capacity-profile.md")

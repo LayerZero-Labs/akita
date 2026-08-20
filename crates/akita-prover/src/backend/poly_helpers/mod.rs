@@ -17,8 +17,9 @@ use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField};
+use akita_field::CanonicalField;
 use akita_types::SubfieldMultiplierOpeningPoint;
 use std::array::from_fn;
 

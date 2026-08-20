@@ -1,4 +1,5 @@
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_types::{DigitRangePlan, FlatBooleanDomain};
 use std::sync::Arc;
 

@@ -5,7 +5,7 @@ use std::fmt;
 use std::ops::{Add, Sub};
 
 use super::prime::{NttPrime, PrimeWidth};
-use crate::AkitaError;
+use akita_error::AkitaError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SmallNat {

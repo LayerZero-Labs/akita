@@ -32,6 +32,7 @@ benchmark-guest = ["guest", "trusted-benchmark-artifact"]
 trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 
 [dependencies]
+akita-error = { path = "../../../crates/akita-error" }
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
 # resolve the same way as in the upstream Jolt examples.
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "f823a9f854f017d87d5ba0233b9729e36896c9fb", default-features = false }

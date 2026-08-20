@@ -146,7 +146,7 @@ fn materialize_schedule_setup_prefix_slots(
     backend: &CpuBackend,
     prepared: &<CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
     schedule: &akita_types::FoldSchedule,
-) -> Result<(), akita_field::AkitaError> {
+) -> Result<(), akita_error::AkitaError> {
     for slot_id in schedule
         .recursive_folds
         .iter()

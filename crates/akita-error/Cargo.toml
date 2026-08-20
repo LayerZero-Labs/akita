@@ -1,0 +1,22 @@
+[package]
+name = "akita-error"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+authors = [
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Protocol errors and checked integer arithmetic shared by Akita crates"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+thiserror = "2.0"
+
+[lints]
+workspace = true

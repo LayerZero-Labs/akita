@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{active_setup_field_len, CommittedGroupParams, OpeningClaimsLayout};
 
 use crate::schedule_params::level_setup_field_elements;
