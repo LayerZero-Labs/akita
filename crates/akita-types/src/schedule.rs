@@ -502,8 +502,30 @@ impl FoldSchedule {
                 "root input witness length must be a power of two".into(),
             ));
         }
+        // Canonical transcript order: earlier groups first, the fold's own
+        // final/new group last. This is the ordering `precommitted_group_iter`
+        // already uses, and the one `FoldParams::groups` makes structural.
         let root_final = &self.root.params.final_group.commitment;
-        let mut root_groups = vec![OpeningExecutionGroup {
+        let mut root_groups: Vec<OpeningExecutionGroup<'_>> = self
+            .root
+            .params
+            .precommitted_groups
+            .iter()
+            .map(|group| {
+                let commitment = &group.commitment;
+                OpeningExecutionGroup {
+                    params: commitment as &dyn LevelParamsLike,
+                    expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                        commitment.opening.opening_method,
+                        extension_degree,
+                        commitment.profile.inner.matrix.ring_dimension(),
+                        group.descriptor.group.num_vars(),
+                        true,
+                    )),
+                }
+            })
+            .collect();
+        root_groups.push(OpeningExecutionGroup {
             params: root_final,
             expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                 root_final.opening_method,
@@ -512,24 +534,19 @@ impl FoldSchedule {
                 self.root.input_witness_len.trailing_zeros() as usize,
                 true,
             )),
-        }];
-        root_groups.extend(self.root.params.precommitted_groups.iter().map(|group| {
-            let commitment = &group.commitment;
-            OpeningExecutionGroup {
-                params: commitment as &dyn LevelParamsLike,
-                expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
-                    commitment.opening.opening_method,
-                    extension_degree,
-                    commitment.profile.inner.matrix.ring_dimension(),
-                    group.descriptor.group.num_vars(),
-                    true,
-                )),
-            }
-        }));
+        });
         validate_level_opening_execution(0, extension_degree, &root_groups)?;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             let witness = &step.params.witness;
-            let mut groups = vec![OpeningExecutionGroup {
+            let mut groups: Vec<OpeningExecutionGroup<'_>> = Vec::new();
+            // An incoming setup prefix is group 0 in canonical order.
+            if let Some(prefix) = &step.params.incoming_setup_prefix {
+                groups.push(OpeningExecutionGroup {
+                    params: prefix,
+                    expected_source_encoding: None,
+                });
+            }
+            groups.push(OpeningExecutionGroup {
                 params: witness,
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                     witness.opening_method,
@@ -538,13 +555,7 @@ impl FoldSchedule {
                     0,
                     false,
                 )),
-            }];
-            if let Some(prefix) = &step.params.incoming_setup_prefix {
-                groups.push(OpeningExecutionGroup {
-                    params: prefix,
-                    expected_source_encoding: None,
-                });
-            }
+            });
             validate_level_opening_execution(index + 1, extension_degree, &groups)?;
         }
         Ok(())
@@ -565,6 +576,13 @@ fn validate_level_opening_execution(
     extension_degree: usize,
     groups: &[OpeningExecutionGroup<'_>],
 ) -> Result<(), AkitaError> {
+    // Which group is `first` does not affect the accept/reject outcome. The
+    // family taken from it is checked against *every* group below, so for a
+    // fold that passes, all groups share that family and any element would give
+    // the same answer; for a fold that fails, both orderings reject. That is why
+    // moving the prefix to index 0 is behaviour-preserving here, and it settles
+    // the ordering disagreement between this check and
+    // `precommitted_group_iter`, which already put the prefix first.
     let first = groups
         .first()
         .ok_or_else(|| AkitaError::InvalidSetup("nonterminal fold has no opening groups".into()))?;

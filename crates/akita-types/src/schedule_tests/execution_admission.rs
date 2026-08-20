@@ -293,3 +293,73 @@ fn rejects_tensor_degree_that_does_not_fit_half_the_a_ring() {
         Err(AkitaError::InvalidSetup(message)) if message.contains("half the A ring dimension")
     ));
 }
+
+/// The canonical group order puts an incoming setup prefix at index 0 and the
+/// fold's own new group last. `validate_level_opening_execution` reads the
+/// opening-method family off `groups.first()`, so moving the prefix there could
+/// in principle change which group defines the family for the whole fold.
+///
+/// It cannot, and this pins why: the family taken from the first group is
+/// checked against every group, so a fold that is accepted has all groups in one
+/// family (any element would answer the same), and a fold whose groups disagree
+/// is rejected whichever one comes first. This test exercises both directions —
+/// a consistent fold stays accepted, and a fold made inconsistent *only in the
+/// prefix* is still rejected even though the prefix is now the group that
+/// defines the family.
+#[test]
+fn prefix_at_index_zero_does_not_redefine_the_opening_family() {
+    let packing = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+
+    // A level-1 fold consuming a prefix, consistent in the packing family.
+    let mut schedule = recursive_schedule(64, 64, true);
+    schedule.root.params.final_group.commitment.opening_method = packing;
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .fold_challenge_config = production;
+    schedule.root.params.sparse_challenge_config = production;
+    schedule.recursive_folds[0].params.witness.opening_method = packing;
+    schedule.recursive_folds[0]
+        .params
+        .witness
+        .fold_challenge_config = production;
+    schedule.recursive_folds[0].params.sparse_challenge_config = production;
+    if let Some(prefix) = schedule.recursive_folds[0]
+        .params
+        .incoming_setup_prefix
+        .as_mut()
+    {
+        prefix.opening.opening_method = packing;
+        prefix.opening.fold_challenge_config = production;
+    }
+    schedule.recursive_folds[0].params.witness.setup_prefix =
+        schedule.recursive_folds[0].params.incoming_setup_prefix;
+    schedule
+        .validate_nonterminal_opening_execution(1)
+        .expect("a fold consistent in one family is accepted with the prefix at index 0");
+
+    // Now break the family in the prefix alone. The prefix is group 0, so it is
+    // what `first` reads; the fold must still be rejected rather than having the
+    // prefix silently redefine the family for the level.
+    let mut inconsistent = schedule.clone();
+    if let Some(prefix) = inconsistent.recursive_folds[0]
+        .params
+        .incoming_setup_prefix
+        .as_mut()
+    {
+        prefix.opening.opening_method = OpeningMethod::EvaluationTrace;
+    }
+    inconsistent.recursive_folds[0].params.witness.setup_prefix =
+        inconsistent.recursive_folds[0].params.incoming_setup_prefix;
+    assert!(
+        inconsistent
+            .validate_nonterminal_opening_execution(1)
+            .is_err(),
+        "a prefix in a different family must be rejected even as group 0"
+    );
+}
