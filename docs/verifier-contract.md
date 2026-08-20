@@ -11,9 +11,9 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 
 - `akita-verifier`
 - Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths
-- `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
-- `akita-schedules` generated-catalog identity, row resolution, and canonical
-  resolved-row audit paths
+- `akita-config` policy validation and trusted artifact binding used by `batched_verify`
+- `akita-schedules` trusted artifact decoding, row identity, row resolution,
+  and canonical resolved-row audit paths
 
 The verifier never invokes planner search. It accepts only an explicit
 `OpeningScheduleSelection` that resolves in a caller supplied trusted catalog.

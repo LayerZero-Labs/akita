@@ -38,14 +38,14 @@ Key structural facts:
   return `Option`; each caller maps failure to the `AkitaError` variant that
   describes its protocol boundary. Field arithmetic remains in `akita-field`.
 - `akita-planner` sits **below** `akita-config` and names no `CommitmentConfig` type.
-- `akita-verifier` depends on `akita-config` and therefore reaches `akita-planner` transitively; the schedule DP is verifier-reachable.
+- `akita-verifier` depends on `akita-config`, `akita-schedules`, and `akita-types`. It does not depend on `akita-planner`, so planner search is not verifier reachable.
 - Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
 
 ## End-to-end lifecycle
 
-1. **Preset and trusted catalog selection.** The caller picks a `CommitmentConfig` preset and loads the matching schedule artifact from the same trusted parameter source used for setup or preprocessing. The loaded `TrustedScheduleCatalog` contains complete expanded rows. Planner search remains offline. Each row selects `SubringCoefficientPacking` or `EvaluationTrace` for every nonterminal fold. EOR is present only for an evaluation trace opening over a proper extension field. See [Fold path and field geometry](./proving/fold-path.md).
-2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `num_vars`.
-3. **Commit.** The context-aware `commit` entry point (in `akita-prover`, orchestrated by `akita-pcs`) produces one committed polynomial group using `GroupContext`. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does; explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
+1. **Preset and trusted catalog selection.** The caller picks a `CommitmentConfig` preset and loads the matching schedule artifact from the same trusted parameter source used for setup or preprocessing. The caller constructs one `AkitaCommitmentScheme<Cfg>` with that catalog. The catalog contains complete expanded rows. Planner search remains offline. Each row selects `SubringCoefficientPacking` or `EvaluationTrace` for every nonterminal fold. EOR is present only for an evaluation trace opening over a proper extension field. See [Fold path and field geometry](./proving/fold-path.md).
+2. **Setup.** `akita-setup` scans the rows in the scheme's trusted catalog and expands the setup (Ajtai matrices and stride envelopes) to cover the requested capacity.
+3. **Commit.** The context-aware `commit` entry point (in `akita-prover`, orchestrated by the same scheme instance) produces one committed polynomial group using `GroupContext`. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does. Explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
 5. **Prove.** `batched_prove` walks the schedule level by level. It prepares each group with the scheduled opening method, runs the sumchecks, performs EOR when required, and hands the last folded witness to the direct terminal proof.
 6. **Verify.** `batched_verify` resolves the proof row digest in the trusted catalog, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. The proof never supplies schedule bytes. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
@@ -111,7 +111,7 @@ Mixed-dimension malformed proof rejection is covered by
 | Type | Role |
 |------|------|
 | `AkitaError`, `akita_error::checked` | Shared protocol failures and reusable checked formulas for sizes, offsets, ranges, alignment, and exact division |
-| `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
+| `AkitaCommitmentScheme<Cfg>` | Stateful top-level PCS orchestration that owns one trusted catalog for setup, commitment, proving, and verification (`akita-pcs`) |
 | `AkitaProverSetup<F>` | Prover setup wrapper around a materialized prefix of the dimension-free public field stream |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |

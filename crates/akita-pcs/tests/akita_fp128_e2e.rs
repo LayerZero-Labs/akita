@@ -358,35 +358,44 @@ fn fp128_onehot_batched() {
             .map(|p| onehot_opening_lagrange(p, &pt))
             .collect();
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(nv, batch_size)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier(&setup)
+            .expect("verifier setup");
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
-            &setup,
-            &polys,
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit::<_, _>(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
         let poly_refs: Vec<_> = polys.iter().collect();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<OneHotCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove::<_, _, _>(
+                &setup,
+                prove_input::<OneHotCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
 
         let shape = proof.shape();
         let mut bytes = Vec::new();
@@ -399,14 +408,16 @@ fn fp128_onehot_batched() {
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
-        AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&pt[..], &openings, &commitment),
-            BasisMode::Lagrange,
-        )
-        .unwrap_or_else(|e| panic!("onehot nv={nv} batch={batch_size}: {e:?}"));
+        AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&pt[..], &openings, &commitment),
+                BasisMode::Lagrange,
+            )
+            .unwrap_or_else(|e| panic!("onehot nv={nv} batch={batch_size}: {e:?}"));
     }
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -432,35 +443,44 @@ fn fp128_dense_batched() {
             .map(|e| dense_opening_lagrange(e, &pt))
             .collect();
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
+        let setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(nv, batch_size)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier(&setup)
+            .expect("verifier setup");
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
-            &setup,
-            &polys,
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit::<_, _>(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
         let poly_refs: Vec<_> = polys.iter().collect();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<DenseCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let proof = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove::<_, _, _>(
+                &setup,
+                prove_input::<DenseCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
 
         let shape = proof.shape();
         let mut bytes = Vec::new();
@@ -473,14 +493,16 @@ fn fp128_dense_batched() {
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
-        AkitaCommitmentScheme::<DenseCfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<DenseCfg>(&pt[..], &openings, &commitment),
-            BasisMode::Lagrange,
-        )
-        .unwrap_or_else(|e| panic!("dense nv={nv} batch={batch_size}: {e:?}"));
+        AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<DenseCfg>(&pt[..], &openings, &commitment),
+                BasisMode::Lagrange,
+            )
+            .unwrap_or_else(|e| panic!("dense nv={nv} batch={batch_size}: {e:?}"));
     }
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -532,18 +554,23 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             MultilinearPolynomial::onehot(onehot_b),
         ];
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH).unwrap();
+        let setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(NV, BATCH)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let output = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
-            &setup,
-            &polys,
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("mixed source representations share one public geometry");
+        let output = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit::<_, _>(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("mixed source representations share one public geometry");
         assert_eq!(
             output.committed_group.profile.group,
             opening_batch
@@ -585,36 +612,45 @@ fn fp128_onehot_oversized_setup() {
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(setup_nv, 1)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier(&setup)
+            .expect("verifier setup");
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit::<_, _>(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
         let poly_refs = [&poly];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<OneHotCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove::<_, _, _>(
+                &setup,
+                prove_input::<OneHotCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
 
         let shape = proof.shape();
         let mut bytes = Vec::new();
@@ -628,16 +664,18 @@ fn fp128_onehot_oversized_setup() {
         let openings = [expected_opening];
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
-        AkitaCommitmentScheme::<OneHotCfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&pt[..], &openings[..], &commitment),
-            BasisMode::Lagrange,
-        )
-        .unwrap_or_else(|e| {
-            panic!("oversized setup (setup_nv={setup_nv}, poly_nv={poly_nv}): {e:?}")
-        });
+        AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&pt[..], &openings[..], &commitment),
+                BasisMode::Lagrange,
+            )
+            .unwrap_or_else(|e| {
+                panic!("oversized setup (setup_nv={setup_nv}, poly_nv={poly_nv}): {e:?}")
+            });
     }
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -657,36 +695,45 @@ fn fp128_dense_monomial_basis() {
         let pt = random_point(NV, 0xc0de_0000);
         let expected_opening = dense_opening_monomial(&evals, &pt);
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(NV, 1)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup =
-            AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier(&setup)
+            .expect("verifier setup");
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit::<_, _>(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
         let poly_refs = [&poly];
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<DenseCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Monomial,
-        )
-        .expect("monomial prove");
+        let proof = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove::<_, _, _>(
+                &setup,
+                prove_input::<DenseCfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Monomial,
+            )
+            .expect("monomial prove");
 
         let shape = proof.shape();
         let mut bytes = Vec::new();
@@ -700,13 +747,15 @@ fn fp128_dense_monomial_basis() {
         let openings = [expected_opening];
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
-        AkitaCommitmentScheme::<DenseCfg>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<DenseCfg>(&pt[..], &openings[..], &commitment),
-            BasisMode::Monomial,
-        )
-        .expect("monomial verify");
+        AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &decoded,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<DenseCfg>(&pt[..], &openings[..], &commitment),
+                BasisMode::Monomial,
+            )
+            .expect("monomial verify");
     });
 }

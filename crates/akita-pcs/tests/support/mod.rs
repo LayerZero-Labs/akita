@@ -900,6 +900,11 @@ where
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
         Envelope::selection_policy()
     }
+
+    fn schedule_family_name() -> &'static str {
+        Envelope::schedule_family_name()
+    }
+
     fn sis_modulus_profile() -> SisModulusProfileId {
         Envelope::sis_modulus_profile()
     }

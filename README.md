@@ -54,10 +54,11 @@ runtime challenge hooks, every expanded schedule invariant, every committed
 profile, and every row digest. Honest prover key selection and verifier digest
 selection then use the same owned catalog.
 
-The checked in Rust tables below remain a migration source. The umbrella PCS
-path materializes them once into the same owned catalog. Direct verifier and
-prover orchestration accept `&TrustedScheduleCatalog`, so an integration can
-load an external trusted artifact without compiling its rows into Akita.
+The checked in Rust tables below remain a migration source. An
+`AkitaCommitmentScheme<Cfg>` instance owns one validated catalog and uses it
+for setup, commitment, proving, and verification. Direct verifier and prover
+orchestration accept `&TrustedScheduleCatalog`, so an integration can load an
+external trusted artifact without compiling its rows into Akita.
 
 Export one currently compiled migration catalog with:
 

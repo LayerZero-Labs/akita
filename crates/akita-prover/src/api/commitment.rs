@@ -7,7 +7,7 @@ use crate::compute::{
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
-use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
+use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog};
 #[cfg(test)]
 use akita_error::checked;
 use akita_error::AkitaError;
@@ -574,6 +574,7 @@ fn validate_explicit_context(
 pub fn commit<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
     context: GroupContext<'_>,
 ) -> Result<CommitOutput<Cfg::Field>, AkitaError>
@@ -605,7 +606,7 @@ where
                 final_group: group_layout,
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
             };
-            scheduled_row = Cfg::resolve_catalog_row_for_key(&key)?;
+            scheduled_row = schedules.resolve_key(&key)?;
 
             // A group with precommitted groups is the final group of the batch this
             // row opens, so the setup must carry the row's whole schedule. A

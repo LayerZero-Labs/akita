@@ -99,13 +99,15 @@ fn run_prove<
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::commit(
-            setup,
-            std::slice::from_ref(poly),
-            stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .unwrap();
+        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit(
+                setup,
+                std::slice::from_ref(poly),
+                stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
         let commitments = [commitment];
@@ -117,14 +119,16 @@ fn run_prove<
         .selection();
         let t0 = Instant::now();
         let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
-            setup,
-            prover_claims::<Cfg, _>(selection, pt, &poly_refs[..], &commitments[0], hint),
-            stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .unwrap();
+        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove(
+                setup,
+                prover_claims::<Cfg, _>(selection, pt, &poly_refs[..], &commitments[0], hint),
+                stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
         (commitments, proof)
     };
@@ -199,14 +203,15 @@ fn run_prove<
         if let Some(schedule) = plan {
             let opening_layout = OpeningClaimsLayout::from_root_groups(&[], group_layout)
                 .expect("singleton opening layout");
-            AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
-                setup,
-                schedule,
-                &opening_layout,
-            )
-            .expect("schedule verifier setup")
+            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+                .expect("embedded schedule catalog")
+                .setup_verifier_for_schedule(setup, schedule, &opening_layout)
+                .expect("schedule verifier setup")
         } else {
-            AkitaCommitmentScheme::<Cfg>::setup_verifier(setup).expect("verifier setup")
+            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+                .expect("embedded schedule catalog")
+                .setup_verifier(setup)
+                .expect("verifier setup")
         }
     });
     report_timing(
@@ -229,13 +234,15 @@ fn run_prove<
     };
     let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            claims,
-            BasisMode::Lagrange,
-        )
+        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                claims,
+                BasisMode::Lagrange,
+            )
     };
     run_verifier_timings(label, pools, "profile", prepare, verify);
     report_verifier_ntt_cache_size(
@@ -333,9 +340,10 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         statement_prepare_start.elapsed().as_secs_f64(),
     );
     let t0 = Instant::now();
-    let setup =
-        AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
-            .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
+        .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -423,7 +431,10 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt);
     let t0 = Instant::now();
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(nv, 1)
+        .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();

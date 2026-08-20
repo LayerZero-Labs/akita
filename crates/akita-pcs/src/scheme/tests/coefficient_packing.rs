@@ -130,6 +130,14 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let num_vars = 20;
             let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
             let row = PackingCfg::resolve_catalog_row_for_opening(&opening_batch).unwrap();
+            let schedules = akita_config::TrustedScheduleCatalog::try_new(
+                PackingCfg::schedule_family_name(),
+                [(row.profiles().clone(), row.schedule().clone())],
+                &akita_config::policy_of::<PackingCfg>(),
+                PackingCfg::ring_challenge_config,
+            )
+            .expect("packing schedule catalog");
+            let scheme = PackingScheme::new(schedules).expect("packing scheme");
             let root = &row.schedule().root.params.final_group.commitment;
             let OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
@@ -168,7 +176,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let polynomial =
                 akita_prover::MultilinearPolynomial::<PackingField, usize>::dense(polynomial);
 
-            let mut setup = PackingScheme::setup_prover(num_vars, 1).unwrap();
+            let mut setup = scheme.setup_prover(num_vars, 1).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]
                 .params
                 .incoming_setup_prefix
@@ -208,17 +216,18 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 setup.expanded.as_ref(),
             )
             .unwrap();
-            let verifier_setup = PackingScheme::setup_verifier(&setup).unwrap();
+            let verifier_setup = scheme.setup_verifier(&setup).unwrap();
             let akita_prover::CommitOutput {
                 committed_group,
                 hint,
-            } = PackingScheme::commit::<_, _>(
-                &setup,
-                std::slice::from_ref(&polynomial),
-                &stack,
-                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-            )
-            .unwrap();
+            } = scheme
+                .commit::<_, _>(
+                    &setup,
+                    std::slice::from_ref(&polynomial),
+                    &stack,
+                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                )
+                .unwrap();
             assert_eq!(committed_group.profile(), &row.profiles().final_group);
             akita_types::dispatch_for_field!(
                 akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
@@ -287,10 +296,11 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 )
                 .unwrap()])
                 .unwrap();
-                let prover_data = selected_prover_data::<PackingCfg, _>(
+                let prover_data = SelectedProverOpeningData::from_committed_claims::<PackingCfg>(
                     prover_claims,
                     vec![hint.clone()],
                     vec![&polynomial_refs],
+                    scheme.schedules(),
                 )
                 .unwrap();
                 let selection = prover_data.selection();
@@ -299,14 +309,15 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     BasisMode::Monomial => b"packing/root/monomial".as_slice(),
                 };
                 let mut prover_transcript = AkitaTranscript::<PackingField>::new(label);
-                let proof = PackingScheme::batched_prove::<_, _, _>(
-                    &setup,
-                    prover_data,
-                    &stack,
-                    &mut prover_transcript,
-                    basis,
-                )
-                .unwrap();
+                let proof = scheme
+                    .batched_prove::<_, _, _>(
+                        &setup,
+                        prover_data,
+                        &stack,
+                        &mut prover_transcript,
+                        basis,
+                    )
+                    .unwrap();
                 assert!(
                     proof.root.stage3_sumcheck_proof().is_some(),
                     "packing root must offload its setup contribution through Stage 3"
@@ -330,14 +341,15 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .unwrap();
                 let statement = GroupBatchStatement::new(selection, verifier_claims).unwrap();
                 let mut verifier_transcript = AkitaTranscript::<PackingField>::new(label);
-                PackingScheme::batched_verify(
-                    &proof,
-                    &verifier_setup,
-                    &mut verifier_transcript,
-                    statement,
-                    basis,
-                )
-                .unwrap();
+                scheme
+                    .batched_verify(
+                        &proof,
+                        &verifier_setup,
+                        &mut verifier_transcript,
+                        statement,
+                        basis,
+                    )
+                    .unwrap();
 
                 if basis == BasisMode::Lagrange {
                     let mut malformed = proof.clone();
@@ -364,95 +376,45 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     );
                     #[cfg(not(feature = "logging-transcript"))]
                     let mut transcript = AkitaTranscript::<PackingField>::new(label);
-                    assert!(PackingScheme::batched_verify(
-                        &malformed,
-                        &verifier_setup,
-                        &mut transcript,
-                        statement,
-                        basis,
-                    )
-                    .is_err());
+                    assert!(scheme
+                        .batched_verify(
+                            &malformed,
+                            &verifier_setup,
+                            &mut transcript,
+                            statement,
+                            basis,
+                        )
+                        .is_err());
                     #[cfg(feature = "logging-transcript")]
                     assert!(
                         transcript.events().is_empty(),
                         "unexpected packing EOR must reject before transcript replay"
                     );
 
-                    macro_rules! assert_early_evaluation_trace_rejects_before_transcript {
+                    macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {
                         ($config:ty, $context:literal) => {{
-                            let claims =
-                                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                                    point.clone(),
-                                    vec![PackingExt::zero()],
-                                    committed_group.clone(),
-                                )
-                                .unwrap()])
-                                .unwrap();
-                            let prover_data = selected_prover_data::<PackingCfg, _>(
-                                claims,
-                                vec![hint.clone()],
-                                vec![&polynomial_refs],
-                            )
-                            .unwrap();
-                            let selection = prover_data.selection();
-                            #[cfg(feature = "logging-transcript")]
-                            let mut transcript =
-                                akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<
-                                    PackingField,
-                                >::new(label));
-                            #[cfg(not(feature = "logging-transcript"))]
-                            let mut transcript = AkitaTranscript::<PackingField>::new(label);
-                            assert!(AkitaCommitmentScheme::<$config>::batched_prove::<_, _, _>(
-                                &setup,
-                                prover_data,
-                                &stack,
-                                &mut transcript,
-                                basis,
-                            )
-                            .is_err());
-                            #[cfg(feature = "logging-transcript")]
+                            let result = <$config>::resolve_catalog_row_for_opening(&opening_batch)
+                                .and_then(|row| {
+                                    akita_config::TrustedScheduleCatalog::try_new(
+                                        <$config>::schedule_family_name(),
+                                        [(row.profiles().clone(), row.schedule().clone())],
+                                        &akita_config::policy_of::<$config>(),
+                                        <$config>::ring_challenge_config,
+                                    )
+                                })
+                                .and_then(AkitaCommitmentScheme::<$config>::new);
                             assert!(
-                                transcript.events().is_empty(),
-                                concat!($context, " must reject before prover transcript work")
-                            );
-
-                            let claims =
-                                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                                    point.clone(),
-                                    vec![expected],
-                                    &committed_group,
-                                )
-                                .unwrap()])
-                                .unwrap();
-                            let statement = GroupBatchStatement::new(selection, claims).unwrap();
-                            #[cfg(feature = "logging-transcript")]
-                            let mut transcript =
-                                akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<
-                                    PackingField,
-                                >::new(label));
-                            #[cfg(not(feature = "logging-transcript"))]
-                            let mut transcript = AkitaTranscript::<PackingField>::new(label);
-                            assert!(AkitaCommitmentScheme::<$config>::batched_verify(
-                                &proof,
-                                &verifier_setup,
-                                &mut transcript,
-                                statement,
-                                basis,
-                            )
-                            .is_err());
-                            #[cfg(feature = "logging-transcript")]
-                            assert!(
-                                transcript.events().is_empty(),
-                                concat!($context, " must reject before verifier transcript work")
+                                result.is_err(),
+                                concat!($context, " must reject at the trusted catalog boundary")
                             );
                         }};
                     }
 
-                    assert_early_evaluation_trace_rejects_before_transcript!(
+                    assert_early_evaluation_trace_rejects_at_catalog_boundary!(
                         RootEvaluationTraceCfg,
                         "root EvaluationTrace"
                     );
-                    assert_early_evaluation_trace_rejects_before_transcript!(
+                    assert_early_evaluation_trace_rejects_at_catalog_boundary!(
                         RecursiveEvaluationTraceCfg,
                         "level-1 EvaluationTrace"
                     );

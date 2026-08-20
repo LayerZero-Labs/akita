@@ -210,6 +210,31 @@ impl TrustedScheduleCatalog {
         self.catalog_digest
     }
 
+    /// Check that this catalog belongs to the expected family and runtime policy.
+    pub fn validate_binding(
+        &self,
+        expected_family_name: &str,
+        policy: &PlannerPolicy,
+    ) -> Result<(), AkitaError> {
+        if self.family_name != expected_family_name {
+            return Err(AkitaError::InvalidSetup(format!(
+                "trusted schedule family {:?} does not match expected family {:?}",
+                self.family_name, expected_family_name
+            )));
+        }
+        if self.policy_digest != policy_digest(policy) {
+            return Err(AkitaError::InvalidSetup(
+                "trusted schedule policy does not match the runtime config".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validated rows in canonical row-digest order.
+    pub fn rows(&self) -> impl ExactSizeIterator<Item = &ResolvedScheduleRow> {
+        self.rows_by_digest.iter()
+    }
+
     /// Number of admitted rows.
     pub fn len(&self) -> usize {
         self.rows_by_digest.len()

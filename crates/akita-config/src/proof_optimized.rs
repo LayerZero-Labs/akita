@@ -170,6 +170,43 @@ impl SetupCapacityScan {
     }
 }
 
+/// Size the shared setup matrix from one validated trusted catalog.
+///
+/// Every admitted row is already expanded and audited. Setup sizing therefore
+/// scans those exact rows instead of consulting the generated-table resolver.
+pub(crate) fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
+    catalog: &akita_schedules::TrustedScheduleCatalog,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<SetupMatrixCapacity, AkitaError> {
+    crate::validate_trusted_schedule_catalog::<Cfg>(catalog)?;
+    validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
+
+    let mut scan = SetupCapacityScan::new();
+    for row in catalog.rows() {
+        for profile in &row.profiles().precommitteds {
+            if profile.group.num_vars() <= max_num_vars
+                && profile.group.num_polynomials() <= max_num_batched_polys
+            {
+                scan.observe(akita_types::commit_only_setup_field_elements(
+                    &profile.inner_commit_matrix,
+                    &profile.outer_commit_matrix,
+                    profile.outer_slice_count,
+                )?);
+            }
+        }
+
+        let key = AkitaScheduleLookupKey {
+            final_group: row.profiles().final_group.group,
+            precommitteds: row.profiles().precommitteds.clone(),
+        };
+        if key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
+            scan.observe_schedule(row.schedule())?;
+        }
+    }
+    scan.finish(max_num_vars)
+}
+
 fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,

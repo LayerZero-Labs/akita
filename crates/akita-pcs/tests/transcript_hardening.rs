@@ -65,7 +65,10 @@ fn event_stream_equality_small() {
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::setup_prover(num_vars, 1).unwrap();
+        let setup = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(num_vars, 1)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -73,17 +76,22 @@ fn event_stream_equality_small() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier(&setup)
+            .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -92,31 +100,35 @@ fn event_stream_equality_small() {
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
-        let proof = Scheme::batched_prove(
-            &setup,
-            prove_input::<OneHotCfg, _>(
-                &point,
-                &poly_refs,
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let proof = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove(
+                &setup,
+                prove_input::<OneHotCfg, _>(
+                    &point,
+                    &poly_refs,
+                    &commitments[0],
+                    hints.into_iter().next().unwrap(),
+                ),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
         let mut verifier_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
-        Scheme::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
-            BasisMode::Lagrange,
-        )
-        .expect("verify");
+        Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect("verify");
 
         prover_transcript.assert_smell_checks();
         verifier_transcript.assert_smell_checks();
@@ -321,7 +333,10 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::setup_prover(num_vars, 1).unwrap();
+        let setup = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(num_vars, 1)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -329,17 +344,22 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier(&setup)
+            .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
 
         let poly_refs = [&poly];
         let commitments = [commitment];
@@ -347,30 +367,34 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
-        let mut proof = Scheme::batched_prove(
-            &setup,
-            prove_input::<OneHotCfg, _>(
-                &point,
-                &poly_refs,
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let mut proof = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove(
+                &setup,
+                prove_input::<OneHotCfg, _>(
+                    &point,
+                    &poly_refs,
+                    &commitments[0],
+                    hints.into_iter().next().unwrap(),
+                ),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
         tamper.apply(&mut proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
-        Scheme::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
-            BasisMode::Lagrange,
-        )
-        .expect_err("tampered terminal proof must reject");
+        Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect_err("tampered terminal proof must reject");
     });
 }
 
@@ -407,7 +431,10 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
-        let setup = Scheme::setup_prover(num_vars, 1).unwrap();
+        let setup = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(num_vars, 1)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -418,24 +445,28 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::commit(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
 
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
-        let proof = Scheme::batched_prove(
-            &setup,
-            prove_input::<OneHotCfg, _>(&point, &poly_refs, &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let proof = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove(
+                &setup,
+                prove_input::<OneHotCfg, _>(&point, &poly_refs, &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
 
         let mut bytes = Vec::new();
         proof

@@ -20,13 +20,6 @@ use akita_types::{
     AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, OpeningClaimsLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
-
-static EMBEDDED_TRUSTED_SCHEDULE_CATALOGS: LazyLock<
-    Mutex<HashMap<TypeId, Arc<TrustedScheduleCatalog>>>,
-> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -114,7 +107,22 @@ pub use proof_optimized::{
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
-pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
+pub use setup_prefix_slots::{
+    setup_prefix_slot_ids_for_capacity, setup_prefix_slot_ids_from_catalog,
+};
+
+/// Size setup from the exact rows in a trusted catalog.
+pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
+    catalog: &TrustedScheduleCatalog,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<SetupMatrixCapacity, AkitaError> {
+    proof_optimized::trusted_setup_matrix_capacity::<Cfg>(
+        catalog,
+        max_num_vars,
+        max_num_batched_polys,
+    )
+}
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
 /// Derive the runtime schedule policy from a preset.
@@ -170,32 +178,24 @@ pub fn trusted_schedule_catalog_from_bytes<Cfg: CommitmentConfig>(
 /// This exists only as a migration source while checked in Rust schedule
 /// tables are replaced by published artifact files.
 pub fn trusted_schedule_catalog_from_embedded<Cfg: CommitmentConfig>(
-) -> Result<Arc<TrustedScheduleCatalog>, AkitaError> {
+) -> Result<TrustedScheduleCatalog, AkitaError> {
     validate_config_policy::<Cfg>()?;
-    let config_id = TypeId::of::<Cfg>();
-    if let Some(catalog) = EMBEDDED_TRUSTED_SCHEDULE_CATALOGS
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("trusted catalog cache poisoned".to_string()))?
-        .get(&config_id)
-        .cloned()
-    {
-        return Ok(catalog);
-    }
     let table = Cfg::schedule_catalog().ok_or_else(|| {
         AkitaError::UnsupportedSchedule("embedded schedule catalog is not enabled".to_string())
     })?;
-    let catalog = Arc::new(akita_schedules::trusted_catalog_from_generated(
+    akita_schedules::trusted_catalog_from_generated(
         table,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-    )?);
-    let mut cache = EMBEDDED_TRUSTED_SCHEDULE_CATALOGS
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("trusted catalog cache poisoned".to_string()))?;
-    Ok(cache
-        .entry(config_id)
-        .or_insert_with(|| Arc::clone(&catalog))
-        .clone())
+    )
+}
+
+/// Check that an already validated catalog belongs to one concrete config.
+pub fn validate_trusted_schedule_catalog<Cfg: CommitmentConfig>(
+    catalog: &TrustedScheduleCatalog,
+) -> Result<(), AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    catalog.validate_binding(Cfg::schedule_family_name(), &policy_of::<Cfg>())
 }
 
 /// Validate a config's schedule policy and concrete extension-field tower.

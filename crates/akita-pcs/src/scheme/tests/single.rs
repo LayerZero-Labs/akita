@@ -8,7 +8,10 @@ fn verify_rejects_wrong_opening() {
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = Scheme::setup_prover(num_vars, 1).unwrap();
+    let setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(num_vars, 1)
+        .unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -16,18 +19,23 @@ fn verify_rejects_wrong_opening() {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_verifier(&setup)
+        .expect("verifier setup");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .unwrap();
+    } = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
 
     let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
     let lw = lagrange_weights(&opening_point).unwrap();
@@ -40,25 +48,29 @@ fn verify_rejects_wrong_opening() {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
+    let proof = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_prove::<_, _, _>(
+            &setup,
+            prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
 
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let result = Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    );
+    let result = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+        );
 
     assert!(
         result.is_err(),
@@ -80,13 +92,15 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-        Scheme::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-            BasisMode::Lagrange,
-        )
+        Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
+                BasisMode::Lagrange,
+            )
     }));
 
     assert!(
@@ -132,12 +146,14 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let openings = [opening];
     let commitments = [commitment];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-        BasisMode::Lagrange,
-    )
-    .expect_err("unchecked extension-opening payload must be rejected");
+    Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect_err("unchecked extension-opening payload must be rejected");
 }

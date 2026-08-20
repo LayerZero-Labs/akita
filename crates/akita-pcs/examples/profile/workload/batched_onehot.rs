@@ -72,7 +72,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_contribution_mode = SetupContributionMode::Direct;
     let (commitments, proof, setup) = {
         let t0 = Instant::now();
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(nv, num_polys)
+            .unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -108,13 +111,15 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-            &setup,
-            &polys,
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .unwrap();
+        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit::<_, _>(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .unwrap();
         let commitments = [commitment];
         let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
             final_group: *commitments[0].profile(),
@@ -133,20 +138,22 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-        let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-            &setup,
-            prover_claims::<Cfg, _>(
-                selection,
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .unwrap();
+        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove::<_, _, _>(
+                &setup,
+                prover_claims::<Cfg, _>(
+                    selection,
+                    &pt[..],
+                    &poly_refs[..],
+                    &commitments[0],
+                    hints.into_iter().next().unwrap(),
+                ),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
         let post_execution_ntt_metrics = prepared
             .shared_ntt_cache_metrics()
@@ -224,7 +231,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
+        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
             .expect("verifier setup")
     });
     report_timing(
@@ -247,13 +256,15 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     };
     let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        AkitaCommitmentScheme::<Cfg>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            claims,
-            BasisMode::Lagrange,
-        )
+        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                claims,
+                BasisMode::Lagrange,
+            )
     };
     run_verifier_timings(label, pools, "batched profile", prepare, verify);
     report_verifier_ntt_cache_size(

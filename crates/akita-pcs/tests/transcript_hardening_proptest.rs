@@ -43,7 +43,10 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .map(|poly| opening_from_poly_for_layout(*poly, &opening_point, &layout, basis_mode))
         .collect();
 
-    let setup = Scheme::setup_prover(num_vars, total_claims).unwrap();
+    let setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(num_vars, total_claims)
+        .unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -51,39 +54,48 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_verifier(&setup)
+        .expect("verifier setup");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit(
-        &setup,
-        &polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("commit");
+    } = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    let proof = Scheme::batched_prove(
-        &setup,
-        prove_input::<DenseCfg, _>(&opening_point, &poly_refs, &commitment, hint),
-        &stack,
-        &mut prover_transcript,
-        basis_mode,
-    )
-    .expect("prove");
+    let proof = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_prove(
+            &setup,
+            prove_input::<DenseCfg, _>(&opening_point, &poly_refs, &commitment, hint),
+            &stack,
+            &mut prover_transcript,
+            basis_mode,
+        )
+        .expect("prove");
 
     let mut verifier_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verify_input::<DenseCfg>(&opening_point, &openings, &commitment),
-        basis_mode,
-    )
-    .expect("verify");
+    Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input::<DenseCfg>(&opening_point, &openings, &commitment),
+            basis_mode,
+        )
+        .expect("verify");
 
     prover_transcript.assert_smell_checks();
     verifier_transcript.assert_smell_checks();

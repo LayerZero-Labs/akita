@@ -2,13 +2,12 @@
 
 use akita_config::{trusted_schedule_catalog_from_embedded, TrustedScheduleCatalog};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 fn usage() -> &'static str {
     "usage: cargo run -p akita-config --example export_schedule_artifact -- <family> <output.aks>"
 }
 
-fn compiled_catalog(family: &str) -> Result<Arc<TrustedScheduleCatalog>, String> {
+fn compiled_catalog(family: &str) -> Result<TrustedScheduleCatalog, String> {
     match family {
         #[cfg(feature = "schedules-fp128-dense")]
         "fp128_dense" => {
