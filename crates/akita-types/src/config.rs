@@ -1,6 +1,6 @@
 //! Shared commitment-config data shapes.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Parameters controlling the gadget decomposition depth (called delta in the paper).
 ///

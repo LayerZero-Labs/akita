@@ -289,7 +289,8 @@ fn witness_dot_matches_ring_subfield_inner_product_field_live_block_weights() {
 mod ring_live_block_weights {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector};
-    use akita_field::{AkitaError, Ext2, Fp32, FpExt4, FpExt8, LiftBase};
+    use akita_error::AkitaError;
+    use akita_field::{Ext2, Fp32, FpExt4, FpExt8, LiftBase};
     use std::marker::PhantomData;
 
     type F2 = Fp32<251>;
@@ -591,7 +592,8 @@ mod ring_live_block_weights {
 mod closed_terms {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector, reduce_inner_opening_to_ring_element};
-    use akita_field::{AkitaError, Ext2, Fp32, FpExt4, FpExt8};
+    use akita_error::AkitaError;
+    use akita_field::{Ext2, Fp32, FpExt4, FpExt8};
 
     type Fk = Fp32<251>;
     type E2 = Ext2<Fk>;

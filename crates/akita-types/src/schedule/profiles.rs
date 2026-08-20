@@ -6,7 +6,8 @@ use crate::{
     InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
     SignedDigitKernel,
 };
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 
 /// Physical coefficient representation authenticated by a commitment.
 ///

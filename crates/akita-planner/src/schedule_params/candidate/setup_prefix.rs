@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -189,18 +190,6 @@ fn setup_prefix_slice_counts(
         })
 }
 
-fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
-    if field_len == 0 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{context} must be nonzero"
-        )));
-    }
-    let padded = field_len.checked_next_power_of_two().ok_or_else(|| {
-        AkitaError::InvalidSetup(format!("{context} power-of-two padding overflow"))
-    })?;
-    Ok(padded.trailing_zeros() as usize)
-}
-
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     cache: &mut SetupPrefixSearchCache,
     request: SetupPrefixSearchRequest<'_>,
@@ -248,8 +237,12 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         ));
     }
     let ring_slots = n_prefix / inner_ring_dimension;
-    let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
-    let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
+    let reduced_vars = checked::ceil_log2(ring_slots).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix ring slots are zero or too large".into())
+    })?;
+    let prefix_num_vars = checked::ceil_log2(n_prefix).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix field length is zero or too large".into())
+    })?;
     let open_decomp = DecompositionParams {
         log_basis: log_basis_open,
         ..policy.decomposition

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::golomb_rice::{golomb_rice_decode_vec, golomb_rice_encode_vec};
 use akita_types::{
     decode_terminal_z_golomb_payload, golomb_rice_max_quotient_for_cap,

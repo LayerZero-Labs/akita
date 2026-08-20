@@ -21,7 +21,7 @@ fn miswired_catalog_rejects_before_lookup() {
     .expect_err("adaptive dense preset must reject adaptive one-hot catalog");
 
     assert!(
-        matches!(err, akita_field::AkitaError::InvalidSetup(_)),
+        matches!(err, akita_error::AkitaError::InvalidSetup(_)),
         "expected InvalidSetup, got {err:?}"
     );
 }

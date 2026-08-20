@@ -4,7 +4,8 @@ use crate::compute::backend::{CompressionComputeBackend, CompressionRowsProducts
 use crate::kernels::linear::{
     mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_single_i8_cyclic, validate_compression_batch_shape,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 
 impl<F> CompressionComputeBackend<F> for CpuBackend
 where

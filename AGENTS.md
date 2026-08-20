@@ -81,6 +81,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - Type methods may assemble `self` into arguments, but the logic lives in one place, not duplicated across siblings.
 - If `A` needs the output of `B`, call `B` (or extend `B`); do not introduce `C` that forwards to `B`.
 - Security and sizing contracts must use the same primitives the verifier enforces. No split-brain where certification and MSIS pricing read different bounds.
+- Generic checked `usize` formulas live in `akita_error::checked`. Use those primitives directly and do not redefine local product, sum, fixed-arity multiplication, range, alignment, division, or power-of-two helpers.
 - Keep intentional boundaries: traits, arithmetic primitives, domain/security helpers, named test/bench scenarios. Delete single-use indirection.
 
 ## Feature flags

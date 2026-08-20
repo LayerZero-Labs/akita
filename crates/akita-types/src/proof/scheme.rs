@@ -1,7 +1,8 @@
 //! Shared commitment-scheme API contracts.
 
 use crate::{BasisMode, GroupBatchStatement};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use std::borrow::Cow;
 

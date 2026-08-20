@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
 use akita_types::{
     CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout, SETUP_PREFIX_CONTENT_TAG,

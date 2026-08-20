@@ -1,6 +1,6 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::{PolynomialGroupLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
 

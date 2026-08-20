@@ -5,9 +5,10 @@ use crate::ntt::ifma52::{
     forward, ifma52_enabled, inverse, pointwise_dot_accumulate, Ifma52Prime, Ifma52Twiddles,
 };
 use crate::{
-    AkitaError, CanonicalField, CenteredMontLut, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt,
-    CyclotomicRing, FieldCore,
+    CanonicalField, CenteredMontLut, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
+    FieldCore,
 };
+use akita_error::AkitaError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Ifma52I16Tail<const K: usize> {

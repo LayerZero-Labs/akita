@@ -5,7 +5,9 @@
 //! carries from arbitrary physical offsets. [`eq_eval_at_index`] is the scalar
 //! equality primitive shared by the kernel and direct callers.
 
-use crate::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use crate::FieldCore;
 use akita_field::parallel::*;
 
 mod tensor_pair;

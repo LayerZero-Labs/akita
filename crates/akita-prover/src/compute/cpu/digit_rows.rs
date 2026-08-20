@@ -3,7 +3,8 @@ use super::CpuBackend;
 use crate::compute::backend::DigitRowsComputeBackend;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{NttCacheKey, NttTransformDomain};
 
 impl<F> DigitRowsComputeBackend<F> for CpuBackend

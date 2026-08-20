@@ -136,7 +136,7 @@ where
         F,
         group_params.inner_commit_matrix_params().ring_dimension(),
         |D_G| {
-            Ok::<_, akita_field::AkitaError>(PreparedOpeningPoint::from_parts(
+            Ok::<_, akita_error::AkitaError>(PreparedOpeningPoint::from_parts(
                 padded_point,
                 ring_multiplier_point,
                 CyclotomicRing::<F, D_G>::one(),

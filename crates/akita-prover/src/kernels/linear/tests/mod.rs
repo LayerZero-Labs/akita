@@ -20,13 +20,13 @@ use akita_types::{
 
 fn prepare_both_transforms<F: FieldCore + CanonicalField, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
-) -> Result<PreparedNttCache<D>, akita_field::AkitaError> {
+) -> Result<PreparedNttCache<D>, akita_error::AkitaError> {
     prepare_ntt_cache(matrix, NttCacheMode::BothTransforms)
 }
 
 fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
-) -> Result<PreparedNttCache<D>, akita_field::AkitaError> {
+) -> Result<PreparedNttCache<D>, akita_error::AkitaError> {
     prepare_ntt_cache(
         matrix,
         NttCacheMode::ExactNegacyclic {

@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::{FieldCore, FromPrimitiveInt};
 
 use crate::{
