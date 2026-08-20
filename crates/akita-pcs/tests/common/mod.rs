@@ -20,8 +20,8 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
     canonical_base_field_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
     AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
-    GroupBatchStatement, LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -265,7 +265,7 @@ where
 pub(super) fn opening_from_poly_for_layout<'a, P>(
     poly: &'a P,
     point: &[F],
-    layout: &(impl LevelParamsLike + ?Sized),
+    layout: &akita_types::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -294,7 +294,7 @@ where
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &(impl LevelParamsLike + ?Sized),
+    layout: &akita_types::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where

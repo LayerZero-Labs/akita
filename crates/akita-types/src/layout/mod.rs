@@ -28,9 +28,8 @@ pub use opening_point::{
 };
 pub use params::{
     opening_d_segment_width, shared_d_digit_log_basis, CommittedGroupParams, GroupOpenPhaseParams,
-    GroupOpeningPlan, InnerCommitMatrixParams, LevelParamsLike, OpenCommitMatrixParams,
-    OpeningFamily, OpeningMethod, OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy,
-    SisModulusProfileId,
+    GroupOpeningPlan, InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningFamily,
+    OpeningMethod, OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy, SisModulusProfileId,
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,

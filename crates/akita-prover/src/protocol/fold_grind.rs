@@ -12,7 +12,7 @@ pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{
     draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, CommittedGroupParams,
-    FoldLinfProtocolBinding, InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout,
+    FoldLinfProtocolBinding, InnerCommitSecurityRoute, OpeningClaimsLayout,
     TerminalCommittedGroupParams, TerminalResponseShape,
 };
 #[cfg(test)]
@@ -327,7 +327,7 @@ pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     polys: &[&P],
     point_indices: &[usize],
     root_lp: &CommittedGroupParams,
-    params: &(impl LevelParamsLike + ?Sized),
+    params: &akita_types::GroupOpenPhaseParams,
 ) -> Result<(DecomposeFoldWitness<F>, FoldChunkCoefficients), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -647,8 +647,19 @@ mod tests {
         params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
-        let challenges =
-            draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 3, 2, 7).unwrap();
+        let challenges = draw_group_fold_challenges::<F, F, _>(
+            &mut draw,
+            &params.final_group(akita_types::PolynomialGroupLayout::singleton(
+                params
+                    .num_live_ring_elements_per_claim
+                    .next_power_of_two()
+                    .trailing_zeros() as usize,
+            )),
+            3,
+            2,
+            7,
+        )
+        .unwrap();
         assert_eq!(draw.draws, 1);
         let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
@@ -695,7 +706,19 @@ mod tests {
         ] {
             params.fold_challenge_config = config;
             let mut draw = FixedDraw::default();
-            assert!(draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 0, 1, 0).is_err());
+            assert!(draw_group_fold_challenges::<F, F, _>(
+                &mut draw,
+                &params.final_group(akita_types::PolynomialGroupLayout::singleton(
+                    params
+                        .num_live_ring_elements_per_claim
+                        .next_power_of_two()
+                        .trailing_zeros() as usize,
+                )),
+                0,
+                1,
+                0
+            )
+            .is_err());
             assert_eq!(draw.draws, 0);
         }
     }

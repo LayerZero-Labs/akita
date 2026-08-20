@@ -141,11 +141,13 @@ fn accepts_group_local_packing_subring_dimensions() {
     let s128 = packing_group(128);
     let groups = [
         OpeningExecutionGroup {
-            params: &s64,
+            params: s64.final_group_scalar().expect("scalar final group"),
+            source_encoding: s64.source_encoding,
             expected_source_encoding: None,
         },
         OpeningExecutionGroup {
-            params: &s128,
+            params: s128.final_group_scalar().expect("scalar final group"),
+            source_encoding: s128.source_encoding,
             expected_source_encoding: None,
         },
     ];

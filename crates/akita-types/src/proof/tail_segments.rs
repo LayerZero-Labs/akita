@@ -16,10 +16,7 @@ use crate::golomb_rice::{
 use crate::layout::field_bytes;
 use crate::proof::{DigitBlocks, RingVec, TerminalWitnessTranscriptParts};
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
-use crate::{
-    CommittedGroupParams, LevelParamsLike, TerminalCommittedGroupParams, WitnessLayout,
-    WitnessUnitLayout,
-};
+use crate::{CommittedGroupParams, TerminalCommittedGroupParams, WitnessLayout, WitnessUnitLayout};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +63,7 @@ pub struct TerminalResponse<F: FieldCore> {
 }
 
 pub struct TerminalResponseGroupParts<'a, F: FieldCore> {
-    pub params: &'a dyn LevelParamsLike,
+    pub params: crate::GroupOpenPhaseParams,
     pub num_w_vectors: usize,
     pub num_t_vectors: usize,
     pub num_z_segments: usize,
@@ -689,9 +686,9 @@ fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
     z_coords.saturating_mul(bits_per_coord).div_ceil(8)
 }
 
-fn tail_segment_layout_from_groups<'a>(
+fn tail_segment_layout_from_groups(
     lp: &CommittedGroupParams,
-    groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize, u128)>,
+    groups: impl IntoIterator<Item = (crate::GroupOpenPhaseParams, usize, usize, usize, u128)>,
     _num_commitment_groups: usize,
     _field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
@@ -793,10 +790,10 @@ impl TerminalResponseShape {
     ///
     /// Returns [`AkitaError::InvalidSetup`] when dimensions are empty or any
     /// derived segment size overflows.
-    pub fn from_groups<'a>(
+    pub fn from_groups(
         lp: &CommittedGroupParams,
         field_bits: u32,
-        groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize, u128)>,
+        groups: impl IntoIterator<Item = (crate::GroupOpenPhaseParams, usize, usize, usize, u128)>,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             layout: tail_segment_layout_from_groups(lp, groups, 0, field_bits)?,
@@ -814,11 +811,16 @@ pub fn tail_segment_multiplicities_from_layout(
     layout: &TailSegmentLayout,
     group_index: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
-    tail_segment_multiplicities_from_layout_for_params(lp, lp.d_a(), layout, group_index)
+    tail_segment_multiplicities_from_layout_for_params(
+        &lp.final_group_scalar()?,
+        lp.d_a(),
+        layout,
+        group_index,
+    )
 }
 
 pub fn tail_segment_multiplicities_from_layout_for_params(
-    params: &dyn LevelParamsLike,
+    params: &crate::GroupOpenPhaseParams,
     ring_dimension: usize,
     layout: &TailSegmentLayout,
     group_index: usize,

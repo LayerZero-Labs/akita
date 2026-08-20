@@ -10,8 +10,6 @@ use crate::sis::{
 };
 use crate::{CommitmentRingDims, DecompositionParams};
 
-use super::CommittedGroupParams;
-
 /// Schedule-selected procedure for opening one committed group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpeningMethod {
@@ -456,124 +454,6 @@ impl GroupOpenPhaseParams {
     }
 }
 
-/// Common view over full and precommitted level parameters.
-///
-/// Use this trait when code only needs the shared commitment geometry carried
-/// by both [`CommittedGroupParams`] and [`GroupOpenPhaseParams`].
-pub trait LevelParamsLike {
-    fn source_encoding(&self) -> crate::CommittedSourceEncoding;
-    fn opening_method(&self) -> OpeningMethod;
-    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams;
-    fn a_rows_len(&self) -> usize;
-    fn a_col_len(&self) -> usize;
-    fn b_rows_len(&self) -> usize;
-    fn outer_slice_count(&self) -> crate::CommitmentSliceCount;
-    fn logical_b_rows_len(&self) -> Result<usize, AkitaError> {
-        self.outer_slice_count()
-            .logical_output_rows(self.b_rows_len())
-    }
-    fn b_col_len(&self) -> usize;
-    fn num_live_ring_elements_per_claim(&self) -> usize;
-    fn num_positions_per_block(&self) -> usize;
-    fn num_live_blocks(&self) -> usize;
-    fn fold_challenge_config(&self) -> SparseChallengeConfig;
-    fn position_index_bits(&self) -> usize;
-    fn block_index_bits(&self) -> usize;
-    fn num_digits_inner(&self) -> usize;
-    fn num_digits_outer(&self) -> usize;
-    fn num_digits_open(&self) -> usize;
-    fn num_digits_fold(&self) -> usize;
-    fn log_basis_inner(&self) -> u32;
-    fn log_basis_outer(&self) -> u32;
-    fn log_basis_open(&self) -> u32;
-}
-
-impl LevelParamsLike for CommittedGroupParams {
-    fn source_encoding(&self) -> crate::CommittedSourceEncoding {
-        self.source_encoding
-    }
-
-    fn opening_method(&self) -> OpeningMethod {
-        self.opening_method
-    }
-
-    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
-        &self.inner_commit_matrix
-    }
-
-    fn a_rows_len(&self) -> usize {
-        self.inner_commit_matrix.output_rank()
-    }
-
-    fn a_col_len(&self) -> usize {
-        self.inner_commit_matrix.input_width()
-    }
-
-    fn b_rows_len(&self) -> usize {
-        self.outer_commit_matrix.output_rank()
-    }
-
-    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
-        self.outer_slice_count
-    }
-
-    fn b_col_len(&self) -> usize {
-        self.outer_commit_matrix.input_width()
-    }
-
-    fn num_live_ring_elements_per_claim(&self) -> usize {
-        self.num_live_ring_elements_per_claim
-    }
-
-    fn num_positions_per_block(&self) -> usize {
-        self.num_positions_per_block
-    }
-
-    fn num_live_blocks(&self) -> usize {
-        self.num_live_blocks
-    }
-
-    fn fold_challenge_config(&self) -> SparseChallengeConfig {
-        self.fold_challenge_config
-    }
-
-    fn position_index_bits(&self) -> usize {
-        self.position_index_bits()
-    }
-
-    fn block_index_bits(&self) -> usize {
-        self.block_index_bits()
-    }
-
-    fn num_digits_inner(&self) -> usize {
-        self.num_digits_inner
-    }
-
-    fn num_digits_outer(&self) -> usize {
-        self.num_digits_outer
-    }
-
-    fn num_digits_open(&self) -> usize {
-        self.num_digits_open
-    }
-
-    fn num_digits_fold(&self) -> usize {
-        self.num_digits_fold
-    }
-
-    fn log_basis_outer(&self) -> u32 {
-        self.log_basis_outer
-    }
-
-    fn log_basis_inner(&self) -> u32 {
-        self.log_basis_inner
-    }
-
-    fn log_basis_open(&self) -> u32 {
-        self.log_basis_open
-    }
-}
-
 impl GroupOpenPhaseParams {
     /// Logical B output rows after un-slicing the physical matrix.
     ///
@@ -584,11 +464,11 @@ impl GroupOpenPhaseParams {
     }
 }
 
-/// Inherent accessors, identical in body to the `LevelParamsLike` impl below.
+/// Commitment geometry and opening policy carried by one group.
 ///
-/// Callers holding a concrete group no longer need the trait in scope. That is
-/// what makes the trait deletable: it exists only to let a caller treat a fold's
-/// final group and a precommitted group uniformly, and both are now the same
+/// These were the 22 methods of the deleted `LevelParamsLike` trait, which
+/// existed only to let a caller treat a fold's final group and a precommitted
+/// group uniformly without knowing which it held. Both are the same
 /// type.
 impl GroupOpenPhaseParams {
     #[inline]
@@ -714,92 +594,6 @@ impl GroupOpenPhaseParams {
     #[inline]
     #[must_use]
     pub fn log_basis_open(&self) -> u32 {
-        self.opening.log_basis_open
-    }
-}
-
-impl LevelParamsLike for GroupOpenPhaseParams {
-    fn source_encoding(&self) -> crate::CommittedSourceEncoding {
-        crate::CommittedSourceEncoding::CanonicalCoefficientTable
-    }
-
-    fn opening_method(&self) -> OpeningMethod {
-        self.opening.opening_method
-    }
-
-    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
-        &self.profile.inner.matrix
-    }
-
-    fn a_rows_len(&self) -> usize {
-        self.profile.inner.matrix.output_rank()
-    }
-
-    fn a_col_len(&self) -> usize {
-        self.profile.inner.matrix.input_width()
-    }
-
-    fn b_rows_len(&self) -> usize {
-        self.profile.outer.matrix.output_rank()
-    }
-
-    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
-        self.profile.outer_slice_count
-    }
-
-    fn b_col_len(&self) -> usize {
-        self.profile.outer.matrix.input_width()
-    }
-
-    fn num_live_ring_elements_per_claim(&self) -> usize {
-        self.profile.blocks.live_ring_elements_per_claim
-    }
-
-    fn num_positions_per_block(&self) -> usize {
-        self.profile.blocks.positions_per_block
-    }
-
-    fn num_live_blocks(&self) -> usize {
-        self.profile.blocks.live_blocks
-    }
-
-    fn fold_challenge_config(&self) -> SparseChallengeConfig {
-        self.opening.fold_challenge_config
-    }
-
-    fn position_index_bits(&self) -> usize {
-        self.profile.blocks().position_index_bits()
-    }
-
-    fn block_index_bits(&self) -> usize {
-        self.profile.blocks().block_index_bits()
-    }
-
-    fn num_digits_inner(&self) -> usize {
-        self.profile.inner.digits.num_digits
-    }
-
-    fn num_digits_outer(&self) -> usize {
-        self.profile.outer.digits.num_digits
-    }
-
-    fn num_digits_open(&self) -> usize {
-        self.opening.num_digits_open
-    }
-
-    fn num_digits_fold(&self) -> usize {
-        self.opening.num_digits_fold
-    }
-
-    fn log_basis_outer(&self) -> u32 {
-        self.profile.outer.digits.log_basis
-    }
-
-    fn log_basis_inner(&self) -> u32 {
-        self.profile.inner.digits.log_basis
-    }
-
-    fn log_basis_open(&self) -> u32 {
         self.opening.log_basis_open
     }
 }

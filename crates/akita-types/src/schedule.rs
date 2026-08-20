@@ -2,8 +2,8 @@
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, InnerCommitSecurityRoute, LevelParamsLike,
-    OpeningMethod, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
+    CommittedGroupParams, InnerCommitMatrixParams, InnerCommitSecurityRoute, OpeningMethod,
+    RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::AkitaError;
 
@@ -500,7 +500,7 @@ impl FoldSchedule {
         // final/new group last. This is the ordering `precommitted_group_iter`
         // already uses, and the one `FoldParams::groups` makes structural.
         let root_final = &self.root.params;
-        let mut root_groups: Vec<OpeningExecutionGroup<'_>> = self
+        let mut root_groups: Vec<OpeningExecutionGroup> = self
             .root
             .params
             .precommitted_groups
@@ -508,7 +508,9 @@ impl FoldSchedule {
             .map(|group| {
                 let commitment = group;
                 OpeningExecutionGroup {
-                    params: commitment as &dyn LevelParamsLike,
+                    params: *commitment,
+                    // Precommitted groups are canonical by admission.
+                    source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                         commitment.opening.opening_method,
                         extension_degree,
@@ -520,7 +522,8 @@ impl FoldSchedule {
             })
             .collect();
         root_groups.push(OpeningExecutionGroup {
-            params: root_final,
+            params: root_final.final_group_scalar()?,
+            source_encoding: root_final.source_encoding,
             expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                 root_final.opening_method,
                 extension_degree,
@@ -532,16 +535,18 @@ impl FoldSchedule {
         validate_level_opening_execution(0, extension_degree, &root_groups)?;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             let witness = &step.params;
-            let mut groups: Vec<OpeningExecutionGroup<'_>> = Vec::new();
+            let mut groups: Vec<OpeningExecutionGroup> = Vec::new();
             // An incoming setup prefix is group 0 in canonical order.
             if let Some(prefix) = &step.params.setup_prefix {
                 groups.push(OpeningExecutionGroup {
-                    params: prefix,
+                    params: *prefix,
+                    source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     expected_source_encoding: None,
                 });
             }
             groups.push(OpeningExecutionGroup {
-                params: witness,
+                params: witness.final_group_scalar()?,
+                source_encoding: witness.source_encoding,
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                     witness.opening_method,
                     extension_degree,
@@ -560,15 +565,29 @@ impl FoldSchedule {
     }
 }
 
-struct OpeningExecutionGroup<'a> {
-    params: &'a dyn LevelParamsLike,
+/// One group admitted by a fold, paired with the source encoding its producer
+/// must have used.
+///
+/// Formerly a borrowed view over `&dyn LevelParamsLike`, needed because a fold's
+/// final group and a precommitted group had different types. Both are
+/// `GroupOpenPhaseParams` now, and it is `Copy`, so this carries values.
+#[derive(Clone, Copy)]
+struct OpeningExecutionGroup {
+    params: crate::GroupOpenPhaseParams,
+    /// Encoding the committing fold actually used for this group.
+    ///
+    /// Carried explicitly rather than read from `params`: a group's own
+    /// `source_encoding` accessor returns a hard-coded canonical value, because a
+    /// precommitted group has nowhere to store one. Reading it from the group
+    /// would make both tensor-projection rejections below unreachable.
+    source_encoding: crate::CommittedSourceEncoding,
     expected_source_encoding: Option<crate::CommittedSourceEncoding>,
 }
 
 fn validate_level_opening_execution(
     absolute_level: usize,
     extension_degree: usize,
-    groups: &[OpeningExecutionGroup<'_>],
+    groups: &[OpeningExecutionGroup],
 ) -> Result<(), AkitaError> {
     // Which group is `first` does not affect the accept/reject outcome. The
     // family taken from it is checked against *every* group below, so for a
@@ -607,7 +626,7 @@ fn validate_level_opening_execution(
     }
     for group in groups {
         let opening_method = group.params.opening_method();
-        match (opening_method, group.params.source_encoding()) {
+        match (opening_method, group.source_encoding) {
             (
                 OpeningMethod::EvaluationTrace,
                 crate::CommittedSourceEncoding::TensorSubfieldProjection {
@@ -630,7 +649,7 @@ fn validate_level_opening_execution(
         }
         if group
             .expected_source_encoding
-            .is_some_and(|expected| expected != group.params.source_encoding())
+            .is_some_and(|expected| expected != group.source_encoding)
         {
             return Err(AkitaError::InvalidSetup(
                 "committed source encoding does not match its producer geometry and opening method"

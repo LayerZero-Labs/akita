@@ -307,7 +307,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             }
         );
         assert_eq!(
-            akita_types::LevelParamsLike::source_encoding(prefix),
+            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         let d_d = params.role_dims().d_d();

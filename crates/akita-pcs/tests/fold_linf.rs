@@ -38,7 +38,12 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     .clone();
     let poly = make_onehot_poly(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
-    let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
+    let opening = opening_from_poly_for_layout(
+        &poly,
+        &point,
+        &layout.final_group_scalar().expect("scalar final group"),
+        BasisMode::Lagrange,
+    );
 
     let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
     let prepared = CpuBackend::DEFAULT

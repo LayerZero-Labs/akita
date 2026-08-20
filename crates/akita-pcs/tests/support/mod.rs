@@ -13,8 +13,8 @@ use akita_types::sis::{
 };
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, DecompositionParams,
-    GroupCommitPhaseParams, LevelParamsLike, OpeningScheduleSelection, PolynomialGroupLayout,
-    SetupMatrixCapacity, SisModulusProfileId,
+    GroupCommitPhaseParams, OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
+    SisModulusProfileId,
 };
 use std::{
     any::TypeId,
@@ -131,7 +131,7 @@ fn rebuild_group_output_matrices(
 }
 
 fn universal_fold_digit_depth(
-    params: &(impl LevelParamsLike + ?Sized),
+    params: &akita_types::GroupOpenPhaseParams,
     field_bits: u32,
     num_claims: usize,
     num_chunks: usize,
@@ -447,8 +447,11 @@ where
         successor_witness.num_live_blocks = successor_witness
             .num_live_ring_elements_per_claim
             .div_ceil(successor_witness.num_positions_per_block);
+        let successor_group = successor_witness
+            .final_group_scalar()
+            .expect("scalar final group");
         successor_witness.num_digits_fold = universal_fold_digit_depth(
-            successor_witness,
+            &successor_group,
             policy.decomposition.field_bits(),
             1,
             successor_witness.witness_chunk.num_chunks,

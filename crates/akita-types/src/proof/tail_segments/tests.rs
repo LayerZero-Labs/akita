@@ -52,7 +52,7 @@ fn scalar_group_layout(
         lp,
         field_bits,
         [(
-            lp as &dyn LevelParamsLike,
+            lp.final_group_scalar().expect("scalar final group"),
             num_w_vectors,
             num_t_vectors,
             num_z_segments,
@@ -138,7 +138,13 @@ fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
-        [(&lp as &dyn LevelParamsLike, 1, 1, 1, cap)],
+        [(
+            lp.final_group_scalar().expect("scalar final group"),
+            1usize,
+            1usize,
+            1usize,
+            cap,
+        )],
     )
     .unwrap()
     .layout;
@@ -161,7 +167,7 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
         &lp,
         field_bits,
         [(
-            &lp as &dyn LevelParamsLike,
+            lp.final_group_scalar().expect("scalar final group"),
             1usize,
             1usize,
             1usize,
@@ -182,7 +188,7 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
         &lp,
         field_bits,
         [(
-            &lp as &dyn LevelParamsLike,
+            lp.final_group_scalar().expect("scalar final group"),
             1usize,
             1usize,
             1usize,
@@ -196,7 +202,7 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
     let recomposed_inner_rows = RingVec::from_coeffs(vec![F::zero(); group_layout.t_field_elems]);
     let z_folded_centered_flat = vec![0i32; group_layout.z_coords];
     let group = TerminalResponseGroupParts {
-        params: &lp,
+        params: lp.final_group_scalar().expect("scalar final group"),
         num_w_vectors: 1,
         num_t_vectors: 1,
         num_z_segments: 1,

@@ -214,7 +214,7 @@ mod tests {
             lp,
             field_bits,
             [(
-                lp as &dyn crate::LevelParamsLike,
+                lp.final_group_scalar().expect("scalar final group"),
                 num_claims,
                 num_claims,
                 1,
