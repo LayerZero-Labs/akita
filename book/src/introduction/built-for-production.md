@@ -22,7 +22,7 @@ Akita takes the next step. It provides a standalone PCS that another proof
 system can integrate as a maintained dependency. The planner chooses
 parameters, and normal builds consume generated artifacts. Separate prover and
 verifier paths share canonical serialization. Portable arithmetic, profiling,
-and end to end host integration complete the deployment system.
+and end-to-end host integration complete the deployment system.
 
 Production readiness comes from agreement across that complete system.
 
@@ -48,7 +48,7 @@ explains how the repository prices Module-SIS and response bounds.
 
 ## The verifier is an independent boundary
 
-Verifier only consumers can depend on `akita-verifier`, `akita-types`, and
+Verifier-only consumers can depend on `akita-verifier`, `akita-types`, and
 `akita-config` without pulling in prover polynomial backends or planner search.
 This crate boundary keeps proving convenience code away from the code that
 accepts or rejects a proof.
@@ -87,7 +87,7 @@ selects an implementation supported by the host CPU. Differential tests compare
 optimized outputs with portable reference paths.
 
 The implementation also distinguishes arithmetic representations by their
-exact bounds. Some AVX-512 kernels use 50 bit residues in 64 bit lanes, while
+exact bounds. Some AVX-512 kernels use 50-bit residues in 64-bit lanes, while
 ordinary i32 transforms retain their own dispatch rules. These are backend
 choices. They do not change the proof statement or public setup identity.
 
@@ -100,20 +100,34 @@ layers.
 ## The prover controls memory as well as time
 
 The committed polynomial is often the largest object in the application.
-Akita avoids adding another equally large dense copy when the source can remain
-sparse or when a matrix operation can be streamed.
+The current dense API receives a materialized table. When the application
+passes an owned field buffer, Akita reuses that buffer instead of making
+another complete copy.
 
-One hot sources store their hot positions instead of a full table. Setup
+The generated fold schedule replaces the source with progressively smaller
+intermediate data. At large supported polynomial sizes, this additional
+working state grows more slowly than the source table. The dense digit cache is
+capped at 512 MiB. Large ring relation and quotient transforms operate on
+bounded chunks instead of retaining complete transformed matrices.
+
+The current 128-bit dense benchmark makes this concrete. Its $2^{28}$ field
+elements occupy a 4.0 GiB source table. The first fold reduces that table to
+55,332,544 field elements, about one fifth as many. The complete benchmark
+process peaks at about 5.1 GiB while it constructs setup, commits, proves, and
+verifies.
+
+One-hot sources store their hot positions instead of a full table. Setup
 matrices come from a deterministic public stream and can be materialized only
 to the capacity required by a deployment. Prepared NTT entries are reusable
-compute state rather than part of public setup identity. Large ring switch
-operations can stream transform chunks instead of keeping a complete prepared
-matrix resident.
+compute state rather than part of public setup identity.
 
 The prover exposes explicit release points for hosts that need to free shared
 matrix state before a recursive suffix. These controls let an integration make
 memory policy visible and measurable instead of relying on hidden global
 caches.
+
+A fully streamed dense source could remove the need to store the original table
+inside Akita. That source path is not part of the current production API.
 
 ## Performance claims come from complete proofs
 
@@ -122,7 +136,7 @@ serialization, and verification for complete opening statements. It reports
 proof bytes, peak resident memory, selected schedule geometry, and separate
 phase timings.
 
-Representative dense, one hot, and grouped profiles across the supported field
+Representative dense, one-hot, and grouped profiles across the supported field
 sizes currently produce Akita proof payloads of roughly 65 to 80 KB. The
 profile records the exact statement and configuration behind each result. This
 keeps a proof size attached to the workload that produced it.
@@ -138,7 +152,7 @@ interpret these measurements.
 ## Jolt exercises the complete boundary
 
 Jolt is Akita's first major integration. It is a zkVM that proves correct
-execution of 64 bit RISC-V programs. Its memory checks create large one hot
+execution of 64-bit RISC-V programs. Its memory checks create large one-hot
 tables, which makes it a natural host for Akita's sparse commitment path.
 
 The integration also exercises more than proving speed. Akita proof bytes must
