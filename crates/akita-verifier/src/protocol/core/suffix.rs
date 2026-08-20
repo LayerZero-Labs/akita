@@ -277,9 +277,7 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     if scheduled.response_shape.layout.groups.len() != 1
-        || params
-            .validate_terminal_linf_cap(&scheduled.fold_challenge_config, group.z_linf_cap)
-            .is_err()
+        || params.validate_terminal_linf_cap(group.z_linf_cap).is_err()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -357,7 +355,6 @@ where
         &challenges,
         &prepared_points[0].ring_multiplier_point,
         params,
-        &scheduled.fold_challenge_config,
         proof.terminal_response(),
     )
     .map_err(|error| {

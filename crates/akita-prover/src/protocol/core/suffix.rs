@@ -380,7 +380,6 @@ where
     )?;
     let terminal_response = akita_types::build_terminal_response(
         params,
-        &scheduled.fold_challenge_config,
         &scheduled.response_shape,
         &e_folded,
         t_state,

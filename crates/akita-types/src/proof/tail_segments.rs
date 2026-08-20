@@ -1001,7 +1001,6 @@ where
 /// schedule. Neither `e` nor `t` is gadget decomposed.
 pub fn build_terminal_response<F>(
     params: &TerminalFoldParams,
-    sparse: &akita_challenges::SparseChallengeConfig,
     scheduled_shape: &TerminalResponseShape,
     e_folded: &RingVec<F>,
     t_fields: RingVec<F>,
@@ -1023,7 +1022,7 @@ where
             "terminal response segment length mismatch".into(),
         ));
     }
-    params.validate_terminal_linf_cap(sparse, group.z_linf_cap)?;
+    params.validate_terminal_linf_cap(group.z_linf_cap)?;
     let z_values = z_folded_centered_flat
         .iter()
         .map(|value| i64::from(*value))

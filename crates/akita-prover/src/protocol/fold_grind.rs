@@ -189,7 +189,7 @@ where
         ));
     }
     let linf_cap = expected_group.z_linf_cap;
-    params.validate_terminal_linf_cap(sparse, linf_cap)?;
+    params.validate_terminal_linf_cap(linf_cap)?;
     let response_l2_sq_cap = params.response_l2_sq_cap();
     let operator_rejection = if response_l2_sq_cap.is_some() {
         Some(

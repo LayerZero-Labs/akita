@@ -189,7 +189,7 @@ impl TerminalFoldParams {
             &cap_config,
         )?;
         let terminal = Self::from_expanded_group(params);
-        let admission_cap = terminal.certified_response_linf_cap(&sparse)?;
+        let admission_cap = terminal.certified_response_linf_cap()?;
         let minimum_usable_cap = unconstrained_target
             .checked_mul(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal target ratio overflow".into()))?
@@ -229,10 +229,15 @@ impl TerminalFoldParams {
     /// The matrix rank can incidentally support a larger collision bucket. The
     /// terminal wire does not consume that slack because doing so would change
     /// its admission and encoding bounds when an unrelated rank frontier moves.
-    pub fn certified_response_linf_cap(
-        &self,
-        sparse: &akita_challenges::SparseChallengeConfig,
-    ) -> Result<u128, AkitaError> {
+    /// Takes no challenge family. Every production caller passed this terminal's
+    /// own `fold_challenge_config` -- the prover and verifier suffixes both bind
+    /// `params = &scheduled` and then passed `&scheduled.fold_challenge_config`,
+    /// and `try_from_expanded_group` derives both the cap and the stored config
+    /// from one `CommittedGroupParams`. Nothing forced the argument to agree with
+    /// the receiver, so a caller could only ever pass the same value or silently
+    /// move the admission cap that gates acceptance. Reading the field removes
+    /// that gap by construction.
+    pub fn certified_response_linf_cap(&self) -> Result<u128, AkitaError> {
         if matches!(
             self.inner.matrix.security_route(),
             crate::sis::InnerCommitSecurityRoute::L2 { .. }
@@ -241,14 +246,16 @@ impl TerminalFoldParams {
                 "terminal L2 route has no independent Linf cap".into(),
             ));
         }
-        crate::sis::certified_terminal_response_linf_cap(&self.inner.matrix, sparse)
+        crate::sis::certified_terminal_response_linf_cap(
+            &self.inner.matrix,
+            &self.fold_challenge_config,
+        )
     }
 
     /// Validate that the wire carries exactly the norm cap required by the
     /// selected terminal security route.
     pub fn validate_terminal_linf_cap(
         &self,
-        sparse: &akita_challenges::SparseChallengeConfig,
         scheduled_cap: Option<u128>,
     ) -> Result<(), AkitaError> {
         match self.inner.matrix.security_route() {
@@ -256,7 +263,7 @@ impl TerminalFoldParams {
                 let cap = scheduled_cap.ok_or_else(|| {
                     AkitaError::InvalidSetup("terminal Linf route is missing its cap".into())
                 })?;
-                if cap == 0 || cap > self.certified_response_linf_cap(sparse)? {
+                if cap == 0 || cap > self.certified_response_linf_cap()? {
                     return Err(AkitaError::InvalidSetup(
                         "terminal Linf cap exceeds its matrix-certified capacity".into(),
                     ));

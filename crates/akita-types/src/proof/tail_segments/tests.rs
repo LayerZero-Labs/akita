@@ -494,7 +494,7 @@ fn terminal_cap_has_exactly_one_implementation() {
             let terminal = crate::TerminalFoldParams::from_expanded_group(lp);
             assert_eq!(
                 terminal
-                    .certified_response_linf_cap(&sparse)
+                    .certified_response_linf_cap()
                     .expect("schedule-side cap"),
                 crate::sis::certified_terminal_response_linf_cap(&matrix, &sparse)
                     .expect("single-authority cap"),

@@ -745,7 +745,7 @@ impl GeneratedTerminalFold {
             fold: akita_types::GadgetDigits::new(self.fold_log_basis, fold_digit_count),
         };
         if terminal
-            .validate_terminal_linf_cap(&sparse, self.z_linf_cap)
+            .validate_terminal_linf_cap(self.z_linf_cap)
             .is_err()
             || self.z_rice_low_bits >= 64
             || self.z_payload_bytes == 0

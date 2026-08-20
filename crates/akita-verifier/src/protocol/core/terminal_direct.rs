@@ -135,7 +135,6 @@ pub(super) fn verify_terminal_ring_relations<F>(
     challenges: &Challenges,
     multiplier: &RingMultiplierOpeningPoint<F>,
     params: &TerminalFoldParams,
-    sparse: &akita_challenges::SparseChallengeConfig,
     terminal_response: &TerminalResponse<F>,
 ) -> Result<(), AkitaError>
 where
@@ -151,7 +150,7 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     if params
-        .validate_terminal_linf_cap(sparse, group_layout.z_linf_cap)
+        .validate_terminal_linf_cap(group_layout.z_linf_cap)
         .is_err()
     {
         return Err(AkitaError::InvalidProof);

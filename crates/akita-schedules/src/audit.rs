@@ -460,9 +460,7 @@ fn audit_terminal(
             "terminal response shape disagrees with the committed witness geometry",
         ));
     }
-    if params
-        .validate_terminal_linf_cap(sparse, group.z_linf_cap)
-        .is_err()
+    if params.validate_terminal_linf_cap(group.z_linf_cap).is_err()
         || group.z_rice_low_bits >= 64
         || group.z_payload_bytes == 0
     {
