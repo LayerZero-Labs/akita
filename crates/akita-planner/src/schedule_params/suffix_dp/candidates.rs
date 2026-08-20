@@ -343,7 +343,6 @@ impl<'a> CandidateDomain<'a> {
                         &work.precommitted_openings,
                         inner_lb,
                         open_lb,
-                        !ctx.allow_noncontractive_root,
                     )?;
                     for (params, next_witness_len) in dimension_candidates {
                         if work.purpose.allows_terminal() {

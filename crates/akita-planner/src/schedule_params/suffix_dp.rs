@@ -129,7 +129,7 @@ type LevelCandidate = (
     Option<crate::response_model::SourceMomentEstimate>,
 );
 
-type GuidedLevelCandidate = (CompleteObjectiveBound, Option<usize>, LevelCandidate);
+type GuidedLevelCandidate = (bool, CompleteObjectiveBound, Option<usize>, LevelCandidate);
 
 enum CandidateTraversal {
     Plain(std::vec::IntoIter<LevelCandidate>),
@@ -171,7 +171,7 @@ impl Iterator for CandidateTraversal {
             Self::Plain(candidates) => candidates.next().map(|candidate| (None, candidate)),
             Self::Guided(candidates) => candidates
                 .next()
-                .map(|(bound, natural_len, candidate)| (Some((bound, natural_len)), candidate)),
+                .map(|(_, bound, natural_len, candidate)| (Some((bound, natural_len)), candidate)),
         }
     }
 }
@@ -304,6 +304,23 @@ fn direct_edge_lower_bound(
     ))
 }
 
+fn root_witness_contracts(
+    policy: &PlannerPolicy,
+    input_witness_len: usize,
+    params: &CommittedGroupParams,
+    output_witness_len: usize,
+) -> Result<bool, AkitaError> {
+    let input_bits = input_witness_len
+        .checked_mul(policy.decomposition.field_bits() as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("root input witness bit length overflow".into()))?;
+    let output_bits = output_witness_len
+        .checked_mul(params.log_basis_open as usize)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("root output witness bit length overflow".into())
+        })?;
+    Ok(output_bits < input_bits)
+}
+
 fn complete_root_bound_is_strictly_worse(
     policy: &PlannerPolicy,
     lower_bound: CompleteObjectiveBound,
@@ -361,6 +378,8 @@ fn candidate_traversal(
     let mut guided = candidates
         .into_iter()
         .map(|candidate| {
+            let contracts = matches!(guide_scope, Some(GuideScope::CompleteRoot))
+                && root_witness_contracts(policy, current_witness_len, &candidate.0, candidate.1)?;
             let natural_len = (policy.selection_policy
                 == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload)
                 .then(|| active_setup_field_len(&candidate.0, opening_layout))
@@ -372,12 +391,19 @@ fn candidate_traversal(
                 candidate.1,
                 natural_len.unwrap_or_default(),
             )?;
-            Ok((lower_bound, natural_len, candidate))
+            Ok((contracts, lower_bound, natural_len, candidate))
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    guided.sort_by_key(|(lower_bound, _, (_, next_witness_len, _, _))| {
-        (*lower_bound, *next_witness_len)
-    });
+    guided.sort_by_cached_key(
+        |(contracts, lower_bound, _, (params, next_witness_len, _, _))| {
+            (
+                !*contracts,
+                *lower_bound,
+                *next_witness_len,
+                params.canonical_descriptor_bytes(),
+            )
+        },
+    );
     Ok(CandidateTraversal::Guided(guided.into_iter()))
 }
 

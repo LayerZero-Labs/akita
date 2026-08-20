@@ -1,8 +1,125 @@
 use super::*;
 
 use akita_config::{
-    honest_fold_policy_of, policy_of, proof_optimized::fp64::Dense, CommitmentConfig,
+    honest_fold_policy_of, policy_of,
+    proof_optimized::{fp128::DenseMultiChunk, fp64::Dense},
+    CommitmentConfig,
 };
+
+fn root_contracts(schedule: &PlannedFoldSchedule, field_bits: u32) -> bool {
+    let root = &schedule.schedule.root;
+    root.output_witness_len * (root.params.final_group.commitment.log_basis_open as usize)
+        < root.input_witness_len * field_bits as usize
+}
+
+fn root_candidate_classes<Cfg: CommitmentConfig>(
+    num_vars: usize,
+) -> Result<(bool, bool), AkitaError> {
+    let policy = policy_of::<Cfg>();
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+    let input_bits = (1usize << num_vars) * policy.decomposition.field_bits() as usize;
+    let mut has_contractive = false;
+    let mut has_noncontractive = false;
+    for dimensions in crate::schedule_params::dimension_candidates(
+        &policy,
+        0,
+        crate::schedule_params::initial_dimension_ceiling(&policy)?,
+    )? {
+        for opening in PlannerOpeningCandidate::coefficient_packing_domain(
+            0,
+            policy.claim_ext_degree,
+            dimensions,
+        )? {
+            for inner_basis in Cfg::inner_basis_range().0..=Cfg::inner_basis_range().1 {
+                for opening_basis in Cfg::opening_basis_range().0..=Cfg::opening_basis_range().1 {
+                    for (params, output_witness_len) in root_level_candidates_for_basis(
+                        &key,
+                        honest_fold_policy_of::<Cfg>(),
+                        &[],
+                        &policy,
+                        dimensions,
+                        opening,
+                        &[],
+                        inner_basis,
+                        opening_basis,
+                    )? {
+                        let contracts =
+                            output_witness_len * (params.log_basis_open as usize) < input_bits;
+                        has_contractive |= contracts;
+                        has_noncontractive |= !contracts;
+                    }
+                    if has_contractive && has_noncontractive {
+                        return Ok((true, true));
+                    }
+                }
+            }
+        }
+    }
+    Ok((has_contractive, has_noncontractive))
+}
+
+#[test]
+fn contractive_winner_remains_selected() {
+    let policy = policy_of::<Dense>();
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(14));
+    let schedule = find_schedule(
+        &key,
+        honest_fold_policy_of::<Dense>(),
+        &[],
+        &policy,
+        Dense::ring_challenge_config,
+    )
+    .expect("valid scalar root");
+
+    assert!(root_contracts(&schedule, policy.decomposition.field_bits()));
+    for fold in &schedule.schedule.recursive_folds {
+        assert!(
+            fold.output_witness_len < fold.input_witness_len,
+            "recursive folds must preserve strict progress"
+        );
+    }
+}
+
+#[test]
+fn noncontractive_root_is_selected_by_the_complete_policy() {
+    let policy = policy_of::<Dense>();
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(9));
+    let schedule = find_schedule(
+        &key,
+        honest_fold_policy_of::<Dense>(),
+        &[],
+        &policy,
+        Dense::ring_challenge_config,
+    )
+    .expect("valid scalar root");
+
+    assert!(
+        !root_contracts(&schedule, policy.decomposition.field_bits()),
+        "root contraction is not a complete selection coordinate"
+    );
+}
+
+#[test]
+fn noncontractive_multi_chunk_root_can_beat_contractive_candidates() {
+    let policy = policy_of::<DenseMultiChunk>();
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
+    let schedule = find_schedule(
+        &key,
+        honest_fold_policy_of::<DenseMultiChunk>(),
+        &[],
+        &policy,
+        DenseMultiChunk::ring_challenge_config,
+    )
+    .expect("valid multi-chunk root");
+    assert_eq!(
+        root_candidate_classes::<DenseMultiChunk>(16).unwrap(),
+        (true, true)
+    );
+    assert!(
+        !root_contracts(&schedule, policy.decomposition.field_bits()),
+        "the actual complete objective must be allowed to select the better noncontractive root"
+    );
+}
 
 #[test]
 fn valid_small_scalar_root_has_a_schedule() {
@@ -19,6 +136,7 @@ fn valid_small_scalar_root_has_a_schedule() {
         .unwrap_or_else(|error| panic!("valid nv={num_vars} D64-root request: {error}"));
 
         if num_vars == 8 {
+            assert_eq!(root_candidate_classes::<Dense>(8).unwrap(), (false, true));
             let root = &schedule.schedule.root;
             assert!(
                 root.output_witness_len
@@ -72,7 +190,6 @@ fn valid_small_grouped_root_has_a_schedule() {
         &[],
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
-        false,
     )
     .expect("scalar producer candidates")
     .into_iter()

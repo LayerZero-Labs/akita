@@ -323,7 +323,6 @@ pub(super) fn find_schedule(
                             &[],
                             inner_basis,
                             log_basis,
-                            true,
                         )?
                     {
                         let next_source_moment = if policy.selective_l2_response_model_enabled() {

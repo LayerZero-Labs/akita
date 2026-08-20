@@ -54,19 +54,18 @@ schedule. A supported proof contains at least the root fold and the terminal.
 
 ## Offline planner selection
 
-The planner separates candidate validity from cost. It first searches for a
-complete schedule whose root output is smaller than the input under the
-selected digit encoding. This is the ordinary optimized path.
-
-If that search finds no complete schedule, the planner runs the same audited
-search again and also admits root folds whose encoded output is not smaller.
-The ordinary objective prices these schedules without a discount. The planner
-still selects a shrinking schedule when one has a better score.
+The planner separates candidate validity from cost. One search admits every
+audited root fold, including roots whose encoded output is not smaller than the
+input. Root contraction can guide traversal order, but it does not determine
+feasibility and it is not a selection objective. Contractive and
+noncontractive roots share the same suffix memo and frontier. The planner
+selects the final complete schedule only with the configured
+`SelectionPolicyId` comparator.
 
 One failed ring dimension does not fail an adaptive request. A dimension that
 cannot reduce any root variables contributes no candidates, and the search
 continues with the other dimensions. The planner returns
-`AkitaError::UnsupportedSchedule` only when neither pass finds an audited fold
+`AkitaError::UnsupportedSchedule` only when the search finds no valid complete
 topology or when a hard setup limit excludes every topology.
 
 An intermediate edge uses one of two bindings:
@@ -148,8 +147,8 @@ must reject any schedule/proof disagreement before replay.
 
 Callers must use these primitives directly. Do not add root or terminal
 wrappers, shape aliases, a runtime scheduler, or a second row layout
-implementation. The offline planner fallback uses the same candidate builder,
-schedule type, and validators as the optimized pass.
+implementation. The offline planner search uses the same candidate builder,
+schedule type, and validators for every root candidate.
 
 ## Security and verifier safety
 
@@ -171,6 +170,10 @@ schedule type, and validators as the optimized pass.
   `UnsupportedSchedule` for keys outside the audited fold domain;
 - scalar and grouped regressions in which the only complete schedule has a
   root output that is not smaller than its input;
+- a regression in which contractive and noncontractive complete schedules are
+  both valid and the configured policy selects the noncontractive winner;
+- root candidate enumeration order does not change the selected schedule;
+- recursive progress and offloaded edge contraction remain enforced;
 - direct-terminal versus former quotient semantics across supported role
   dimensions;
 - transcript tamper tests for terminal `t`, `e`, `z`, the opening target, and
