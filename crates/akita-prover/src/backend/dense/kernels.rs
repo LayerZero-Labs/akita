@@ -9,8 +9,9 @@ use crate::compute::{
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{CanonicalField, ExtField, FieldCore};
 
 impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where

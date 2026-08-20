@@ -6,6 +6,7 @@ version = 4
 name = "akita-algebra"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "rand_core 0.6.4",
@@ -16,6 +17,7 @@ dependencies = [
 name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "akita-field",
  "akita-transcript",
  "serde",
@@ -25,14 +27,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-error"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "akita-field"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "akita-serialization",
  "num-traits",
  "rand_core 0.6.4",
  "serde",
- "thiserror",
 ]
 
 [[package]]
@@ -58,6 +67,7 @@ name = "akita-sumcheck"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "akita-transcript",
@@ -80,6 +90,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",

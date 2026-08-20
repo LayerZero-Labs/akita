@@ -503,7 +503,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         .map(|_| ())
         .expect_err("a dense source must not commit under a one-hot schedule");
         assert!(
-            matches!(error, akita_field::AkitaError::InvalidInput(_)),
+            matches!(error, akita_error::AkitaError::InvalidInput(_)),
             "expected InvalidInput, got {error:?}"
         );
 
@@ -644,7 +644,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         let error = commit(&over_positive)
             .expect_err("a coefficient above the declared bound must be rejected");
         assert!(
-            matches!(error, akita_field::AkitaError::InvalidInput(_)),
+            matches!(error, akita_error::AkitaError::InvalidInput(_)),
             "expected InvalidInput, got {error:?}"
         );
 

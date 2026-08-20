@@ -5,7 +5,8 @@ use crate::compute::compression::{
     CompressionExecutionReport,
 };
 use crate::compute::{CompressionComputeBackend, OperationCtx};
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{
     AkitaCommitmentHint, CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload,
     RelationRhsLayout, RingVec,

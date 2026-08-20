@@ -1,6 +1,6 @@
 //! Census live B/D source-image sizes across stock generated/offline keys.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, GenerationPreplans, ALL_GENERATED_FAMILIES,
 };

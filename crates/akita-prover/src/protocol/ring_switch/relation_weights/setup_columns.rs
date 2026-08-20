@@ -1,8 +1,9 @@
 use std::ops::Range;
 
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, FieldCore, MulBaseUnreduced};
+use akita_field::{FieldCore, MulBaseUnreduced};
 
 /// One family of setup-matrix rows read as per-column ring slices borrowed
 /// from the materialized store.

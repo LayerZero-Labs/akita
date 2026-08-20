@@ -7,7 +7,7 @@
 //! resulting `δ_fold` depth (see [`super::norm_bound::rounded_up_role_a_inf_norm`]).
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Maximum Fiat-Shamir probes per committed fold level.
 pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;

@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use akita_field::AkitaError;
+use akita_error::{checked, AkitaError};
 
 use crate::compression::CommitmentPayloadMode;
 use crate::witness::dyadic_block_ranges;
@@ -363,9 +363,7 @@ impl CommitmentSliceGeometry {
                 "B slice row coordinates are outside the physical matrix".into(),
             ));
         }
-        slice_index
-            .checked_mul(physical_output_rank)
-            .and_then(|offset| offset.checked_add(physical_row))
+        checked::mul_add(slice_index, physical_output_rank, physical_row)
             .ok_or_else(|| AkitaError::InvalidSetup("logical B row index overflow".into()))
     }
 

@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
@@ -408,9 +408,9 @@ fn fp32_onehot_grouped_requests(
 fn fp32_dense_grouped_requests(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    // The precommit half is 20 rather than 14: `fp32::Dense` has no schedule
-    // with at least two folds below 20, so 14 cannot produce the row this
-    // group's frozen profile is read from.
+    // The precommit half is 20 rather than 14 because the shipped fp32 dense
+    // catalog begins at 20. The group's frozen profile must come from a
+    // generated row in that catalog.
     single_pre_grouped_requests::<fp32::Dense>(
         preplans,
         PolynomialGroupLayout::new(20, 1),

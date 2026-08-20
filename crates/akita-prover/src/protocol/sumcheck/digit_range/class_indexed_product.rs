@@ -10,9 +10,10 @@ use super::range_class_tables::{
 use super::round_accumulation::accumulate_equality_weighted_round;
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 use akita_types::DigitRangePlan;
 

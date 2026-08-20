@@ -1,9 +1,10 @@
 #![allow(missing_docs)]
 
 use akita_algebra::poly::multilinear_eval;
+use akita_error::AkitaError;
 use akita_field::{
-    AkitaError, Ext2, ExtField, FieldCore, FpExt4, Prime128Offset275, Prime24Offset3,
-    Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime64Offset59,
+    Ext2, ExtField, FieldCore, FpExt4, Prime128Offset275, Prime24Offset3, Prime30Offset35,
+    Prime31Offset19, Prime32Offset99, Prime64Offset59,
 };
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
@@ -278,14 +279,14 @@ fn row_factor_batches_multiple_opening_points() {
 #[test]
 fn factor_rejects_malformed_shapes() {
     let err = ExtensionOpeningReductionFactor::<F>::from_terms(Vec::new()).unwrap_err();
-    assert!(matches!(err, akita_field::AkitaError::InvalidInput(_)));
+    assert!(matches!(err, akita_error::AkitaError::InvalidInput(_)));
 
     let err = ExtensionOpeningReductionFactor::from_terms(vec![
         ExtensionOpeningFactorTerm::new(vec![F::one(), F::zero()], F::one()),
         ExtensionOpeningFactorTerm::new(vec![F::one()], F::one()),
     ])
     .unwrap_err();
-    assert!(matches!(err, akita_field::AkitaError::InvalidSize { .. }));
+    assert!(matches!(err, akita_error::AkitaError::InvalidSize { .. }));
 }
 
 #[test]
@@ -799,7 +800,7 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
             opened_witness,
             factor_eval,
         ),
-        Err(akita_field::AkitaError::InvalidProof)
+        Err(akita_error::AkitaError::InvalidProof)
     ));
 }
 
@@ -819,7 +820,7 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
 
     let bad_factor_evals: Vec<F> = (0..8).map(|i| F::from_u64((2 * i + 10) as u64)).collect();
     let err = verify_eor_full(&witness_evals, &bad_factor_evals, &proof).unwrap_err();
-    assert!(matches!(err, akita_field::AkitaError::InvalidProof));
+    assert!(matches!(err, akita_error::AkitaError::InvalidProof));
 }
 
 #[test]

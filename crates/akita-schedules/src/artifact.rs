@@ -1,7 +1,7 @@
 //! Versioned trusted JSON schedule catalog artifacts.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::instance_descriptor::{
     digest_descriptor_bytes, AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };

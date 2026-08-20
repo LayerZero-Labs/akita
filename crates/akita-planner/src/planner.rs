@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
@@ -185,10 +185,8 @@ pub(crate) fn root_level_candidates_for_basis(
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
     precommitted_openings: &[PlannerOpeningCandidate],
-    root_input_witness_len: usize,
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
-    require_witness_contraction: bool,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
     opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
@@ -196,10 +194,7 @@ pub(crate) fn root_level_candidates_for_basis(
     let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
-        return Err(AkitaError::UnsupportedSchedule(format!(
-            "root batch num_vars={} does not exceed log2(ring_dimension)={alpha}",
-            key.final_group.num_vars()
-        )));
+        return Ok(Vec::new());
     }
 
     if precommitted_honest_fold_policies.len() != key.precommitteds.len() {
@@ -238,9 +233,6 @@ pub(crate) fn root_level_candidates_for_basis(
         ),
     };
     let opening_batch = key.opening_layout()?;
-    let initial_witness_len_bits = root_input_witness_len
-        .checked_mul(field_bits as usize)
-        .ok_or_else(|| AkitaError::InvalidSetup("root batch witness bit length overflow".into()))?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
     let num_ring_elems = 1usize.checked_shl(reduced_vars as u32).ok_or_else(|| {
@@ -337,18 +329,6 @@ pub(crate) fn root_level_candidates_for_basis(
             else {
                 continue;
             };
-            if require_witness_contraction
-                && output_witness_len
-                    .checked_mul(candidate_log_basis_open as usize)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "root batch next witness bit length overflow".into(),
-                        )
-                    })?
-                    >= initial_witness_len_bits
-            {
-                continue;
-            }
             candidates.push((candidate_params, output_witness_len));
         }
     }
@@ -544,23 +524,19 @@ pub fn find_schedule(
         precommitted_honest_fold_policies,
         level_zero_is_root: true,
     };
-    let mut memo = ScheduleMemo::new();
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
+    let initial_state = SuffixState {
+        level: 0,
+        current_witness_len: root_input_witness_len,
+        current_lb: 0,
+        source_moment: None,
+        incoming_setup_prefix: None,
+        dimension_ceiling,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+    };
+    let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
-    let suffix = derive_selected_suffix_schedule(
-        &suffix_ctx,
-        &mut memo,
-        SuffixState {
-            level: 0,
-            current_witness_len: root_input_witness_len,
-            current_lb: 0,
-            source_moment: None,
-            incoming_setup_prefix: None,
-            dimension_ceiling,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        },
-        0,
-    );
+    let suffix = derive_selected_suffix_schedule(&suffix_ctx, &mut memo, initial_state, 0);
     if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
         diagnostics.add_suffix_dp_time(started.elapsed());
         let (hits, misses) = memo.setup_prefix_cache_diagnostics();
@@ -584,13 +560,13 @@ pub fn find_schedule(
             )
         {
             return Err(AkitaError::UnsupportedSchedule(format!(
-                "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
+                "no mixed-D schedule in the audited fold domain for num_vars={}, num_polynomials={}",
                 key.final_group.num_vars(),
                 key.final_group.num_polynomials()
             )));
         }
         return Err(AkitaError::UnsupportedSchedule(format!(
-            "no multi-group schedule with at least two folds for num_vars={}",
+            "no multi-group schedule in the audited fold domain for num_vars={}",
             key.final_group.num_vars()
         )));
     };
@@ -639,3 +615,7 @@ pub fn find_schedule(
     }
     planned
 }
+
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/planner_totality.rs"]
+mod totality_tests;

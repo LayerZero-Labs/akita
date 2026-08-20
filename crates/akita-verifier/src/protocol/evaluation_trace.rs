@@ -11,7 +11,8 @@ use akita_algebra::offset_eq::{
     EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
 };
 use akita_algebra::poly::multilinear_eval;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_types::{
     basis_weights, prepare_evaluation_trace_group_parameters, BasisMode, EvaluationTraceInputs,
     FpExtEncoding,
@@ -817,7 +818,7 @@ mod tests {
             F,
             group_params.inner_commit_matrix_params().ring_dimension(),
             |D_G| {
-                Ok::<_, akita_field::AkitaError>(PreparedOpeningPoint::from_parts(
+                Ok::<_, akita_error::AkitaError>(PreparedOpeningPoint::from_parts(
                     padded_point,
                     ring_multiplier_point,
                     CyclotomicRing::<F, D_G>::one(),

@@ -7,7 +7,7 @@ use super::montgomery::{
     forward_dif_tail_i32_avx2, inverse_dit_head_i32_avx2, mont_mul_4x_i32_avx2,
     mont_mul_8x_i32_avx2, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
 };
-use super::{d32, wide512};
+use super::wide512;
 use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::prime::{MontCoeff, NttPrime};
@@ -244,16 +244,6 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::forward_ntt_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
@@ -396,16 +386,6 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::inverse_ntt_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
@@ -542,16 +522,6 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::forward_ntt_cyclic_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
@@ -675,16 +645,6 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::inverse_ntt_cyclic_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {

@@ -4,7 +4,7 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
@@ -427,7 +427,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<akita_challenges::SparseChallengeConfig, akita_field::AkitaError> {
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_ring_challenge_config(d)
             }
 
@@ -438,7 +438,7 @@ macro_rules! impl_proof_optimized_preset {
             fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
                 $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                     max_num_vars,
                     max_num_batched_polys,

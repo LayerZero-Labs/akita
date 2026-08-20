@@ -1,7 +1,8 @@
 //! Verifier replay for the schedule-selected physical response norm.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceVerifier, SumcheckInstanceVerifierExt};
 use akita_transcript::labels::{

@@ -5,7 +5,8 @@
 //! describes one recursion level.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use akita_field::CanonicalField;
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;

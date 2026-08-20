@@ -327,11 +327,11 @@ fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
 
 fn assert_invalid_proof<T: core::fmt::Debug>(
     case: &str,
-    result: Result<T, akita_field::AkitaError>,
+    result: Result<T, akita_error::AkitaError>,
 ) {
     match result {
-        Err(akita_field::AkitaError::InvalidProof) => {}
-        Err(akita_field::AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
+        Err(akita_error::AkitaError::InvalidProof) => {}
+        Err(akita_error::AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
         other => panic!("{case} must reject with InvalidProof, got {other:?}"),
     }
 }
@@ -503,7 +503,7 @@ fn small_field_dense_uncataloged_roots_fail_fast() {
     ] {
         assert!(matches!(
             result,
-            Err(akita_field::AkitaError::UnsupportedSchedule(_))
+            Err(akita_error::AkitaError::UnsupportedSchedule(_))
         ));
     }
 }
@@ -521,12 +521,12 @@ fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
         .expect_err("tiny roots must not produce a degenerate proof schedule");
         assert!(matches!(
             err,
-            akita_field::AkitaError::UnsupportedSchedule(_)
+            akita_error::AkitaError::UnsupportedSchedule(_)
         ));
         let setup_err = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
             .expect_err("tiny capacity must not produce a prover setup");
         assert!(
-            matches!(setup_err, akita_field::AkitaError::InvalidSetup(_)),
+            matches!(setup_err, akita_error::AkitaError::InvalidSetup(_)),
             "setup capacity rejection should use the setup boundary: {setup_err:?}"
         );
     });

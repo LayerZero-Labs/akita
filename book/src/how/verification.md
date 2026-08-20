@@ -169,6 +169,7 @@ Verifier-reachable execution is a **no-panic boundary**.
 Malformed verifier-facing proof, setup, schedule, public claim, opening point,
 commitment, direct witness, or transcript input must be rejected with
 `AkitaError` or `SerializationError`, never by panicking.
+`AkitaError` has one canonical definition in `akita-error`.
 
 ### Crates in scope
 
@@ -181,8 +182,10 @@ commitment, direct witness, or transcript input must be rejected with
 ### Rules for contributors
 
 1. Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier boundary has validated the invariant.
-2. Strengthen validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points rather than sprinkling checks through hot loops.
-3. Prover-only panics are acceptable when not reachable from verifier paths.
+2. Use `akita_error::checked` for reusable exact `usize` formulas. The functions return `Option`, so the caller maps failure to the `AkitaError` variant that matches the protocol boundary. A direct standard library `checked_*` call remains appropriate for one local operation.
+3. Do not use wrapping or saturating arithmetic for exact sizes and indices. Reject arithmetic that cannot represent the required geometry.
+4. Strengthen validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points rather than sprinkling checks through hot loops.
+5. Prover-only panics are acceptable when not reachable from verifier paths.
 
 Maintainer mirror: [`docs/verifier-contract.md`](../../../docs/verifier-contract.md).
 Historical audit evidence: [`docs/verifier-panic-audit.md`](../../../docs/verifier-panic-audit.md).

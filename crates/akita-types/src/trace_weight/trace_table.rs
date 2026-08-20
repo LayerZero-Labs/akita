@@ -1,6 +1,8 @@
 //! Prover-side trace table: sparse columns for `K = 1`, dense flat slice for `K > 1`.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use akita_field::FieldCore;
 
 #[inline]
 fn fold_pair<E: FieldCore>(a: E, b: E, r: E) -> E {

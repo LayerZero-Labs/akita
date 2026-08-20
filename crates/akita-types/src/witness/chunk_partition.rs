@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::MAX_WITNESS_CHUNKS;
 

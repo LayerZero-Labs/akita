@@ -1,6 +1,6 @@
 //! Relation row identities and shared layout data.
 
-use akita_field::AkitaError;
+use akita_error::{checked, AkitaError};
 
 use crate::{CommitmentRingDims, CommitmentSliceCount, CompressionChainPlan, OpeningMethod};
 
@@ -75,11 +75,13 @@ impl RelationRowGeometry {
                 "relation row coefficient lies outside its geometry".into(),
             ));
         }
-        coordinate_plane
-            .checked_mul(self.polynomial_modulus_dimension)
-            .and_then(|base| base.checked_add(modulus_coefficient))
-            .filter(|&index| index < self.physical_coefficient_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation row index overflow".into()))
+        checked::mul_add(
+            coordinate_plane,
+            self.polynomial_modulus_dimension,
+            modulus_coefficient,
+        )
+        .filter(|&index| index < self.physical_coefficient_width)
+        .ok_or_else(|| AkitaError::InvalidSetup("relation row index overflow".into()))
     }
 }
 

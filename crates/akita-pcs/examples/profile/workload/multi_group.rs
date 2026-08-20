@@ -35,7 +35,7 @@ fn materialize_schedule_setup_prefix_slots<F, B>(
     backend: &B,
     prepared: &B::PreparedSetup,
     schedule: &FoldSchedule,
-) -> Result<(), akita_field::AkitaError>
+) -> Result<(), akita_error::AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
     B: RuntimeCommitBackendFor<F, DensePoly<F>>,

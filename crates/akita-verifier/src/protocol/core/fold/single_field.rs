@@ -2,9 +2,8 @@
 
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::ABSORB_EVALUATION_CLAIMS;
 use akita_transcript::{append_ext_field, Transcript};

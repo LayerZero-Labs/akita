@@ -7,7 +7,8 @@ use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::{CommittedGroup, OpeningScheduleSelection};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::{checked, AkitaError};
+use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
@@ -158,10 +159,8 @@ impl OpeningClaimsLayout {
     }
 
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
-        self.groups.iter().try_fold(0usize, |acc, group| {
-            acc.checked_add(group.num_polynomials())
-                .ok_or(AkitaError::InvalidProof)
-        })
+        checked::sum(self.groups.iter().map(|group| group.num_polynomials()))
+            .ok_or(AkitaError::InvalidProof)
     }
 
     /// Number of polynomials in each group.
@@ -220,12 +219,12 @@ impl OpeningClaimsLayout {
         if group_index >= self.groups.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let start = self.groups[..group_index]
-            .iter()
-            .try_fold(0usize, |acc, group| {
-                acc.checked_add(group.num_polynomials())
-                    .ok_or(AkitaError::InvalidProof)
-            })?;
+        let start = checked::sum(
+            self.groups[..group_index]
+                .iter()
+                .map(|group| group.num_polynomials()),
+        )
+        .ok_or(AkitaError::InvalidProof)?;
         let end = start
             .checked_add(self.groups[group_index].num_polynomials())
             .ok_or(AkitaError::InvalidProof)?;
@@ -522,10 +521,12 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
-        self.groups.iter().try_fold(0usize, |acc, group| {
-            acc.checked_add(group.evaluations.len())
-                .ok_or(AkitaError::InvalidProof)
-        })
+        checked::sum(
+            self.groups
+                .iter()
+                .map(PolynomialGroupClaims::num_evaluations),
+        )
+        .ok_or(AkitaError::InvalidProof)
     }
 
     /// Number of polynomials/evaluations in each group.

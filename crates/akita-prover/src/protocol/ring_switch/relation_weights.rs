@@ -7,9 +7,10 @@ use std::ops::Range;
 
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+    CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 use akita_types::{
     gadget_row_scalars, prepare_coefficient_packing_batch_semantics, r_decomp_levels,

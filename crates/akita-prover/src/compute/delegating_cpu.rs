@@ -20,7 +20,8 @@ use super::operation_plans::{
 use super::plans::RingSwitchRelationRows;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, HalvingField};
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 

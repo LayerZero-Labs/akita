@@ -4,7 +4,6 @@
 //! Production pointwise and transform kernels use AVX2 after it won the
 //! measured Ice Lake workloads.
 
-mod d32;
 mod montgomery;
 mod pointwise;
 mod runtime;
