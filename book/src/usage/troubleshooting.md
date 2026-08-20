@@ -76,13 +76,15 @@ are not accepted as current setup. Akita logs the load failure and regenerates
 the setup. If saving the replacement fails, Akita logs a warning and continues
 with the in-memory setup.
 
-The cache directory is:
+Akita chooses the cache directory from environment variables in this order:
 
-| Platform | Directory |
-|----------|-----------|
-| macOS | `~/Library/Caches/akita` when `~/Library/Caches` exists |
-| Linux and other Unix systems | `~/.cache/akita` |
-| Windows | `%LOCALAPPDATA%/akita` |
+1. If `LOCALAPPDATA` is set, use `$LOCALAPPDATA/akita`.
+2. Otherwise, if `HOME/Library/Caches` exists, use
+   `$HOME/Library/Caches/akita`.
+3. Otherwise, if `HOME` is set, use `$HOME/.cache/akita`.
+
+This order is independent of the operating system. If neither environment
+variable is set, disk persistence has no cache path.
 
 Normal upgrades do not require manual cache deletion. If every run reports a
 write failure, check that the directory is writable or build without
@@ -92,9 +94,11 @@ warning and affected cache file for diagnosis before removing that file.
 ## Thread counts do not match the profile request
 
 The profile harness reads `AKITA_PROFILE_PROVE_THREADS` and
-`AKITA_PROFILE_VERIFY_THREADS`. Each variable falls back to
-`RAYON_NUM_THREADS`, then to the Rayon default. A value of `0` also selects the
-Rayon default. The harness prints the resolved prover and verifier thread
+`AKITA_PROFILE_VERIFY_THREADS`. Each value falls back to `RAYON_NUM_THREADS`
+when it is missing or invalid. The prover pool resolves first. A prover value
+of `0` lets Rayon choose the global pool size. A verifier value of `0` reuses
+that resolved prover size. A positive verifier value creates a separate pool
+only when it differs from the prover size. The harness prints both resolved
 counts at startup.
 
 Set the profile variables before the process starts. Rayon global pool size is
@@ -133,7 +137,7 @@ For a panic, temporarily change the guest attribute to
 `backtrace = "dwarf"`, rebuild the guest, and run with
 `JOLT_BACKTRACE=full`. The exact commands, cache paths, memory limits, and
 current trace limit live in the
-[`profile/akita-recursion` runbook](../../../profile/akita-recursion/README.md).
+[`profile/akita-recursion` runbook](https://github.com/LayerZero-Labs/akita/blob/main/profile/akita-recursion/README.md).
 
 ## What to include in a bug report
 

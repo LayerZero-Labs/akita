@@ -91,8 +91,7 @@ source shape, while the width describes its allowed coefficient interval.
 A committed source is accepted only when every coefficient satisfies both the
 declared interval and the interval represented by the selected digit depth.
 The accepted range is their intersection. Producers reject a value outside
-that intersection instead of committing a truncated decomposition. See
-[Bounded committed sources](../how/configuration.md#bounded-committed-sources).
+that intersection instead of committing a truncated decomposition.
 
 ## Signed digit storage
 
