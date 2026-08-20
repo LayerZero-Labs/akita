@@ -44,7 +44,7 @@ pub struct GeneratedRootFinalGroup {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootPrecommittedGroup {
-    pub descriptor: akita_types::CommittedGroupProfile,
+    pub descriptor: akita_types::GroupCommitPhaseParams,
     pub num_digits_fold: u32,
     pub opening_method: akita_types::OpeningMethod,
 }
@@ -67,7 +67,7 @@ pub struct GeneratedRootFold {
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
     /// Exact frozen commitment identity emitted by the planner.
-    pub commitment: akita_types::CommittedGroupProfile,
+    pub commitment: akita_types::GroupCommitPhaseParams,
     pub opening: akita_types::GroupOpeningPlan,
 }
 
@@ -168,8 +168,8 @@ pub use crate::{
     SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{
-    CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout,
+    CommitmentPayloadMode, GroupCommitPhaseParams, InnerCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 pub use akita_types::{SisL2TableDigest, SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
@@ -302,7 +302,7 @@ pub fn runtime_schedule_key_cmp(
         })
 }
 
-fn precommitted_group_sort_key(key: &akita_types::CommittedGroupProfile) -> Vec<u8> {
+fn precommitted_group_sort_key(key: &akita_types::GroupCommitPhaseParams) -> Vec<u8> {
     key.canonical_descriptor_bytes()
 }
 
@@ -321,8 +321,8 @@ fn schedule_key_eq(
 }
 
 fn precommitted_group_key_eq(
-    generated: &akita_types::CommittedGroupProfile,
-    layout: &akita_types::CommittedGroupProfile,
+    generated: &akita_types::GroupCommitPhaseParams,
+    layout: &akita_types::GroupCommitPhaseParams,
 ) -> bool {
     generated == layout
 }
@@ -478,13 +478,13 @@ pub fn fp64_onehot_table() -> GeneratedScheduleTable {
 mod mixed_dimension_key_tests {
     use super::{precommitted_group_key_eq, precommitted_group_sort_key};
     use akita_types::{
-        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        GroupCommitPhaseParams, InnerCommitMatrixParams, OuterCommitMatrixParams,
         PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
     };
 
-    fn descriptor() -> CommittedGroupProfile {
-        CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+    fn descriptor() -> GroupCommitPhaseParams {
+        GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(12, 1),
             blocks: akita_types::BlockGeometry::new(32, 8, 4),
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,

@@ -80,7 +80,7 @@ impl CommittedSourceEncoding {
 
 /// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CommittedGroupProfile {
+pub struct GroupCommitPhaseParams {
     /// Version of the canonical committed-profile encoding.
     pub version: u8,
     /// Per-group root schedule entry shape.
@@ -95,7 +95,7 @@ pub struct CommittedGroupProfile {
     pub outer: crate::OuterRoleParams,
 }
 
-impl CommittedGroupProfile {
+impl GroupCommitPhaseParams {
     /// Current committed-profile format.
     pub const VERSION: u8 = 4;
 
@@ -314,7 +314,7 @@ pub struct AkitaScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
     /// Previously committed groups in caller-supplied transcript order.
-    pub precommitteds: Vec<CommittedGroupProfile>,
+    pub precommitteds: Vec<GroupCommitPhaseParams>,
 }
 
 /// A non-empty ordered prefix of groups committed before a final group.
@@ -325,7 +325,7 @@ pub struct AkitaScheduleLookupKey {
 /// input, which is why building a grouped context is infallible.
 #[derive(Debug, Clone)]
 pub struct PrecommittedGroupProfiles {
-    profiles: Vec<CommittedGroupProfile>,
+    profiles: Vec<GroupCommitPhaseParams>,
 }
 
 impl PrecommittedGroupProfiles {
@@ -334,7 +334,7 @@ impl PrecommittedGroupProfiles {
     /// # Errors
     ///
     /// Returns an error when `profiles` is empty.
-    pub fn from_profiles(profiles: Vec<CommittedGroupProfile>) -> Result<Self, AkitaError> {
+    pub fn from_profiles(profiles: Vec<GroupCommitPhaseParams>) -> Result<Self, AkitaError> {
         if profiles.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "precommitted group profiles must describe at least one group".to_string(),
@@ -361,7 +361,7 @@ impl PrecommittedGroupProfiles {
     }
 
     /// Borrow the exact ordered profiles.
-    pub fn as_slice(&self) -> &[CommittedGroupProfile] {
+    pub fn as_slice(&self) -> &[GroupCommitPhaseParams] {
         &self.profiles
     }
 }
@@ -528,9 +528,9 @@ mod source_encoding_tests {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CommittedGroupBatchProfile {
     /// Final/new commitment group.
-    pub final_group: CommittedGroupProfile,
+    pub final_group: GroupCommitPhaseParams,
     /// Earlier commitments in transcript order.
-    pub precommitteds: Vec<CommittedGroupProfile>,
+    pub precommitteds: Vec<GroupCommitPhaseParams>,
 }
 
 impl CommittedGroupBatchProfile {

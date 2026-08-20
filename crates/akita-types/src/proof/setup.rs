@@ -707,8 +707,8 @@ mod tests {
         )
         .expect("audited prefix B matrix");
         crate::PrecommittedLevelParams {
-            layout: crate::CommittedGroupProfile {
-                version: crate::CommittedGroupProfile::VERSION,
+            layout: crate::GroupCommitPhaseParams {
+                version: crate::GroupCommitPhaseParams::VERSION,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                 blocks: crate::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
                 outer_slice_count: crate::CommitmentSliceCount::ONE,

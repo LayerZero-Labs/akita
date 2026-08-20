@@ -85,7 +85,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
 }
 
 fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayout) {
-    use crate::schedule::CommittedGroupProfile;
+    use crate::schedule::GroupCommitPhaseParams;
     let mut lp = sample_params_only()
         .with_layout(&sample_layout_lp())
         .unwrap();
@@ -110,7 +110,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         precommit_lp.outer_commit_matrix.coeff_linf_bound(),
         precommit_lp.d_a(),
     );
-    let mut layout = CommittedGroupProfile::from_params_unchecked_for_test(
+    let mut layout = GroupCommitPhaseParams::from_params_unchecked_for_test(
         PolynomialGroupLayout::new(4, 1),
         &precommit_lp,
     );

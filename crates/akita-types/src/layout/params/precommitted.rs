@@ -2,7 +2,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
-use crate::schedule::CommittedGroupProfile;
+use crate::schedule::GroupCommitPhaseParams;
 use crate::sis::{
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     InnerCommitMatrixParams, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
@@ -164,7 +164,7 @@ impl GroupOpeningPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrecommittedLevelParams {
     /// Frozen standalone group layout bound into commitment identity.
-    pub layout: CommittedGroupProfile,
+    pub layout: GroupCommitPhaseParams,
     /// Opening policy owned by the fold that consumes this commitment.
     pub opening: GroupOpeningPlan,
 }
@@ -195,7 +195,7 @@ impl PrecommittedLevelParams {
     /// basis. This is the canonical admission path for planner generation and
     /// generated-schedule replay.
     pub fn admit(
-        layout: CommittedGroupProfile,
+        layout: GroupCommitPhaseParams,
         num_digits_fold: usize,
         policy: PrecommittedGroupAdmissionPolicy,
         opening_method: OpeningMethod,

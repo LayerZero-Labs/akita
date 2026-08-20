@@ -9,8 +9,8 @@ use akita_types::sis::{
     OpenCommitMatrixParams, SisMatrixRole,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
-    DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
+    GroupCommitPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
     PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
 };
 
@@ -24,7 +24,7 @@ use crate::schedule_params::{
 };
 use crate::PlannerPolicy;
 
-type PrecommittedGroupSeed = (CommittedGroupProfile, HonestFoldPolicySpec);
+type PrecommittedGroupSeed = (GroupCommitPhaseParams, HonestFoldPolicySpec);
 
 fn materialize_precommitted_group_for_open_basis(
     (layout, honest_fold_policy): &PrecommittedGroupSeed,

@@ -19,7 +19,7 @@ use akita_schedules::{
     PlannerCostModelId, PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
@@ -455,7 +455,7 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 }
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
-) -> CommittedGroupProfile {
+) -> GroupCommitPhaseParams {
     Cfg::profile_without_precommitted_groups(group).expect("heterogeneous group must resolve")
 }
 

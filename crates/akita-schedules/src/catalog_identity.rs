@@ -13,7 +13,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
 use akita_types::{
-    CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout, SETUP_PREFIX_CONTENT_TAG,
+    CommitmentRingDims, GroupCommitPhaseParams, PolynomialGroupLayout, SETUP_PREFIX_CONTENT_TAG,
 };
 
 use crate::generated::{
@@ -644,7 +644,7 @@ fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
     h.write_u64(key.num_polynomials() as u64);
 }
 
-fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupProfile) {
+fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &GroupCommitPhaseParams) {
     h.write_bytes(&key.canonical_descriptor_bytes());
 }
 

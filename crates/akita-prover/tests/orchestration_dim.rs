@@ -7,7 +7,7 @@ use akita_config::proof_optimized::{fp128, fp64};
 use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
-    CommittedGroupBatchProfile, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
+    CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout, PolynomialGroupLayout,
     RingRole,
 };
 
@@ -20,7 +20,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
     let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::try_from_params(
+        final_group: GroupCommitPhaseParams::try_from_params(
             key.final_group,
             &expected.schedule().root.params.final_group.commitment,
         )

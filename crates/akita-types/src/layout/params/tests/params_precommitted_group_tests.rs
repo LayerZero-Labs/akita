@@ -1,5 +1,5 @@
 use super::*;
-use crate::schedule::CommittedGroupProfile;
+use crate::schedule::GroupCommitPhaseParams;
 use crate::{dyadic_block_ranges, WitnessLayout};
 
 #[test]
@@ -110,7 +110,7 @@ fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
 }
 
 fn precommit_admission_fixture() -> (
-    CommittedGroupProfile,
+    GroupCommitPhaseParams,
     PrecommittedGroupAdmissionPolicy,
     SparseChallengeConfig,
     usize,
@@ -169,8 +169,8 @@ fn precommit_admission_fixture() -> (
         inner_commit_matrix.output_rank() * 43 * 8,
     )
     .expect("audited B matrix");
-    let layout = CommittedGroupProfile {
-        version: CommittedGroupProfile::VERSION,
+    let layout = GroupCommitPhaseParams {
+        version: GroupCommitPhaseParams::VERSION,
         group: PolynomialGroupLayout::new(14, 1),
         blocks: crate::BlockGeometry::new(256, 32, 8),
         outer_slice_count: crate::CommitmentSliceCount::ONE,
@@ -466,7 +466,7 @@ fn address_oracle_precommit(
         outer.coeff_linf_bound(),
         d_b,
     );
-    let layout = CommittedGroupProfile::from_params_unchecked_for_test(
+    let layout = GroupCommitPhaseParams::from_params_unchecked_for_test(
         PolynomialGroupLayout::new(4, claims),
         &lp,
     );

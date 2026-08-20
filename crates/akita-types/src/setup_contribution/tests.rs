@@ -239,7 +239,7 @@ fn test_inputs_for_group_sizes(
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
             .map(|&_group_size| {
-                let mut layout = crate::CommittedGroupProfile::from_params_unchecked_for_test(
+                let mut layout = crate::GroupCommitPhaseParams::from_params_unchecked_for_test(
                     crate::PolynomialGroupLayout::new(0, 1),
                     &lp,
                 );

@@ -380,7 +380,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// `group`.
     fn profile_without_precommitted_groups(
         group: akita_types::PolynomialGroupLayout,
-    ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
+    ) -> Result<akita_types::GroupCommitPhaseParams, AkitaError> {
         let layout = OpeningClaimsLayout::from_groups(vec![group])?;
         Ok(Self::resolve_catalog_row_for_opening(&layout)?
             .profiles()

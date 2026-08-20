@@ -44,7 +44,7 @@ use akita_planner::generated_families::{
     ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 use std::sync::OnceLock;
 
@@ -102,7 +102,7 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
                             .unwrap_or_else(|error| {
                                 panic!("{} S-row lookup failed: {error}", family.module_name)
                             });
-                    CommittedGroupProfile::try_from_params(
+                    GroupCommitPhaseParams::try_from_params(
                         group,
                         &schedule.root.params.final_group.commitment,
                     )

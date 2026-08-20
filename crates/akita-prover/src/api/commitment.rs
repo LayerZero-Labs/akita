@@ -16,8 +16,8 @@ use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims,
-    CommitmentSliceCount, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
-    CommittedSourceEncoding, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
+    CommitmentSliceCount, CommittedGroup, CommittedGroupParams, CommittedSourceEncoding,
+    CompressionChainPlan, FpExtEncoding, GroupCommitPhaseParams, InnerCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
 
@@ -45,7 +45,7 @@ enum PrecommittedGroupContext<'a> {
 
 impl PrecommittedGroupContext<'_> {
     /// Borrow the ordered precommitted profiles, empty when there are none.
-    fn as_slice(&self) -> &[CommittedGroupProfile] {
+    fn as_slice(&self) -> &[GroupCommitPhaseParams] {
         match self {
             Self::NoPrecommittedGroups => &[],
             Self::WithPrecommittedGroups(profiles) => profiles.as_slice(),
@@ -518,7 +518,7 @@ fn validate_explicit_context(
     group_layout: akita_types::PolynomialGroupLayout,
     precommitted_groups: PrecommittedGroupContext<'_>,
     params: &CommittedGroupParams,
-) -> Result<CommittedGroupProfile, AkitaError> {
+) -> Result<GroupCommitPhaseParams, AkitaError> {
     match precommitted_groups {
         PrecommittedGroupContext::NoPrecommittedGroups => {
             params.require_scalar_level("explicit commitment")?;
@@ -557,7 +557,7 @@ fn validate_explicit_context(
         }
     }
 
-    CommittedGroupProfile::try_from_params(group_layout, params)
+    GroupCommitPhaseParams::try_from_params(group_layout, params)
 }
 
 /// Commit one homogeneous polynomial group in its complete parameter context.
@@ -594,7 +594,7 @@ where
     let group_layout = opening_layout.root_final_group_layout()?;
 
     let scheduled_row;
-    let (params, profile): (&CommittedGroupParams, CommittedGroupProfile) =
+    let (params, profile): (&CommittedGroupParams, GroupCommitPhaseParams) =
         if let GroupParameterSource::Explicit(params) = context.parameter_source {
             let profile =
                 validate_explicit_context(group_layout, context.precommitted_groups, params)?;

@@ -4,8 +4,8 @@
 |---|---|
 | Author(s) | Omid Bodaghi |
 | Created | 2026-08-12 |
-| Revised | 2026-08-19 (against `main` @ `8e552d2ac`) |
-| Status | proposed |
+| Revised | 2026-08-19 (against `main` @ `8e552d2ac`; steps 0-4 landed) |
+| Status | active |
 | PR | |
 | Supersedes | |
 | Superseded-by | |

@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, CommittedGroupProfile, OpeningClaimsLayout, OpeningMethod,
+    CommittedGroupParams, GroupCommitPhaseParams, OpeningClaimsLayout, OpeningMethod,
     OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
@@ -361,7 +361,7 @@ fn precommitted_group(
     group: PolynomialGroupLayout,
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params_unchecked_for_test(group, params),
+        layout: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
             params.log_basis_open,

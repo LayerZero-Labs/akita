@@ -312,7 +312,7 @@ where
     }
     let schedule = resolved.schedule();
     let root_params = &schedule.root_fold().params;
-    let expected_final_descriptor = akita_types::CommittedGroupProfile::try_from_params(
+    let expected_final_descriptor = akita_types::GroupCommitPhaseParams::try_from_params(
         final_descriptor.group,
         &root_params.final_group.commitment,
     )

@@ -7,7 +7,7 @@ use crate::sis::{
 };
 use crate::transcript::AppendToTranscript;
 use crate::{
-    detect_field_modulus, CommitmentSliceCount, CommittedGroupProfile, CompressionChainPlan,
+    detect_field_modulus, CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams,
     PolynomialGroupLayout,
 };
 
@@ -170,14 +170,14 @@ impl<F: FieldCore> Commitment<F> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroup<F: FieldCore> {
     /// Exact public algebraic profile and commitment geometry.
-    pub profile: CommittedGroupProfile,
+    pub profile: GroupCommitPhaseParams,
     /// Terminal compressed `p_F` payload.
     pub commitment: Commitment<F>,
 }
 
 impl<F: FieldCore> CommittedGroup<F> {
     /// Build a self-describing group commitment.
-    pub fn new(profile: CommittedGroupProfile, commitment: Commitment<F>) -> Self {
+    pub fn new(profile: GroupCommitPhaseParams, commitment: Commitment<F>) -> Self {
         Self {
             profile,
             commitment,
@@ -185,7 +185,7 @@ impl<F: FieldCore> CommittedGroup<F> {
     }
 
     /// Borrow the exact frozen commitment profile.
-    pub fn profile(&self) -> &CommittedGroupProfile {
+    pub fn profile(&self) -> &GroupCommitPhaseParams {
         &self.profile
     }
 
@@ -397,7 +397,7 @@ where
         }
 
         let version = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        if version != CommittedGroupProfile::VERSION {
+        if version != GroupCommitPhaseParams::VERSION {
             return Err(SerializationError::InvalidData(format!(
                 "unknown committed-group profile version {version}"
             )));
@@ -441,7 +441,7 @@ where
         )
         .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
 
-        let descriptor = CommittedGroupProfile {
+        let descriptor = GroupCommitPhaseParams {
             version,
             group,
             blocks: crate::BlockGeometry::new(
@@ -560,8 +560,8 @@ mod committed_group_tests {
             outer_width,
         )
         .expect("audited B profile");
-        let profile = CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+        let profile = GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(11, 1),
             blocks: crate::BlockGeometry::new(32, 32, 1),
             outer_slice_count: CommitmentSliceCount::ONE,
@@ -599,7 +599,7 @@ mod committed_group_tests {
         assert_eq!(decoded, group);
 
         let mut unknown_version = bytes.clone();
-        unknown_version[0] = CommittedGroupProfile::VERSION + 1;
+        unknown_version[0] = GroupCommitPhaseParams::VERSION + 1;
         assert!(CommittedGroup::<F>::deserialize_with_mode(
             unknown_version.as_slice(),
             Compress::Yes,
@@ -609,7 +609,7 @@ mod committed_group_tests {
         .is_err());
 
         let mut previous_version = bytes.clone();
-        previous_version[0] = CommittedGroupProfile::VERSION - 1;
+        previous_version[0] = GroupCommitPhaseParams::VERSION - 1;
         assert!(CommittedGroup::<F>::deserialize_with_mode(
             previous_version.as_slice(),
             Compress::Yes,

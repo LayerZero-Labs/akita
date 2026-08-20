@@ -375,7 +375,7 @@ fn relation_segment_layout_uses_same_axis_contract() {
 }
 
 fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
-    use crate::schedule::CommittedGroupProfile;
+    use crate::schedule::GroupCommitPhaseParams;
     let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
         .expect("multi-group test ring dimension has a production challenge");
     let lp = CommittedGroupParams::params_only(
@@ -402,7 +402,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
     .expect("multi-group precommit params");
     certify_test_sis_bounds(&mut precommit_lp);
     let precommit = PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params_unchecked_for_test(
+        layout: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::new(4, 1),
             &precommit_lp,
         ),

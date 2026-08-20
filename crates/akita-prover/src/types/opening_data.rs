@@ -425,7 +425,7 @@ mod tests {
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
-        CommittedGroupProfile, PrecommittedLevelParams, RingVec, SisModulusProfileId,
+        GroupCommitPhaseParams, PrecommittedLevelParams, RingVec, SisModulusProfileId,
     };
 
     type F = Fp32<251>;
@@ -452,9 +452,9 @@ mod tests {
     fn synthetic_profile(
         group: PolynomialGroupLayout,
         params: &CommittedGroupParams,
-    ) -> CommittedGroupProfile {
-        CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+    ) -> GroupCommitPhaseParams {
+        GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group,
             blocks: akita_types::BlockGeometry::new(
                 params.num_live_ring_elements_per_claim,

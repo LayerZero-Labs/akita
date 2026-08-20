@@ -779,8 +779,8 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
-                    CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
+                    scheduled_setup_prefix, AkitaCommitmentHint, CompressionChainPlan,
+                    CompressionChainWitness, GroupCommitPhaseParams, InnerCommitMatrixParams,
                     OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
                     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
                     SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
@@ -817,8 +817,8 @@ mod tests {
                 .expect("audited prefix B matrix");
                 let commitment_rows = outer_commit_matrix.output_rank();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: CommittedGroupProfile {
-                        version: CommittedGroupProfile::VERSION,
+                    layout: GroupCommitPhaseParams {
+                        version: GroupCommitPhaseParams::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,

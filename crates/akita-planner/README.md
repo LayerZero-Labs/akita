@@ -48,7 +48,7 @@ leave `precommitteds` empty:
   opened at that group's point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`CommittedGroupProfile` in `precommitteds`. For a single-group batch,
+`GroupCommitPhaseParams` in `precommitteds`. For a single-group batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
 `final_group` plus `precommitteds`.

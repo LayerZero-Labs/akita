@@ -14,7 +14,7 @@
 //! - the lookup key;
 //! - the whole-schedule descriptor;
 //! - each fold's `CommittedGroupParams` descriptor;
-//! - each group's frozen `CommittedGroupProfile` and its `GroupOpeningPlan`;
+//! - each group's frozen `GroupCommitPhaseParams` and its `GroupOpeningPlan`;
 //! - the incoming setup prefix, where a recursive fold consumes one;
 //! - the terminal descriptor;
 //! - the `ScheduleRowDigest` for the row.
@@ -122,7 +122,7 @@ fn capture_row(
     push(
         records,
         format!("{prefix} root.final_group.profile"),
-        akita_types::CommittedGroupProfile::try_from_params(
+        akita_types::GroupCommitPhaseParams::try_from_params(
             key.final_group,
             &root.final_group.commitment,
         )
@@ -187,7 +187,7 @@ fn capture_row(
 
     // The row digest is what schedule selection compares, so pin it too.
     let profiles = CommittedGroupBatchProfile {
-        final_group: akita_types::CommittedGroupProfile::try_from_params(
+        final_group: akita_types::GroupCommitPhaseParams::try_from_params(
             key.final_group,
             &root.final_group.commitment,
         )

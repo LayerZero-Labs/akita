@@ -132,8 +132,8 @@ impl SetupPrefixCandidateContext<'_> {
         else {
             return Ok(None);
         };
-        let layout = CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+        let layout = GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
             blocks: akita_types::BlockGeometry::new(
                 self.ring_slots,

@@ -674,7 +674,7 @@ mod tests {
     fn setup_prefix_coefficient_packing_matches_copied_dense_oracle() {
         use akita_types::{
             coefficient_packing_partials, sample_akita_setup_seed, AkitaCommitmentHint,
-            AkitaSetupDescriptor, BasisMode, CommittedGroupParams, CommittedGroupProfile,
+            AkitaSetupDescriptor, BasisMode, CommittedGroupParams, GroupCommitPhaseParams,
             InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PreparedSubringCoefficientPackingPoint, SetupPrefixPublicCommitment, SetupPrefixSlotId,
             SisModulusProfileId, SubringCoefficientPackingGeometry,
@@ -714,7 +714,7 @@ mod tests {
             D,
         );
         let profile =
-            CommittedGroupProfile::try_from_params(PolynomialGroupLayout::singleton(9), &params)
+            GroupCommitPhaseParams::try_from_params(PolynomialGroupLayout::singleton(9), &params)
                 .expect("valid setup-prefix profile");
         let fields = (0..512)
             .map(|index| F::from_i64((index % 17) as i64 - 8))

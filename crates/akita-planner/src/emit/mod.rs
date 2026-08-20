@@ -12,7 +12,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile, FoldSchedule,
+    AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule, GroupCommitPhaseParams,
     OpenCommitMatrixParams, PolynomialGroupLayout, ScheduledSetupPrefix, WitnessPartition,
 };
 
@@ -48,7 +48,7 @@ pub struct MaterializationDiagnostics {
 /// One frozen precommit descriptor with its canonical producer facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrecommittedProducer {
-    descriptor: CommittedGroupProfile,
+    descriptor: GroupCommitPhaseParams,
     contract: CommittedSourceContract,
     fold_policy: HonestFoldPolicySpec,
 }
@@ -57,7 +57,7 @@ impl PrecommittedProducer {
     /// Capture the producer contract and its offline sizing projection together.
     #[cfg(feature = "catalog-gen")]
     pub fn from_config<Cfg: akita_config::CommitmentConfig>(
-        descriptor: CommittedGroupProfile,
+        descriptor: GroupCommitPhaseParams,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             descriptor,
@@ -66,7 +66,7 @@ impl PrecommittedProducer {
         })
     }
 
-    const fn descriptor(self) -> CommittedGroupProfile {
+    const fn descriptor(self) -> GroupCommitPhaseParams {
         self.descriptor
     }
 
@@ -406,9 +406,9 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 /// The nesting mirrors the struct: geometry, slicing, then a `(digits, matrix)`
 /// role twice. `BlockGeometry::new`, `GadgetDigits::new`, and `RoleParams::new`
 /// are all `const`, so the result stays valid in `static` position.
-fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
+fn emit_precommitted_group_key(layout: &GroupCommitPhaseParams) -> String {
     format!(
-        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, inner: {}, outer: {} }}",
+        "GroupCommitPhaseParams {{ version: GroupCommitPhaseParams::VERSION, group: {}, blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, inner: {}, outer: {} }}",
         emit_key(layout.group),
         emit_block_geometry(layout.blocks),
         match layout.outer_slice_count {
@@ -851,7 +851,7 @@ pub(super) fn emit_family_module_from_entries(
          GeneratedRootFinalGroup, GeneratedRootFold, \
          GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
-         CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
+         CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, GroupCommitPhaseParams, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
          CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
     )

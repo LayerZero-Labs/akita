@@ -19,7 +19,7 @@ use akita_types::sis::{
 };
 use akita_types::{
     active_setup_field_len, dyadic_block_ranges, padded_setup_prefix_len, CommitmentRingDims,
-    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, OpeningClaimsLayout,
+    CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, OpeningClaimsLayout,
     PolynomialGroupLayout, PrecommittedLevelParams,
 };
 #[cfg(test)]
@@ -64,7 +64,7 @@ pub(crate) fn root_inner_basis_source(
 }
 
 pub(crate) fn precommitted_groups_support_opening_dimension<'a>(
-    profiles: impl IntoIterator<Item = &'a CommittedGroupProfile>,
+    profiles: impl IntoIterator<Item = &'a GroupCommitPhaseParams>,
     opening_ring_dimension: usize,
 ) -> bool {
     profiles.into_iter().all(|profile| {

@@ -154,8 +154,8 @@ pub use proof::{
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    CommittedSourceEncoding, FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldSchedule,
+    FoldScheduleDescriptorStep, FoldScheduleEstimate, GroupCommitPhaseParams,
     NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, RecursiveFoldParams,
     RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldDescriptor,

@@ -1,5 +1,5 @@
 use super::{
-    CommittedGroupProfile, FoldSchedule, FoldScheduleDescriptorStep, TerminalFoldDescriptor,
+    FoldSchedule, FoldScheduleDescriptorStep, GroupCommitPhaseParams, TerminalFoldDescriptor,
     TerminalFoldStep, WitnessPartition,
 };
 use crate::descriptor_bytes::push_usize;
@@ -115,7 +115,7 @@ fn append_root_fold_descriptor_bytes<'a>(
     payload_mode: crate::CommitmentPayloadMode,
     precommitted_groups: impl ExactSizeIterator<
         Item = (
-            &'a CommittedGroupProfile,
+            &'a GroupCommitPhaseParams,
             &'a crate::PrecommittedLevelParams,
         ),
     >,

@@ -12,8 +12,8 @@ use akita_types::sis::{
     BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
 };
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    DecompositionParams, LevelParamsLike, OpeningScheduleSelection, PolynomialGroupLayout,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, DecompositionParams,
+    GroupCommitPhaseParams, LevelParamsLike, OpeningScheduleSelection, PolynomialGroupLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::{
@@ -631,7 +631,7 @@ where
         schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
         let root = &schedule.root.params.final_group.commitment;
         let profiles = CommittedGroupBatchProfile {
-            final_group: CommittedGroupProfile::try_from_params(key.final_group, root)?,
+            final_group: GroupCommitPhaseParams::try_from_params(key.final_group, root)?,
             precommitteds: Vec::new(),
         };
         let selection = OpeningScheduleSelection {
@@ -983,7 +983,7 @@ where
         )?
         .schedule;
         let profiles = CommittedGroupBatchProfile {
-            final_group: CommittedGroupProfile::try_from_params(
+            final_group: GroupCommitPhaseParams::try_from_params(
                 key.final_group,
                 &schedule.root.params.final_group.commitment,
             )?,

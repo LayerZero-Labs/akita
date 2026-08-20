@@ -5,7 +5,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp64;
 use akita_types::{
-    CommittedGroupProfile, CommittedSourceEncoding, OpenCommitMatrixParams, OpeningMethod,
+    CommittedSourceEncoding, GroupCommitPhaseParams, OpenCommitMatrixParams, OpeningMethod,
     PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
 };
 
@@ -623,8 +623,8 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         challenge_subring_dimension: 64,
     };
     let group = PolynomialGroupLayout::new(NUM_VARS, 1);
-    let profile = |params: &CommittedGroupParams| CommittedGroupProfile {
-        version: CommittedGroupProfile::VERSION,
+    let profile = |params: &CommittedGroupParams| GroupCommitPhaseParams {
+        version: GroupCommitPhaseParams::VERSION,
         group,
         blocks: akita_types::BlockGeometry::new(
             params.num_live_ring_elements_per_claim,
@@ -686,5 +686,5 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     tensor.source_encoding = CommittedSourceEncoding::TensorSubfieldProjection {
         extension_degree: 2,
     };
-    assert!(CommittedGroupProfile::try_from_params(group, &tensor).is_err());
+    assert!(GroupCommitPhaseParams::try_from_params(group, &tensor).is_err());
 }

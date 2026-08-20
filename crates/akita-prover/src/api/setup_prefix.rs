@@ -10,8 +10,9 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_types::{
-    dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupProfile,
-    CompressionChainPlan, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CompressionChainPlan,
+    GroupCommitPhaseParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId,
 };
 
 /// Commit one actual power-of-two flat prefix of the shared setup matrix.
@@ -29,7 +30,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup,
-    commitment_profile: &CommittedGroupProfile,
+    commitment_profile: &GroupCommitPhaseParams,
     n_prefix: usize,
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>

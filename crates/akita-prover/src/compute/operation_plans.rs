@@ -2,7 +2,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    CommittedGroupParams, CommittedGroupProfile, PreparedSubringCoefficientPackingPoint,
+    CommittedGroupParams, GroupCommitPhaseParams, PreparedSubringCoefficientPackingPoint,
     SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,
 };
 
@@ -57,7 +57,7 @@ impl CommitInnerPlan {
     }
 
     /// Build inner-commit parameters from a frozen standalone precommit profile.
-    pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
+    pub fn from_profile(profile: &GroupCommitPhaseParams) -> Self {
         Self {
             n_a: profile.inner.matrix.output_rank(),
             num_positions_per_block: profile.blocks.positions_per_block,

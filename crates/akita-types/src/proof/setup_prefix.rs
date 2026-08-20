@@ -9,7 +9,7 @@ use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFI
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
     AkitaSetupSeed, CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroupParams,
-    CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    GroupCommitPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
@@ -38,7 +38,7 @@ pub struct SetupPrefixSlotId {
     /// Active setup-weight support in flat field coefficients.
     pub natural_len: usize,
     /// Frozen commitment profile used to build the setup-prefix object.
-    pub commitment_profile: CommittedGroupProfile,
+    pub commitment_profile: GroupCommitPhaseParams,
 }
 
 /// Setup-prefix commitment identity plus the consuming fold's opening policy.
@@ -108,14 +108,14 @@ impl SetupPrefixSlotId {
     }
 }
 
-fn committed_group_profile_descriptor_bytes(params: &CommittedGroupProfile) -> Vec<u8> {
+fn committed_group_profile_descriptor_bytes(params: &GroupCommitPhaseParams) -> Vec<u8> {
     let mut bytes = Vec::new();
     params.append_descriptor_bytes(&mut bytes);
     bytes
 }
 
 fn n_prefix_from_commitment_profile(
-    params: &CommittedGroupProfile,
+    params: &GroupCommitPhaseParams,
 ) -> Result<usize, SerializationError> {
     1usize
         .checked_shl(params.group.num_vars() as u32)
@@ -281,7 +281,7 @@ use commit_matrix::{
 };
 
 fn serialize_committed_group_profile<W: Write>(
-    params: &CommittedGroupProfile,
+    params: &GroupCommitPhaseParams,
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
@@ -337,9 +337,9 @@ fn deserialize_committed_group_profile<R: Read>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
-) -> Result<CommittedGroupProfile, SerializationError> {
+) -> Result<GroupCommitPhaseParams, SerializationError> {
     let version = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    if version != CommittedGroupProfile::VERSION {
+    if version != GroupCommitPhaseParams::VERSION {
         return Err(SerializationError::InvalidData(format!(
             "unknown committed-group profile version {version}"
         )));
@@ -363,7 +363,7 @@ fn deserialize_committed_group_profile<R: Read>(
     let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let outer_commit_matrix: OuterCommitMatrixParams =
         deserialize_commit_matrix(&mut reader, compress, validate)?;
-    Ok(CommittedGroupProfile {
+    Ok(GroupCommitPhaseParams {
         version,
         group,
         blocks: crate::BlockGeometry::new(
@@ -384,7 +384,7 @@ fn deserialize_committed_group_profile<R: Read>(
 }
 
 fn committed_group_profile_serialized_size(
-    params: &CommittedGroupProfile,
+    params: &GroupCommitPhaseParams,
     compress: Compress,
 ) -> usize {
     let outer_slice_count = params.outer_slice_count.get();
@@ -1183,8 +1183,8 @@ pub fn setup_prefix_precommitted_params(
                 prefix_params.outer_commit_matrix.ring_dimension(),
             );
             return Ok(PrecommittedLevelParams {
-                layout: CommittedGroupProfile {
-                    version: CommittedGroupProfile::VERSION,
+                layout: GroupCommitPhaseParams {
+                    version: GroupCommitPhaseParams::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                     blocks: crate::BlockGeometry::new(
                         ring_slots,

@@ -39,7 +39,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     );
     let pre_layout = PolynomialGroupLayout::new(11, 1);
     params.precommitted_groups = vec![PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params_unchecked_for_test(pre_layout, &frozen),
+        layout: GroupCommitPhaseParams::from_params_unchecked_for_test(pre_layout, &frozen),
         opening: GroupOpeningPlan {
             opening_method: OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64,

@@ -7,7 +7,7 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
     root_input_witness_len, schedule_row_digest, validate_schedule_ring_dims,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile, FoldSchedule,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,
     OpeningScheduleSelection,
 };
 
@@ -186,7 +186,7 @@ fn profiles_for_entry(
     schedule: &FoldSchedule,
 ) -> Result<CommittedGroupBatchProfile, AkitaError> {
     Ok(CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::try_from_params(
+        final_group: GroupCommitPhaseParams::try_from_params(
             entry.root.final_group.layout,
             &schedule.root.params.final_group.commitment,
         )?,

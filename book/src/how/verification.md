@@ -78,7 +78,7 @@ At a high level:
 1. **Bind the instance** and absorb the opening batch shape into the transcript.
 2. **Resolve the exact generated row** named by
    `OpeningScheduleSelection`. Catalog and row digests are checked before the
-   ordered `CommittedGroupProfile` values are compared with the resolved row.
+   ordered `GroupCommitPhaseParams` values are compared with the resolved row.
    The verifier never runs planner search.
 3. **Replay the structural folds** in `protocol/core`: the root fold followed by
    every recursive fold, using the schedule-selected `LevelParams`.

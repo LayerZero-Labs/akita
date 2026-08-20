@@ -17,7 +17,7 @@ use crate::{
     SisModulusProfileId, WitnessLayout,
 };
 use crate::{
-    CommittedGroupProfile, GroupOpeningPlan, InnerCommitMatrixParams, PrecommittedLevelParams,
+    GroupCommitPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams, PrecommittedLevelParams,
 };
 
 type F = Prime64Offset59;

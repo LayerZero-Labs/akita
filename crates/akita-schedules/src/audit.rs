@@ -495,7 +495,7 @@ pub(crate) fn audit_resolved_schedule(
             "root cannot use an L2 A security route",
         ));
     }
-    let expected_final_profile = akita_types::CommittedGroupProfile::try_from_params(
+    let expected_final_profile = akita_types::GroupCommitPhaseParams::try_from_params(
         profiles.final_group.group,
         final_params,
     )?;

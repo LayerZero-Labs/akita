@@ -12,8 +12,8 @@ mod profiles;
 mod sizing;
 
 pub use profiles::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    CommittedSourceEncoding, PrecommittedGroupProfiles,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding,
+    GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
 pub use sizing::{detect_field_modulus, r_decomp_levels};
 
@@ -64,7 +64,7 @@ pub struct RootFinalGroupParams {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootPrecommittedGroupParams {
-    pub descriptor: CommittedGroupProfile,
+    pub descriptor: GroupCommitPhaseParams,
     pub commitment: crate::PrecommittedLevelParams,
 }
 

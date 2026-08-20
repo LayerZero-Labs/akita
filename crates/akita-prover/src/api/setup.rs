@@ -242,8 +242,8 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
-            CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
+            scheduled_setup_prefix, AkitaCommitmentHint, CompressionChainPlan,
+            CompressionChainWitness, GroupCommitPhaseParams, InnerCommitMatrixParams,
             OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
             PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
             SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
@@ -315,8 +315,8 @@ mod tests {
         )
         .expect("compression-valid A-native hint");
         let commitment_params = PrecommittedLevelParams {
-            layout: CommittedGroupProfile {
-                version: CommittedGroupProfile::VERSION,
+            layout: GroupCommitPhaseParams {
+                version: GroupCommitPhaseParams::VERSION,
                 group: PolynomialGroupLayout::singleton(6),
                 blocks: akita_types::BlockGeometry::new(1, 1, 1),
                 outer_slice_count: akita_types::CommitmentSliceCount::ONE,

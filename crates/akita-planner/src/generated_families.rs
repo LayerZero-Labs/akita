@@ -21,7 +21,7 @@ use akita_field::AkitaError;
 use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -290,9 +290,9 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
-) -> Result<CommittedGroupProfile, AkitaError> {
+) -> Result<GroupCommitPhaseParams, AkitaError> {
     let schedule = preplans.scalar::<Cfg>(group)?;
-    CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
+    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params.final_group.commitment)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.

@@ -2,7 +2,7 @@ use akita_config::{
     policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_planner::find_schedule;
-use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
+use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams, PolynomialGroupLayout};
 
 fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     let schedule = &planned.schedule;
@@ -115,7 +115,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &direct_policy,
         OneHot::ring_challenge_config,
     )?;
-    let descriptor = CommittedGroupProfile::try_from_params(
+    let descriptor = GroupCommitPhaseParams::try_from_params(
         precommit_layout,
         &independent.schedule.root.params.final_group.commitment,
     )?;

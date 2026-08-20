@@ -191,7 +191,7 @@ fn precommitted_group_params(
     group: PolynomialGroupLayout,
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
-        layout: CommittedGroupProfile::from_params_unchecked_for_test(group, params),
+        layout: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
             params.log_basis_open,
@@ -984,7 +984,7 @@ fn validate_rejects_zero_dimensions() {
     );
 }
 
-fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
+fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
     let num_live_blocks = 1usize << (num_vars - 10);
     let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
@@ -999,8 +999,8 @@ fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
     )
     .expect("audited precommitted A matrix");
     let outer_width = inner_commit_matrix.output_rank() * num_live_blocks;
-    CommittedGroupProfile {
-        version: CommittedGroupProfile::VERSION,
+    GroupCommitPhaseParams {
+        version: GroupCommitPhaseParams::VERSION,
         group: PolynomialGroupLayout::new(num_vars, 1),
         blocks: crate::BlockGeometry::new(1usize << (num_vars - 6), 16, num_live_blocks),
         outer_slice_count: crate::CommitmentSliceCount::ONE,
@@ -1209,7 +1209,7 @@ fn checked_committed_profile_construction_rejects_invalid_params() {
     params.num_live_blocks = 1;
 
     assert!(matches!(
-        CommittedGroupProfile::try_from_params(PolynomialGroupLayout::singleton(8), &params),
+        GroupCommitPhaseParams::try_from_params(PolynomialGroupLayout::singleton(8), &params),
         Err(AkitaError::InvalidSetup(_))
     ));
 }
@@ -1236,7 +1236,7 @@ fn validate_frozen_precommit_rejects_unsupported_inner_decomposition() {
 fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
     let schedule = recursive_schedule(64, 64, false);
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
+        final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),
@@ -1291,7 +1291,7 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
 fn schedule_row_identity_binds_setup_prefix_opening_method() {
     let schedule = recursive_schedule(64, 64, true);
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
+        final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),
@@ -1353,7 +1353,7 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
 fn schedule_row_identity_binds_main_opening_method() {
     let schedule = recursive_schedule(64, 64, false);
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
+        final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),
@@ -1462,7 +1462,7 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
         .expect("valid root precommitted schedule");
 
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::from_params_unchecked_for_test(
+        final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::singleton(8),
             &schedule.root.params.final_group.commitment,
         ),

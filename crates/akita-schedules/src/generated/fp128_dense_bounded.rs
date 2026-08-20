@@ -9,15 +9,15 @@
 // Opening witnesses stay full-width (128 bits).
 #[allow(unused_imports)]
 use super::{
-    ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, CommittedGroupProfile,
-    DecompositionParams, GeneratedBlockGeometry, GeneratedCommittedGroup,
-    GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix,
-    GeneratedOuterCommitMatrix, GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
+    ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, DecompositionParams,
+    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
+    GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
+    GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
     GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
-    GeneratedTerminalFold, GeneratedWitnessPartition, InnerCommitMatrixParams,
-    OuterCommitMatrixParams, PlannerCostModelId, PolynomialGroupLayout, RingDimensionScheduleMode,
-    SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId,
-    SisSecurityPolicyId, SisTableDigest,
+    GeneratedTerminalFold, GeneratedWitnessPartition, GroupCommitPhaseParams,
+    InnerCommitMatrixParams, OuterCommitMatrixParams, PlannerCostModelId, PolynomialGroupLayout,
+    RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest,
+    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
 };
 
 #[rustfmt::skip]

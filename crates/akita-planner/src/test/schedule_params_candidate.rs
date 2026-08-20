@@ -9,9 +9,9 @@ use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 fn synthetic_profile(
     group: PolynomialGroupLayout,
     params: &CommittedGroupParams,
-) -> CommittedGroupProfile {
-    CommittedGroupProfile {
-        version: CommittedGroupProfile::VERSION,
+) -> GroupCommitPhaseParams {
+    GroupCommitPhaseParams {
+        version: GroupCommitPhaseParams::VERSION,
         group,
         blocks: akita_types::BlockGeometry::new(
             params.num_live_ring_elements_per_claim,
@@ -678,7 +678,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
             extension_degree: 2,
         };
-    let error = CommittedGroupProfile::try_from_params(pre_group, &tensor_params)
+    let error = GroupCommitPhaseParams::try_from_params(pre_group, &tensor_params)
         .expect_err("tensor params cannot be frozen into canonical commitment identity");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
 }
