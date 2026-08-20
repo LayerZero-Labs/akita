@@ -331,6 +331,12 @@ rank 4. Every shape includes the current i8/L8 prover path and unified i16
 L8/L10/L11 paths. Labels state whether the exact i16 path uses only the base
 CRT residues or also the optional i16 tail.
 
+On a host with AVX-512IFMA, the labels also identify the `ifma52` exact cache
+when the field, degree, width, and signed bound select it. This label means
+canonical 50-bit residues in `u64` lanes. It does not mean that the ordinary
+i32 NTT has switched to the width-aware AVX-512 transform. Production x86 i32
+NTT dispatch still selects AVX2.
+
 The equal-output group compares D64/rank-8, D128/rank-4, D256/rank-2, and
 D512/rank-1 at widths 128, 256, 512, and 1024. All four return 512 field
 coefficients, but their scalar input sizes differ because each input ring
