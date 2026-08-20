@@ -46,10 +46,6 @@ state directly and do not measure the new backend operation boundary.
 
 | Benchmark | Time interval |
 | --- | ---: |
-| `root_kernels/dense_root_matvec_full_nv25_d32` | `[1.9827 s 2.0213 s 2.0570 s]` |
-| `root_kernels/dense_root_matvec_full_nv25_d32_single_row_subkernel` | `[1.6988 s 1.7103 s 1.7227 s]` |
-| `root_kernels/dense_root_predecomp_digit_matvec_full_nv25_d32` | `[2.2886 s 2.3411 s 2.4018 s]` |
-
 ## Ring NTT
 
 | Benchmark | Time interval |
@@ -57,13 +53,6 @@ state directly and do not measure the new backend operation boundary.
 | `ring_schoolbook_mul_d64` | `[4.6332 us 4.6436 us 4.6544 us]` |
 | `ntt_single_prime_forward_inverse_d64` | `[274.45 ns 275.65 ns 276.54 ns]` |
 | `ring_ntt_crt_round_trip_d64_k6` | `[5.6906 us 5.7043 us 5.7348 us]` |
-| `ring_schoolbook_mul_d32_q128m159` | `[2.7027 us 2.7084 us 2.7128 us]` |
-| `ring_crt_ntt_mul_d32_q128m159_k5` | `[3.4254 us 3.4333 us 3.4390 us]` |
-| `ring_crt_ntt_mul_i8_rhs_d32_q128m159_k5` | `[3.1237 us 3.1387 us 3.1558 us]` |
-| `ring_crt_ntt_cyclic_mul_d32_q128m159_k5` | `[3.2949 us 3.3044 us 3.3137 us]` |
-| `ring_crt_ntt_quotient_d32_q128m159_k5` | `[6.6767 us 6.9220 us 7.1920 us]` |
-| `ring_crt_ntt_simd_cached_matvec_d32_q128m159_k5` | `[21.057 us 21.166 us 21.286 us]` |
-| `ring_crt_ntt_simd_cached_matvec_i8_rhs_d32_q128m159_k5` | `[20.942 us 21.089 us 21.386 us]` |
 
 ## One-Hot Batched Commit
 
@@ -131,20 +120,15 @@ AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=error AKITA_PROFILE_ANSI=0 AKITA_MODE=<m
 
 | Mode | Setup | Commit | Prove | Verify | Proof total | Fold bytes | Tail bytes | Levels | Claim/challenge ext degree |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `onehot_fp32_d32` | `0.985262 s` | `0.547446 s` | `3.335166 s` | `0.051551 s` | `38,352 B` | `19,472 B` | `18,880 B` | `6` | `4/4` |
 | `onehot_fp32_d64` | `0.294832 s` | `0.569073 s` | `3.056431 s` | `0.037627 s` | `43,248 B` | `20,624 B` | `22,624 B` | `6` | `4/4` |
-| `onehot_fp64_d32` | `0.440407 s` | `0.409220 s` | `2.144096 s` | `0.037579 s` | `43,248 B` | `20,624 B` | `22,624 B` | `6` | `2/2` |
 | `onehot_fp64_d64` | `0.195142 s` | `0.385249 s` | `2.191310 s` | `0.040556 s` | `54,528 B` | `23,776 B` | `30,752 B` | `6` | `2/2` |
 
 ### Dense nv26 Modes
 
 | Field / mode | Setup | Commit | Prove | Verify | Proof total | Fold bytes | Tail bytes | Levels | Claim/challenge ext degree |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| fp128 `full_d32` | `0.753363 s` | `5.920908 s` | `4.434486 s` | `0.019827 s` | `61,300 B` | `29,920 B` | `31,380 B` | `7` | `1/1` |
 | fp128 `dense_d64` | `0.110167 s` | `3.208263 s` | `3.498260 s` | `0.016489 s` | `71,688 B` | `32,048 B` | `39,640 B` | `6` | `1/1` |
-| fp32 `dense_fp32_d32` | `0.244446 s` | `6.687460 s` | `1.579170 s` | `0.021254 s` | `37,600 B` | `19,040 B` | `18,560 B` | `6` | `4/4` |
 | fp32 `dense_fp32_d64` | `0.111561 s` | `1.023532 s` | `1.044095 s` | `0.016854 s` | `41,008 B` | `19,360 B` | `21,648 B` | `5` | `4/4` |
-| fp64 `dense_fp64_d32` | `0.219134 s` | `2.091091 s` | `1.788981 s` | `0.018076 s` | `41,696 B` | `19,760 B` | `21,936 B` | `5` | `2/2` |
 | fp64 `dense_fp64_d64` | `0.200086 s` | `2.503449 s` | `2.146537 s` | `0.027658 s` | `52,400 B` | `22,848 B` | `29,552 B` | `6` | `2/2` |
 
 The refreshed dense fp64 rows also report setup preparation split out from the
@@ -152,7 +136,6 @@ aggregate setup time:
 
 | Mode | Setup expand | Backend prepare |
 | --- | ---: | ---: |
-| `dense_fp64_d32` | `0.158866 s` | `0.060265 s` |
 | `dense_fp64_d64` | `0.147241 s` | `0.052843 s` |
 
 Earlier dense fp64 nv26 runs failed with
