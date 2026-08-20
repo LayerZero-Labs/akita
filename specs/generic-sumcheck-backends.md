@@ -20,7 +20,10 @@ changing the relation itself.
 
 This specification separates the protocol from the computation. The protocol
 driver continues to own proof shape, transcript order, batching coefficients,
-master-point suffix alignment, and verifier recurrence. A source exposes a
+master-point suffix alignment, and verifier recurrence. Unequal-round
+eq-factored groups need a future proof format because they do not share one
+accumulated equality factor. This specification checks that geometry but does
+not assign it a transcript schedule. A source exposes a
 borrowed group view in its native representation. A backend prepares that view
 and a checked relation program into a transcript-free round executor. CPU,
 packed CPU, Metal, CUDA, and mixed-device implementations may use different
@@ -38,9 +41,10 @@ transcript labels.
 ### Goal
 
 Build one protocol-neutral sumcheck compute hierarchy that accepts native
-witness views, supports standard and eq-factored front-loaded batching, and
-lets CPU and accelerator backends fuse round work without owning protocol or
-transcript semantics.
+witness views, supports standard front-loaded batches and eq-factored batches
+that share one equality factor, and lets CPU and accelerator backends fuse
+round work without owning protocol or transcript semantics. It also preserves
+checked unequal-round eq geometry for a later protocol design.
 
 ### Invariants
 
@@ -95,9 +99,11 @@ transcript semantics.
 - [ ] `akita-sumcheck` has checked standard and eq-factored batch plans that
   reject empty batches, inconsistent degree declarations, invalid round
   counts, invalid suffix offsets, and malformed proof shapes before execution.
-- [ ] The protocol driver can prove a front-loaded batch through grouped round
-  executors while producing the same proof and challenges as the reference
-  scalar driver on deterministic fixtures.
+- [ ] The standard protocol driver can prove a front-loaded batch through
+  grouped round executors while producing the same proof bytes and challenges
+  as the reference scalar driver on deterministic fixtures. The eq-factored
+  driver can combine same-round groups into the existing proof type and rejects
+  unequal-round execution before transcript work.
 - [ ] A source trait exposes a group view through a generic associated type.
   Dense, compact integer, sparse or indexed, and externally owned views can be
   implemented without conversion to `Vec<E>`.
@@ -109,9 +115,11 @@ transcript semantics.
   pass.
 - [ ] The first generic product-sum program has a scalar reference interpreter,
   checked degree metadata, and at least one fused CPU specialization.
-- [ ] Standard and eq-factored differential tests cover one, many, unequal
-  round counts, non-power-of-two logical batch sizes, terminal-only instances,
-  and tampered round or terminal claims.
+- [ ] Standard differential tests cover one, many, unequal round counts,
+  non-power-of-two logical batch sizes, terminal-only instances, and tampered
+  round or terminal claims. Eq-factored tests cover same-factor grouped
+  execution, terminal-only batches, unequal-round suffix derivation, and typed
+  rejection where the existing proof type cannot represent the plan.
 - [ ] A proof-session test proves that scratch and prepared resources are
   released on success and error and cannot be reused with mismatched field,
   relation, or setup identity.
@@ -128,11 +136,13 @@ transcript semantics.
 
 ### Testing Strategy
 
-Protocol tests use deterministic transcripts and compare proof bytes, sampled
-challenges, per-round claims, and terminal claims against the current scalar
-drivers. They include groups that begin at different master rounds so suffix
-alignment is exercised directly. Eq-factored tests independently recompute the
-linear factor and scaled recurrence instead of trusting prover state.
+Protocol tests use deterministic transcripts and compare standard proof bytes,
+sampled challenges, per-round claims, and terminal claims against the current
+scalar driver. Standard groups begin at different master rounds so the tests
+exercise suffix alignment directly. Eq-factored tests independently recompute
+the shared linear factor and scaled recurrence instead of trusting prover
+state. Separate geometry tests cover unequal-round eq suffixes and confirm that
+execution rejects them before any transcript absorb or squeeze.
 
 Source tests instantiate the same relation over dense extension values,
 compact signed digits, and a deliberately non-contiguous borrowed view. The
@@ -250,6 +260,16 @@ factor, supplies its checked `(l(0), l(1))` values to the round executor, and
 advances the scaled claim. The executor only computes the compact message for
 `q`. It cannot provide a competing factor state.
 
+The existing `EqFactoredSumcheckProof` can combine several executor groups only
+when every group starts at master round zero and therefore shares the same
+accumulated `l`. The engine adds those group messages and absorbs one existing
+proof message per round. A shorter suffix group starts with a different
+accumulated factor, so its compact `q` message cannot be added to the longer
+group's message. The checked plan may represent that geometry, but execution
+returns a typed unsupported-schedule error before transcript work. This
+specification does not define an in-memory frame, serializer, or verifier replay
+for unequal-round eq batches.
+
 Formats define message encoding and verifier recurrence. They are not backend
 implementations. Adding a format requires prover and verifier logic together;
 adding a backend does not.
@@ -270,7 +290,9 @@ work. It records:
 An instance becomes active at its suffix offset. The final local challenge
 point is always a borrowed suffix of the master point. Terminal-only instances
 have zero local rounds and participate only in the checked terminal reduction.
-Logical batch length is independent of padding used inside a source or kernel.
+For eq-factored execution through the current proof type, all groups must have
+offset zero, unless every group is terminal-only. Logical batch length is
+independent of padding used inside a source or kernel.
 
 The engine combines group round messages in stable logical order. Parallel or
 device completion order cannot change claim order, error attribution, or
@@ -495,7 +517,11 @@ Work proceeds in reviewable slices:
 1. **Architecture contract.** Land this spec and synchronized documentation.
 2. **Protocol plans and executor shell.** Add checked standard and eq-factored
    batch geometry, object-safe two-phase round control, a fake asynchronous
-   executor, and transcript-order tests. Do not migrate a production relation.
+   executor, and transcript-order tests. Standard execution supports unequal
+   rounds. Eq-factored execution combines groups that share the full equality
+   factor into the existing proof type and rejects other checked plans before
+   transcript work. Do not define a new eq proof format or migrate a production
+   relation.
 3. **Source and reference program.** Add the source GAT, product-sum program,
    scalar interpreter, proof session, and dense plus compact fixtures.
 4. **Fused CPU pilot.** Select one current Akita sumcheck, implement a fused CPU
