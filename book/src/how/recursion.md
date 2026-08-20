@@ -32,9 +32,16 @@ uses `TerminalInnerState` and carries no duplicate compression payload.
 ## Proof anatomy
 
 `AkitaBatchedProof` stores one `FoldLevelProof` root, zero or more recursive
-`FoldLevelProof` records, and one `TerminalLevelProof`. Supported schedules
-always contain at least two fold records, so the terminal state is bound by its
-predecessor and there is no root-terminal proof variant. Each level's
+`FoldLevelProof` records, and one `TerminalLevelProof`. The root or final
+recursive fold binds the terminal state as its successor. A schedule with no
+recursive folds uses the same proof types and transcript rules. Each level's
 descriptor binds the resolved `L`, exact `F`, chunk count, and
 decomposition parameters. Singleton openings and terminal folds are ordinary
 one-group, one-chunk cases; there is no alternate block order.
+
+The offline planner runs one root search. Root contraction can change candidate
+order, but it is not a feasibility rule or part of the final objective.
+Contractive and noncontractive roots share the same suffix memo and frontier.
+The configured `SelectionPolicyId` comparator selects the final complete
+schedule. Recursive folds still require strict progress, and offloaded edges
+still enforce their explicit minimum contraction policy.
