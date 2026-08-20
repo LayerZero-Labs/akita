@@ -6,7 +6,8 @@
 #[cfg(test)]
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{evaluate_power_sequence_mle, scalar_powers};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 #[cfg(test)]
 use akita_types::{CommitmentRingDims, RingRole};
 use akita_types::{PreparedRelationAddress, RelationAddressGeometry};

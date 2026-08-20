@@ -151,36 +151,21 @@ pub(super) fn build_group_b_setup_tensors<E: FieldCore>(
     let geometry = physical_b.geometry();
     let (b_subcolumns, _) = SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
     let source_lanes = group.a_relation_ratio;
-    let a_row_setup_stride = checked_mul(
-        group.depth_commit,
-        b_subcolumns,
-        "setup B A-row stride overflow",
-    )?;
-    let block_setup_stride = checked_mul(
-        group.n_a,
-        a_row_setup_stride,
-        "setup B block stride overflow",
-    )?;
-    let a_row_relation_stride = checked_mul(
-        group.depth_commit,
-        source_lanes,
-        "setup B relation A-row stride overflow",
-    )?;
-    let subcolumn_relation_stride = checked_mul(
-        group.depth_commit,
-        group.b_relation_ratio,
-        "setup B subcolumn relation stride overflow",
-    )?;
-    let block_relation_stride = checked_mul(
-        group.n_a,
-        a_row_relation_stride,
-        "setup B relation block stride overflow",
-    )?;
-    let claim_setup_stride = checked_mul(
-        geometry.max_blocks_per_slice(),
-        block_setup_stride,
-        "setup B claim stride overflow",
-    )?;
+    let a_row_setup_stride = checked::product([group.depth_commit, b_subcolumns])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B A-row stride overflow".into()))?;
+    let block_setup_stride = checked::product([group.n_a, a_row_setup_stride])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B block stride overflow".into()))?;
+    let a_row_relation_stride = checked::product([group.depth_commit, source_lanes])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B relation A-row stride overflow".into()))?;
+    let subcolumn_relation_stride = checked::product([group.depth_commit, group.b_relation_ratio])
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("setup B subcolumn relation stride overflow".into())
+        })?;
+    let block_relation_stride = checked::product([group.n_a, a_row_relation_stride])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B relation block stride overflow".into()))?;
+    let claim_setup_stride =
+        checked::product([geometry.max_blocks_per_slice(), block_setup_stride])
+            .ok_or_else(|| AkitaError::InvalidSetup("setup B claim stride overflow".into()))?;
     let slice_row_weights = (0..geometry.slice_count().get())
         .map(|slice_index| {
             let row_start =

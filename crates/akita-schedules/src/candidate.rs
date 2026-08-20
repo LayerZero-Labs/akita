@@ -2,7 +2,7 @@
 
 use crate::runtime::PlannerPolicy;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     min_secure_l2_rank, projected_role_ring_count, role_a_collision_l2_sq_for_response_bound,
     rounded_up_collision_inf_norm, sis_l2_table_key_for_collision_sq, FoldChallengeNorms,

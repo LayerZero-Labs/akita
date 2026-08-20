@@ -4,7 +4,8 @@ use crate::{
     OpeningClaimsLayout, SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use std::{ops::Range, sync::Arc};
 
 #[derive(Clone)]

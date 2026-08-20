@@ -1,4 +1,5 @@
-use akita_field::{parallel::*, AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{parallel::*, FieldCore};
 
 const EXACT_PREFIX_SEQUENTIAL_LEN: usize = 1 << 12;
 

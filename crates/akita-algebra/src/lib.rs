@@ -27,9 +27,8 @@ pub use akita_field::{
     cfg_try_fold_reduce,
 };
 pub use akita_field::{
-    AdditiveGroup, AkitaError, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt,
-    HalvingField, Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField,
-    Zero,
+    AdditiveGroup, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField,
+    Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField, Zero,
 };
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use module::{Module, VectorModule};

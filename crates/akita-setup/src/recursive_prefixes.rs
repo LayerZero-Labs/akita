@@ -1,5 +1,6 @@
 use akita_config::CommitmentConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
     NttExecutionRequirements, RuntimeCommitBackendFor,

@@ -23,7 +23,8 @@
 
 use super::eq_poly::EqPolynomial;
 use super::uni_poly::UniPoly;
-use crate::{AkitaError, FieldCore, FromPrimitiveInt};
+use crate::{FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
 
 /// Split equality polynomial with Gruen scalar accumulation.
 ///

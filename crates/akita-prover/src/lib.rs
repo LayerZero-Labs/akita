@@ -13,8 +13,9 @@ pub mod types;
 mod validation;
 
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, FieldCore};
+use akita_field::FieldCore;
 use akita_types::RingVec;
 
 pub use api::{

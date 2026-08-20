@@ -16,7 +16,8 @@
 //! ## Structure
 //!
 //! ### Core Modules
-//! - `akita-field` - Field traits, concrete fields, packing, and core error types
+//! - `akita-error` - Shared protocol errors and checked integer formulas
+//! - `akita-field` - Field traits, concrete fields, and packing
 //! - `akita-serialization` - Serialization abstractions
 //! - `akita-algebra` - Modules, rings, NTTs, and polynomial helpers
 //! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
@@ -44,7 +45,7 @@ mod scheme;
 mod test_support;
 
 pub use akita_algebra::Module;
-pub use akita_field::AkitaError;
+pub use akita_error::AkitaError;
 // Specialized field surfaces mirror akita-field's curated facades.
 pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,

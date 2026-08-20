@@ -38,6 +38,7 @@ dependencies = [
 name = "akita-algebra"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "criterion",
@@ -51,6 +52,7 @@ dependencies = [
 name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "akita-field",
  "akita-transcript",
  "criterion",
@@ -64,6 +66,7 @@ name = "akita-config"
 version = "0.1.0"
 dependencies = [
  "akita-challenges",
+ "akita-error",
  "akita-field",
  "akita-planner",
  "akita-schedules",
@@ -74,9 +77,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-error"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "akita-field"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "akita-serialization",
  "allocative",
  "jolt-field",
@@ -87,7 +98,6 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
- "thiserror",
 ]
 
 [[package]]
@@ -97,6 +107,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-error",
  "akita-field",
  "akita-planner",
  "akita-prover",
@@ -134,7 +145,7 @@ version = "0.1.0"
 dependencies = [
  "akita-challenges",
  "akita-config",
- "akita-field",
+ "akita-error",
  "akita-schedules",
  "akita-types",
  "libm",
@@ -148,6 +159,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -166,7 +178,7 @@ name = "akita-schedules"
 version = "0.1.0"
 dependencies = [
  "akita-challenges",
- "akita-field",
+ "akita-error",
  "akita-types",
 ]
 
@@ -185,6 +197,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-error",
  "akita-field",
  "akita-prover",
  "akita-serialization",
@@ -212,6 +225,7 @@ name = "akita-sumcheck"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "akita-transcript",
@@ -235,6 +249,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -256,6 +271,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-config",
+ "akita-error",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",
@@ -269,6 +285,7 @@ dependencies = [
 name = "akita-witness"
 version = "0.1.0"
 dependencies = [
+ "akita-error",
  "akita-field",
 ]
 

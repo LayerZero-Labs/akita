@@ -8,7 +8,8 @@ use crate::{
     BasisMode, Commitment, CommittedGroupParams, FpExtEncoding, RingOpeningPoint, RingVec,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::{checked, AkitaError};
+use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVAL_OPENINGS_FIELD};
 use akita_transcript::{append_ext_field, Transcript};
 
@@ -341,10 +342,8 @@ where
 ///
 /// Returns an error if the total claim count overflows `usize`.
 pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, AkitaError> {
-    group_sizes.iter().try_fold(0usize, |acc, &group_size| {
-        acc.checked_add(group_size)
-            .ok_or_else(|| AkitaError::InvalidInput(format!("{label} total claim count overflow")))
-    })
+    checked::sum(group_sizes.iter().copied())
+        .ok_or_else(|| AkitaError::InvalidInput(format!("{label} total claim count overflow")))
 }
 
 /// Absorb the batch commitment into the transcript using the D-free flat

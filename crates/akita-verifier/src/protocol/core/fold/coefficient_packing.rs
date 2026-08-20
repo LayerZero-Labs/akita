@@ -1,7 +1,8 @@
 //! Coefficient-packing fold verifier prefix.
 
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{

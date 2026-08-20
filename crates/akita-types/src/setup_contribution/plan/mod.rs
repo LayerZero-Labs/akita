@@ -42,23 +42,16 @@ use crate::dispatch_for_field;
 use crate::layout::{CommittedGroupParams, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
 use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
+use akita_error::{checked, AkitaError};
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
-
-fn checked_mul(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
-}
+use akita_field::{CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 
 fn divide_aligned(
     value: usize,
     divisor: usize,
     context: &'static str,
 ) -> Result<usize, AkitaError> {
-    value
-        .checked_div(divisor)
-        .filter(|_| divisor != 0 && value.is_multiple_of(divisor))
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+    checked::exact_div(value, divisor).ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }
 
 #[cfg(test)]
