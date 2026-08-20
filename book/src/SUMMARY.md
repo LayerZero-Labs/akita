@@ -2,10 +2,11 @@
 
 [Introduction](./intro.md)
 
-# Usage
+# Using Akita
 
-- [Overview](./usage/usage.md)
-  - [Quickstart and configuration](./usage/quickstart.md)
+- [Using Akita](./usage/usage.md)
+  - [Your first proof](./usage/quickstart.md)
+  - [Choosing a configuration](./usage/configuration.md)
   - [The commitment API](./usage/commitment-api.md)
   - [Verifier-only integration](./usage/verifier-only.md)
   - [Feature flags](./usage/feature-flags.md)
