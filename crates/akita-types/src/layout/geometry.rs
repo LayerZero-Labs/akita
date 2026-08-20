@@ -196,6 +196,66 @@ impl GadgetDigits {
     }
 }
 
+/// The A role: source digits and the inner commitment matrix.
+pub type InnerRoleParams = RoleParams<crate::InnerCommitMatrixParams>;
+
+/// The B role: `t_hat` digits and the outer commitment matrix.
+pub type OuterRoleParams = RoleParams<crate::OuterCommitMatrixParams>;
+
+/// The D role: opening digits and the shared open commitment matrix.
+pub type OpenRoleParams = RoleParams<crate::OpenCommitMatrixParams>;
+
+pub(crate) mod sealed_matrix {
+    /// Prevents downstream crates from implementing [`super::MatrixDescriptorBytes`].
+    pub trait Sealed {}
+}
+
+/// A matrix identity that can write itself into a canonical descriptor.
+///
+/// Sealed and implemented only for the three commitment-matrix types, so
+/// [`RoleParams`] can encode atomically without duplicating the two-line body
+/// once per role. It is `pub` only because it appears as a bound on a `pub`
+/// impl; it is not an extension point.
+pub trait MatrixDescriptorBytes: sealed_matrix::Sealed {
+    /// Append this matrix identity to a canonical descriptor.
+    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>);
+}
+
+/// A gadget decomposition and the matrix that consumes it.
+///
+/// Generic over the **matrix type**, not over a role marker, because the A
+/// role's matrix is `InnerCommitMatrixParams` and carries a security route,
+/// while B and D share `LinfCommitMatrix<R>`. Parameterising by the matrix keeps
+/// all three expressible without an `Option`-shaped tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RoleParams<M> {
+    /// Basis and exact depth for this role.
+    pub digits: GadgetDigits,
+    /// Audited matrix identity that consumes those digits.
+    pub matrix: M,
+}
+
+impl<M> RoleParams<M> {
+    /// Pair a decomposition with the matrix that consumes it.
+    ///
+    /// `const` so the generated tables can build a role in `static` position.
+    #[must_use]
+    pub const fn new(digits: GadgetDigits, matrix: M) -> Self {
+        Self { digits, matrix }
+    }
+}
+
+impl<M: MatrixDescriptorBytes> RoleParams<M> {
+    /// Atomic descriptor encoding: `basis, depth, matrix`.
+    ///
+    /// Byte-neutral wherever the containing encoder already wrote those three in
+    /// that order, which the commit-phase profile does for both of its roles.
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        self.digits.append_descriptor_bytes(bytes);
+        self.matrix.append_descriptor_bytes(bytes);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

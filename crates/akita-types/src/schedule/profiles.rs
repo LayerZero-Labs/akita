@@ -3,7 +3,7 @@
 use crate::descriptor_bytes::push_usize;
 use crate::{
     CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroup, CommittedGroupParams,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
+    OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use akita_field::{AkitaError, FieldCore};
 
@@ -85,26 +85,14 @@ pub struct CommittedGroupProfile {
     pub version: u8,
     /// Per-group root schedule entry shape.
     pub group: PolynomialGroupLayout,
-    /// Exact number of live source ring elements per claim (`N`).
-    pub num_live_ring_elements_per_claim: usize,
-    /// Number of positions per block (`M`), power-of-two in the current Boolean layout.
-    pub num_positions_per_block: usize,
-    /// Exact number of live blocks (`B = ceil(N / M)`).
-    pub num_live_blocks: usize,
+    /// Exact `(N, M, B)` block split of this group's source.
+    pub blocks: crate::BlockGeometry,
     /// Number of logical B inputs committed through one physical B matrix.
     pub outer_slice_count: CommitmentSliceCount,
-    /// Gadget basis selected for the standalone A/source digits.
-    pub log_basis_inner: u32,
-    /// Exact gadget depth used by the standalone A/source relation.
-    pub num_digits_inner: usize,
-    /// Complete audited A/source matrix identity.
-    pub inner_commit_matrix: InnerCommitMatrixParams,
-    /// Gadget basis selected for the standalone B/`t_hat` digits.
-    pub log_basis_outer: u32,
-    /// Exact gadget depth used by the standalone B/`t_hat` relation.
-    pub num_digits_outer: usize,
-    /// Complete audited B/commitment matrix identity.
-    pub outer_commit_matrix: OuterCommitMatrixParams,
+    /// A/source role: gadget decomposition and audited matrix identity.
+    pub inner: crate::InnerRoleParams,
+    /// B/`t_hat` role: gadget decomposition and audited matrix identity.
+    pub outer: crate::OuterRoleParams,
 }
 
 impl CommittedGroupProfile {
@@ -127,12 +115,8 @@ impl CommittedGroupProfile {
             ));
         }
         let profile = Self::from_params_fields(group, params);
-        profile.validate_frozen_precommit(
-            profile
-                .inner_commit_matrix
-                .sis_modulus_profile()
-                .field_bits(),
-        )?;
+        profile
+            .validate_frozen_precommit(profile.inner.matrix.sis_modulus_profile().field_bits())?;
         Ok(profile)
     }
 
@@ -140,16 +124,16 @@ impl CommittedGroupProfile {
         Self {
             version: Self::VERSION,
             group,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-            num_positions_per_block: params.num_positions_per_block,
-            num_live_blocks: params.num_live_blocks,
+            blocks: params.blocks(),
             outer_slice_count: params.outer_slice_count,
-            log_basis_inner: params.log_basis_inner,
-            num_digits_inner: params.num_digits_inner,
-            inner_commit_matrix: params.inner_commit_matrix,
-            log_basis_outer: params.log_basis_outer,
-            num_digits_outer: params.num_digits_outer,
-            outer_commit_matrix: params.outer_commit_matrix,
+            inner: crate::RoleParams::new(
+                crate::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
+                params.inner_commit_matrix,
+            ),
+            outer: crate::RoleParams::new(
+                crate::GadgetDigits::new(params.log_basis_outer, params.num_digits_outer),
+                params.outer_commit_matrix,
+            ),
         }
     }
 
@@ -168,25 +152,21 @@ impl CommittedGroupProfile {
     #[inline]
     #[must_use]
     pub fn blocks(&self) -> crate::BlockGeometry {
-        crate::BlockGeometry::new(
-            self.num_live_ring_elements_per_claim,
-            self.num_positions_per_block,
-            self.num_live_blocks,
-        )
+        self.blocks
     }
 
     /// The A-role gadget decomposition.
     #[inline]
     #[must_use]
     pub fn inner_digits(&self) -> crate::GadgetDigits {
-        crate::GadgetDigits::new(self.log_basis_inner, self.num_digits_inner)
+        self.inner.digits
     }
 
     /// The B-role gadget decomposition.
     #[inline]
     #[must_use]
     pub fn outer_digits(&self) -> crate::GadgetDigits {
-        crate::GadgetDigits::new(self.log_basis_outer, self.num_digits_outer)
+        self.outer.digits
     }
 
     /// Canonical versioned bytes used for catalog and schedule-key identity.
@@ -204,12 +184,10 @@ impl CommittedGroupProfile {
         bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
-        self.blocks().append_descriptor_bytes(bytes);
+        self.blocks.append_descriptor_bytes(bytes);
         self.outer_slice_count.append_descriptor_bytes(bytes);
-        self.inner_digits().append_descriptor_bytes(bytes);
-        self.inner_commit_matrix.append_descriptor_bytes(bytes);
-        self.outer_digits().append_descriptor_bytes(bytes);
-        self.outer_commit_matrix.append_descriptor_bytes(bytes);
+        self.inner.append_descriptor_bytes(bytes);
+        self.outer.append_descriptor_bytes(bytes);
     }
 
     /// Validate that this layout is a well-formed standalone commitment group.
@@ -221,10 +199,10 @@ impl CommittedGroupProfile {
                 self.version
             )));
         }
-        self.inner_commit_matrix.validate()?;
-        self.outer_commit_matrix.validate()?;
-        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
-        let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
+        self.inner.matrix.validate()?;
+        self.outer.matrix.validate()?;
+        let inner_ring_dimension = self.inner.matrix.ring_dimension();
+        let outer_ring_dimension = self.outer.matrix.ring_dimension();
         if !inner_ring_dimension.is_power_of_two()
             || !outer_ring_dimension.is_power_of_two()
             || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
@@ -235,7 +213,7 @@ impl CommittedGroupProfile {
             ));
         }
         self.inner_digits().validate(field_bits)?;
-        if self.log_basis_outer == 0 || self.num_digits_outer == 0 {
+        if self.outer.digits.log_basis == 0 || self.outer.digits.num_digits == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout requires nonzero outer basis and digit depth".to_string(),
             ));
@@ -243,31 +221,32 @@ impl CommittedGroupProfile {
         self.outer_slice_count.validate_for_commitment(
             0,
             crate::CommitmentPayloadMode::Compressed,
-            self.num_live_blocks,
+            self.blocks.live_blocks,
         )?;
-        if self.inner_commit_matrix.sis_modulus_profile().field_bits() != field_bits
-            || self.outer_commit_matrix.sis_modulus_profile().field_bits() != field_bits
+        if self.inner.matrix.sis_modulus_profile().field_bits() != field_bits
+            || self.outer.matrix.sis_modulus_profile().field_bits() != field_bits
         {
             return Err(AkitaError::InvalidSetup(
                 "committed-group matrix modulus profile does not match the field".to_string(),
             ));
         }
         let expected_a_width = self
-            .num_positions_per_block
-            .checked_mul(self.num_digits_inner)
+            .blocks
+            .positions_per_block
+            .checked_mul(self.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("committed-group A width overflow".into()))?;
         let expected_b_width = CommitmentSliceGeometry::try_new(
             self.outer_slice_count,
-            self.num_live_blocks,
+            self.blocks.live_blocks,
             self.group.num_polynomials(),
-            self.inner_commit_matrix.output_rank(),
-            self.num_digits_outer,
+            self.inner.matrix.output_rank(),
+            self.outer.digits.num_digits,
             inner_ring_dimension,
             outer_ring_dimension,
         )?
         .physical_input_width();
-        if self.inner_commit_matrix.input_width() != expected_a_width
-            || self.outer_commit_matrix.input_width() != expected_b_width
+        if self.inner.matrix.input_width() != expected_a_width
+            || self.outer.matrix.input_width() != expected_b_width
         {
             return Err(AkitaError::InvalidSetup(
                 "committed-group A/B matrix widths do not match frozen geometry".to_string(),
@@ -278,10 +257,11 @@ impl CommittedGroupProfile {
 
     /// Validate that frozen exact block geometry matches `group.num_vars`.
     pub fn validate_root_geometry(&self) -> Result<(), AkitaError> {
-        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let inner_ring_dimension = self.inner.matrix.ring_dimension();
         let alpha = inner_ring_dimension.trailing_zeros() as usize;
         let Some(source_field_len) = self
-            .num_live_ring_elements_per_claim
+            .blocks
+            .live_ring_elements_per_claim
             .checked_mul(inner_ring_dimension)
         else {
             return Err(AkitaError::InvalidSetup(
@@ -295,19 +275,20 @@ impl CommittedGroupProfile {
             AkitaError::InvalidSetup("commitment group field length overflow".to_string())
         })?;
         if source_field_len != expected_field_len
-            || self.num_positions_per_block == 0
-            || !self.num_positions_per_block.is_power_of_two()
-            || self.num_live_blocks
+            || self.blocks.positions_per_block == 0
+            || !self.blocks.positions_per_block.is_power_of_two()
+            || self.blocks.live_blocks
                 != self
-                    .num_live_ring_elements_per_claim
-                    .div_ceil(self.num_positions_per_block)
+                    .blocks
+                    .live_ring_elements_per_claim
+                    .div_ceil(self.blocks.positions_per_block)
         {
             return Err(AkitaError::InvalidSetup(format!(
                 "precommitted group geometry does not match group.num_vars: \
                  N={} L={} F={} alpha={} group.num_vars={}",
-                self.num_live_ring_elements_per_claim,
-                self.num_positions_per_block,
-                self.num_live_blocks,
+                self.blocks.live_ring_elements_per_claim,
+                self.blocks.positions_per_block,
+                self.blocks.live_blocks,
                 alpha,
                 self.group.num_vars()
             )));

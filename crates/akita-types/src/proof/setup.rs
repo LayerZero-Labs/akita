@@ -710,16 +710,10 @@ mod tests {
             layout: crate::CommittedGroupProfile {
                 version: crate::CommittedGroupProfile::VERSION,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                num_live_ring_elements_per_claim: n_prefix / d_setup,
-                num_positions_per_block: 1,
-                num_live_blocks: n_prefix / d_setup,
+                blocks: crate::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
                 outer_slice_count: crate::CommitmentSliceCount::ONE,
-                log_basis_inner: 1,
-                num_digits_inner: 1,
-                inner_commit_matrix,
-                log_basis_outer: 1,
-                num_digits_outer: 1,
-                outer_commit_matrix,
+                inner: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), inner_commit_matrix),
+                outer: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), outer_commit_matrix),
             },
             opening: crate::GroupOpeningPlan::evaluation_trace(
                 akita_challenges::SparseChallengeConfig::pm1_only(0),
@@ -748,7 +742,7 @@ mod tests {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.setup_seed.clone());
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
-        let matrix = &commitment_params.layout.outer_commit_matrix;
+        let matrix = &commitment_params.layout.outer.matrix;
         let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),

@@ -68,10 +68,7 @@ impl ScheduledSetupPrefix {
     /// Ring dimension used for the frozen setup-prefix commitment.
     #[must_use]
     pub fn d_setup(&self) -> usize {
-        self.commitment_params
-            .layout
-            .inner_commit_matrix
-            .ring_dimension()
+        self.commitment_params.layout.inner.matrix.ring_dimension()
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
@@ -94,7 +91,7 @@ impl SetupPrefixSlotId {
     /// Ring dimension used to commit the setup-prefix coefficient vector.
     #[must_use]
     pub fn d_setup(&self) -> usize {
-        self.commitment_profile.inner_commit_matrix.ring_dimension()
+        self.commitment_profile.inner.matrix.ring_dimension()
     }
 
     /// Full power-of-two flat coefficient length committed for this slot.
@@ -179,7 +176,8 @@ impl Valid for SetupPrefixSlotId {
         self.commitment_profile
             .validate(
                 self.commitment_profile
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .sis_modulus_profile()
                     .field_bits(),
             )
@@ -297,30 +295,41 @@ fn serialize_committed_group_profile<W: Write>(
         .num_polynomials()
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_live_ring_elements_per_claim
+        .blocks
+        .live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_positions_per_block
+        .blocks
+        .positions_per_block
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_live_blocks
+        .blocks
+        .live_blocks
         .serialize_with_mode(&mut writer, compress)?;
     let outer_slice_count = params.outer_slice_count.get();
     outer_slice_count.serialize_with_mode(&mut writer, compress)?;
     params
-        .log_basis_inner
+        .inner
+        .digits
+        .log_basis
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_digits_inner
+        .inner
+        .digits
+        .num_digits
         .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.inner_commit_matrix, &mut writer, compress)?;
+    serialize_commit_matrix(&params.inner.matrix, &mut writer, compress)?;
     params
-        .log_basis_outer
+        .outer
+        .digits
+        .log_basis
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_digits_outer
+        .outer
+        .digits
+        .num_digits
         .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.outer_commit_matrix, &mut writer, compress)?;
+    serialize_commit_matrix(&params.outer.matrix, &mut writer, compress)?;
     Ok(())
 }
 
@@ -357,16 +366,20 @@ fn deserialize_committed_group_profile<R: Read>(
     Ok(CommittedGroupProfile {
         version,
         group,
-        num_live_ring_elements_per_claim,
-        num_positions_per_block,
-        num_live_blocks,
+        blocks: crate::BlockGeometry::new(
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+        ),
         outer_slice_count,
-        log_basis_inner,
-        num_digits_inner,
-        inner_commit_matrix,
-        log_basis_outer,
-        num_digits_outer,
-        outer_commit_matrix,
+        inner: crate::RoleParams::new(
+            crate::GadgetDigits::new(log_basis_inner, num_digits_inner),
+            inner_commit_matrix,
+        ),
+        outer: crate::RoleParams::new(
+            crate::GadgetDigits::new(log_basis_outer, num_digits_outer),
+            outer_commit_matrix,
+        ),
     })
 }
 
@@ -379,17 +392,18 @@ fn committed_group_profile_serialized_size(
         + params.group.num_vars().serialized_size(compress)
         + params.group.num_polynomials().serialized_size(compress)
         + params
-            .num_live_ring_elements_per_claim
+            .blocks
+            .live_ring_elements_per_claim
             .serialized_size(compress)
-        + params.num_positions_per_block.serialized_size(compress)
-        + params.num_live_blocks.serialized_size(compress)
+        + params.blocks.positions_per_block.serialized_size(compress)
+        + params.blocks.live_blocks.serialized_size(compress)
         + outer_slice_count.serialized_size(compress)
-        + params.log_basis_inner.serialized_size(compress)
-        + params.num_digits_inner.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.inner_commit_matrix, compress)
-        + params.log_basis_outer.serialized_size(compress)
-        + params.num_digits_outer.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.outer_commit_matrix, compress)
+        + params.inner.digits.log_basis.serialized_size(compress)
+        + params.inner.digits.num_digits.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.inner.matrix, compress)
+        + params.outer.digits.log_basis.serialized_size(compress)
+        + params.outer.digits.num_digits.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.outer.matrix, compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -1172,16 +1186,23 @@ pub fn setup_prefix_precommitted_params(
                 layout: CommittedGroupProfile {
                     version: CommittedGroupProfile::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                    num_live_ring_elements_per_claim: ring_slots,
-                    num_positions_per_block,
-                    num_live_blocks,
+                    blocks: crate::BlockGeometry::new(
+                        ring_slots,
+                        num_positions_per_block,
+                        num_live_blocks,
+                    ),
                     outer_slice_count: prefix_params.outer_slice_count,
-                    log_basis_inner: prefix_params.log_basis_inner,
-                    num_digits_inner: setup_num_digits,
-                    inner_commit_matrix,
-                    log_basis_outer: prefix_params.log_basis_outer,
-                    num_digits_outer: prefix_params.num_digits_outer,
-                    outer_commit_matrix,
+                    inner: crate::RoleParams::new(
+                        crate::GadgetDigits::new(prefix_params.log_basis_inner, setup_num_digits),
+                        inner_commit_matrix,
+                    ),
+                    outer: crate::RoleParams::new(
+                        crate::GadgetDigits::new(
+                            prefix_params.log_basis_outer,
+                            prefix_params.num_digits_outer,
+                        ),
+                        outer_commit_matrix,
+                    ),
                 },
                 opening: crate::GroupOpeningPlan::evaluation_trace(
                     prefix_params.fold_challenge_config,

@@ -511,8 +511,10 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         // check doing work rather than the interval check catching it anyway.
         let contract = OneHotCfg::committed_source_contract()
             .expect("the one-hot preset declares a valid producer contract");
-        let (negative, positive) =
-            contract.accepted_bounds(profile.log_basis_inner, profile.num_digits_inner);
+        let (negative, positive) = contract.accepted_bounds(
+            profile.inner.digits.log_basis,
+            profile.inner.digits.num_digits,
+        );
         assert!(
             negative.is_some_and(|reach| reach >= 1) && positive.is_some_and(|reach| reach >= 1),
             "the all-ones dense source fits the accepted magnitude interval [{negative:?}, {positive:?}]"

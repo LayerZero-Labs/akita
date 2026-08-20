@@ -486,31 +486,31 @@ mod mixed_dimension_key_tests {
         CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::new(12, 1),
-            num_live_ring_elements_per_claim: 32,
-            num_positions_per_block: 8,
-            num_live_blocks: 4,
+            blocks: akita_types::BlockGeometry::new(32, 8, 4),
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-            log_basis_inner: 4,
-            num_digits_inner: 2,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                3,
-                16,
-                7,
-                128,
+            inner: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(4, 2),
+                InnerCommitMatrixParams::new_unchecked(
+                    akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    3,
+                    16,
+                    7,
+                    128,
+                ),
             ),
-            log_basis_outer: 5,
-            num_digits_outer: 2,
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                2,
-                48,
-                11,
-                64,
+            outer: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(5, 2),
+                OuterCommitMatrixParams::new_unchecked(
+                    akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    2,
+                    48,
+                    11,
+                    64,
+                ),
             ),
         }
     }
@@ -519,7 +519,7 @@ mod mixed_dimension_key_tests {
     fn precommitted_key_identity_includes_both_native_ring_dimensions() {
         let base = descriptor();
         let mut changed_inner = base;
-        changed_inner.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        changed_inner.inner.matrix = InnerCommitMatrixParams::new_unchecked(
             akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,
@@ -529,7 +529,7 @@ mod mixed_dimension_key_tests {
             64,
         );
         let mut changed_outer = base;
-        changed_outer.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        changed_outer.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,

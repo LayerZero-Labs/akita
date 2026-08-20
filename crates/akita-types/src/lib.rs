@@ -85,9 +85,10 @@ pub use layout::{
     sumcheck_rounds, terminal_response_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
     witness_commitment_domain_len, BasisMode, BlockGeometry, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, GadgetDigits, GroupOpeningPlan, LevelParamsLike,
-    OpeningFamily, OpeningMethod, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
-    RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
+    CommittedGroupParams, FlatMatrix, GadgetDigits, GroupOpeningPlan, InnerRoleParams,
+    LevelParamsLike, OpenRoleParams, OpeningFamily, OpeningMethod, OuterRoleParams,
+    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, RingMatrixView, RingOpeningPoint,
+    RingRole, RoleParams, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{

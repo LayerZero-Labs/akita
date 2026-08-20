@@ -178,21 +178,26 @@ fn setup_prefix_fold_geometry<const D: usize>(
     geometry.validate(
         slot.id
             .commitment_profile
-            .inner_commit_matrix
+            .inner
+            .matrix
             .sis_modulus_profile()
             .field_bits(),
     )?;
     if slot.id.d_setup() != D
         || geometry.group.num_polynomials() != 1
-        || geometry.num_live_ring_elements_per_claim != source_ring_len
-        || geometry.num_positions_per_block == 0
-        || geometry.num_live_blocks != source_ring_len.div_ceil(geometry.num_positions_per_block)
+        || geometry.blocks.live_ring_elements_per_claim != source_ring_len
+        || geometry.blocks.positions_per_block == 0
+        || geometry.blocks.live_blocks
+            != source_ring_len.div_ceil(geometry.blocks.positions_per_block)
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix source disagrees with frozen block geometry".into(),
         ));
     }
-    Ok((geometry.num_positions_per_block, geometry.num_live_blocks))
+    Ok((
+        geometry.blocks.positions_per_block,
+        geometry.blocks.live_blocks,
+    ))
 }
 
 fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(

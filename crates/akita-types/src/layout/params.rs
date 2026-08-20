@@ -197,11 +197,11 @@ impl CommittedGroupParams {
                 .layout
                 .outer_slice_count
                 .complete_source_coefficients(
-                    group.layout.outer_commit_matrix.output_rank(),
-                    group.layout.outer_commit_matrix.ring_dimension(),
+                    group.layout.outer.matrix.output_rank(),
+                    group.layout.outer.matrix.ring_dimension(),
                 )?;
             if crate::CompressionChainPlan::try_for_complete_source(
-                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                group.layout.outer.matrix.sis_modulus_profile(),
                 source,
             )?
             .is_none()
@@ -856,7 +856,7 @@ impl CommittedGroupParams {
         group
             .layout
             .outer_slice_count
-            .logical_output_rows(group.layout.outer_commit_matrix.output_rank())
+            .logical_output_rows(group.layout.outer.matrix.output_rank())
     }
 
     /// Group-local parameter view for folded opening work.
@@ -918,12 +918,12 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
-                .checked_add(group.layout.inner_commit_matrix.output_rank())
+                .checked_add(group.layout.inner.matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             let group_b_rows = group
                 .layout
                 .outer_slice_count
-                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?;
+                .logical_output_rows(group.layout.outer.matrix.output_rank())?;
             rows = rows
                 .checked_add(group_b_rows)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -972,14 +972,14 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.layout.inner_commit_matrix.output_rank())
+                .checked_add(prior.layout.inner.matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
                 .checked_add(
                     prior
                         .layout
                         .outer_slice_count
-                        .logical_output_rows(prior.layout.outer_commit_matrix.output_rank())?,
+                        .logical_output_rows(prior.layout.outer.matrix.output_rank())?,
                 )
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
@@ -1011,7 +1011,8 @@ impl CommittedGroupParams {
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
                 .layout
-                .inner_commit_matrix
+                .inner
+                .matrix
                 .output_rank())
         }
     }
@@ -1031,7 +1032,7 @@ impl CommittedGroupParams {
             group
                 .layout
                 .outer_slice_count
-                .logical_output_rows(group.layout.outer_commit_matrix.output_rank())
+                .logical_output_rows(group.layout.outer.matrix.output_rank())
         }
     }
 

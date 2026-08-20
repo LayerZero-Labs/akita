@@ -818,6 +818,22 @@ pub type OuterCommitMatrixParams = LinfCommitMatrix<Outer>;
 /// [`OuterCommitMatrixParams`].
 pub type OpenCommitMatrixParams = LinfCommitMatrix<Open>;
 
+impl<R: LinfMatrixRole> crate::layout::geometry::sealed_matrix::Sealed for LinfCommitMatrix<R> {}
+
+impl crate::layout::geometry::sealed_matrix::Sealed for InnerCommitMatrixParams {}
+
+impl<R: LinfMatrixRole> crate::layout::geometry::MatrixDescriptorBytes for LinfCommitMatrix<R> {
+    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        Self::append_descriptor_bytes(self, bytes);
+    }
+}
+
+impl crate::layout::geometry::MatrixDescriptorBytes for InnerCommitMatrixParams {
+    fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        Self::append_descriptor_bytes(self, bytes);
+    }
+}
+
 impl<R: LinfMatrixRole> LinfCommitMatrix<R> {
     #[allow(clippy::too_many_arguments)]
     pub fn try_new(

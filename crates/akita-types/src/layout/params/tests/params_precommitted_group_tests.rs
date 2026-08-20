@@ -7,14 +7,8 @@ fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0]
-        .layout
-        .inner_commit_matrix
-        .output_rank();
-    let n_b_pre = lp.precommitted_groups[0]
-        .layout
-        .outer_commit_matrix
-        .output_rank();
+    let n_a_pre = lp.precommitted_groups[0].layout.inner.matrix.output_rank();
+    let n_b_pre = lp.precommitted_groups[0].layout.outer.matrix.output_rank();
     let n_d = lp.open_commit_matrix.output_rank();
 
     assert_eq!(
@@ -28,14 +22,8 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0]
-        .layout
-        .inner_commit_matrix
-        .output_rank();
-    let n_b_pre = lp.precommitted_groups[0]
-        .layout
-        .outer_commit_matrix
-        .output_rank();
+    let n_a_pre = lp.precommitted_groups[0].layout.inner.matrix.output_rank();
+    let n_b_pre = lp.precommitted_groups[0].layout.outer.matrix.output_rank();
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(
@@ -76,8 +64,8 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
 fn group_role_dims_use_group_a_b_and_level_shared_d() {
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let outer = &precommitted.layout.outer_commit_matrix;
-    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer.matrix;
+    precommitted.layout.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -111,7 +99,8 @@ fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
     let precommitted = &mut lp.precommitted_groups[0];
     precommitted
         .layout
-        .outer_commit_matrix
+        .outer
+        .matrix
         .sis_table_key
         .ring_dimension /= 2;
     let err = precommitted
@@ -183,16 +172,10 @@ fn precommit_admission_fixture() -> (
     let layout = CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
         group: PolynomialGroupLayout::new(14, 1),
-        num_live_ring_elements_per_claim: 256,
-        num_positions_per_block: 32,
-        num_live_blocks: 8,
+        blocks: crate::BlockGeometry::new(256, 32, 8),
         outer_slice_count: crate::CommitmentSliceCount::ONE,
-        log_basis_inner: 8,
-        num_digits_inner: 16,
-        inner_commit_matrix,
-        log_basis_outer: 3,
-        num_digits_outer: 43,
-        outer_commit_matrix,
+        inner: crate::RoleParams::new(crate::GadgetDigits::new(8, 16), inner_commit_matrix),
+        outer: crate::RoleParams::new(crate::GadgetDigits::new(3, 43), outer_commit_matrix),
     };
     (layout, policy, challenge, num_digits_fold)
 }
@@ -241,7 +224,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         policy,
         OpeningMethod::EvaluationTrace,
         challenge,
-        layout.log_basis_outer,
+        layout.outer.digits.log_basis,
     )
     .expect("valid precommit admission");
 
@@ -255,7 +238,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         mismatched_modulus,
         OpeningMethod::EvaluationTrace,
         challenge,
-        layout.log_basis_outer,
+        layout.outer.digits.log_basis,
     )
     .expect_err("mismatched modulus must be rejected");
     assert!(error.to_string().contains("modulus profile does not match"));
@@ -265,19 +248,18 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         policy,
         OpeningMethod::EvaluationTrace,
         challenge,
-        layout.log_basis_outer - 1,
+        layout.outer.digits.log_basis - 1,
     )
     .expect_err("opening below frozen outer basis must be rejected");
     assert!(error.to_string().contains("must dominate"));
 
     let mut wrong_outer_depth = layout;
-    wrong_outer_depth.num_digits_outer += 1;
-    let outer = wrong_outer_depth.outer_commit_matrix;
-    wrong_outer_depth.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+    wrong_outer_depth.outer.digits.num_digits += 1;
+    let outer = wrong_outer_depth.outer.matrix;
+    wrong_outer_depth.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         outer.sis_table_key(),
         outer.input_width()
-            + wrong_outer_depth.inner_commit_matrix.output_rank()
-                * wrong_outer_depth.num_live_blocks,
+            + wrong_outer_depth.inner.matrix.output_rank() * wrong_outer_depth.blocks.live_blocks,
     )
     .expect("canonical wrong-depth B matrix");
     let error = PrecommittedLevelParams::admit(
@@ -286,7 +268,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         policy,
         OpeningMethod::EvaluationTrace,
         challenge,
-        layout.log_basis_outer,
+        layout.outer.digits.log_basis,
     )
     .expect_err("wrong frozen outer digit depth must be rejected");
     assert!(error.to_string().contains("outer digit depth"), "{error}");
@@ -296,13 +278,13 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
 fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
     let (layout, policy, challenge, num_digits_fold) = precommit_admission_fixture();
     let mut low_a = layout;
-    let inner = low_a.inner_commit_matrix;
+    let inner = low_a.inner.matrix;
     let lower_a_bound = crate::sis::COEFF_LINF_BUCKETS
         .iter()
         .copied()
         .rfind(|&bound| bound < inner.coeff_linf_bound().expect("L infinity test matrix"))
         .expect("lower supported A bound");
-    low_a.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+    low_a.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
             coeff_linf_bound: lower_a_bound,
             ..inner.sis_table_key().expect("L infinity test matrix")
@@ -316,19 +298,19 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
         policy,
         OpeningMethod::EvaluationTrace,
         challenge,
-        layout.log_basis_outer,
+        layout.outer.digits.log_basis,
     )
     .expect_err("insufficient A bound must be rejected");
     assert!(error.to_string().contains("A bound"), "{error}");
 
     let mut low_b = layout;
-    let outer = low_b.outer_commit_matrix;
+    let outer = low_b.outer.matrix;
     let lower_b_bound = crate::sis::COEFF_LINF_BUCKETS
         .iter()
         .copied()
         .rfind(|&bound| bound < outer.coeff_linf_bound())
         .expect("lower supported B bound");
-    low_b.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+    low_b.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
             coeff_linf_bound: lower_b_bound,
             ..outer.sis_table_key()
@@ -342,7 +324,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
         policy,
         OpeningMethod::EvaluationTrace,
         challenge,
-        layout.log_basis_outer,
+        layout.outer.digits.log_basis,
     )
     .expect_err("insufficient B bound must be rejected");
     assert!(error.to_string().contains("B bound"), "{error}");
@@ -354,8 +336,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let inner = &precommitted.layout.inner_commit_matrix;
-    precommitted.layout.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = &precommitted.layout.inner.matrix;
+    precommitted.layout.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -367,8 +349,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         inner.coeff_linf_bound().expect("L infinity test matrix"),
         128,
     );
-    let outer = &precommitted.layout.outer_commit_matrix;
-    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer.matrix;
+    precommitted.layout.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -571,7 +553,8 @@ fn relation_geometry_revalidates_frozen_precommitted_profiles() {
     let (mut lp, batch) = address_oracle_fixture(2);
     lp.precommitted_groups[0]
         .layout
-        .outer_commit_matrix
+        .outer
+        .matrix
         .sis_table_key
         .ring_dimension /= 2;
     assert!(crate::RelationWitnessGeometry::for_level(&lp, &batch, 2).is_err());

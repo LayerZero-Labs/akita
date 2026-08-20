@@ -59,10 +59,10 @@ impl CommitInnerPlan {
     /// Build inner-commit parameters from a frozen standalone precommit profile.
     pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
         Self {
-            n_a: profile.inner_commit_matrix.output_rank(),
-            num_positions_per_block: profile.num_positions_per_block,
-            num_digits_inner: profile.num_digits_inner,
-            log_basis_inner: profile.log_basis_inner,
+            n_a: profile.inner.matrix.output_rank(),
+            num_positions_per_block: profile.blocks.positions_per_block,
+            num_digits_inner: profile.inner.digits.num_digits,
+            log_basis_inner: profile.inner.digits.log_basis,
         }
     }
 }

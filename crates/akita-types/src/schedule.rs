@@ -439,7 +439,7 @@ impl FoldSchedule {
                     .validate_for_commitment(
                         0,
                         crate::CommitmentPayloadMode::Compressed,
-                        prefix.commitment_params.layout.num_live_blocks,
+                        prefix.commitment_params.layout.blocks.live_blocks,
                     )?;
                 let n_prefix = prefix.n_prefix()?;
                 if prefix.natural_len == 0
@@ -536,7 +536,7 @@ impl FoldSchedule {
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                     commitment.opening.opening_method,
                     extension_degree,
-                    commitment.layout.inner_commit_matrix.ring_dimension(),
+                    commitment.layout.inner.matrix.ring_dimension(),
                     group.descriptor.group.num_vars(),
                     true,
                 )),

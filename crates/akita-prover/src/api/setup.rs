@@ -318,16 +318,16 @@ mod tests {
             layout: CommittedGroupProfile {
                 version: CommittedGroupProfile::VERSION,
                 group: PolynomialGroupLayout::singleton(6),
-                num_live_ring_elements_per_claim: 1,
-                num_positions_per_block: 1,
-                num_live_blocks: 1,
+                blocks: akita_types::BlockGeometry::new(1, 1, 1),
                 outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-                log_basis_inner: 1,
-                num_digits_inner: 1,
-                inner_commit_matrix,
-                log_basis_outer: 1,
-                num_digits_outer: 1,
-                outer_commit_matrix,
+                inner: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(1, 1),
+                    inner_commit_matrix,
+                ),
+                outer: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(1, 1),
+                    outer_commit_matrix,
+                ),
             },
             opening: akita_types::GroupOpeningPlan::evaluation_trace(
                 akita_challenges::SparseChallengeConfig::pm1_only(0),

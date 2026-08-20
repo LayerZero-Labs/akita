@@ -49,8 +49,9 @@ where
     }
     let full_prefix_ring_slots = n_prefix / D;
     let witness_ring_slots = commitment_profile
-        .num_live_blocks
-        .checked_mul(commitment_profile.num_positions_per_block)
+        .blocks
+        .live_blocks
+        .checked_mul(commitment_profile.blocks.positions_per_block)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
@@ -81,8 +82,8 @@ where
             witnesses.len()
         ))
     })?;
-    let n_a = commitment_profile.inner_commit_matrix.output_rank();
-    let recomposed_inner_rows = (0..commitment_profile.num_live_blocks)
+    let n_a = commitment_profile.inner.matrix.output_rank();
+    let recomposed_inner_rows = (0..commitment_profile.blocks.live_blocks)
         .map(|block| {
             witness
                 .block_rows::<D>(block, n_a)
@@ -90,14 +91,14 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let n_b = commitment_profile.outer_commit_matrix.output_rank();
-    let d_b = commitment_profile.outer_commit_matrix.ring_dimension();
+    let n_b = commitment_profile.outer.matrix.output_rank();
+    let d_b = commitment_profile.outer.matrix.ring_dimension();
     let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
         commitment_profile.outer_slice_count,
-        commitment_profile.num_live_blocks,
+        commitment_profile.blocks.live_blocks,
         1,
         n_a,
-        commitment_profile.num_digits_outer,
+        commitment_profile.outer.digits.num_digits,
         D,
         d_b,
     )?;
@@ -109,8 +110,8 @@ where
                 .collect::<Vec<_>>();
             let decomposed_inner_rows = decompose_commit_blocks_into::<F, D, D_B>(
                 &blocks,
-                commitment_profile.num_digits_outer,
-                commitment_profile.log_basis_outer,
+                commitment_profile.outer.digits.num_digits,
+                commitment_profile.outer.digits.log_basis,
             )?;
             let u = commit_outer_slices::<F, _, D_B>(
                 backend,
@@ -118,7 +119,7 @@ where
                 n_b,
                 std::iter::once(&decomposed_inner_rows),
                 &slice_geometry,
-                commitment_profile.log_basis_outer,
+                commitment_profile.outer.digits.log_basis,
             )?;
             Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
         })?;
@@ -136,7 +137,8 @@ where
     }
     let plan = CompressionChainPlan::for_complete_source(
         commitment_profile
-            .outer_commit_matrix
+            .outer
+            .matrix
             .sis_table_key()
             .modulus_profile,
         raw_commitment.coeff_len(),
@@ -445,8 +447,8 @@ mod tests {
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let mut prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let outer = &prefix_params.layout.outer_commit_matrix;
-        prefix_params.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        let outer = &prefix_params.layout.outer.matrix;
+        prefix_params.layout.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),

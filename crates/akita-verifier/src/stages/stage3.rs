@@ -365,7 +365,7 @@ mod tests {
         let commitment_params = setup_prefix_precommitted_params(&level_params, full_prefix_len)
             .expect("setup-prefix parameters");
         let id = scheduled_setup_prefix(natural_field_len, commitment_params);
-        let matrix = &id.commitment_params.layout.outer_commit_matrix;
+        let matrix = &id.commitment_params.layout.outer.matrix;
         let payload_coefficients = CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),

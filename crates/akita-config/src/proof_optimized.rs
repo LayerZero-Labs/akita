@@ -198,8 +198,8 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
                     && profile.group.num_polynomials() <= max_num_batched_polys
                 {
                     scan.observe(akita_types::commit_only_setup_field_elements(
-                        &profile.inner_commit_matrix,
-                        &profile.outer_commit_matrix,
+                        &profile.inner.matrix,
+                        &profile.outer.matrix,
                         profile.outer_slice_count,
                     )?);
                 }

@@ -69,7 +69,8 @@ pub(crate) fn precommitted_groups_support_opening_dimension<'a>(
 ) -> bool {
     profiles.into_iter().all(|profile| {
         profile
-            .inner_commit_matrix
+            .inner
+            .matrix
             .ring_dimension()
             .is_multiple_of(opening_ring_dimension)
     })

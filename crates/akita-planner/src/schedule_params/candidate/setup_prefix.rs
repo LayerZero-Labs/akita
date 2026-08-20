@@ -135,16 +135,20 @@ impl SetupPrefixCandidateContext<'_> {
         let layout = CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
-            num_live_ring_elements_per_claim: self.ring_slots,
-            num_positions_per_block: split.num_positions_per_block,
-            num_live_blocks: split.num_live_blocks,
+            blocks: akita_types::BlockGeometry::new(
+                self.ring_slots,
+                split.num_positions_per_block,
+                split.num_live_blocks,
+            ),
             outer_slice_count,
-            log_basis_inner: split.log_basis_inner,
-            num_digits_inner: split.num_digits_inner,
-            inner_commit_matrix: inner_candidate.inner_commit_matrix,
-            log_basis_outer: self.log_basis_open,
-            num_digits_outer: self.num_digits_outer,
-            outer_commit_matrix,
+            inner: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(split.log_basis_inner, split.num_digits_inner),
+                inner_candidate.inner_commit_matrix,
+            ),
+            outer: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(self.log_basis_open, self.num_digits_outer),
+                outer_commit_matrix,
+            ),
         };
         let params = PrecommittedLevelParams {
             layout,
@@ -345,8 +349,8 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             coords[0],
             coords[1],
             *score,
-            params.layout.log_basis_inner,
-            params.layout.num_live_blocks,
+            params.layout.inner.digits.log_basis,
+            params.layout.blocks.live_blocks,
         )
     });
     let result: Arc<[PrecommittedLevelParams]> = frontier

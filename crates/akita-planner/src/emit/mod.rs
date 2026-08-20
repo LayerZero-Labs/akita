@@ -401,13 +401,16 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
     )
 }
 
+/// Emit one nested commit-phase profile literal.
+///
+/// The nesting mirrors the struct: geometry, slicing, then a `(digits, matrix)`
+/// role twice. `BlockGeometry::new`, `GadgetDigits::new`, and `RoleParams::new`
+/// are all `const`, so the result stays valid in `static` position.
 fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
     format!(
-        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
+        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, inner: {}, outer: {} }}",
         emit_key(layout.group),
-        layout.num_live_ring_elements_per_claim,
-        layout.num_positions_per_block,
-        layout.num_live_blocks,
+        emit_block_geometry(layout.blocks),
         match layout.outer_slice_count {
             akita_types::CommitmentSliceCount::ONE => "ONE",
             akita_types::CommitmentSliceCount::TWO => "TWO",
@@ -415,25 +418,42 @@ fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
             akita_types::CommitmentSliceCount::EIGHT => "EIGHT",
             _ => unreachable!("checked commitment slice count"),
         },
-        layout.log_basis_inner,
-        layout.num_digits_inner,
-        emit_profile_matrix(
-            "InnerCommitMatrixParams",
-            layout.inner_commit_matrix.output_rank(),
-            layout.inner_commit_matrix.input_width(),
-            layout
-                .inner_commit_matrix
-                .sis_table_key()
-                .expect("validated precommitted matrix is L infinity"),
+        emit_role_params(
+            layout.inner.digits,
+            &emit_profile_matrix(
+                "InnerCommitMatrixParams",
+                layout.inner.matrix.output_rank(),
+                layout.inner.matrix.input_width(),
+                layout
+                    .inner
+                    .matrix
+                    .sis_table_key()
+                    .expect("validated precommitted matrix is L infinity"),
+            ),
         ),
-        layout.log_basis_outer,
-        layout.num_digits_outer,
-        emit_profile_matrix(
-            "OuterCommitMatrixParams",
-            layout.outer_commit_matrix.output_rank(),
-            layout.outer_commit_matrix.input_width(),
-            layout.outer_commit_matrix.sis_table_key(),
+        emit_role_params(
+            layout.outer.digits,
+            &emit_profile_matrix(
+                "OuterCommitMatrixParams",
+                layout.outer.matrix.output_rank(),
+                layout.outer.matrix.input_width(),
+                layout.outer.matrix.sis_table_key(),
+            ),
         ),
+    )
+}
+
+fn emit_block_geometry(blocks: akita_types::BlockGeometry) -> String {
+    format!(
+        "akita_types::BlockGeometry::new({}, {}, {})",
+        blocks.live_ring_elements_per_claim, blocks.positions_per_block, blocks.live_blocks,
+    )
+}
+
+fn emit_role_params(digits: akita_types::GadgetDigits, matrix: &str) -> String {
+    format!(
+        "akita_types::RoleParams::new(akita_types::GadgetDigits::new({}, {}), {})",
+        digits.log_basis, digits.num_digits, matrix,
     )
 }
 
@@ -580,8 +600,8 @@ fn emit_schedule_entry(
         writeln!(out, "            precommitted_groups: &[").map_err(|e| e.to_string())?;
         for (index, group) in entry.root.precommitted_groups.iter().enumerate() {
             out.push_str(&precommitted_source_note(
-                group.descriptor.log_basis_inner,
-                group.descriptor.num_digits_inner,
+                group.descriptor.inner.digits.log_basis,
+                group.descriptor.inner.digits.num_digits,
                 precommitted_producers[index].contract().class(),
             ));
             writeln!(

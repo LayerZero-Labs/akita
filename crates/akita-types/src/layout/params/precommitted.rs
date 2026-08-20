@@ -203,8 +203,8 @@ impl PrecommittedLevelParams {
         log_basis_open: u32,
     ) -> Result<Self, AkitaError> {
         layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
-        if layout.inner_commit_matrix.sis_modulus_profile() != policy.sis_modulus_profile
-            || layout.outer_commit_matrix.sis_modulus_profile() != policy.sis_modulus_profile
+        if layout.inner.matrix.sis_modulus_profile() != policy.sis_modulus_profile
+            || layout.outer.matrix.sis_modulus_profile() != policy.sis_modulus_profile
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group modulus profile does not match admission policy".into(),
@@ -212,10 +212,10 @@ impl PrecommittedLevelParams {
         }
 
         let outer_decomposition = DecompositionParams {
-            log_basis: layout.log_basis_outer,
+            log_basis: layout.outer.digits.log_basis,
             ..policy.decomposition
         };
-        if num_digits_open(outer_decomposition) != layout.num_digits_outer {
+        if num_digits_open(outer_decomposition) != layout.outer.digits.num_digits {
             return Err(AkitaError::InvalidSetup(
                 "precommitted outer digit depth does not match its frozen basis".into(),
             ));
@@ -224,16 +224,16 @@ impl PrecommittedLevelParams {
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
-            layout.outer_commit_matrix.ring_dimension(),
-            layout.log_basis_outer,
+            layout.outer.matrix.ring_dimension(),
+            layout.outer.digits.log_basis,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".into()))?;
-        if layout.outer_commit_matrix.coeff_linf_bound() < frozen_b_bound {
+        if layout.outer.matrix.coeff_linf_bound() < frozen_b_bound {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group B bound is below its frozen outer-basis requirement".into(),
             ));
         }
-        if log_basis_open < layout.log_basis_outer {
+        if log_basis_open < layout.outer.digits.log_basis {
             return Err(AkitaError::InvalidSetup(
                 "certified opening basis must dominate the precommitted outer basis".into(),
             ));
@@ -248,18 +248,15 @@ impl PrecommittedLevelParams {
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
-            layout.inner_commit_matrix.ring_dimension(),
+            layout.inner.matrix.ring_dimension(),
             log_basis_open,
             &fold_challenge_config,
             num_digits_fold,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".into()))?;
-        let declared_a_bound = layout
-            .inner_commit_matrix
-            .coeff_linf_bound()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".into())
-            })?;
+        let declared_a_bound = layout.inner.matrix.coeff_linf_bound().ok_or_else(|| {
+            AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".into())
+        })?;
         if required_a_bound > declared_a_bound {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A bound does not cover the certified opening basis".into(),
@@ -269,11 +266,11 @@ impl PrecommittedLevelParams {
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
-            layout.outer_commit_matrix.ring_dimension(),
+            layout.outer.matrix.ring_dimension(),
             log_basis_open,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".into()))?;
-        if required_b_bound > layout.outer_commit_matrix.coeff_linf_bound() {
+        if required_b_bound > layout.outer.matrix.coeff_linf_bound() {
             return Err(AkitaError::InvalidSetup(
                 "precommitted B bound does not cover the certified opening basis".into(),
             ));
@@ -305,23 +302,19 @@ impl PrecommittedLevelParams {
     #[must_use]
     pub fn role_dims(&self, shared_opening_ring_dimension: usize) -> CommitmentRingDims {
         CommitmentRingDims {
-            inner: self.layout.inner_commit_matrix.ring_dimension(),
-            outer: self.layout.outer_commit_matrix.ring_dimension(),
+            inner: self.layout.inner.matrix.ring_dimension(),
+            outer: self.layout.outer.matrix.ring_dimension(),
             opening: shared_opening_ring_dimension,
         }
     }
 
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        let field_bits = self
-            .layout
-            .inner_commit_matrix
-            .sis_modulus_profile()
-            .field_bits();
+        let field_bits = self.layout.inner.matrix.sis_modulus_profile().field_bits();
         self.layout.validate(field_bits)?;
         if self.opening.fold_challenge_config.weight() != 0 {
             let challenge_dimension = match self.opening.opening_method {
-                OpeningMethod::EvaluationTrace => self.layout.inner_commit_matrix.ring_dimension(),
+                OpeningMethod::EvaluationTrace => self.layout.inner.matrix.ring_dimension(),
                 OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } => challenge_subring_dimension,
@@ -339,18 +332,19 @@ impl PrecommittedLevelParams {
                 "precommitted exact fold plan is missing or inconsistent".to_string(),
             ));
         }
-        if self.opening.log_basis_open < self.layout.log_basis_outer {
+        if self.opening.log_basis_open < self.layout.outer.digits.log_basis {
             return Err(AkitaError::InvalidSetup(
                 "certified opening basis must dominate the precommitted outer basis".to_string(),
             ));
         }
         let expected_a_width = self
             .layout
-            .num_positions_per_block
-            .checked_mul(self.layout.num_digits_inner)
+            .blocks
+            .positions_per_block
+            .checked_mul(self.layout.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted A width overflow".to_string()))?;
-        let inner_ring_dimension = self.layout.inner_commit_matrix.ring_dimension();
-        let outer_ring_dimension = self.layout.outer_commit_matrix.ring_dimension();
+        let inner_ring_dimension = self.layout.inner.matrix.ring_dimension();
+        let outer_ring_dimension = self.layout.outer.matrix.ring_dimension();
         if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A-native source rings do not decompose into B-native subcolumns"
@@ -359,16 +353,16 @@ impl PrecommittedLevelParams {
         }
         let expected_b_width = crate::CommitmentSliceGeometry::try_new(
             self.layout.outer_slice_count,
-            self.layout.num_live_blocks,
+            self.layout.blocks.live_blocks,
             self.layout.group.num_polynomials(),
-            self.layout.inner_commit_matrix.output_rank(),
-            self.layout.num_digits_outer,
+            self.layout.inner.matrix.output_rank(),
+            self.layout.outer.digits.num_digits,
             inner_ring_dimension,
             outer_ring_dimension,
         )?
         .physical_input_width();
-        if self.layout.inner_commit_matrix.input_width() != expected_a_width
-            || self.layout.outer_commit_matrix.input_width() != expected_b_width
+        if self.layout.inner.matrix.input_width() != expected_a_width
+            || self.layout.outer.matrix.input_width() != expected_b_width
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A/B keys do not match frozen ranks, bounds, or digit depths"
@@ -381,13 +375,13 @@ impl PrecommittedLevelParams {
     /// Width of this group's A matrix.
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.layout.inner_commit_matrix.input_width()
+        self.layout.inner.matrix.input_width()
     }
 
     /// Width of this group's B matrix.
     #[inline]
     pub fn outer_width(&self) -> usize {
-        self.layout.outer_commit_matrix.input_width()
+        self.layout.outer.matrix.input_width()
     }
 
     /// Width contribution to the consuming batch's shared D matrix
@@ -403,10 +397,10 @@ impl PrecommittedLevelParams {
         opening_d_segment_width(
             self.opening.opening_method,
             extension_degree,
-            self.layout.inner_commit_matrix.ring_dimension(),
+            self.layout.inner.matrix.ring_dimension(),
             opening_ring_dimension,
             self.opening.num_digits_open,
-            self.layout.num_live_blocks,
+            self.layout.blocks.live_blocks,
             self.layout.group.num_polynomials(),
         )
     }
@@ -552,19 +546,19 @@ impl LevelParamsLike for PrecommittedLevelParams {
     }
 
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
-        &self.layout.inner_commit_matrix
+        &self.layout.inner.matrix
     }
 
     fn a_rows_len(&self) -> usize {
-        self.layout.inner_commit_matrix.output_rank()
+        self.layout.inner.matrix.output_rank()
     }
 
     fn a_col_len(&self) -> usize {
-        self.layout.inner_commit_matrix.input_width()
+        self.layout.inner.matrix.input_width()
     }
 
     fn b_rows_len(&self) -> usize {
-        self.layout.outer_commit_matrix.output_rank()
+        self.layout.outer.matrix.output_rank()
     }
 
     fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
@@ -572,19 +566,19 @@ impl LevelParamsLike for PrecommittedLevelParams {
     }
 
     fn b_col_len(&self) -> usize {
-        self.layout.outer_commit_matrix.input_width()
+        self.layout.outer.matrix.input_width()
     }
 
     fn num_live_ring_elements_per_claim(&self) -> usize {
-        self.layout.num_live_ring_elements_per_claim
+        self.layout.blocks.live_ring_elements_per_claim
     }
 
     fn num_positions_per_block(&self) -> usize {
-        self.layout.num_positions_per_block
+        self.layout.blocks.positions_per_block
     }
 
     fn num_live_blocks(&self) -> usize {
-        self.layout.num_live_blocks
+        self.layout.blocks.live_blocks
     }
 
     fn fold_challenge_config(&self) -> SparseChallengeConfig {
@@ -600,11 +594,11 @@ impl LevelParamsLike for PrecommittedLevelParams {
     }
 
     fn num_digits_inner(&self) -> usize {
-        self.layout.num_digits_inner
+        self.layout.inner.digits.num_digits
     }
 
     fn num_digits_outer(&self) -> usize {
-        self.layout.num_digits_outer
+        self.layout.outer.digits.num_digits
     }
 
     fn num_digits_open(&self) -> usize {
@@ -616,11 +610,11 @@ impl LevelParamsLike for PrecommittedLevelParams {
     }
 
     fn log_basis_outer(&self) -> u32 {
-        self.layout.log_basis_outer
+        self.layout.outer.digits.log_basis
     }
 
     fn log_basis_inner(&self) -> u32 {
-        self.layout.log_basis_inner
+        self.layout.inner.digits.log_basis
     }
 
     fn log_basis_open(&self) -> u32 {

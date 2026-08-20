@@ -58,13 +58,16 @@ fn setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer() {
     );
     let prefix = setup_prefix_precommitted_params(&params, 128).expect("setup prefix params");
     assert_eq!(
-        prefix.layout.num_digits_inner,
+        prefix.layout.inner.digits.num_digits,
         crate::sis::compute_num_digits_field_width(
             SisModulusProfileId::Q32Offset99.field_bits(),
             params.log_basis_inner,
         )
     );
-    assert_ne!(prefix.layout.num_digits_inner, params.num_digits_inner);
+    assert_ne!(
+        prefix.layout.inner.digits.num_digits,
+        params.num_digits_inner
+    );
 }
 
 #[test]
@@ -455,16 +458,13 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
     params
         .validate()
         .expect("projected B width must satisfy the precommitted contract");
-    let ratio = params.layout.inner_commit_matrix.ring_dimension()
-        / params.layout.outer_commit_matrix.ring_dimension();
-    let expected_b_width = params.layout.num_live_blocks
-        * params.layout.inner_commit_matrix.output_rank()
-        * params.layout.num_digits_outer
+    let ratio =
+        params.layout.inner.matrix.ring_dimension() / params.layout.outer.matrix.ring_dimension();
+    let expected_b_width = params.layout.blocks.live_blocks
+        * params.layout.inner.matrix.output_rank()
+        * params.layout.outer.digits.num_digits
         * ratio;
-    assert_eq!(
-        params.layout.outer_commit_matrix.input_width(),
-        expected_b_width
-    );
+    assert_eq!(params.layout.outer.matrix.input_width(), expected_b_width);
 }
 
 #[test]
@@ -585,7 +585,7 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
     let slot = || {
         let inner_rows =
             RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("inner rows");
-        let matrix = &id.commitment_profile.outer_commit_matrix;
+        let matrix = &id.commitment_profile.outer.matrix;
         let plan = crate::CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),

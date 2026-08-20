@@ -370,27 +370,15 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             entry.root.open_commit_matrix.ring_dimension as usize,
         );
         for group in entry.root.precommitted_groups {
-            push_unique(
-                &mut dims,
-                group.descriptor.inner_commit_matrix.ring_dimension(),
-            );
-            push_unique(
-                &mut dims,
-                group.descriptor.outer_commit_matrix.ring_dimension(),
-            );
+            push_unique(&mut dims, group.descriptor.inner.matrix.ring_dimension());
+            push_unique(&mut dims, group.descriptor.outer.matrix.ring_dimension());
         }
         for fold in entry.recursive_folds {
             collect_group_ring_dimensions(fold.witness, &mut dims);
             push_unique(&mut dims, fold.open_commit_matrix.ring_dimension as usize);
             if let Some(prefix) = fold.incoming_setup_prefix {
-                push_unique(
-                    &mut dims,
-                    prefix.commitment.inner_commit_matrix.ring_dimension(),
-                );
-                push_unique(
-                    &mut dims,
-                    prefix.commitment.outer_commit_matrix.ring_dimension(),
-                );
+                push_unique(&mut dims, prefix.commitment.inner.matrix.ring_dimension());
+                push_unique(&mut dims, prefix.commitment.outer.matrix.ring_dimension());
             }
         }
         push_unique(

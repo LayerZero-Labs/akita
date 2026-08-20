@@ -102,9 +102,9 @@ fn retarget_precommitted_test_role_dims(
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
     let mut layout = group.layout;
-    let inner = &layout.inner_commit_matrix;
+    let inner = &layout.inner.matrix;
     let inner_output_rank = inner.output_rank();
-    layout.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+    layout.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -116,14 +116,14 @@ fn retarget_precommitted_test_role_dims(
         inner.coeff_linf_bound().expect("L infinity test matrix"),
         inner_ring_dimension,
     );
-    let outer = &layout.outer_commit_matrix;
+    let outer = &layout.outer.matrix;
     let projected_width = inner_output_rank
-        .checked_mul(layout.num_digits_outer)
-        .and_then(|width| width.checked_mul(group.layout.num_live_blocks))
+        .checked_mul(layout.outer.digits.num_digits)
+        .and_then(|width| width.checked_mul(group.layout.blocks.live_blocks))
         .and_then(|width| width.checked_mul(group.layout.group.num_polynomials()))
         .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
         .expect("test precommitted B width");
-    layout.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+    layout.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -247,7 +247,7 @@ fn test_inputs_for_group_sizes(
                     .inner_commit_matrix
                     .output_rank()
                     .checked_mul(lp.num_digits_outer)
-                    .and_then(|width| width.checked_mul(layout.num_live_blocks))
+                    .and_then(|width| width.checked_mul(layout.blocks.live_blocks))
                     .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
                     .expect("test precommitted B width");
                 let outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
@@ -259,7 +259,7 @@ fn test_inputs_for_group_sizes(
                     lp.outer_commit_matrix.coeff_linf_bound(),
                     lp.d_a(),
                 );
-                layout.outer_commit_matrix = outer_commit_matrix;
+                layout.outer.matrix = outer_commit_matrix;
                 crate::PrecommittedLevelParams {
                     layout,
                     opening: crate::GroupOpeningPlan::evaluation_trace(

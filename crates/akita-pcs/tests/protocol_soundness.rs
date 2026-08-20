@@ -1202,7 +1202,8 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
         .expect("honest dense proof must verify");
 
         let mut mismatched = commitment.clone();
-        mismatched.profile.num_live_blocks = mismatched.profile.num_live_blocks.saturating_add(1);
+        mismatched.profile.blocks.live_blocks =
+            mismatched.profile.blocks.live_blocks.saturating_add(1);
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert_invalid_proof(
             "mismatched committed-group profile geometry",

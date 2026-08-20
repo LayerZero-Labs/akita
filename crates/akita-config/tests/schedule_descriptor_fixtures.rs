@@ -335,6 +335,11 @@ fn the_fixture_mechanism_detects_change() {
     assert_ne!(render(&swapped), baseline, "record order is not pinned");
 }
 
+/// Family name a record line belongs to (the first whitespace-delimited token).
+fn family_of(line: &str) -> &str {
+    line.split_whitespace().next().unwrap_or("")
+}
+
 #[test]
 fn generated_schedule_descriptor_bytes_are_stable() {
     let records = collect_records();
@@ -347,6 +352,18 @@ fn generated_schedule_descriptor_bytes_are_stable() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_PATH);
 
     if std::env::var_os(BLESS_ENV).is_some() {
+        // Blessing must never record a partial catalog set, or a later
+        // all-schedules run would look like a regression.
+        let linked: std::collections::BTreeSet<&str> =
+            records.iter().map(|r| family_of(&r.label)).collect();
+        assert_eq!(
+            linked.len(),
+            ALL_GENERATED_FAMILIES.len(),
+            "refusing to bless a partial fixture: {} of {} families linked. \
+             Re-run with --features all-schedules.",
+            linked.len(),
+            ALL_GENERATED_FAMILIES.len()
+        );
         std::fs::create_dir_all(path.parent().expect("fixture parent"))
             .expect("create fixture dir");
         std::fs::write(&path, &rendered).expect("write fixture");
@@ -354,7 +371,7 @@ fn generated_schedule_descriptor_bytes_are_stable() {
         return;
     }
 
-    let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+    let full = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "missing descriptor fixture {}: {error}\n\
              create it with {BLESS_ENV}=1 and the all-schedules feature",
@@ -362,6 +379,37 @@ fn generated_schedule_descriptor_bytes_are_stable() {
         )
     });
 
+    // The fixture is blessed under `all-schedules`, but this test also runs in
+    // builds that link fewer catalogs. Compare only the families actually
+    // linked, so the check is meaningful in every feature set instead of
+    // passing in exactly one of them. Under `all-schedules` this is the whole
+    // file.
+    let linked: std::collections::BTreeSet<&str> =
+        records.iter().map(|r| family_of(&r.label)).collect();
+    let expected: String = full
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .filter(|line| linked.contains(family_of(line)))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let rendered_body: String = rendered
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .map(|line| format!("{line}\n"))
+        .collect();
+    eprintln!(
+        "checked {} records across {}/{} linked families",
+        records.len(),
+        linked.len(),
+        ALL_GENERATED_FAMILIES.len()
+    );
+    assert!(
+        !expected.is_empty(),
+        "no fixture lines matched the linked families {linked:?}; \
+         the fixture may predate a family rename"
+    );
+
+    let rendered = rendered_body;
     if expected == rendered {
         return;
     }
@@ -375,15 +423,7 @@ fn generated_schedule_descriptor_bytes_are_stable() {
     let mut detail = String::new();
     let mut shown = 0usize;
     let mut differing = 0usize;
-    for (expected_line, actual_line) in expected
-        .lines()
-        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
-        .zip(
-            rendered
-                .lines()
-                .filter(|line| !line.starts_with('#') && !line.trim().is_empty()),
-        )
-    {
+    for (expected_line, actual_line) in expected.lines().zip(rendered.lines()) {
         if expected_line == actual_line {
             continue;
         }
@@ -406,10 +446,7 @@ fn generated_schedule_descriptor_bytes_are_stable() {
          {} expected lines, {} actual lines).\n\
          If this change is intended, read the diff and re-bless with \
          {BLESS_ENV}=1.\n{detail}",
-        expected
-            .lines()
-            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
-            .count(),
-        records.len(),
+        expected.lines().count(),
+        rendered.lines().count(),
     );
 }

@@ -276,15 +276,12 @@ where
         let source_coefficients = descriptor
             .outer_slice_count
             .complete_source_coefficients(
-                descriptor.outer_commit_matrix.output_rank(),
-                descriptor.outer_commit_matrix.ring_dimension(),
+                descriptor.outer.matrix.output_rank(),
+                descriptor.outer.matrix.ring_dimension(),
             )
             .map_err(|_| AkitaError::InvalidProof)?;
         let plan = akita_types::CompressionChainPlan::for_complete_source(
-            descriptor
-                .outer_commit_matrix
-                .sis_table_key()
-                .modulus_profile,
+            descriptor.outer.matrix.sis_table_key().modulus_profile,
             source_coefficients,
         )?;
         if committed.commitment().rows().coeff_len() != plan.terminal_coefficients() {

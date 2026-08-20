@@ -227,7 +227,8 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
             group
                 .commitment
                 .layout
-                .inner_commit_matrix
+                .inner
+                .matrix
                 .sis_modulus_profile()
                 .field_bits(),
         )?;

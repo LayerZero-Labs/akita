@@ -99,8 +99,8 @@ fn audit_precommitted_group(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     params.validate()?;
-    audit_inner_matrix(label, &params.layout.inner_commit_matrix, policy)?;
-    audit_outer_matrix(label, &params.layout.outer_commit_matrix, policy)?;
+    audit_inner_matrix(label, &params.layout.inner.matrix, policy)?;
+    audit_outer_matrix(label, &params.layout.outer.matrix, policy)?;
 
     let expected_open_digits = num_digits_open(DecompositionParams {
         log_basis: params.opening.log_basis_open,
@@ -115,7 +115,8 @@ fn audit_precommitted_group(
 
     let declared_a_bound = params
         .layout
-        .inner_commit_matrix
+        .inner
+        .matrix
         .coeff_linf_bound()
         .ok_or_else(|| {
             invalid(
@@ -130,7 +131,7 @@ fn audit_precommitted_group(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
-            params.layout.inner_commit_matrix.ring_dimension(),
+            params.layout.inner.matrix.ring_dimension(),
             params.opening.log_basis_open,
             &params.opening.fold_challenge_config,
             params.opening.num_digits_fold,
@@ -138,12 +139,12 @@ fn audit_precommitted_group(
     )?;
     audit_bound(
         label,
-        params.layout.outer_commit_matrix.coeff_linf_bound(),
+        params.layout.outer.matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
-            params.layout.outer_commit_matrix.ring_dimension(),
+            params.layout.outer.matrix.ring_dimension(),
             params.opening.log_basis_open,
         ),
     )

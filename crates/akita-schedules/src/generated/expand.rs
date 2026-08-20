@@ -73,10 +73,11 @@ impl GeneratedSetupPrefixInput {
         log_basis_open: u32,
     ) -> Result<PrecommittedLevelParams, AkitaError> {
         let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
-        let d_a = self.commitment.inner_commit_matrix.ring_dimension();
+        let d_a = self.commitment.inner.matrix.ring_dimension();
         let committed_len = self
             .commitment
-            .num_live_ring_elements_per_claim
+            .blocks
+            .live_ring_elements_per_claim
             .checked_mul(d_a)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
@@ -996,7 +997,7 @@ mod tests {
 
         assert_eq!(
             &*requested_dimensions.borrow(),
-            &[input.commitment.inner_commit_matrix.ring_dimension()]
+            &[input.commitment.inner.matrix.ring_dimension()]
         );
         assert_eq!(expanded.layout, input.commitment);
         assert_eq!(expanded.opening, input.opening);
@@ -1009,7 +1010,7 @@ mod tests {
             .flat_map(|entry| entry.recursive_folds)
             .find_map(|fold| fold.incoming_setup_prefix)
             .expect("generated recursive setup-prefix fixture");
-        input.commitment.num_live_blocks += 1;
+        input.commitment.blocks.live_blocks += 1;
         let ring_challenge_config = |d| {
             SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
                 AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))

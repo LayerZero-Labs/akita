@@ -33,19 +33,20 @@ fn materialize_precommitted_group_for_open_basis(
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
-    let ring_dimension = layout.inner_commit_matrix.ring_dimension();
+    let ring_dimension = layout.inner.matrix.ring_dimension();
     opening.validate_for(
         0,
         policy.claim_ext_degree,
         CommitmentRingDims {
             inner: ring_dimension,
-            outer: layout.outer_commit_matrix.ring_dimension(),
+            outer: layout.outer.matrix.ring_dimension(),
             opening: shared_opening_ring_dimension,
         },
     )?;
     let num_chunks = policy.chunks_at_level(0);
     let num_fold_coeffs = layout
-        .inner_commit_matrix
+        .inner
+        .matrix
         .input_width()
         .checked_mul(ring_dimension)
         .and_then(|count| count.checked_mul(num_chunks))
@@ -55,13 +56,13 @@ fn materialize_precommitted_group_for_open_basis(
         ring_dimension,
         challenge_dimension: opening.challenge_dimension(ring_dimension),
         num_claims: group_claims,
-        num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
-        num_live_blocks: layout.num_live_blocks,
-        num_positions_per_block: layout.num_positions_per_block,
+        num_live_ring_elements_per_claim: layout.blocks.live_ring_elements_per_claim,
+        num_live_blocks: layout.blocks.live_blocks,
+        num_positions_per_block: layout.blocks.positions_per_block,
         num_chunks,
         num_fold_coeffs,
         witness_norms: honest_fold_policy
-            .witness_norms_for_inner_basis(layout.log_basis_inner, ring_dimension)?,
+            .witness_norms_for_inner_basis(layout.inner.digits.log_basis, ring_dimension)?,
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
     })?;
@@ -76,21 +77,21 @@ fn materialize_precommitted_group_for_open_basis(
     ) else {
         return Ok(None);
     };
-    let declared_a_bound = layout
-        .inner_commit_matrix
-        .coeff_linf_bound()
-        .ok_or_else(|| AkitaError::InvalidSetup("precommitted A cannot use an L2 route".into()))?;
+    let declared_a_bound =
+        layout.inner.matrix.coeff_linf_bound().ok_or_else(|| {
+            AkitaError::InvalidSetup("precommitted A cannot use an L2 route".into())
+        })?;
     let Some(required_b_bound) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         SisMatrixRole::Outer,
-        layout.outer_commit_matrix.ring_dimension(),
+        layout.outer.matrix.ring_dimension(),
         log_basis_open,
     ) else {
         return Ok(None);
     };
     if required_a_bound > declared_a_bound
-        || required_b_bound > layout.outer_commit_matrix.coeff_linf_bound()
+        || required_b_bound > layout.outer.matrix.coeff_linf_bound()
     {
         return Ok(None);
     }

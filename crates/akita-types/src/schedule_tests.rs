@@ -1002,27 +1002,24 @@ fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
     CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
         group: PolynomialGroupLayout::new(num_vars, 1),
-        num_live_ring_elements_per_claim: 1usize << (num_vars - 6),
-        num_positions_per_block: 16,
-        num_live_blocks,
+        blocks: crate::BlockGeometry::new(1usize << (num_vars - 6), 16, num_live_blocks),
         outer_slice_count: crate::CommitmentSliceCount::ONE,
-        log_basis_inner: 1,
-        num_digits_inner: 1,
-        inner_commit_matrix,
-        log_basis_outer: 2,
-        num_digits_outer: 1,
-        outer_commit_matrix: crate::OuterCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                table_digest: crate::SisTableDigest::CURRENT,
-                modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
-                role: crate::sis::SisMatrixRole::Outer,
-                ring_dimension: 64,
-                coeff_linf_bound: 3,
-            },
-            outer_width,
-        )
-        .expect("audited precommitted B matrix"),
+        inner: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), inner_commit_matrix),
+        outer: crate::RoleParams::new(
+            crate::GadgetDigits::new(2, 1),
+            crate::OuterCommitMatrixParams::try_new_with_min_rank(
+                crate::SisTableKey {
+                    policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    table_digest: crate::SisTableDigest::CURRENT,
+                    modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
+                    role: crate::sis::SisMatrixRole::Outer,
+                    ring_dimension: 64,
+                    coeff_linf_bound: 3,
+                },
+                outer_width,
+            )
+            .expect("audited precommitted B matrix"),
+        ),
     }
 }
 
@@ -1148,7 +1145,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
         precommitteds: vec![{
             let mut descriptor = precommitted_descriptor(10);
             descriptor.group = PolynomialGroupLayout::new(10, 2);
-            descriptor.outer_commit_matrix = crate::OuterCommitMatrixParams::try_new_with_min_rank(
+            descriptor.outer.matrix = crate::OuterCommitMatrixParams::try_new_with_min_rank(
                 crate::SisTableKey {
                     policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                     table_digest: crate::SisTableDigest::CURRENT,
@@ -1157,8 +1154,8 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
                     ring_dimension: 64,
                     coeff_linf_bound: 3,
                 },
-                descriptor.inner_commit_matrix.output_rank()
-                    * descriptor.num_live_blocks
+                descriptor.inner.matrix.output_rank()
+                    * descriptor.blocks.live_blocks
                     * descriptor.group.num_polynomials(),
             )
             .expect("audited multi-polynomial B matrix");
@@ -1196,8 +1193,8 @@ fn group_batch_key_identity_binds_ordered_profiles() {
 #[test]
 fn validate_frozen_precommit_rejects_geometry_mismatch() {
     let mut layout = precommitted_descriptor(20);
-    layout.num_live_ring_elements_per_claim = 1;
-    layout.num_live_blocks = 1;
+    layout.blocks.live_ring_elements_per_claim = 1;
+    layout.blocks.live_blocks = 1;
     let err = layout
         .validate_frozen_precommit(128)
         .expect_err("geometry must match num_vars");
@@ -1220,15 +1217,15 @@ fn checked_committed_profile_construction_rejects_invalid_params() {
 #[test]
 fn validate_frozen_precommit_rejects_unsupported_inner_decomposition() {
     let mut unsupported_basis = precommitted_descriptor(20);
-    unsupported_basis.log_basis_inner = crate::MAX_I16_LOG_BASIS + 1;
+    unsupported_basis.inner.digits.log_basis = crate::MAX_I16_LOG_BASIS + 1;
     assert!(matches!(
         unsupported_basis.validate_frozen_precommit(128),
         Err(AkitaError::InvalidSetup(_))
     ));
 
     let mut excessive_depth = precommitted_descriptor(20);
-    excessive_depth.num_digits_inner =
-        crate::sis::compute_num_digits_field_width(128, excessive_depth.log_basis_inner) + 1;
+    excessive_depth.inner.digits.num_digits =
+        crate::sis::compute_num_digits_field_width(128, excessive_depth.inner.digits.log_basis) + 1;
     assert!(matches!(
         excessive_depth.validate_frozen_precommit(128),
         Err(AkitaError::InvalidSetup(_))

@@ -535,7 +535,7 @@ where
             &prefix_source_params,
             root_setup_prefix_len,
         )?;
-        if prefix_params.layout.inner_commit_matrix.ring_dimension() != successor_witness.d_a() {
+        if prefix_params.layout.inner.matrix.ring_dimension() != successor_witness.d_a() {
             return Err(AkitaError::InvalidSetup(
                 "packing root setup prefix left the base row's planned commitment class".into(),
             ));
@@ -561,7 +561,7 @@ where
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
-            prefix_params.layout.inner_commit_matrix.ring_dimension(),
+            prefix_params.layout.inner.matrix.ring_dimension(),
             prefix_params.opening.log_basis_open,
             &prefix_params.opening.fold_challenge_config,
             prefix_params.opening.num_digits_fold,
@@ -569,28 +569,29 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("packing prefix has no audited A bound".into()))?;
         let mut prefix_a_key = prefix_params
             .layout
-            .inner_commit_matrix
+            .inner
+            .matrix
             .sis_table_key()
             .ok_or_else(|| AkitaError::InvalidSetup("packing prefix requires Linf A".into()))?;
         prefix_a_key.coeff_linf_bound = prefix_a_bound;
-        prefix_params.layout.inner_commit_matrix =
+        prefix_params.layout.inner.matrix =
             akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
                 prefix_a_key,
-                prefix_params.layout.inner_commit_matrix.input_width(),
+                prefix_params.layout.inner.matrix.input_width(),
             )?;
         let prefix_outer_width = akita_types::CommitmentSliceGeometry::try_new(
             prefix_params.layout.outer_slice_count,
-            prefix_params.layout.num_live_blocks,
+            prefix_params.layout.blocks.live_blocks,
             1,
-            prefix_params.layout.inner_commit_matrix.output_rank(),
-            prefix_params.layout.num_digits_outer,
-            prefix_params.layout.inner_commit_matrix.ring_dimension(),
-            prefix_params.layout.outer_commit_matrix.ring_dimension(),
+            prefix_params.layout.inner.matrix.output_rank(),
+            prefix_params.layout.outer.digits.num_digits,
+            prefix_params.layout.inner.matrix.ring_dimension(),
+            prefix_params.layout.outer.matrix.ring_dimension(),
         )?
         .physical_input_width();
-        prefix_params.layout.outer_commit_matrix =
+        prefix_params.layout.outer.matrix =
             akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
-                prefix_params.layout.outer_commit_matrix.sis_table_key(),
+                prefix_params.layout.outer.matrix.sis_table_key(),
                 prefix_outer_width,
             )?;
         let incoming_setup_prefix =
@@ -662,7 +663,8 @@ where
                 let d_a = prefix
                     .commitment_params
                     .layout
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .ring_dimension();
                 prefix.commitment_params.opening.fold_challenge_config =
                     SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {

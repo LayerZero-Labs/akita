@@ -626,16 +626,20 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     let profile = |params: &CommittedGroupParams| CommittedGroupProfile {
         version: CommittedGroupProfile::VERSION,
         group,
-        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-        num_positions_per_block: params.num_positions_per_block,
-        num_live_blocks: params.num_live_blocks,
+        blocks: akita_types::BlockGeometry::new(
+            params.num_live_ring_elements_per_claim,
+            params.num_positions_per_block,
+            params.num_live_blocks,
+        ),
         outer_slice_count: params.outer_slice_count,
-        log_basis_inner: params.log_basis_inner,
-        num_digits_inner: params.num_digits_inner,
-        inner_commit_matrix: params.inner_commit_matrix,
-        log_basis_outer: params.log_basis_outer,
-        num_digits_outer: params.num_digits_outer,
-        outer_commit_matrix: params.outer_commit_matrix,
+        inner: akita_types::RoleParams::new(
+            akita_types::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
+            params.inner_commit_matrix,
+        ),
+        outer: akita_types::RoleParams::new(
+            akita_types::GadgetDigits::new(params.log_basis_outer, params.num_digits_outer),
+            params.outer_commit_matrix,
+        ),
     };
     assert_eq!(
         profile(&canonical),

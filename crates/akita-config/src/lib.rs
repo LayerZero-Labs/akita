@@ -880,9 +880,9 @@ mod independent_commitment_tests {
             fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
                 .expect("generated scalar row");
         assert_eq!(profile, scalar_row.profiles().final_group);
-        assert_eq!(profile.inner_commit_matrix.ring_dimension(), 256);
-        assert_eq!(profile.outer_commit_matrix.ring_dimension(), 64);
-        assert_eq!(profile.log_basis_inner, 3);
-        assert_eq!(profile.log_basis_outer, 3);
+        assert_eq!(profile.inner.matrix.ring_dimension(), 256);
+        assert_eq!(profile.outer.matrix.ring_dimension(), 64);
+        assert_eq!(profile.inner.digits.log_basis, 3);
+        assert_eq!(profile.outer.digits.log_basis, 3);
     }
 }

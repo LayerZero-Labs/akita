@@ -539,7 +539,7 @@ impl PlannedGroupReport {
             .then_some(layout.group)
             .map(|layout| (layout.num_vars(), layout.num_polynomials()))
             .unwrap_or((0, 0));
-        let security_route = layout.inner_commit_matrix.security_route();
+        let security_route = layout.inner.matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
             akita_types::InnerCommitSecurityRoute::L2 {
@@ -553,14 +553,14 @@ impl PlannedGroupReport {
             role_dims.d_a(),
             &params.opening.fold_challenge_config,
         );
-        let n_b = layout.outer_commit_matrix.output_rank();
+        let n_b = layout.outer.matrix.output_rank();
         let b_geometry = b_slice_report_geometry(
             CommitmentPayloadMode::Compressed,
             layout.outer_slice_count,
             n_b,
-            layout.outer_commit_matrix.input_width(),
+            layout.outer.matrix.input_width(),
             role_dims.d_b(),
-            layout.outer_commit_matrix.sis_modulus_profile(),
+            layout.outer.matrix.sis_modulus_profile(),
         )?;
         Ok(Self {
             group,
@@ -585,32 +585,33 @@ impl PlannedGroupReport {
             packing_factor: opening.packing_factor,
             packing_partial_width: opening.partial_width,
             packing_quotient_width: opening.quotient_width,
-            a_width: layout.inner_commit_matrix.input_width(),
-            b_width: layout.outer_commit_matrix.input_width(),
+            a_width: layout.inner.matrix.input_width(),
+            b_width: layout.outer.matrix.input_width(),
             d_width: shared_open.input_width(),
-            n_a: layout.inner_commit_matrix.output_rank(),
+            n_a: layout.inner.matrix.output_rank(),
             n_b,
             n_d: shared_open.output_rank(),
             b_slice_count: b_geometry.slice_count,
             physical_b_input_width: b_geometry.physical_input_width,
             logical_b_rows: b_geometry.logical_rows,
             complete_b_compression_bytes: b_geometry.complete_compression_bytes,
-            log_basis_inner: layout.log_basis_inner,
-            log_basis_outer: layout.log_basis_outer,
+            log_basis_inner: layout.inner.digits.log_basis,
+            log_basis_outer: layout.outer.digits.log_basis,
             log_basis_open: params.opening.log_basis_open,
-            num_digits_inner: layout.num_digits_inner,
-            num_digits_outer: layout.num_digits_outer,
+            num_digits_inner: layout.inner.digits.num_digits,
+            num_digits_outer: layout.outer.digits.num_digits,
             num_digits_open: params.opening.num_digits_open,
             num_digits_fold: params.opening.num_digits_fold,
             challenge_l1_mass: params.challenge_l1_mass(),
             challenge_count_pm1: params.opening.fold_challenge_config.count_pm1,
             challenge_count_pm2: params.opening.fold_challenge_config.count_pm2,
             challenge_operator_norm_threshold,
-            num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
-            num_live_blocks: layout.num_live_blocks,
-            num_positions_per_block: layout.num_positions_per_block,
+            num_live_ring_elements_per_claim: layout.blocks.live_ring_elements_per_claim,
+            num_live_blocks: layout.blocks.live_blocks,
+            num_positions_per_block: layout.blocks.positions_per_block,
             block_index_domain_size: layout
-                .num_live_blocks
+                .blocks
+                .live_blocks
                 .checked_next_power_of_two()
                 .unwrap_or(0),
             security_route,

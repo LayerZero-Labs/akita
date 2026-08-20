@@ -179,7 +179,8 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 setup_prefix.d_setup(),
                 setup_prefix
                     .commitment_profile
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .ring_dimension(),
                 "the prefix dispatcher must use its frozen A-ring dimension"
             );

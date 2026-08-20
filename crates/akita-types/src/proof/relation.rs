@@ -422,18 +422,18 @@ fn build_relation_rhs_layout(
             role_dims,
             opening_geometry: opening_row_geometry(group, extension_degree)?,
             opening_method: group.opening.opening_method,
-            n_a: group.layout.inner_commit_matrix.output_rank(),
-            physical_b_rows: group.layout.outer_commit_matrix.output_rank(),
+            n_a: group.layout.inner.matrix.output_rank(),
+            physical_b_rows: group.layout.outer.matrix.output_rank(),
             outer_slice_count: group.layout.outer_slice_count,
         });
         group_indices.push(group_index);
         if opening_plan.is_some() {
             group_plans.push(compression_plan(
-                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                group.layout.outer.matrix.sis_modulus_profile(),
                 group
                     .layout
                     .outer_slice_count
-                    .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?,
+                    .logical_output_rows(group.layout.outer.matrix.output_rank())?,
                 role_dims.d_b(),
             )?);
         }

@@ -7,7 +7,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
-    let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
+    let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
@@ -37,25 +37,25 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
-        frozen_layout.num_positions_per_block,
-        profile.num_positions_per_block
+        frozen_layout.blocks.positions_per_block,
+        profile.blocks.positions_per_block
     );
-    assert_eq!(frozen_layout.num_live_blocks, profile.num_live_blocks);
+    assert_eq!(frozen_layout.blocks.live_blocks, profile.blocks.live_blocks);
     assert_eq!(
-        frozen_layout.log_basis_outer,
+        frozen_layout.outer.digits.log_basis,
         OneHotCfg::opening_basis_range().0
     );
     assert_eq!(
-        frozen_layout.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.output_rank()
+        frozen_layout.inner.matrix.output_rank(),
+        profile.inner.matrix.output_rank()
     );
     assert_eq!(
-        frozen_layout.outer_commit_matrix.output_rank(),
-        profile.outer_commit_matrix.output_rank()
+        frozen_layout.outer.matrix.output_rank(),
+        profile.outer.matrix.output_rank()
     );
     assert_eq!(
         commitment.rows().count(),
-        frozen_layout.outer_commit_matrix.output_rank()
+        frozen_layout.outer.matrix.output_rank()
     );
 }
 
@@ -133,11 +133,11 @@ fn profile_native_commit_group_allows_independent_groups() {
         assert_eq!(pre_b_frozen.group, pre_b_key);
         assert_eq!(
             pre_a_commitment.rows().count(),
-            pre_a_frozen.outer_commit_matrix.output_rank()
+            pre_a_frozen.outer.matrix.output_rank()
         );
         assert_eq!(
             pre_b_commitment.rows().count(),
-            pre_b_frozen.outer_commit_matrix.output_rank()
+            pre_b_frozen.outer.matrix.output_rank()
         );
         assert_ne!(pre_a_frozen.group, pre_b_frozen.group);
         assert_eq!(pre_a_frozen, pre_a_profile);
@@ -313,11 +313,11 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
 
     assert_eq!(
         pre_a_commitment.rows().count(),
-        pre_a_frozen.outer_commit_matrix.output_rank()
+        pre_a_frozen.outer.matrix.output_rank()
     );
     assert_eq!(
         pre_b_commitment.rows().count(),
-        pre_b_frozen.outer_commit_matrix.output_rank()
+        pre_b_frozen.outer.matrix.output_rank()
     );
     assert_eq!(
         final_commitment.rows().count(),
@@ -350,7 +350,7 @@ fn commit_group_returns_frozen_exact_layout() {
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
-    let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
+    let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
@@ -380,22 +380,25 @@ fn commit_group_returns_frozen_exact_layout() {
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
-        frozen_layout.num_positions_per_block,
-        profile.num_positions_per_block
+        frozen_layout.blocks.positions_per_block,
+        profile.blocks.positions_per_block
     );
-    assert_eq!(frozen_layout.num_live_blocks, profile.num_live_blocks);
-    assert_eq!(frozen_layout.log_basis_outer, profile.log_basis_outer);
+    assert_eq!(frozen_layout.blocks.live_blocks, profile.blocks.live_blocks);
     assert_eq!(
-        frozen_layout.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.output_rank()
+        frozen_layout.outer.digits.log_basis,
+        profile.outer.digits.log_basis
     );
     assert_eq!(
-        frozen_layout.outer_commit_matrix.output_rank(),
-        profile.outer_commit_matrix.output_rank()
+        frozen_layout.inner.matrix.output_rank(),
+        profile.inner.matrix.output_rank()
+    );
+    assert_eq!(
+        frozen_layout.outer.matrix.output_rank(),
+        profile.outer.matrix.output_rank()
     );
     assert_eq!(
         commitment.rows().count(),
-        frozen_layout.outer_commit_matrix.output_rank()
+        frozen_layout.outer.matrix.output_rank()
     );
 }
 
@@ -451,7 +454,7 @@ where
             .map(|poly_idx| {
                 debug_make_onehot_poly(
                     pre_num_vars,
-                    profile.inner_commit_matrix.ring_dimension(),
+                    profile.inner.matrix.ring_dimension(),
                     0x0bee_fcaf_1a00_0000 + ((group_idx as u64) << 8) + poly_idx as u64,
                 )
             })
@@ -560,9 +563,9 @@ where
                     opening_from_poly(
                         poly,
                         &pre_point,
-                        layout.inner_commit_matrix.ring_dimension(),
-                        layout.num_positions_per_block,
-                        layout.num_live_blocks,
+                        layout.inner.matrix.ring_dimension(),
+                        layout.blocks.positions_per_block,
+                        layout.blocks.live_blocks,
                     )
                 })
                 .collect()

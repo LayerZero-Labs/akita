@@ -39,9 +39,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
         .zip(generated_groups)
         .map(|(layout, generated)| {
             let challenge_dimension = match generated.opening_method {
-                akita_types::OpeningMethod::EvaluationTrace => {
-                    layout.inner_commit_matrix.ring_dimension()
-                }
+                akita_types::OpeningMethod::EvaluationTrace => layout.inner.matrix.ring_dimension(),
                 akita_types::OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } => challenge_subring_dimension,
