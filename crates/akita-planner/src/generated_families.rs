@@ -292,7 +292,7 @@ fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     group: PolynomialGroupLayout,
 ) -> Result<GroupCommitPhaseParams, AkitaError> {
     let schedule = preplans.scalar::<Cfg>(group)?;
-    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params.final_group.commitment)
+    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.

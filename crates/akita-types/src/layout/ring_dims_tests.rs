@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, RecursiveFoldParams, RecursiveFoldStep,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout,
+    CommittedGroupParams, FoldParams, FoldSchedule, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
@@ -24,15 +23,8 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
     let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(terminal);
     let ring_dimension = terminal_witness.d_a();
     FoldSchedule {
-        root: RootFoldStep {
-            params: RootFoldParams {
-                final_group: RootFinalGroupParams {
-                    commitment: root.clone(),
-                },
-                precommitted_groups: Vec::new(),
-                open_commit_matrix: root.open_commit_matrix,
-                sparse_challenge_config: root.fold_challenge_config,
-            },
+        root: FoldParams {
+            params: root.clone(),
             input_witness_len: root.d_a(),
             output_witness_len: ring_dimension,
         },
@@ -67,62 +59,34 @@ fn accepts_typed_root_and_terminal_ring_dimensions() {
     validate_schedule_ring_dims(&schedule).expect("mixed dimensions are valid");
 }
 
+/// A recursive fold's shared D matrix used to be stored twice — on the fold and
+/// on its witness params — and this test constructed a disagreement between the
+/// two copies.
+///
+/// The state no longer exists: one field holds the matrix, so the mismatch is
+/// unrepresentable and the runtime check that caught it has been deleted along
+/// with the duplicate. The guarantee moved from validated to type-level, which is
+/// strictly stronger, and there is nothing left here to construct.
 #[test]
-fn rejects_recursive_shared_d_matrix_mismatch() {
-    let root_params = committed(128);
-    let recursive_params = committed(64);
-    let terminal_params = committed(64);
-    let terminal_witness =
-        TerminalCommittedGroupParams::from_expanded_group(terminal_params.clone());
-    let recursive_input_len = recursive_params.d_a();
-    let schedule = FoldSchedule {
-        root: RootFoldStep {
-            params: RootFoldParams {
-                final_group: RootFinalGroupParams {
-                    commitment: root_params.clone(),
-                },
-                precommitted_groups: Vec::new(),
-                open_commit_matrix: root_params.open_commit_matrix,
-                sparse_challenge_config: root_params.fold_challenge_config,
-            },
-            input_witness_len: root_params.d_a(),
-            output_witness_len: recursive_input_len,
-        },
-        recursive_folds: vec![RecursiveFoldStep {
-            params: RecursiveFoldParams {
-                witness: recursive_params.clone(),
-                open_commit_matrix: root_params.open_commit_matrix,
-                sparse_challenge_config: recursive_params.fold_challenge_config,
-                incoming_setup_prefix: None,
-            },
-            input_witness_len: recursive_input_len,
-            output_witness_len: terminal_witness.d_a(),
-        }],
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                witness: terminal_witness,
-                sparse_challenge_config: terminal_params.fold_challenge_config,
-                response_shape: TerminalResponseShape {
-                    layout: TailSegmentLayout {
-                        ring_dimension: terminal_params.d_a(),
-                        groups: vec![TailSegmentGroupLayout {
-                            z_coords: terminal_params.d_a(),
-                            e_field_elems: terminal_params.d_a(),
-                            t_field_elems: terminal_params.d_a(),
-                            z_linf_cap: Some(1),
-                            z_payload_bytes: 1,
-                            z_rice_low_bits: 0,
-                        }],
-                        logical_num_elems: 3 * terminal_params.d_a(),
-                    },
-                },
-            },
-            input_witness_len: terminal_params.d_a(),
-        },
+fn recursive_shared_d_matrix_has_a_single_owner() {
+    let fold = FoldParams {
+        params: committed(64),
+        input_witness_len: 64,
+        output_witness_len: 64,
     };
-    let err = validate_schedule_ring_dims(&schedule)
-        .expect_err("recursive shared D mismatch must reject");
-    assert!(err.to_string().contains("shared D matrix disagrees"));
+    // Reading the matrix through the fold accessor and through its params must
+    // be the same read, because it is the same field. If a second copy is ever
+    // reintroduced, these diverge and this fails.
+    assert_eq!(
+        fold.open_commit_matrix(),
+        &fold.params.open_commit_matrix,
+        "the fold accessor must not introduce a second copy"
+    );
+    assert_eq!(
+        fold.sparse_challenge_config(),
+        &fold.params.fold_challenge_config,
+        "the challenge-family accessor must not introduce a second copy"
+    );
 }
 
 #[test]

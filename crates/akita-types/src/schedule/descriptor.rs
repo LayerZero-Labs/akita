@@ -72,23 +72,16 @@ impl FoldSchedule {
         bytes.push(1);
         append_root_fold_descriptor_bytes(
             bytes,
-            &self.root.params.final_group.commitment,
-            self.root.params.final_group.commitment.payload_mode,
+            &self.root.params,
+            self.root.params.payload_mode,
             self.root
                 .params
                 .precommitted_groups
                 .iter()
-                .map(|group| (&group.descriptor, &group.commitment)),
+                .map(|group| (&group.profile, group)),
             &self.root.params.open_commit_matrix,
-            &self.root.params.sparse_challenge_config,
-            WitnessChunkDescriptor(
-                self.root
-                    .params
-                    .final_group
-                    .commitment
-                    .witness_chunk
-                    .num_chunks,
-            ),
+            &self.root.params.fold_challenge_config,
+            WitnessChunkDescriptor(self.root.params.witness_chunk.num_chunks),
             self.root.input_witness_len,
             self.root.output_witness_len,
         );
@@ -96,12 +89,12 @@ impl FoldSchedule {
         for fold in &self.recursive_folds {
             append_recursive_fold_descriptor_bytes(
                 bytes,
-                &fold.params.witness,
-                fold.params.witness.payload_mode,
+                &fold.params,
+                fold.params.payload_mode,
                 &fold.params.open_commit_matrix,
-                &fold.params.sparse_challenge_config,
-                fold.params.incoming_setup_prefix.as_ref(),
-                WitnessChunkDescriptor(fold.params.witness.witness_chunk.num_chunks),
+                &fold.params.fold_challenge_config,
+                fold.params.setup_prefix.as_ref(),
+                WitnessChunkDescriptor(fold.params.witness_chunk.num_chunks),
                 fold.input_witness_len,
                 fold.output_witness_len,
             );

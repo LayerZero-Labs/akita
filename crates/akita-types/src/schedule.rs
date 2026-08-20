@@ -42,38 +42,70 @@ pub enum NextWitnessBindingPolicy {
     TerminalInnerState,
 }
 
+/// Parameters for one fold level: the root fold or one recursive fold.
+///
+/// Replaces six types. `FoldParams`, `FoldParams`,
+/// `RootFinalGroupParams`, `RootPrecommittedGroupParams`, `FoldParams`, and
+/// `FoldParams` held the same information in different shapes, with the
+/// overlap kept honest by eight equality audits. Every one of those audits
+/// compared a field with a copy of itself:
+///
+/// - `FoldParams::open_commit_matrix` and `FoldParams::open_commit_matrix`
+///   duplicated `params.open_commit_matrix`;
+/// - `sparse_challenge_config` on both duplicated `params.fold_challenge_config`;
+/// - `FoldParams::precommitted_groups` duplicated
+///   `params.precommitted_groups`, and each entry's `descriptor` duplicated its
+///   own `commitment.profile`;
+/// - `FoldParams::incoming_setup_prefix` duplicated
+///   `params.setup_prefix`;
+/// - `RootFinalGroupParams` was a one-field wrapper.
+///
+/// Root and recursive folds share this type because after the merge they hold
+/// identical fields. What separates them stays a validated constraint, as it
+/// already was: `FoldSchedule` names the three positions, so no role is inferred
+/// from an array index.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootFinalGroupParams {
-    pub commitment: CommittedGroupParams,
+pub struct FoldParams {
+    /// This fold's own parameters, including its final/new group, its
+    /// precommitted groups, the shared D matrix, and any incoming setup prefix.
+    pub params: CommittedGroupParams,
+    /// Witness field length entering this fold.
+    pub input_witness_len: usize,
+    /// Witness field length leaving this fold.
+    pub output_witness_len: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootPrecommittedGroupParams {
-    pub descriptor: GroupCommitPhaseParams,
-    pub commitment: crate::GroupOpenPhaseParams,
-}
+impl FoldParams {
+    /// Shared D matrix over every group's `w_hat` segment.
+    ///
+    /// Stored once, on the fold's params. The two former copies are gone.
+    #[inline]
+    #[must_use]
+    pub fn open_commit_matrix(&self) -> &crate::OpenCommitMatrixParams {
+        &self.params.open_commit_matrix
+    }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootFoldParams {
-    pub final_group: RootFinalGroupParams,
-    pub precommitted_groups: Vec<RootPrecommittedGroupParams>,
-    pub open_commit_matrix: crate::OpenCommitMatrixParams,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-}
+    /// Fold-challenge family for this level.
+    #[inline]
+    #[must_use]
+    pub fn sparse_challenge_config(&self) -> &akita_challenges::SparseChallengeConfig {
+        &self.params.fold_challenge_config
+    }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecursiveFoldParams {
-    pub witness: CommittedGroupParams,
-    pub open_commit_matrix: crate::OpenCommitMatrixParams,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub incoming_setup_prefix: Option<crate::GroupOpenPhaseParams>,
-}
+    /// The incoming setup prefix, when this fold consumes one.
+    #[inline]
+    #[must_use]
+    pub fn incoming_setup_prefix(&self) -> Option<&crate::GroupOpenPhaseParams> {
+        self.params.setup_prefix.as_ref()
+    }
 
-impl RecursiveFoldParams {
-    /// Setup-contribution mode of the fold that produces this recursive
-    /// witness. Presence of this consumer-owned prefix is the sole authority.
+    /// Setup-contribution mode of the fold that produces this witness.
+    ///
+    /// Presence of the consumer-owned prefix is the sole authority; there is no
+    /// separately stored mode that could disagree with adjacency.
+    #[must_use]
     pub fn predecessor_setup_contribution_mode(&self) -> SetupContributionMode {
-        if self.incoming_setup_prefix.is_some() {
+        if self.params.setup_prefix.is_some() {
             SetupContributionMode::Recursive
         } else {
             SetupContributionMode::Direct
@@ -266,20 +298,6 @@ pub struct TerminalFoldParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootFoldStep {
-    pub params: RootFoldParams,
-    pub input_witness_len: usize,
-    pub output_witness_len: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecursiveFoldStep {
-    pub params: RecursiveFoldParams,
-    pub input_witness_len: usize,
-    pub output_witness_len: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalFoldStep {
     pub params: TerminalFoldParams,
     pub input_witness_len: usize,
@@ -287,8 +305,8 @@ pub struct TerminalFoldStep {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldSchedule {
-    pub root: RootFoldStep,
-    pub recursive_folds: Vec<RecursiveFoldStep>,
+    pub root: FoldParams,
+    pub recursive_folds: Vec<FoldParams>,
     pub terminal: TerminalFoldStep,
 }
 
@@ -316,39 +334,30 @@ impl FoldSchedule {
         self.recursive_folds.len() + 2
     }
 
-    pub fn root_fold(&self) -> &RootFoldStep {
+    pub fn root_fold(&self) -> &FoldParams {
         &self.root
     }
 
-    pub fn root_fold_mut(&mut self) -> &mut RootFoldStep {
+    pub fn root_fold_mut(&mut self) -> &mut FoldParams {
         &mut self.root
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
-        let root_commitment = &self.root.params.final_group.commitment;
+        let root_commitment = &self.root.params;
         root_commitment
             .validate_commitment_request(0, root_commitment.commitment_polynomial_count()?)?;
         for group in &self.root.params.precommitted_groups {
-            group.commitment.validate()?;
+            group.validate()?;
         }
-        if !self
-            .root
-            .params
-            .final_group
-            .commitment
-            .payload_mode
-            .is_compressed()
-        {
+        if !self.root.params.payload_mode.is_compressed() {
             return Err(AkitaError::InvalidSetup(
                 "root fold payload must be compressed".into(),
             ));
         }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
-            step.params
-                .witness
-                .validate_commitment_request(index + 1, 1)?;
-            let consumes_setup_prefix = step.params.witness.setup_prefix.is_some();
+            step.params.validate_commitment_request(index + 1, 1)?;
+            let consumes_setup_prefix = step.params.setup_prefix.is_some();
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"
@@ -356,13 +365,13 @@ impl FoldSchedule {
             }
             if !payload_phase
                 .candidate_modes(index + 1, consumes_setup_prefix)
-                .contains(&step.params.witness.payload_mode)
+                .contains(&step.params.payload_mode)
             {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} payload mode disagrees with the compression cutover policy"
                 )));
             }
-            payload_phase = payload_phase.after(step.params.witness.payload_mode);
+            payload_phase = payload_phase.after(step.params.payload_mode);
         }
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -388,16 +397,11 @@ impl FoldSchedule {
                         self.terminal.params.witness.recursive_opening_num_vars()?,
                     ))
                 },
-                |step| {
-                    Ok((
-                        step.params.witness.d_a(),
-                        step.params.witness.recursive_opening_num_vars()?,
-                    ))
-                },
+                |step| Ok((step.params.d_a(), step.params.recursive_opening_num_vars()?)),
             )?;
         validate_stage2_successor_capacity(
             "root fold",
-            &self.root.params.final_group.commitment,
+            &self.root.params,
             self.root.output_witness_len,
             first_successor_d,
             first_successor_opening_num_vars,
@@ -408,12 +412,7 @@ impl FoldSchedule {
                     "recursive fold witness lengths must be nonzero".to_string(),
                 ));
             }
-            if step.params.witness.setup_prefix != step.params.incoming_setup_prefix {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "recursive fold {index} setup-prefix mirror disagrees with its successor edge"
-                )));
-            }
-            if let Some(prefix) = &step.params.incoming_setup_prefix {
+            if let Some(prefix) = &step.params.setup_prefix {
                 prefix.validate()?;
                 prefix.profile.outer_slice_count.validate_for_commitment(
                     0,
@@ -455,16 +454,11 @@ impl FoldSchedule {
                             self.terminal.params.witness.recursive_opening_num_vars()?,
                         ))
                     },
-                    |next| {
-                        Ok((
-                            next.params.witness.d_a(),
-                            next.params.witness.recursive_opening_num_vars()?,
-                        ))
-                    },
+                    |next| Ok((next.params.d_a(), next.params.recursive_opening_num_vars()?)),
                 )?;
             validate_stage2_successor_capacity(
                 &format!("recursive fold {index}"),
-                &step.params.witness,
+                &step.params,
                 step.output_witness_len,
                 successor_d,
                 successor_opening_num_vars,
@@ -505,21 +499,21 @@ impl FoldSchedule {
         // Canonical transcript order: earlier groups first, the fold's own
         // final/new group last. This is the ordering `precommitted_group_iter`
         // already uses, and the one `FoldParams::groups` makes structural.
-        let root_final = &self.root.params.final_group.commitment;
+        let root_final = &self.root.params;
         let mut root_groups: Vec<OpeningExecutionGroup<'_>> = self
             .root
             .params
             .precommitted_groups
             .iter()
             .map(|group| {
-                let commitment = &group.commitment;
+                let commitment = group;
                 OpeningExecutionGroup {
                     params: commitment as &dyn LevelParamsLike,
                     expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                         commitment.opening.opening_method,
                         extension_degree,
                         commitment.profile.inner.matrix.ring_dimension(),
-                        group.descriptor.group.num_vars(),
+                        group.profile.group.num_vars(),
                         true,
                     )),
                 }
@@ -537,10 +531,10 @@ impl FoldSchedule {
         });
         validate_level_opening_execution(0, extension_degree, &root_groups)?;
         for (index, step) in self.recursive_folds.iter().enumerate() {
-            let witness = &step.params.witness;
+            let witness = &step.params;
             let mut groups: Vec<OpeningExecutionGroup<'_>> = Vec::new();
             // An incoming setup prefix is group 0 in canonical order.
-            if let Some(prefix) = &step.params.incoming_setup_prefix {
+            if let Some(prefix) = &step.params.setup_prefix {
                 groups.push(OpeningExecutionGroup {
                     params: prefix,
                     expected_source_encoding: None,

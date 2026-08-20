@@ -15,7 +15,7 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
             .params
             .precommitted_groups
             .iter()
-            .map(|group| group.descriptor)
+            .map(|group| group.profile)
             .collect(),
     };
     if let Some(catalog) = Cfg::schedule_catalog() {

@@ -109,7 +109,7 @@ fn validate_canonical_transition_lengths(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let field_bits = policy.decomposition.field_bits();
-    let root_params = &schedule.root.params.final_group.commitment;
+    let root_params = &schedule.root.params;
     let expected_root_input = root_input_witness_len(root_params);
     if schedule.root.input_witness_len != expected_root_input {
         return Err(AkitaError::InvalidSetup(format!(
@@ -155,9 +155,9 @@ fn validate_canonical_transition_lengths(
         let expected_output = planned_next_witness_len(
             field_bits,
             policy.claim_ext_degree,
-            &step.params.witness,
+            &step.params,
             1,
-            step.params.witness.witness_chunk.num_chunks,
+            step.params.witness_chunk.num_chunks,
         )?
         .ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
@@ -188,7 +188,7 @@ fn profiles_for_entry(
     Ok(CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::try_from_params(
             entry.root.final_group.layout,
-            &schedule.root.params.final_group.commitment,
+            &schedule.root.params,
         )?,
         precommitteds: entry
             .root

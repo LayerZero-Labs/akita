@@ -36,9 +36,9 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, sample_row_coefficients,
     tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
     BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
-    FoldLevelProof, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute, OpeningClaims,
-    OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims, PreparedOpeningPoint,
-    RecursiveFoldParams, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
+    FoldLevelProof, FoldParams, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
+    OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims,
+    PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
     RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
     TerminalResponse, TerminalWitnessTranscriptParts,
 };

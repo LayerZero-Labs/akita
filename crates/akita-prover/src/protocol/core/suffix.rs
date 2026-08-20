@@ -124,7 +124,7 @@ where
     let mut level = 1usize;
 
     for (recursive_index, step) in schedule.recursive_folds.iter().enumerate() {
-        let level_params = &step.params.witness;
+        let level_params = &step.params;
         let input_witness_len = step.input_witness_len;
         let successor = schedule.recursive_folds.get(recursive_index + 1);
         let (next_params, next_binding) = successor.map_or(
@@ -134,7 +134,7 @@ where
             ),
             |next| {
                 (
-                    super::fold::FoldSuccessorParams::Recursive(&next.params),
+                    super::fold::FoldSuccessorParams::Recursive(next),
                     akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },

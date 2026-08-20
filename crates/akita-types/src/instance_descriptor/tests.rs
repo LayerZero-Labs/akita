@@ -1,9 +1,8 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep,
-    TerminalResponseShape,
+    CommittedGroupParams, FoldParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OpeningScheduleSelection, ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -36,15 +35,8 @@ fn sample_schedule() -> FoldSchedule {
     let response_shape =
         TerminalResponseShape::derive(&terminal_witness, admission_cap).expect("terminal shape");
     FoldSchedule {
-        root: RootFoldStep {
-            params: RootFoldParams {
-                final_group: RootFinalGroupParams {
-                    commitment: committed.clone(),
-                },
-                precommitted_groups: Vec::new(),
-                open_commit_matrix: committed.open_commit_matrix,
-                sparse_challenge_config: sparse,
-            },
+        root: FoldParams {
+            params: committed.clone(),
             input_witness_len: 256,
             output_witness_len: 256,
         },
@@ -320,18 +312,8 @@ fn terminal_sparse_sampler_changes_plan_binding() {
 fn role_local_ring_dimension_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    let matrix = &second
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix;
-    second
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let matrix = &second.root.params.inner_commit_matrix;
+    second.root.params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
         matrix
             .sis_table_key()

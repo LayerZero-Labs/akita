@@ -128,9 +128,9 @@ where
         if current_state.witness_len != step.input_witness_len {
             return Err(AkitaError::InvalidProof);
         }
-        let current_lp = &step.params.witness;
+        let current_lp = &step.params;
         let next_step = schedule.recursive_folds.get(offset + 1);
-        let next_params = next_step.map(|next| &next.params.witness);
+        let next_params = next_step.map(|next| &next.params);
         let next_witness_ring_dim = next_params.map_or(
             schedule.terminal.params.witness.d_a(),
             CommittedGroupParams::d_a,
@@ -172,7 +172,7 @@ where
             _ => return Err(AkitaError::InvalidProof),
         };
         let setup_contribution_mode = next_step.map_or(SetupContributionMode::Direct, |step| {
-            step.params.predecessor_setup_contribution_mode()
+            step.predecessor_setup_contribution_mode()
         });
         let stage3 = fold.stage3_for_mode(setup_contribution_mode, next_params)?;
         let prepared = prepare_fold_replay::<F, E, T>(

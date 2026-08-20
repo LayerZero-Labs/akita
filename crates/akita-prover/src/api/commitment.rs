@@ -623,7 +623,7 @@ where
 
             // `audit_resolved_schedule` already proved this row's profile
             // agrees with its parameters, so no re-derivation happens here.
-            let params = &scheduled_row.schedule().root.params.final_group.commitment;
+            let params = &scheduled_row.schedule().root.params;
             (params, scheduled_row.profiles().final_group)
         };
 

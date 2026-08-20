@@ -551,7 +551,7 @@ fn fp32_onehot_multi_group() {
         )
         .expect("pre schedule")
         .into_schedule();
-        let pre_params = &pre_group_schedule.root.params.final_group.commitment;
+        let pre_params = &pre_group_schedule.root.params;
         let pre_poly = grouped_poly(pre_params, 1);
 
         let pre_setup = SmallScheme::setup_prover(PRE_NV, 1).expect("pre setup");
@@ -581,7 +581,7 @@ fn fp32_onehot_multi_group() {
         })
         .expect("multi-group schedule")
         .into_schedule();
-        let final_params = &multi_schedule.root.params.final_group.commitment;
+        let final_params = &multi_schedule.root.params;
         let final_poly = grouped_poly(final_params, 2);
 
         let setup = SmallScheme::setup_prover(FINAL_NV, 2).expect("setup");

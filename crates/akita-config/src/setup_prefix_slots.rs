@@ -42,24 +42,21 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         let successor_prefix = schedule
             .recursive_folds
             .get(producer_index)
-            .and_then(|fold| fold.params.incoming_setup_prefix.as_ref());
+            .and_then(|fold| fold.params.setup_prefix.as_ref());
         let Some(slot_id) = successor_prefix else {
             continue;
         };
         let (params, opening_layout) = if producer_index == 0 {
-            (
-                &schedule.root.params.final_group.commitment,
-                root_layout.clone(),
-            )
+            (&schedule.root.params, root_layout.clone())
         } else {
             let producer = &schedule.recursive_folds[producer_index - 1];
             let incoming_len = producer
                 .params
-                .incoming_setup_prefix
+                .setup_prefix
                 .as_ref()
                 .map(|slot| slot.setup_natural_len.expect("setup prefix group"));
             (
-                &producer.params.witness,
+                &producer.params,
                 suffix_opening_layout(producer.input_witness_len, incoming_len)?,
             )
         };

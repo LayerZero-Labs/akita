@@ -134,7 +134,7 @@ pub struct CommittedGroupParams {
     pub precommitted_groups: Vec<GroupOpenPhaseParams>,
     /// Derived runtime mirror of the successor-owned setup-prefix edge.
     ///
-    /// [`crate::RecursiveFoldParams::incoming_setup_prefix`] is authoritative;
+    /// [`crate::FoldParams::incoming_setup_prefix`] is authoritative;
     /// [`crate::FoldSchedule::validate_structure`] rejects disagreement before
     /// prover or verifier execution.
     pub setup_prefix: Option<GroupOpenPhaseParams>,

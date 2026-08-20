@@ -2,12 +2,11 @@
 
 use akita_field::AkitaError;
 use akita_types::{
-    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    RecursiveFoldParams, RecursiveFoldStep, RingRole, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout,
-    DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
+    ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
+    FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule,
+    PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY,
+    MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
 
@@ -564,7 +563,7 @@ pub fn expanded_schedule_proof_payload_bytes(
     for level in 0..nonterminal_levels {
         let (params, input_witness_len, output_witness_len) = if level == 0 {
             (
-                &schedule.root.params.final_group.commitment,
+                &schedule.root.params,
                 schedule.root.input_witness_len,
                 schedule.root.output_witness_len,
             )
@@ -573,15 +572,12 @@ pub fn expanded_schedule_proof_payload_bytes(
                 AkitaError::InvalidSetup("recursive fold index is out of range".into())
             })?;
             (
-                &fold.params.witness,
+                &fold.params,
                 fold.input_witness_len,
                 fold.output_witness_len,
             )
         };
-        let successor = schedule
-            .recursive_folds
-            .get(level)
-            .map(|fold| &fold.params.witness);
+        let successor = schedule.recursive_folds.get(level).map(|fold| &fold.params);
         let (direct, stage3) = nonterminal_level_payload_bytes(
             policy,
             params,
@@ -660,23 +656,8 @@ pub fn materialize_candidate_schedule(
     }
     let root_params = Arc::unwrap_or_clone(root.params);
     let schedule = FoldSchedule {
-        root: RootFoldStep {
-            params: RootFoldParams {
-                final_group: RootFinalGroupParams {
-                    commitment: root_params.clone(),
-                },
-                precommitted_groups: root_params
-                    .precommitted_groups
-                    .iter()
-                    .cloned()
-                    .map(|commitment| RootPrecommittedGroupParams {
-                        descriptor: commitment.profile,
-                        commitment,
-                    })
-                    .collect(),
-                open_commit_matrix: root_params.open_commit_matrix,
-                sparse_challenge_config: root_params.fold_challenge_config,
-            },
+        root: FoldParams {
+            params: root_params.clone(),
             input_witness_len: root.input_witness_len,
             output_witness_len: root.output_witness_len,
         },
@@ -684,12 +665,10 @@ pub fn materialize_candidate_schedule(
             .into_iter()
             .map(|fold| {
                 let params = Arc::unwrap_or_clone(fold.params);
-                RecursiveFoldStep {
-                    params: RecursiveFoldParams {
-                        open_commit_matrix: params.open_commit_matrix,
-                        sparse_challenge_config: params.fold_challenge_config,
-                        incoming_setup_prefix: params.setup_prefix,
-                        witness: params,
+                FoldParams {
+                    params: CommittedGroupParams {
+                        setup_prefix: params.setup_prefix,
+                        ..params
                     },
                     input_witness_len: fold.input_witness_len,
                     output_witness_len: fold.output_witness_len,
@@ -733,7 +712,7 @@ pub fn materialize_candidate_schedule(
     estimate.selected_offload_edges = schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix.is_some())
         .count();
     estimate.first_direct_setup_field_len = first_direct_setup_field_len;
     Ok(PlannedFoldSchedule { schedule, estimate })
@@ -747,14 +726,11 @@ pub fn first_direct_setup_field_len_for_schedule(
     schedule.validate_structure()?;
 
     for (successor_index, successor) in schedule.recursive_folds.iter().enumerate() {
-        if successor.params.incoming_setup_prefix.is_some() {
+        if successor.params.setup_prefix.is_some() {
             continue;
         }
         return if successor_index == 0 {
-            akita_types::active_setup_field_len(
-                &schedule.root.params.final_group.commitment,
-                root_layout,
-            )
+            akita_types::active_setup_field_len(&schedule.root.params, root_layout)
         } else {
             active_setup_field_len_for_recursive_producer(
                 &schedule.recursive_folds[successor_index - 1],
@@ -763,12 +739,7 @@ pub fn first_direct_setup_field_len_for_schedule(
     }
 
     schedule.recursive_folds.last().map_or_else(
-        || {
-            akita_types::active_setup_field_len(
-                &schedule.root.params.final_group.commitment,
-                root_layout,
-            )
-        },
+        || akita_types::active_setup_field_len(&schedule.root.params, root_layout),
         active_setup_field_len_for_recursive_producer,
     )
 }
@@ -784,16 +755,16 @@ pub fn first_direct_setup_capacity_for_schedule(
 }
 
 fn active_setup_field_len_for_recursive_producer(
-    producer: &RecursiveFoldStep,
+    producer: &FoldParams,
 ) -> Result<usize, AkitaError> {
     let incoming_prefix_len = producer
         .params
-        .incoming_setup_prefix
+        .setup_prefix
         .as_ref()
         .map(|prefix| prefix.setup_natural_len.expect("setup prefix group"));
     let layout =
         akita_types::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
-    akita_types::active_setup_field_len(&producer.params.witness, &layout)
+    akita_types::active_setup_field_len(&producer.params, &layout)
 }
 
 /// Derive the canonical next-witness field length for a scalar planner level.

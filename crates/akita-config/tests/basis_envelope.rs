@@ -24,7 +24,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             Err(_) => continue,
         };
         covered += 1;
-        let root = &schedule.root.params.final_group.commitment;
+        let root = &schedule.root.params;
         assert_eq!(
             root.log_basis_inner,
             Cfg::inner_basis_range().0,
@@ -70,10 +70,10 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
         let mut source_basis = root.log_basis_open;
         for fold in &schedule.recursive_folds {
             assert_eq!(
-                fold.params.witness.log_basis_inner, source_basis,
+                fold.params.log_basis_inner, source_basis,
                 "recursive fold redecomposes its balanced-digit input at nv={nv}"
             );
-            source_basis = fold.params.witness.log_basis_open;
+            source_basis = fold.params.log_basis_open;
         }
         assert_eq!(
             schedule.terminal.params.witness.log_basis_inner, source_basis,
@@ -83,9 +83,9 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             && root.log_basis_outer <= opening_basis_max
             && root.log_basis_open <= opening_basis_max
             && schedule.recursive_folds.iter().all(|fold| {
-                fold.params.witness.log_basis_inner <= opening_basis_max
-                    && fold.params.witness.log_basis_outer <= opening_basis_max
-                    && fold.params.witness.log_basis_open <= opening_basis_max
+                fold.params.log_basis_inner <= opening_basis_max
+                    && fold.params.log_basis_outer <= opening_basis_max
+                    && fold.params.log_basis_open <= opening_basis_max
             })
             && schedule.terminal.params.witness.log_basis_inner <= opening_basis_max;
         assert!(

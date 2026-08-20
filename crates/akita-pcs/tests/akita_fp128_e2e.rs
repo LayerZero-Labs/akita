@@ -498,9 +498,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             .expect("layout")
             .into_schedule()
             .root
-            .params
-            .final_group
-            .commitment;
+            .params;
 
         let root_d = layout.d_a();
         let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
@@ -567,9 +565,7 @@ fn fp128_onehot_oversized_setup() {
             .expect("layout")
             .into_schedule()
             .root
-            .params
-            .final_group
-            .commitment;
+            .params;
         let d = layout.d_a();
         let total_field = layout.num_live_blocks * layout.num_positions_per_block * d;
         let total_chunks = total_field / ONEHOT_K;

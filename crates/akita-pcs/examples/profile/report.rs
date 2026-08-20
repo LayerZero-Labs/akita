@@ -700,7 +700,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     let selected_offload_edges = schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix.is_some())
         .count();
     tracing::info!(
         label,
@@ -714,14 +714,14 @@ pub(crate) fn emit_runtime_schedule_summary(
     let root_current_w_groups = root_current_w_groups(schedule, final_group);
     let root_open = &schedule.root.params.open_commit_matrix;
     for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
-        let layout = group.descriptor.group;
+        let layout = group.profile.group;
         let witness_field_elements =
             group_field_elements(layout.num_vars(), layout.num_polynomials());
         PlannedGroupReport::precommitted(
             format!("pre{index}"),
             0,
             witness_field_elements,
-            &group.commitment,
+            group,
             root_open,
             None,
             extension_degree,
@@ -734,7 +734,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         0,
         group_field_elements(final_group.num_vars(), final_group.num_polynomials()),
         Some(final_group),
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         extension_degree,
     )?
     .emit(label, 0, field_bits);
@@ -745,11 +745,11 @@ pub(crate) fn emit_runtime_schedule_summary(
             index + 1,
             fold.input_witness_len,
             None,
-            &fold.params.witness,
+            &fold.params,
             extension_degree,
         )?
         .emit(label, index + 1, field_bits);
-        if let Some(prefix) = &fold.params.incoming_setup_prefix {
+        if let Some(prefix) = &fold.params.setup_prefix {
             PlannedGroupReport::precommitted(
                 format!("setup_to_L{}", index + 1),
                 index + 1,
@@ -767,7 +767,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     }
     let nonterminal = std::iter::once((
         0usize,
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
         root_current_w_groups,
@@ -780,7 +780,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             .map(|(index, level)| {
                 (
                     index + 1,
-                    &level.params.witness,
+                    &level.params,
                     level.input_witness_len,
                     level.output_witness_len,
                     format!("folded={}", level.input_witness_len),
@@ -812,7 +812,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         let setup_prefix = schedule
             .recursive_folds
             .get(level_idx)
-            .and_then(|fold| fold.params.incoming_setup_prefix.as_ref());
+            .and_then(|fold| fold.params.setup_prefix.as_ref());
         let setup_prefix_natural_field_elements = setup_prefix.map_or(0, |prefix| {
             prefix.setup_natural_len.expect("setup prefix group")
         });
@@ -974,7 +974,7 @@ fn root_current_w_groups(schedule: &FoldSchedule, final_group: PolynomialGroupLa
         .iter()
         .enumerate()
         .map(|(index, group)| {
-            let layout = group.descriptor.group;
+            let layout = group.profile.group;
             format!(
                 "pre{index}={}",
                 group_field_elements(layout.num_vars(), layout.num_polynomials())
@@ -1311,9 +1311,9 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     let level_ring_dimension = |level_idx: usize| {
         schedule.map_or(D, |schedule| {
             if level_idx == 0 {
-                schedule.root.params.final_group.commitment.d_a()
+                schedule.root.params.d_a()
             } else if let Some(fold) = schedule.recursive_folds.get(level_idx - 1) {
-                fold.params.witness.d_a()
+                fold.params.d_a()
             } else {
                 schedule.terminal.params.witness.d_a()
             }

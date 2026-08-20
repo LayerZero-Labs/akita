@@ -44,7 +44,7 @@ fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> CommittedGroupPar
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     Cfg::resolve_catalog_row_for_opening(&opening_batch)
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("singleton commitment layout")
 }
 const SMALL_FIELD_TEST_NV: usize = 8;
@@ -375,7 +375,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let opening_batch = akita_types::OpeningClaimsLayout::new(NV, 2).expect("opening_batch");
         let layout = Cfg::resolve_catalog_row_for_opening(&opening_batch)
-            .map(|row| row.schedule().root.params.final_group.commitment.clone())
+            .map(|row| row.schedule().root.params.clone())
             .expect("layout");
         let root_d = layout.d_a();
         let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
@@ -729,13 +729,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let resolved = Cfg::resolve_schedule_selection(selection).expect("selected fp32 row");
         assert!(
             matches!(
-                resolved
-                    .schedule()
-                    .root
-                    .params
-                    .final_group
-                    .commitment
-                    .opening_method,
+                resolved.schedule().root.params.opening_method,
                 OpeningMethod::SubringCoefficientPacking { .. }
             ),
             "the shipped fp32 row must use coefficient packing at the root"
@@ -753,7 +747,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         {
             assert!(
                 matches!(
-                    step.params.witness.opening_method,
+                    step.params.opening_method,
                     OpeningMethod::SubringCoefficientPacking { .. }
                 ),
                 "every emitted early fp32 fold must use coefficient packing"
@@ -1052,8 +1046,8 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         ))
         .expect("runtime schedule")
         .into_schedule();
-        let fold_params = std::iter::once(&plan.root.params.final_group.commitment)
-            .chain(plan.recursive_folds.iter().map(|step| &step.params.witness))
+        let fold_params = std::iter::once(&plan.root.params)
+            .chain(plan.recursive_folds.iter().map(|step| &step.params))
             .collect::<Vec<_>>();
         assert!(
             fold_params.iter().any(|params| {

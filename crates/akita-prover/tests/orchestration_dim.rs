@@ -22,7 +22,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
     let profiles = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::try_from_params(
             key.final_group,
-            &expected.schedule().root.params.final_group.commitment,
+            &expected.schedule().root.params,
         )
         .expect("valid profile"),
         precommitteds: Vec::new(),
@@ -46,13 +46,7 @@ fn role_dispatch_rejects_wrong_inner_dimension() {
         PolynomialGroupLayout::singleton(16),
     ))
     .expect("runtime schedule");
-    let dims = schedule
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .role_dims();
+    let dims = schedule.schedule().root.params.role_dims();
     assert!(validate_role_dispatch::<128>(dims, RingRole::Inner).is_err());
 }
 

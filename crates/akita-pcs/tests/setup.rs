@@ -114,7 +114,7 @@ where
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
         .expect("schedule")
@@ -230,7 +230,7 @@ where
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
         .expect("schedule")

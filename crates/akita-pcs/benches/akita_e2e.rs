@@ -267,8 +267,6 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     .schedule()
     .root
     .params
-    .final_group
-    .commitment
     .clone();
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     let root_ring_dimension = layout.inner_commit_matrix.ring_dimension();

@@ -40,13 +40,7 @@ where
 {
     let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
     let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(lookup_key))?;
-    let layout = schedule
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
+    let layout = schedule.schedule().root.params.clone();
     tracing::info!(
         num_vars,
         num_polynomials,

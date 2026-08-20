@@ -584,13 +584,8 @@ mod sis_schedule_width_audit {
         schedule: &akita_types::FoldSchedule,
         num_vars: usize,
     ) {
-        for (level_idx, lp) in std::iter::once(&schedule.root.params.final_group.commitment)
-            .chain(
-                schedule
-                    .recursive_folds
-                    .iter()
-                    .map(|step| &step.params.witness),
-            )
+        for (level_idx, lp) in std::iter::once(&schedule.root.params)
+            .chain(schedule.recursive_folds.iter().map(|step| &step.params))
             .enumerate()
         {
             let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
@@ -816,8 +811,6 @@ mod fp128_policy_tests {
             let alignment = schedule
                 .root
                 .params
-                .final_group
-                .commitment
                 .d_a()
                 .max(schedule.terminal.params.witness.d_a());
             schedule.root.output_witness_len -= alignment;

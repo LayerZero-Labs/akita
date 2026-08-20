@@ -51,9 +51,9 @@ impl NttExecutionRequirements {
     pub fn from_commit_and_prove_schedule(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
         let mut requirements = Self::from_prove_schedule(schedule)?;
         let root = &schedule.root.params;
-        requirements.add_group_commit(0, &root.final_group.commitment)?;
+        requirements.add_group_commit(0, root)?;
         for precommitted in &root.precommitted_groups {
-            requirements.add_precommitted_commit(0, &precommitted.commitment)?;
+            requirements.add_precommitted_commit(0, precommitted)?;
         }
         Ok(requirements)
     }
@@ -68,10 +68,10 @@ impl NttExecutionRequirements {
         schedule.validate_structure()?;
         let mut requirements = Self::default();
         let root = &schedule.root.params;
-        let root_num_chunks = root.final_group.commitment.witness_chunk.num_chunks;
-        requirements.add_group_relation(0, &root.final_group.commitment, root_num_chunks)?;
+        let root_num_chunks = root.witness_chunk.num_chunks;
+        requirements.add_group_relation(0, root, root_num_chunks)?;
         for precommitted in &root.precommitted_groups {
-            requirements.add_precommitted_relation(0, &precommitted.commitment, root_num_chunks)?;
+            requirements.add_precommitted_relation(0, precommitted, root_num_chunks)?;
         }
         let root_open_extent = matrix_extent(
             root.open_commit_matrix.output_rank(),
@@ -103,10 +103,10 @@ impl NttExecutionRequirements {
         for (index, step) in schedule.recursive_folds.iter().enumerate() {
             let predecessor_level = index;
             let level = index + 1;
-            let num_chunks = step.params.witness.witness_chunk.num_chunks;
-            requirements.add_group_commit(predecessor_level, &step.params.witness)?;
-            requirements.add_group_relation(level, &step.params.witness, num_chunks)?;
-            if let Some(prefix) = &step.params.incoming_setup_prefix {
+            let num_chunks = step.params.witness_chunk.num_chunks;
+            requirements.add_group_commit(predecessor_level, &step.params)?;
+            requirements.add_group_relation(level, &step.params, num_chunks)?;
+            if let Some(prefix) = &step.params.setup_prefix {
                 requirements.add_setup_prefix_commitment(
                     level,
                     &prefix.slot_id().expect("setup prefix group"),
@@ -695,7 +695,7 @@ mod tests {
         let mut expected_root_level_commits = NttExecutionRequirements::default();
         if let Some(first_recursive) = schedule.recursive_folds.first() {
             expected_root_level_commits
-                .add_group_commit(0, &first_recursive.params.witness)
+                .add_group_commit(0, &first_recursive.params)
                 .expect("recursive witness requirements");
         } else {
             expected_root_level_commits
@@ -742,7 +742,7 @@ mod tests {
         .into_schedule();
         let prove = NttExecutionRequirements::from_prove_schedule(&schedule).unwrap();
         let complete = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule).unwrap();
-        let root = &schedule.root.params.final_group.commitment;
+        let root = &schedule.root.params;
         assert!(complete.entries().iter().any(|entry| {
             entry.fold_level == 0
                 && entry.cluster == NttOperationCluster::Commit
@@ -764,14 +764,7 @@ mod tests {
         assert!(requirements.entries().iter().any(|entry| {
             entry.fold_level == 0
                 && entry.cluster == NttOperationCluster::RingSwitch
-                && entry.key.ring_d
-                    == schedule
-                        .root
-                        .params
-                        .final_group
-                        .commitment
-                        .role_dims()
-                        .d_a()
+                && entry.key.ring_d == schedule.root.params.role_dims().d_a()
                 && entry.key.domain == NttTransformDomain::I16TailBothTransforms
         }));
     }
@@ -791,7 +784,7 @@ mod tests {
             .expect("generated fp64 dense schedule")
             .into_schedule(),
         ] {
-            let root = &schedule.root.params.final_group.commitment;
+            let root = &schedule.root.params;
             assert!(matches!(
                 root.opening_method,
                 akita_types::OpeningMethod::SubringCoefficientPacking { .. }

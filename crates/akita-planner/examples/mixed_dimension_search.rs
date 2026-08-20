@@ -20,28 +20,10 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     );
     println!(
         "  L0: {:?}, ranks={}/{}/{}, input={}, output={}",
-        schedule.root.params.final_group.commitment.role_dims(),
-        schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .inner_commit_matrix
-            .output_rank(),
-        schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .outer_commit_matrix
-            .output_rank(),
-        schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .open_commit_matrix
-            .output_rank(),
+        schedule.root.params.role_dims(),
+        schedule.root.params.inner_commit_matrix.output_rank(),
+        schedule.root.params.outer_commit_matrix.output_rank(),
+        schedule.root.params.open_commit_matrix.output_rank(),
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
     );
@@ -49,10 +31,10 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
         println!(
             "  L{}: {:?}, ranks={}/{}/{}, input={}, output={}",
             index + 1,
-            fold.params.witness.role_dims(),
-            fold.params.witness.inner_commit_matrix.output_rank(),
-            fold.params.witness.outer_commit_matrix.output_rank(),
-            fold.params.witness.open_commit_matrix.output_rank(),
+            fold.params.role_dims(),
+            fold.params.inner_commit_matrix.output_rank(),
+            fold.params.outer_commit_matrix.output_rank(),
+            fold.params.open_commit_matrix.output_rank(),
             fold.input_witness_len,
             fold.output_witness_len,
         );
@@ -117,7 +99,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     )?;
     let descriptor = GroupCommitPhaseParams::try_from_params(
         precommit_layout,
-        &independent.schedule.root.params.final_group.commitment,
+        &independent.schedule.root.params,
     )?;
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),

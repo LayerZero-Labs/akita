@@ -289,12 +289,12 @@ fn setup_capacity_scan_layouts(
 /// Extract setup-level params from a `FoldSchedule`.
 ///
 pub fn setup_level_params_from_schedule(schedule: &FoldSchedule) -> Vec<CommittedGroupParams> {
-    std::iter::once(schedule.root.params.final_group.commitment.clone())
+    std::iter::once(schedule.root.params.clone())
         .chain(
             schedule
                 .recursive_folds
                 .iter()
-                .map(|fold| fold.params.witness.clone()),
+                .map(|fold| fold.params.clone()),
         )
         .collect()
 }
@@ -316,12 +316,7 @@ where
     // `setup_matrix_field_elements_for_schedule` already maxes over the root
     // level's A/B/D matrices, every frozen precommitted group, the compression maps,
     // and the fold tail, so it dominates any per-level recomputation here.
-    schedule
-        .root
-        .params
-        .final_group
-        .commitment
-        .validate_opening_batch(layout)?;
+    schedule.root.params.validate_opening_batch(layout)?;
     ensure_required_setup_field_elements(
         setup_matrix_field_elements_for_schedule(schedule)?,
         setup.shared_matrix.as_field_slice().len(),

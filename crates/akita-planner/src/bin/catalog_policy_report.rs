@@ -64,7 +64,7 @@ pub(super) fn catalog_policy_signature(
     let mut signature = String::new();
     let nonterminal = std::iter::once((
         0usize,
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
     ))
@@ -76,7 +76,7 @@ pub(super) fn catalog_policy_signature(
             .map(|(index, fold)| {
                 (
                     index + 1,
-                    &fold.params.witness,
+                    &fold.params,
                     fold.input_witness_len,
                     fold.output_witness_len,
                 )
@@ -129,18 +129,18 @@ pub(super) fn catalog_policy_signature(
                     signature,
                     ";pre{index}={}",
                     opening_policy_signature(
-                        group.commitment.opening.opening_method,
+                        group.opening.opening_method,
                         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                         spec.policy.claim_ext_degree,
-                        group.commitment.profile.inner.matrix.ring_dimension(),
-                        group.commitment.profile.inner.matrix.security_route(),
+                        group.profile.inner.matrix.ring_dimension(),
+                        group.profile.inner.matrix.security_route(),
                     )?,
                 )
                 .map_err(|error| format!("write catalog policy signature: {error}"))?;
             }
         } else if let Some(prefix) = schedule.recursive_folds[level - 1]
             .params
-            .incoming_setup_prefix
+            .setup_prefix
             .as_ref()
         {
             write!(

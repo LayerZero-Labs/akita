@@ -3,31 +3,16 @@ use super::*;
 #[test]
 fn borrowed_schedule_descriptor_matches_materialized_schedule() {
     let mut schedule = recursive_schedule(64, 64, true);
-    let precommitted = precommitted_group_params(
-        &schedule.root.params.final_group.commitment,
-        PolynomialGroupLayout::singleton(6),
-    );
-    schedule
-        .root
-        .params
-        .final_group
-        .commitment
-        .precommitted_groups
-        .push(precommitted);
-    schedule
-        .root
-        .params
-        .precommitted_groups
-        .push(RootPrecommittedGroupParams {
-            descriptor: precommitted.profile,
-            commitment: precommitted,
-        });
+    let precommitted =
+        precommitted_group_params(&schedule.root.params, PolynomialGroupLayout::singleton(6));
+    schedule.root.params.precommitted_groups.push(precommitted);
+    schedule.root.params.precommitted_groups.push(precommitted);
     append_recursive_fold(&mut schedule);
 
     let mut steps = Vec::with_capacity(schedule.recursive_folds.len() + 1);
     steps.push(FoldScheduleDescriptorStep {
-        params: &schedule.root.params.final_group.commitment,
-        payload_mode: schedule.root.params.final_group.commitment.payload_mode,
+        params: &schedule.root.params,
+        payload_mode: schedule.root.params.payload_mode,
         input_witness_len: schedule.root.input_witness_len,
         output_witness_len: schedule.root.output_witness_len,
     });
@@ -36,8 +21,8 @@ fn borrowed_schedule_descriptor_matches_materialized_schedule() {
             .recursive_folds
             .iter()
             .map(|fold| FoldScheduleDescriptorStep {
-                params: &fold.params.witness,
-                payload_mode: fold.params.witness.payload_mode,
+                params: &fold.params,
+                payload_mode: fold.params.payload_mode,
                 input_witness_len: fold.input_witness_len,
                 output_witness_len: fold.output_witness_len,
             }),

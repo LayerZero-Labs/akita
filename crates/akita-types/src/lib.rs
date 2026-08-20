@@ -154,13 +154,11 @@ pub use proof::{
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldSchedule,
-    FoldScheduleDescriptorStep, FoldScheduleEstimate, GroupCommitPhaseParams,
-    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldDescriptor,
-    TerminalFoldParams, TerminalFoldStep, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
+    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, GroupCommitPhaseParams,
+    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles,
+    TerminalCommittedGroupParams, TerminalFoldDescriptor, TerminalFoldParams, TerminalFoldStep,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{

@@ -26,7 +26,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     assert_eq!(first.schedule(), second.schedule());
 
     let schedule = first.schedule();
-    let root = &schedule.root.params.final_group.commitment;
+    let root = &schedule.root.params;
     assert_eq!(PackingCfg::EXT_DEGREE, 4);
     let OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
@@ -66,18 +66,18 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         successor.input_witness_len
     );
     assert!(matches!(
-        successor.params.witness.opening_method,
+        successor.params.opening_method,
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64
         }
     ));
     assert_eq!(
-        successor.params.witness.source_encoding,
+        successor.params.source_encoding,
         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
     let prefix = successor
         .params
-        .incoming_setup_prefix
+        .setup_prefix
         .as_ref()
         .expect("synthetic successor must consume the root setup prefix");
     assert_eq!(
@@ -130,7 +130,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let num_vars = 20;
             let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
             let row = PackingCfg::resolve_catalog_row_for_opening(&opening_batch).unwrap();
-            let root = &row.schedule().root.params.final_group.commitment;
+            let root = &row.schedule().root.params;
             let OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             } = root.opening_method
@@ -149,7 +149,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             assert_eq!(row.schedule().recursive_folds.len(), 1);
             assert!(row.schedule().recursive_folds[0]
                 .params
-                .incoming_setup_prefix
+                .setup_prefix
                 .is_some());
             assert!(
                 root.open_commit_matrix.input_width()
@@ -171,7 +171,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let mut setup = PackingScheme::setup_prover(num_vars, 1).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]
                 .params
-                .incoming_setup_prefix
+                .setup_prefix
                 .as_ref()
                 .unwrap()
                 .slot_id()

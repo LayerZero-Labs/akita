@@ -153,10 +153,10 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let schedule = &selected.schedule;
     assert!(domain
         .candidates()
-        .contains(&schedule.root.params.final_group.commitment.role_dims()));
-    let mut previous = schedule.root.params.final_group.commitment.role_dims();
+        .contains(&schedule.root.params.role_dims()));
+    let mut previous = schedule.root.params.role_dims();
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        let current = fold.params.witness.role_dims();
+        let current = fold.params.role_dims();
         assert!(componentwise_dimensions_at_most(current, previous));
         if index + 1 >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
             assert_eq!(
@@ -218,7 +218,7 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes(),
     );
-    let root = &selected.schedule.root.params.final_group.commitment;
+    let root = &selected.schedule.root.params;
     assert!(matches!(
         root.opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
@@ -307,13 +307,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     )
     .expect("packing schedule from mixed domain");
     assert!(matches!(
-        selected
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .opening_method,
+        selected.schedule.root.params.opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     let unpruned = unpruned_search::find_schedule(
@@ -324,13 +318,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     )
     .expect("unpruned packing schedule from mixed domain");
     assert!(matches!(
-        unpruned
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .opening_method,
+        unpruned.schedule.root.params.opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     assert_eq!(
@@ -358,7 +346,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         .recursive_folds
         .iter()
         .all(|fold| matches!(
-            fold.params.witness.opening_method,
+            fold.params.opening_method,
             akita_types::OpeningMethod::SubringCoefficientPacking { .. }
         )));
 }
@@ -448,7 +436,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
     .expect("shipped fp128 selective L2 schedule");
     assert!(selected.schedule.recursive_folds.iter().any(|step| {
         matches!(
-            step.params.witness.inner_commit_matrix.security_route(),
+            step.params.inner_commit_matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )
     }));
@@ -579,13 +567,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         .expect("unpruned adaptive search");
 
         assert_eq!(
-            selected
-                .schedule
-                .root
-                .params
-                .final_group
-                .commitment
-                .role_dims(),
+            selected.schedule.root.params.role_dims(),
             expected_root,
             "hand-priced role optimum changed"
         );
@@ -719,7 +701,7 @@ fn adaptive_nv36_minimizes_first_direct_setup_before_proof_bytes() {
         OneHot::ring_challenge_config,
     )
     .expect("rank-one-capped nv36 planner");
-    let selected_root = &selected.schedule.root.params.final_group.commitment;
+    let selected_root = &selected.schedule.root.params;
     assert_eq!(
         selected_root.role_dims(),
         CommitmentRingDims {
@@ -728,19 +710,13 @@ fn adaptive_nv36_minimizes_first_direct_setup_before_proof_bytes() {
             opening: 64,
         }
     );
-    assert_eq!(
-        selected.schedule.recursive_folds[0]
-            .params
-            .witness
-            .role_dims(),
-        d64
-    );
+    assert_eq!(selected.schedule.recursive_folds[0].params.role_dims(), d64);
     let opening_methods = std::iter::once(selected_root.opening_method).chain(
         selected
             .schedule
             .recursive_folds
             .iter()
-            .map(|fold| fold.params.witness.opening_method),
+            .map(|fold| fold.params.opening_method),
     );
     for (level, opening_method) in opening_methods.enumerate() {
         if level <= 1 {
@@ -841,21 +817,10 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
     )
     .unwrap();
     assert!(!schedule.schedule.recursive_folds.is_empty());
-    assert_eq!(
-        schedule
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .witness_chunk
-            .num_chunks,
-        8
-    );
+    assert_eq!(schedule.schedule.root.params.witness_chunk.num_chunks, 8);
     assert_eq!(
         schedule.schedule.recursive_folds[0]
             .params
-            .witness
             .witness_chunk
             .num_chunks,
         8
@@ -865,7 +830,7 @@ fn adaptive_search_supports_direct_multi_chunk_policy() {
         .recursive_folds
         .iter()
         .skip(1)
-        .all(|fold| fold.params.witness.witness_chunk.num_chunks == 1));
+        .all(|fold| fold.params.witness_chunk.num_chunks == 1));
 }
 
 #[cfg(feature = "catalog-gen")]

@@ -65,20 +65,20 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             .iter()
             .find(|step| {
                 matches!(
-                    step.params.witness.inner_commit_matrix.security_route(),
+                    step.params.inner_commit_matrix.security_route(),
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             })
             .expect("schedule-selected small-field L2 fold");
-        assert_eq!(l2_step.params.witness.d_a(), 128);
+        assert_eq!(l2_step.params.d_a(), 128);
         assert_eq!(
-            l2_step.params.witness.fold_challenge_config,
+            l2_step.params.fold_challenge_config,
             akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
         );
         assert_eq!(
             akita_challenges::selective_l2_operator_norm_rejection(
                 128,
-                &l2_step.params.witness.fold_challenge_config,
+                &l2_step.params.fold_challenge_config,
             ),
             Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
         );
@@ -86,7 +86,7 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             response_l2_sq_cap,
             norm_proof_shape,
             ..
-        } = l2_step.params.witness.inner_commit_matrix.security_route()
+        } = l2_step.params.inner_commit_matrix.security_route()
         else {
             unreachable!("selected route checked above")
         };
@@ -99,7 +99,7 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
                 > 1
         );
 
-        let poly = fp32_l2_onehot_poly(&schedule.root.params.final_group.commitment, 3);
+        let poly = fp32_l2_onehot_poly(&schedule.root.params, 3);
         let point = (0..NUM_VARS)
             .map(|i| E::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
             .collect::<Vec<_>>();
@@ -240,7 +240,7 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         let terminal_params = &schedule.terminal.params.witness;
         let response_l2_sq_cap = terminal_params.response_l2_sq_cap();
 
-        let poly = fp32_l2_onehot_poly(&schedule.root.params.final_group.commitment, 9);
+        let poly = fp32_l2_onehot_poly(&schedule.root.params, 9);
         let point = (0..NUM_VARS)
             .map(|i| E::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
             .collect::<Vec<_>>();

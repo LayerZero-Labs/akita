@@ -43,7 +43,7 @@ where
     for slot_id in schedule
         .recursive_folds
         .iter()
-        .filter_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+        .filter_map(|fold| fold.params.setup_prefix.as_ref())
     {
         if setup
             .prefix_slots
@@ -244,7 +244,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         report_crt_profile(
             label,
             prepared
-                .shared_ntt_profile(schedule.root.params.final_group.commitment.d_a())
+                .shared_ntt_profile(schedule.root.params.d_a())
                 .expect("prepared setup CRT profile"),
         );
         let mut pre_keys = Vec::with_capacity(PRE_GROUPS);

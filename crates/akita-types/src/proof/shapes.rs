@@ -206,12 +206,9 @@ pub fn canonical_base_field_proof_shape(
         })
     }
 
-    let root_successor = schedule
-        .recursive_folds
-        .first()
-        .map(|step| &step.params.witness);
+    let root_successor = schedule.recursive_folds.first().map(|step| &step.params);
     let root = level_shape(
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         schedule.root.output_witness_len,
         root_successor,
     )?;
@@ -220,9 +217,9 @@ pub fn canonical_base_field_proof_shape(
         let successor = schedule
             .recursive_folds
             .get(index + 1)
-            .map(|next| &next.params.witness);
+            .map(|next| &next.params);
         recursive_folds.push(level_shape(
-            &step.params.witness,
+            &step.params,
             step.output_witness_len,
             successor,
         )?);

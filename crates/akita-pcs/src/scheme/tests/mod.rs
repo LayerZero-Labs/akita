@@ -143,8 +143,6 @@ fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParam
         .schedule()
         .root
         .params
-        .final_group
-        .commitment
         .clone()
 }
 
@@ -250,7 +248,7 @@ fn expected_same_point_batched_shape(
         .expect("batched root runtime plan")
         .into_schedule();
     let root_step = &schedule.root;
-    let root_params = &root_step.params.final_group.commitment;
+    let root_params = &root_step.params;
     let num_fold_levels = schedule.num_fold_levels();
     let root_rounds = batched_shape_rounds(root_params.d_a(), root_step.output_witness_len);
 
@@ -288,7 +286,7 @@ fn expected_same_point_batched_shape(
         stage3_sumcheck: None,
         next_witness_binding: match root_successor {
             Some(successor) => {
-                let next_level_params = &successor.params.witness;
+                let next_level_params = &successor.params;
                 NextWitnessBindingShape::OuterPayload {
                     coeffs: commitment_payload_coeffs(next_level_params),
                 }
@@ -303,7 +301,7 @@ fn expected_same_point_batched_shape(
     let mut input_witness_len = root_step.output_witness_len;
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         assert_eq!(step.input_witness_len, input_witness_len);
-        let level_params = &step.params.witness;
+        let level_params = &step.params;
         let output_witness_len = step.output_witness_len;
         let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
         let stage1 = DigitRangePlan::new(1usize << level_params.log_basis_open)
@@ -319,7 +317,7 @@ fn expected_same_point_batched_shape(
             stage3_sumcheck: None,
             next_witness_binding: match schedule.recursive_folds.get(index + 1) {
                 Some(successor) => {
-                    let next_level_params = &successor.params.witness;
+                    let next_level_params = &successor.params;
                     NextWitnessBindingShape::OuterPayload {
                         coeffs: commitment_payload_coeffs(next_level_params),
                     }

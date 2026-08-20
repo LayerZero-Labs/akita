@@ -395,8 +395,6 @@ mod tests {
         .schedule()
         .root
         .params
-        .final_group
-        .commitment
         .clone();
         let natural_field_len = level_params
             .inner_commit_matrix

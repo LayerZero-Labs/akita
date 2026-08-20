@@ -194,18 +194,8 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     let profiles = selected.profiles().clone();
 
     let mut low_rank_d = selected.schedule().clone();
-    let matrix = &low_rank_d
-        .root
-        .params
-        .final_group
-        .commitment
-        .open_commit_matrix;
-    low_rank_d
-        .root
-        .params
-        .final_group
-        .commitment
-        .open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+    let matrix = &low_rank_d.root.params.open_commit_matrix;
+    low_rank_d.root.params.open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
         matrix.sis_table_key().table_digest,
         matrix.sis_modulus_profile(),
@@ -217,29 +207,20 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     assert_mutated_row_is_rejected::<Cfg>(profiles.clone(), low_rank_d);
 
     let mut low_rank_a = selected.schedule().clone();
-    let matrix = &low_rank_a
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix;
+    let matrix = &low_rank_a.root.params.inner_commit_matrix;
     let table_key = matrix
         .sis_table_key()
         .expect("root A matrix must use the L infinity route");
-    low_rank_a
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
-        table_key.policy,
-        table_key.table_digest,
-        table_key.modulus_profile,
-        0,
-        matrix.input_width(),
-        table_key.coeff_linf_bound,
-        table_key.ring_dimension as usize,
-    );
+    low_rank_a.root.params.inner_commit_matrix =
+        akita_types::InnerCommitMatrixParams::new_unchecked(
+            table_key.policy,
+            table_key.table_digest,
+            table_key.modulus_profile,
+            0,
+            matrix.input_width(),
+            table_key.coeff_linf_bound,
+            table_key.ring_dimension as usize,
+        );
     assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_a);
 }
 
@@ -408,13 +389,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         .validate_structure()
         .expect("valid grouped schedule");
     assert_eq!(
-        planned
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .role_dims(),
+        planned.schedule.root.params.role_dims(),
         CommitmentRingDims {
             inner: 512,
             outer: 64,
@@ -422,7 +397,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         }
     );
     assert_eq!(
-        planned.schedule.root.params.precommitted_groups[0].descriptor,
+        planned.schedule.root.params.precommitted_groups[0].profile,
         key.precommitteds[0]
     );
 }

@@ -418,14 +418,14 @@ pub(super) fn u64_magnitude_endpoints() -> [F; 4] {
 }
 
 pub(super) fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
-    &schedule.root.params.final_group.commitment
+    &schedule.root.params
 }
 
 pub(super) fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
     schedule
         .recursive_folds
         .iter()
-        .any(|fold| fold.params.incoming_setup_prefix.is_some())
+        .any(|fold| fold.params.setup_prefix.is_some())
 }
 
 pub(super) fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
@@ -452,7 +452,7 @@ fn first_setup_prefix_slot(schedule: &FoldSchedule) -> SetupPrefixSlotId {
     schedule
         .recursive_folds
         .iter()
-        .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+        .find_map(|fold| fold.params.setup_prefix.as_ref())
         .expect("recursive profile must carry a setup prefix")
         .slot_id()
         .expect("setup prefix group")

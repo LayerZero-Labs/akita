@@ -23,7 +23,7 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
     assert_eq!(setup_levels.len(), 1 + schedule.recursive_folds.len());
     assert_eq!(
         setup_levels[0].role_dims(),
-        schedule.root.params.final_group.commitment.role_dims()
+        schedule.root.params.role_dims()
     );
 }
 
@@ -58,7 +58,7 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
         .recursive_folds
         .iter()
         .find_map(
-            |step| match step.params.witness.inner_commit_matrix.security_route() {
+            |step| match step.params.inner_commit_matrix.security_route() {
                 akita_types::InnerCommitSecurityRoute::Linf(_) => None,
                 akita_types::InnerCommitSecurityRoute::L2 {
                     table_key,
@@ -69,21 +69,21 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
         )
         .expect("shipped fp128 row must retain one L2 route");
     assert_eq!(
-        step.params.witness.fold_challenge_config,
+        step.params.fold_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(step.params.witness.log_basis_open, 4);
-    assert_eq!(step.params.witness.num_digits_fold, 3);
+    assert_eq!(step.params.log_basis_open, 4);
+    assert_eq!(step.params.num_digits_fold, 3);
     assert_eq!(
-        step.params.witness.inner_commit_matrix.input_width()
-            * step.params.witness.inner_commit_matrix.ring_dimension(),
+        step.params.inner_commit_matrix.input_width()
+            * step.params.inner_commit_matrix.ring_dimension(),
         65_536,
     );
     assert_eq!(
-        step.params.witness.inner_commit_matrix.output_rank(),
+        step.params.inner_commit_matrix.output_rank(),
         akita_types::sis::min_secure_l2_rank(
             table_key,
-            step.params.witness.inner_commit_matrix.input_width() as u64,
+            step.params.inner_commit_matrix.input_width() as u64,
         )
         .expect("shipped L2 geometry must have an audited rank")
     );
@@ -131,7 +131,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         .expect("generated fp64 schedule")
         .into_schedule();
     assert!(schedule.recursive_folds.iter().any(|step| matches!(
-        step.params.witness.inner_commit_matrix.security_route(),
+        step.params.inner_commit_matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     )));
     let terminal = &schedule.terminal.params;
@@ -357,7 +357,7 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
     let schedule = fp128::OneHot::resolve_catalog_row_for_key(&first.to_runtime_lookup_key())
         .expect("resolve adaptive one-hot row")
         .into_schedule();
-    let root = &schedule.root.params.final_group.commitment;
+    let root = &schedule.root.params;
     assert_eq!(
         root.num_digits_fold,
         first.root.final_group.num_digits_fold as usize

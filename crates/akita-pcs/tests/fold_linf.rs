@@ -35,8 +35,6 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     .schedule()
     .root
     .params
-    .final_group
-    .commitment
     .clone();
     let poly = make_onehot_poly(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));

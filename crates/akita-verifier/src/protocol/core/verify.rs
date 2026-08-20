@@ -85,17 +85,12 @@ where
         ),
         |step| {
             (
-                Some(&step.params.witness),
+                Some(&step.params),
                 akita_types::NextWitnessBindingPolicy::OuterPayload,
             )
         },
     );
-    validate_nonterminal(
-        &proof.root,
-        &schedule.root.params.final_group.commitment,
-        root_next,
-        root_binding,
-    )?;
+    validate_nonterminal(&proof.root, &schedule.root.params, root_next, root_binding)?;
     for (index, (fold, step)) in proof
         .recursive_folds
         .iter()
@@ -109,12 +104,12 @@ where
             ),
             |next| {
                 (
-                    Some(&next.params.witness),
+                    Some(&next.params),
                     akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
-        validate_nonterminal(fold, &step.params.witness, next, binding)?;
+        validate_nonterminal(fold, &step.params, next, binding)?;
     }
 
     let terminal_shape = &schedule.terminal.params.response_shape;
@@ -175,10 +170,10 @@ where
         &claims,
         opening_batch,
         basis,
-        &root_step.params.final_group.commitment,
-        first_recursive_params.map(|step| &step.params),
+        &root_step.params,
+        first_recursive_params,
         first_recursive_params.map_or(schedule.terminal.params.witness.d_a(), |step| {
-            step.params.witness.d_a()
+            step.params.d_a()
         }),
         root_t_state.as_deref(),
     )
@@ -312,20 +307,16 @@ where
     }
     let schedule = resolved.schedule();
     let root_params = &schedule.root_fold().params;
-    let expected_final_descriptor = akita_types::GroupCommitPhaseParams::try_from_params(
-        final_descriptor.group,
-        &root_params.final_group.commitment,
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
+    let expected_final_descriptor =
+        akita_types::GroupCommitPhaseParams::try_from_params(final_descriptor.group, root_params)
+            .map_err(|_| AkitaError::InvalidProof)?;
     if final_descriptor != expected_final_descriptor
         || root_params.precommitted_groups.len() != precommitteds.len()
         || root_params
             .precommitted_groups
             .iter()
             .zip(precommitteds)
-            .any(|(params, claims_group)| {
-                params.commitment.profile != *claims_group.commitment().profile()
-            })
+            .any(|(params, claims_group)| params.profile != *claims_group.commitment().profile())
     {
         return Err(AkitaError::InvalidProof);
     }

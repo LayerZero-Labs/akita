@@ -45,8 +45,6 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     .schedule()
     .root
     .params
-    .final_group
-    .commitment
     .clone();
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
     let total = setup.expanded.shared_matrix.num_field_elements() / D;

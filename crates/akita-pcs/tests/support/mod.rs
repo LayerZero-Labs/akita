@@ -330,7 +330,7 @@ where
         };
         let mut schedule = base.into_schedule();
         let policy = policy_of::<Self>();
-        let root = &mut schedule.root.params.final_group.commitment;
+        let root = &mut schedule.root.params;
         let d_a = root.inner_commit_matrix.ring_dimension();
         akita_types::SubringCoefficientPackingGeometry::try_new(
             Self::EXT_DEGREE,
@@ -394,8 +394,6 @@ where
             current_a.input_width(),
         )?;
         rebuild_group_output_matrices(root, key.final_group.num_polynomials(), Self::EXT_DEGREE)?;
-        schedule.root.params.open_commit_matrix = root.open_commit_matrix;
-        schedule.root.params.sparse_challenge_config = root.fold_challenge_config;
 
         let opening_batch = key.opening_layout()?;
         let root_output_witness_len = root.output_witness_len_for_field_bits(
@@ -407,7 +405,7 @@ where
 
         let mut successor = successor_template;
         successor.input_witness_len = root_output_witness_len;
-        let successor_witness = &mut successor.params.witness;
+        let successor_witness = &mut successor.params;
         if successor_witness.log_basis_inner != root.log_basis_open
             || successor_witness.num_digits_inner != 1
         {
@@ -610,9 +608,6 @@ where
                 successor_witness.open_commit_matrix.sis_table_key(),
                 successor_d_width,
             )?;
-        successor.params.open_commit_matrix = successor_witness.open_commit_matrix;
-        successor.params.sparse_challenge_config = successor_witness.fold_challenge_config;
-        successor.params.incoming_setup_prefix = Some(incoming_setup_prefix);
         let successor_opening_batch = akita_types::suffix_opening_layout(
             root_output_witness_len,
             Some(root_setup_natural_len),
@@ -628,7 +623,7 @@ where
         retarget_synthetic_terminal::<Self>(&mut schedule)?;
 
         schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
-        let root = &schedule.root.params.final_group.commitment;
+        let root = &schedule.root.params;
         let profiles = CommittedGroupBatchProfile {
             final_group: GroupCommitPhaseParams::try_from_params(key.final_group, root)?,
             precommitteds: Vec::new(),
@@ -651,22 +646,21 @@ where
         let profiles = base.profiles().clone();
         let mut schedule = base.into_schedule();
         let params = if LEVEL == 0 {
-            &mut schedule.root.params.final_group.commitment
+            &mut schedule.root.params
         } else if LEVEL == 1 {
             let step = schedule.recursive_folds.first_mut().ok_or_else(|| {
                 AkitaError::InvalidSetup("early-ET test row needs a recursive fold".into())
             })?;
-            if let Some(prefix) = step.params.incoming_setup_prefix.as_mut() {
+            if let Some(prefix) = step.params.setup_prefix.as_mut() {
                 prefix.opening.opening_method = akita_types::OpeningMethod::EvaluationTrace;
                 let d_a = prefix.profile.inner.matrix.ring_dimension();
                 prefix.opening.fold_challenge_config =
                     SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {
                         AkitaError::InvalidSetup("missing early-ET prefix challenge family".into())
                     })?;
-                step.params.incoming_setup_prefix = Some(prefix);
+                step.params.setup_prefix = Some(*prefix);
             }
-            step.params.witness.setup_prefix = step.params.incoming_setup_prefix;
-            &mut step.params.witness
+            &mut step.params
         } else {
             return Err(AkitaError::InvalidSetup(
                 "early-ET test level must be zero or one".into(),
@@ -685,8 +679,7 @@ where
             LEVEL == 0,
         );
         if LEVEL == 1 {
-            schedule.recursive_folds[0].params.sparse_challenge_config =
-                params.fold_challenge_config;
+            schedule.recursive_folds[0].params.fold_challenge_config = params.fold_challenge_config;
         }
         schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
         let selection = OpeningScheduleSelection {
@@ -978,7 +971,7 @@ where
         let profiles = CommittedGroupBatchProfile {
             final_group: GroupCommitPhaseParams::try_from_params(
                 key.final_group,
-                &schedule.root.params.final_group.commitment,
+                &schedule.root.params,
             )?,
             precommitteds: key.precommitteds.clone(),
         };

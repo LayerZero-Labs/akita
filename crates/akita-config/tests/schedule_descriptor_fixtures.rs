@@ -117,33 +117,30 @@ fn capture_row(
     push(
         records,
         format!("{prefix} root.fold"),
-        root.final_group.commitment.canonical_descriptor_bytes(),
+        root.canonical_descriptor_bytes(),
     );
     push(
         records,
         format!("{prefix} root.final_group.profile"),
-        akita_types::GroupCommitPhaseParams::try_from_params(
-            key.final_group,
-            &root.final_group.commitment,
-        )
-        .map(|profile| profile.canonical_descriptor_bytes())
-        .unwrap_or_default(),
+        akita_types::GroupCommitPhaseParams::try_from_params(key.final_group, root)
+            .map(|profile| profile.canonical_descriptor_bytes())
+            .unwrap_or_default(),
     );
     for (index, group) in root.precommitted_groups.iter().enumerate() {
         push(
             records,
             format!("{prefix} root.precommitted[{index}].profile"),
-            group.descriptor.canonical_descriptor_bytes(),
+            group.profile.canonical_descriptor_bytes(),
         );
         push(
             records,
             format!("{prefix} root.precommitted[{index}].opening"),
-            group.commitment.opening.canonical_descriptor_bytes(),
+            group.opening.canonical_descriptor_bytes(),
         );
         push(
             records,
             format!("{prefix} root.precommitted[{index}].group"),
-            group.commitment.canonical_descriptor_bytes(),
+            group.canonical_descriptor_bytes(),
         );
     }
 
@@ -152,9 +149,9 @@ fn capture_row(
         push(
             records,
             format!("{prefix} recursive[{level}].fold"),
-            step.params.witness.canonical_descriptor_bytes(),
+            step.params.canonical_descriptor_bytes(),
         );
-        if let Some(prefix_group) = step.params.incoming_setup_prefix.as_ref() {
+        if let Some(prefix_group) = step.params.setup_prefix.as_ref() {
             push(
                 records,
                 format!("{prefix} recursive[{level}].setup_prefix.profile"),
@@ -185,11 +182,8 @@ fn capture_row(
 
     // The row digest is what schedule selection compares, so pin it too.
     let profiles = CommittedGroupBatchProfile {
-        final_group: akita_types::GroupCommitPhaseParams::try_from_params(
-            key.final_group,
-            &root.final_group.commitment,
-        )
-        .expect("final group profile"),
+        final_group: akita_types::GroupCommitPhaseParams::try_from_params(key.final_group, root)
+            .expect("final group profile"),
         precommitteds: key.precommitteds.clone(),
     };
     let digest: ScheduleRowDigest =

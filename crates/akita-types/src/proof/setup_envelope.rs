@@ -27,12 +27,9 @@ pub fn setup_matrix_field_elements_for_schedule(
     schedule: &FoldSchedule,
 ) -> Result<usize, AkitaError> {
     let mut max_field_elements = 1;
-    accumulate_matrix_field_elements_for_level(
-        &schedule.root.params.final_group.commitment,
-        &mut max_field_elements,
-    )?;
+    accumulate_matrix_field_elements_for_level(&schedule.root.params, &mut max_field_elements)?;
     for fold in &schedule.recursive_folds {
-        accumulate_matrix_field_elements_for_level(&fold.params.witness, &mut max_field_elements)?;
+        accumulate_matrix_field_elements_for_level(&fold.params, &mut max_field_elements)?;
     }
     accumulate_terminal_matrix_field_elements(
         &schedule.terminal.params.witness,
@@ -62,12 +59,12 @@ pub fn verifier_setup_matrix_capacity_for_schedule(
         &mut num_field_elements,
     )?;
     accumulate_compression_matrix_field_elements_for_level(
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         &mut num_field_elements,
     )?;
     for fold in &schedule.recursive_folds {
         accumulate_compression_matrix_field_elements_for_level(
-            &fold.params.witness,
+            &fold.params,
             &mut num_field_elements,
         )?;
     }
@@ -76,22 +73,22 @@ pub fn verifier_setup_matrix_capacity_for_schedule(
         let producer_is_offloaded = schedule
             .recursive_folds
             .get(producer_index)
-            .is_some_and(|successor| successor.params.incoming_setup_prefix.is_some());
+            .is_some_and(|successor| successor.params.setup_prefix.is_some());
         if producer_is_offloaded {
             continue;
         }
 
         let direct_fields = if producer_index == 0 {
-            active_setup_field_len(&schedule.root.params.final_group.commitment, root_layout)?
+            active_setup_field_len(&schedule.root.params, root_layout)?
         } else {
             let producer = &schedule.recursive_folds[producer_index - 1];
             let incoming_prefix_len = producer
                 .params
-                .incoming_setup_prefix
+                .setup_prefix
                 .as_ref()
                 .and_then(|slot| slot.setup_natural_len);
             let layout = suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
-            active_setup_field_len(&producer.params.witness, &layout)?
+            active_setup_field_len(&producer.params, &layout)?
         };
         num_field_elements = num_field_elements.max(direct_fields);
     }

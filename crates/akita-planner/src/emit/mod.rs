@@ -282,7 +282,7 @@ fn generated_entry(
     schedule: &FoldSchedule,
 ) -> Result<GeneratedFoldScheduleEntry, String> {
     let root_fold = &schedule.root.params;
-    let root_params = &root_fold.final_group.commitment;
+    let root_params = &root_fold;
     let precommitted_groups = key
         .precommitteds
         .iter()
@@ -290,19 +290,19 @@ fn generated_entry(
         .zip(&root_fold.precommitted_groups)
         .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
             descriptor,
-            num_digits_fold: group.commitment.opening.num_digits_fold as u32,
-            opening_method: group.commitment.opening.opening_method,
+            num_digits_fold: group.opening.num_digits_fold as u32,
+            opening_method: group.opening.opening_method,
         })
         .collect::<Vec<_>>();
     let recursive_folds = schedule
         .recursive_folds
         .iter()
         .map(|step| GeneratedRecursiveFold {
-            payload_mode: step.params.witness.payload_mode,
-            opening_method: step.params.witness.opening_method,
-            witness: committed_group(&step.params.witness),
-            num_digits_fold: step.params.witness.num_digits_fold as u32,
-            response_l2_sq_cap: match step.params.witness.inner_commit_matrix.security_route() {
+            payload_mode: step.params.payload_mode,
+            opening_method: step.params.opening_method,
+            witness: committed_group(&step.params),
+            num_digits_fold: step.params.num_digits_fold as u32,
+            response_l2_sq_cap: match step.params.inner_commit_matrix.security_route() {
                 akita_types::InnerCommitSecurityRoute::Linf(_) => None,
                 akita_types::InnerCommitSecurityRoute::L2 {
                     response_l2_sq_cap, ..
@@ -310,16 +310,14 @@ fn generated_entry(
             },
             open_commit_matrix: open_matrix_params(
                 &step.params.open_commit_matrix,
-                step.params.witness.log_basis_open,
+                step.params.log_basis_open,
             ),
             incoming_setup_prefix: step
                 .params
-                .incoming_setup_prefix
+                .setup_prefix
                 .as_ref()
                 .map(setup_prefix_slot_input),
-            witness_partition: runtime_witness_partition(
-                step.params.witness.witness_chunk.num_chunks,
-            ),
+            witness_partition: runtime_witness_partition(step.params.witness_chunk.num_chunks),
         })
         .collect::<Vec<_>>();
     let terminal_group = schedule
@@ -347,9 +345,7 @@ fn generated_entry(
                 &root_fold.open_commit_matrix,
                 root_params.log_basis_open,
             ),
-            witness_partition: runtime_witness_partition(
-                root_fold.final_group.commitment.witness_chunk.num_chunks,
-            ),
+            witness_partition: runtime_witness_partition(root_fold.witness_chunk.num_chunks),
         },
         recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),
         terminal: GeneratedTerminalFold {
@@ -985,13 +981,7 @@ mod preplanned_scalar_tests {
         )
         .expect("planned packing schedule");
         assert!(matches!(
-            planned
-                .schedule
-                .root
-                .params
-                .final_group
-                .commitment
-                .opening_method,
+            planned.schedule.root.params.opening_method,
             akita_types::OpeningMethod::SubringCoefficientPacking { .. }
         ));
         let expanded = akita_schedules::expanded_schedule_proof_payload_bytes(

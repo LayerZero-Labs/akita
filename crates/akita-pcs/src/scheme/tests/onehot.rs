@@ -60,7 +60,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
 }
 
 fn multi_group_root_params(schedule: &akita_types::FoldSchedule) -> &CommittedGroupParams {
-    &schedule.root.params.final_group.commitment
+    &schedule.root.params
 }
 
 fn with_precommit_stack<R>(
@@ -172,7 +172,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
         .expect("multi-group runtime schedule")
         .into_schedule();
     let root = multi_group_root_params(&schedule);
-    let main_params = schedule.root.params.final_group.commitment.clone();
+    let main_params = schedule.root.params.clone();
 
     assert_eq!(multi_group_key.num_commitment_groups(), 4);
     assert_eq!(
@@ -184,15 +184,15 @@ fn group_batch_schedule_preserves_precommitted_order() {
     assert_eq!(main_params, *root);
     assert_eq!(schedule.root.params.precommitted_groups.len(), 3);
     assert_eq!(
-        schedule.root.params.precommitted_groups[0].descriptor,
+        schedule.root.params.precommitted_groups[0].profile,
         pre_a_frozen
     );
     assert_eq!(
-        schedule.root.params.precommitted_groups[1].descriptor,
+        schedule.root.params.precommitted_groups[1].profile,
         pre_b_frozen
     );
     assert_eq!(
-        schedule.root.params.precommitted_groups[2].descriptor,
+        schedule.root.params.precommitted_groups[2].profile,
         pre_c_frozen
     );
 }
@@ -334,11 +334,11 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         2
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups[0].descriptor,
+        multi_group_schedule.root.params.precommitted_groups[0].profile,
         pre_a_frozen
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups[1].descriptor,
+        multi_group_schedule.root.params.precommitted_groups[1].profile,
         pre_b_frozen
     );
 }
@@ -494,14 +494,14 @@ where
             .params
             .precommitted_groups
             .iter()
-            .map(|group| group.descriptor)
+            .map(|group| group.profile)
             .collect::<Vec<_>>(),
         pre_layouts,
         "precommitted groups must retain their native descriptors"
     );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
-        let root_commitment = &root.params.final_group.commitment;
+        let root_commitment = &root.params;
         assert!(!root.params.precommitted_groups.is_empty());
         assert_eq!(
             root_commitment.witness_chunk.num_chunks,
@@ -639,7 +639,7 @@ where
     let planned_stage3 = multi_group_schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix.is_some())
         .count();
     let proved_stage3 = proof
         .nonterminal_folds()

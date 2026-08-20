@@ -5,9 +5,9 @@
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, CommitmentRingDims,
-    CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    CommittedGroupParams, FoldParams, FoldSchedule, RingRole, RingView, SisModulusProfileId,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape,
 };
 
 #[test]
@@ -63,15 +63,8 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
     let root = params(128);
     let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(params(64));
     let schedule = FoldSchedule {
-        root: RootFoldStep {
-            params: RootFoldParams {
-                final_group: RootFinalGroupParams {
-                    commitment: root.clone(),
-                },
-                precommitted_groups: Vec::new(),
-                open_commit_matrix: root.open_commit_matrix,
-                sparse_challenge_config: root.fold_challenge_config,
-            },
+        root: FoldParams {
+            params: root.clone(),
             input_witness_len: 256,
             output_witness_len: 64,
         },

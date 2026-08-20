@@ -194,7 +194,7 @@ where
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
 {
     schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
-    let root_params = &schedule.root.params.final_group.commitment;
+    let root_params = &schedule.root.params;
     {
         // Every public group commitment is the fixed terminal F payload. The
         // frozen B geometry derives the complete compression plan and therefore
@@ -235,7 +235,7 @@ where
         ),
         |step| {
             (
-                super::fold::FoldSuccessorParams::Recursive(&step.params),
+                super::fold::FoldSuccessorParams::Recursive(step),
                 akita_types::NextWitnessBindingPolicy::OuterPayload,
             )
         },

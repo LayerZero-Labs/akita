@@ -481,7 +481,7 @@ pub(crate) fn audit_resolved_schedule(
     schedule.validate_structure()?;
 
     let root = &schedule.root.params;
-    let final_params = &root.final_group.commitment;
+    let final_params = &root;
     if !matches!(
         final_params.inner_commit_matrix.security_route(),
         InnerCommitSecurityRoute::Linf(_)
@@ -495,38 +495,34 @@ pub(crate) fn audit_resolved_schedule(
         profiles.final_group.group,
         final_params,
     )?;
+    // Four of the five comparisons that used to live here compared a field with
+    // a copy of itself and are deleted with the merge: the shared D matrix, the
+    // precommitted-group count (twice over), and each group's `descriptor`
+    // against its own `commitment.profile`. What survives is the only one that
+    // relates two independent sources: the ordered profiles from the lookup key
+    // against the expanded row.
     if profiles.final_group != expected_final_profile
-        || profiles.precommitteds.len() != root.precommitted_groups.len()
-        || root.open_commit_matrix != final_params.open_commit_matrix
-        || final_params.precommitted_groups.len() != root.precommitted_groups.len()
+        || profiles.precommitteds.len() != final_params.precommitted_groups.len()
     {
         return Err(invalid(
             "root fold",
-            "ordered profiles or shared D metadata disagree with the expanded row",
+            "ordered profiles disagree with the expanded row",
         ));
     }
 
-    for (index, ((profile, root_group), params_group)) in profiles
+    for (index, (profile, group)) in profiles
         .precommitteds
         .iter()
-        .zip(&root.precommitted_groups)
         .zip(&final_params.precommitted_groups)
         .enumerate()
     {
-        if profile != &root_group.descriptor
-            || profile != &root_group.commitment.profile
-            || root_group.commitment != *params_group
-        {
+        if profile != &group.profile {
             return Err(invalid(
                 &format!("root precommitted group {index}"),
                 "profile and consuming parameters disagree",
             ));
         }
-        audit_precommitted_group(
-            &format!("root precommitted group {index}"),
-            &root_group.commitment,
-            policy,
-        )?;
+        audit_precommitted_group(&format!("root precommitted group {index}"), group, policy)?;
     }
 
     audit_committed_params(
@@ -539,17 +535,11 @@ pub(crate) fn audit_resolved_schedule(
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         audit_committed_params(
             &format!("recursive fold {index}"),
-            &step.params.witness,
+            &step.params,
             1,
             index + 1,
             policy,
         )?;
-        if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {
-            return Err(invalid(
-                &format!("recursive fold {index}"),
-                "shared D matrix disagrees with the witness parameters",
-            ));
-        }
     }
     audit_terminal(
         &schedule.terminal.params.witness,
