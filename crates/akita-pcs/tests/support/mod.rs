@@ -312,7 +312,7 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
     terminal.blocks.live_blocks = num_live_blocks;
     terminal.fold.num_digits = fold_digit_count;
     terminal.inner.matrix = matrix;
-    let encoding_scale = terminal.certified_response_linf_cap(&terminal.fold_challenge_config)?;
+    let encoding_scale = terminal.certified_response_linf_cap()?;
     terminal.response_shape = akita_types::TerminalResponseShape::derive(terminal, encoding_scale)?;
     Ok(())
 }
