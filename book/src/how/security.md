@@ -208,13 +208,13 @@ transcript also binds the method, challenge subring dimension, challenge
 family, group order, claim count, and block count. After challenge folding, the
 prover binds `Q_pack` and the next witness before sampling `alpha`.
 
-Both opening methods squeeze one 32-byte root per commitment group. They then
-derive coordinate `(claim, block)` from a fresh SHAKE256 stream whose input is
-the sparse-challenge domain, the fixed coordinate domain, the group root, and
-the claim-major coordinate index as a little-endian `u64`. The coordinate
-streams do not mutate the live transcript. Sequential and parallel samplers
-therefore return the same ordered vector, and one coordinate can be forked
-without changing any other coordinate.
+Both opening methods squeeze one dedicated 32-byte root per commitment group.
+They then derive coordinate `(claim, block)` from a fresh SHAKE256 stream whose
+input is exactly that root followed by the claim-major coordinate index as a
+little-endian `u64`. The fixed widths make this encoding unambiguous. The
+coordinate streams do not mutate the live transcript. Sequential and parallel
+samplers therefore return the same ordered vector, and one coordinate can be
+forked without changing any other coordinate.
 
 The production primes satisfy the fixed LS18 congruence and shortness
 condition used for unit pairwise challenge differences. This fact belongs to
