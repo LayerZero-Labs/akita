@@ -88,14 +88,10 @@ pub(crate) fn walk_generated_schedule_entry(
             )?
     };
     let distributed_levels = distributed_activation_depth(
-        entry.root.witness_partition,
-        entry
-            .recursive_folds
-            .iter()
-            .map(|fold| fold.witness_partition),
+        entry.root.witness_chunks,
+        entry.recursive_folds.iter().map(|fold| fold.witness_chunks),
     );
-    root_params.witness_chunk =
-        partition_to_chunk(entry.root.witness_partition, distributed_levels)?;
+    root_params.witness_chunk = partition_to_chunk(entry.root.witness_chunks, distributed_levels)?;
     let root_output_len = if is_multi_group {
         root_params.output_witness_len_for_field_bits(
             field_bits,
@@ -134,7 +130,7 @@ pub(crate) fn walk_generated_schedule_entry(
             fold.open_commit_matrix,
             fold.incoming_setup_prefix,
         )?;
-        params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
+        params.witness_chunk = partition_to_chunk(fold.witness_chunks, distributed_levels)?;
         let output_witness_len = planned_next_witness_len(
             field_bits,
             policy.claim_ext_degree,
@@ -290,42 +286,27 @@ pub(crate) fn walk_generated_schedule_entry(
 }
 
 fn partition_to_chunk(
-    partition: crate::generated::GeneratedWitnessPartition,
+    witness_chunks: u32,
     activated_levels: usize,
 ) -> Result<akita_types::ChunkedWitnessCfg, AkitaError> {
-    match partition {
-        crate::generated::GeneratedWitnessPartition::Single => {
-            Ok(akita_types::ChunkedWitnessCfg::default_non_chunked())
-        }
-        crate::generated::GeneratedWitnessPartition::Distributed { num_chunks } => {
-            let cfg = akita_types::ChunkedWitnessCfg {
-                num_chunks: num_chunks as usize,
-                num_activated_levels: activated_levels,
-            };
-            cfg.validate()?;
-            Ok(cfg)
-        }
+    // A chunk count of 1 is the non-chunked layout; the enum that used to spell
+    // that distinction carried no other information.
+    if witness_chunks <= 1 {
+        return Ok(akita_types::ChunkedWitnessCfg::default_non_chunked());
     }
+    let cfg = akita_types::ChunkedWitnessCfg {
+        num_chunks: witness_chunks as usize,
+        num_activated_levels: activated_levels,
+    };
+    cfg.validate()?;
+    Ok(cfg)
 }
 
-fn distributed_activation_depth(
-    current: crate::generated::GeneratedWitnessPartition,
-    following: impl Iterator<Item = crate::generated::GeneratedWitnessPartition>,
-) -> usize {
-    if !matches!(
-        current,
-        crate::generated::GeneratedWitnessPartition::Distributed { .. }
-    ) {
+fn distributed_activation_depth(current: u32, following: impl Iterator<Item = u32>) -> usize {
+    if current <= 1 {
         return 0;
     }
-    1 + following
-        .take_while(|partition| {
-            matches!(
-                partition,
-                crate::generated::GeneratedWitnessPartition::Distributed { .. }
-            )
-        })
-        .count()
+    1 + following.take_while(|chunks| *chunks > 1).count()
 }
 
 fn validate_expanded_precommitted_groups(

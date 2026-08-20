@@ -110,7 +110,7 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
         .expect("W8R2 schedule")
         .into_schedule();
     let first_recursive = &schedule.recursive_folds[0].params;
-    assert_eq!(first_recursive.witness_partition.num_chunks(), 8);
+    assert_eq!(first_recursive.witness_chunks.num_chunks(), 8);
     let prefix = first_recursive
         .incoming_setup_prefix
         .as_ref()

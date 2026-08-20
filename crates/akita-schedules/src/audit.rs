@@ -559,9 +559,7 @@ pub(crate) fn audit_resolved_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::{
-        GeneratedBlockGeometry, GeneratedInnerCommitMatrix, GeneratedTerminalFold,
-    };
+    use crate::generated::{GeneratedBlockGeometry, GeneratedMatrix, GeneratedTerminalFold};
     use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
     use akita_types::{
         ChunkedWitnessCfg, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
@@ -630,7 +628,7 @@ mod tests {
                 positions_per_block: 16,
                 live_blocks: 1,
             },
-            inner_commit_matrix: GeneratedInnerCommitMatrix {
+            inner_commit_matrix: GeneratedMatrix {
                 ring_dimension: 64,
                 log_basis: 4,
             },

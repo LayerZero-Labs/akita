@@ -15,7 +15,7 @@ use akita_field::AkitaError;
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{
-    GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
+    GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedMatrix,
     GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
 use crate::PlannerPolicy;
@@ -169,7 +169,7 @@ impl GeneratedCommittedGroup {
         response_l2_sq_cap: Option<u128>,
         input_witness_len: usize,
         num_claims: usize,
-        open_commit_matrix: GeneratedOpenCommitMatrix,
+        open_commit_matrix: GeneratedMatrix,
         setup_prefix_group: Option<GeneratedSetupPrefixInput>,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let dimensions = CommitmentRingDims {
@@ -517,7 +517,7 @@ impl GeneratedCommittedGroup {
         num_digits_fold: u32,
         precommitted_groups: Vec<GroupOpenPhaseParams>,
         precommitted_d_width: usize,
-        open_commit_matrix: GeneratedOpenCommitMatrix,
+        open_commit_matrix: GeneratedMatrix,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let dimensions = CommitmentRingDims {
             inner: self.inner_commit_matrix.ring_dimension as usize,

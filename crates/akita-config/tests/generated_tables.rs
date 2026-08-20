@@ -177,13 +177,11 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 #[cfg(feature = "all-schedules")]
 #[test]
 fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
-    use akita_schedules::GeneratedWitnessPartition;
     use std::collections::BTreeSet;
 
-    let chunks = |partition: GeneratedWitnessPartition| match partition {
-        GeneratedWitnessPartition::Single => 1,
-        GeneratedWitnessPartition::Distributed { num_chunks } => num_chunks,
-    };
+    // The chunk count is the value now; `GeneratedWitnessPartition` spelled the
+    // `1` case as a separate variant and carried nothing else.
+    let chunks = |witness_chunks: u32| witness_chunks.max(1);
     let catalogs = [
         fp128::OneHot::schedule_catalog().expect("W1 catalog"),
         fp128::OneHotMultiChunkW2R2::schedule_catalog().expect("W2 catalog"),
@@ -196,13 +194,10 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
         for entry in catalog.entries {
             observed.insert((
                 entry.root.final_group.commitment.outer_slice_count,
-                chunks(entry.root.witness_partition),
+                chunks(entry.root.witness_chunks),
             ));
             for fold in entry.recursive_folds.iter().take(2) {
-                observed.insert((
-                    fold.witness.outer_slice_count,
-                    chunks(fold.witness_partition),
-                ));
+                observed.insert((fold.witness.outer_slice_count, chunks(fold.witness_chunks)));
             }
         }
     }

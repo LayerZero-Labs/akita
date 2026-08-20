@@ -7,20 +7,15 @@ pub struct GeneratedBlockGeometry {
     pub live_blocks: u64,
 }
 
+/// Compact planner input for any commitment matrix.
+///
+/// Replaces `GeneratedMatrix`, `GeneratedMatrix`, and
+/// `GeneratedMatrix`, which were three byte-identical two-field
+/// structs. The role is already fixed by the field that holds the value, and
+/// expansion re-derives every rank against the checked-in SIS table, so nothing
+/// was gained by naming the role three times here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedInnerCommitMatrix {
-    pub ring_dimension: u32,
-    pub log_basis: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedOuterCommitMatrix {
-    pub ring_dimension: u32,
-    pub log_basis: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedOpenCommitMatrix {
+pub struct GeneratedMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
 }
@@ -28,8 +23,8 @@ pub struct GeneratedOpenCommitMatrix {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedCommittedGroup {
     pub geometry: GeneratedBlockGeometry,
-    pub inner_commit_matrix: GeneratedInnerCommitMatrix,
-    pub outer_commit_matrix: GeneratedOuterCommitMatrix,
+    pub inner_commit_matrix: GeneratedMatrix,
+    pub outer_commit_matrix: GeneratedMatrix,
     pub outer_slice_count: u32,
 }
 
@@ -50,17 +45,11 @@ pub struct GeneratedRootPrecommittedGroup {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedWitnessPartition {
-    Single,
-    Distributed { num_chunks: u32 },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootFold {
     pub final_group: GeneratedRootFinalGroup,
     pub precommitted_groups: &'static [GeneratedRootPrecommittedGroup],
-    pub open_commit_matrix: GeneratedOpenCommitMatrix,
-    pub witness_partition: GeneratedWitnessPartition,
+    pub open_commit_matrix: GeneratedMatrix,
+    pub witness_chunks: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,15 +67,15 @@ pub struct GeneratedRecursiveFold {
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
     pub response_l2_sq_cap: Option<u128>,
-    pub open_commit_matrix: GeneratedOpenCommitMatrix,
+    pub open_commit_matrix: GeneratedMatrix,
     pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
-    pub witness_partition: GeneratedWitnessPartition,
+    pub witness_chunks: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedTerminalFold {
     pub geometry: GeneratedBlockGeometry,
-    pub inner_commit_matrix: GeneratedInnerCommitMatrix,
+    pub inner_commit_matrix: GeneratedMatrix,
     pub num_digits_inner: u32,
     pub fold_log_basis: u32,
     pub fold_digit_count: u32,

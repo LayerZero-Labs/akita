@@ -170,8 +170,8 @@ fp128_dense_bounded [002] recursive[3].fold                len=345    fnv1a=1720
 fp128_dense_bounded [002] recursive[4].fold                len=345    fnv1a=86473fa73833cae3
 fp128_dense_bounded [002] terminal                         len=263    fnv1a=350a911d9437c9ec
 fp128_dense_bounded [002] row_digest                       len=162    fnv1a=717ec3394386a65a
-fp128_dense_multi_chunk catalog.identity                   len=1448   fnv1a=04618d7404933e16
-fp128_dense_multi_chunk catalog.key_digest                 len=8      fnv1a=44a895720d36ec1d
+fp128_dense_multi_chunk catalog.identity                   len=1446   fnv1a=608b40abad3d4159
+fp128_dense_multi_chunk catalog.key_digest                 len=8      fnv1a=7750ddf3796f89d7
 fp128_dense_multi_chunk catalog.key_count                  len=8      fnv1a=89cd31291d2aefa4
 fp128_dense_multi_chunk [000] lookup_key                   len=24     fnv1a=9d4ebdcac3c5b0d4
 fp128_dense_multi_chunk [000] schedule                     len=2923   fnv1a=bfadda52c080f2d2
@@ -500,8 +500,8 @@ fp128_onehot [028] recursive[4].fold                       len=345    fnv1a=0227
 fp128_onehot [028] recursive[5].fold                       len=345    fnv1a=07f839b0cd78113b
 fp128_onehot [028] terminal                                len=263    fnv1a=d4dfd7461b205847
 fp128_onehot [028] row_digest                              len=161    fnv1a=97576c7b73603ff9
-fp128_onehot_multi_chunk catalog.identity                  len=1456   fnv1a=fde579813bdf5ebf
-fp128_onehot_multi_chunk catalog.key_digest                len=8      fnv1a=57b38a50af73717a
+fp128_onehot_multi_chunk catalog.identity                  len=1456   fnv1a=c53b84efc66ebce4
+fp128_onehot_multi_chunk catalog.key_digest                len=8      fnv1a=aeaf6c270dc76873
 fp128_onehot_multi_chunk catalog.key_count                 len=8      fnv1a=c7c2bf3b330983e6
 fp128_onehot_multi_chunk [000] lookup_key                  len=24     fnv1a=9d4ebdcac3c5b0d4
 fp128_onehot_multi_chunk [000] schedule                    len=2346   fnv1a=41a1026645164891
@@ -541,8 +541,8 @@ fp128_onehot_multi_chunk [002] recursive[3].fold           len=345    fnv1a=f218
 fp128_onehot_multi_chunk [002] recursive[4].fold           len=345    fnv1a=07f839b0cd78113b
 fp128_onehot_multi_chunk [002] terminal                    len=263    fnv1a=d4dfd7461b205847
 fp128_onehot_multi_chunk [002] row_digest                  len=166    fnv1a=dd8e76da3c1917b1
-fp128_onehot_multi_chunk_w2r2 catalog.identity             len=1466   fnv1a=14f59fc8c1b08aa5
-fp128_onehot_multi_chunk_w2r2 catalog.key_digest           len=8      fnv1a=0d42de45b903a24b
+fp128_onehot_multi_chunk_w2r2 catalog.identity             len=1466   fnv1a=9b7c44366fc6d951
+fp128_onehot_multi_chunk_w2r2 catalog.key_digest           len=8      fnv1a=f7bc614db9de537f
 fp128_onehot_multi_chunk_w2r2 catalog.key_count            len=8      fnv1a=c7c2bf3b330983e6
 fp128_onehot_multi_chunk_w2r2 [000] lookup_key             len=24     fnv1a=1ac221755da2890a
 fp128_onehot_multi_chunk_w2r2 [000] schedule               len=1979   fnv1a=6a9ec6a5f0f4a57c
@@ -576,8 +576,8 @@ fp128_onehot_multi_chunk_w2r2 [002] recursive[3].fold      len=345    fnv1a=0227
 fp128_onehot_multi_chunk_w2r2 [002] recursive[4].fold      len=345    fnv1a=07f839b0cd78113b
 fp128_onehot_multi_chunk_w2r2 [002] terminal               len=263    fnv1a=d4dfd7461b205847
 fp128_onehot_multi_chunk_w2r2 [002] row_digest             len=169    fnv1a=3f803908e793ee5c
-fp128_onehot_multi_chunk_w4r2 catalog.identity             len=1460   fnv1a=d31d0f275ce82805
-fp128_onehot_multi_chunk_w4r2 catalog.key_digest           len=8      fnv1a=827e815e6a062c92
+fp128_onehot_multi_chunk_w4r2 catalog.identity             len=1461   fnv1a=c0ec23e547998446
+fp128_onehot_multi_chunk_w4r2 catalog.key_digest           len=8      fnv1a=2b333e144e1f6901
 fp128_onehot_multi_chunk_w4r2 catalog.key_count            len=8      fnv1a=89cd31291d2aefa4
 fp128_onehot_multi_chunk_w4r2 [000] lookup_key             len=24     fnv1a=5ddf02973fe9bea4
 fp128_onehot_multi_chunk_w4r2 [000] schedule               len=2923   fnv1a=9467bf3d6d13379b
@@ -627,8 +627,8 @@ fp128_onehot_recursive [001] recursive[3].fold             len=345    fnv1a=40eb
 fp128_onehot_recursive [001] recursive[4].fold             len=345    fnv1a=07f839b0cd78113b
 fp128_onehot_recursive [001] terminal                      len=263    fnv1a=d4dfd7461b205847
 fp128_onehot_recursive [001] row_digest                    len=163    fnv1a=411258d316c33ba0
-fp128_onehot_recursive_multi_chunk_w8r2 catalog.identity   len=1470   fnv1a=a2643e61b6a595de
-fp128_onehot_recursive_multi_chunk_w8r2 catalog.key_digest len=8      fnv1a=23804c86d5087115
+fp128_onehot_recursive_multi_chunk_w8r2 catalog.identity   len=1469   fnv1a=c87b98603975e93e
+fp128_onehot_recursive_multi_chunk_w8r2 catalog.key_digest len=8      fnv1a=9fe33bc66f6cc742
 fp128_onehot_recursive_multi_chunk_w8r2 catalog.key_count  len=8      fnv1a=89cd31291d2aefa4
 fp128_onehot_recursive_multi_chunk_w8r2 [000] lookup_key   len=440    fnv1a=904dc696028825d1
 fp128_onehot_recursive_multi_chunk_w8r2 [000] schedule     len=5262   fnv1a=53c51bcbb5b625de

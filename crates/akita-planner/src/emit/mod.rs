@@ -23,11 +23,10 @@ mod render;
 mod source_annotations;
 use akita_schedules::expected_catalog_identity;
 use akita_schedules::generated::{
-    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
-    GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
+    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedMatrix,
     GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
     GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
-    GeneratedTerminalFold, GeneratedWitnessPartition,
+    GeneratedTerminalFold,
 };
 pub(super) use materialize::materialized_entries_for_specs;
 pub use materialize::MaterializedEntry;
@@ -240,11 +239,11 @@ fn geometry(p: &CommittedGroupParams) -> GeneratedBlockGeometry {
 fn committed_group(p: &CommittedGroupParams) -> GeneratedCommittedGroup {
     GeneratedCommittedGroup {
         geometry: geometry(p),
-        inner_commit_matrix: GeneratedInnerCommitMatrix {
+        inner_commit_matrix: GeneratedMatrix {
             ring_dimension: p.inner_commit_matrix.ring_dimension() as u32,
             log_basis: p.log_basis_inner,
         },
-        outer_commit_matrix: GeneratedOuterCommitMatrix {
+        outer_commit_matrix: GeneratedMatrix {
             ring_dimension: p.outer_commit_matrix.ring_dimension() as u32,
             log_basis: p.log_basis_outer,
         },
@@ -252,19 +251,10 @@ fn committed_group(p: &CommittedGroupParams) -> GeneratedCommittedGroup {
     }
 }
 
-fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedOpenCommitMatrix {
-    GeneratedOpenCommitMatrix {
+fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedMatrix {
+    GeneratedMatrix {
         ring_dimension: p.ring_dimension() as u32,
         log_basis,
-    }
-}
-
-fn runtime_witness_partition(num_chunks: usize) -> GeneratedWitnessPartition {
-    match num_chunks {
-        1 => GeneratedWitnessPartition::Single,
-        num_chunks => GeneratedWitnessPartition::Distributed {
-            num_chunks: num_chunks as u32,
-        },
     }
 }
 
@@ -317,7 +307,7 @@ fn generated_entry(
                 .setup_prefix
                 .as_ref()
                 .map(setup_prefix_slot_input),
-            witness_partition: runtime_witness_partition(step.params.witness_chunk.num_chunks),
+            witness_chunks: step.params.witness_chunk.num_chunks as u32,
         })
         .collect::<Vec<_>>();
     let terminal_group = schedule
@@ -344,7 +334,7 @@ fn generated_entry(
                 &root_fold.open_commit_matrix,
                 root_params.log_basis_open,
             ),
-            witness_partition: runtime_witness_partition(root_fold.witness_chunk.num_chunks),
+            witness_chunks: root_fold.witness_chunk.num_chunks as u32,
         },
         recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),
         terminal: GeneratedTerminalFold {
@@ -354,7 +344,7 @@ fn generated_entry(
                 positions_per_block: schedule.terminal.blocks.positions_per_block as u64,
                 live_blocks: schedule.terminal.blocks.live_blocks as u64,
             },
-            inner_commit_matrix: GeneratedInnerCommitMatrix {
+            inner_commit_matrix: GeneratedMatrix {
                 ring_dimension: schedule.terminal.inner.matrix.ring_dimension() as u32,
                 log_basis: schedule.terminal.inner.digits.log_basis,
             },
@@ -467,7 +457,7 @@ fn emit_geometry(value: GeneratedBlockGeometry) -> String {
 
 fn emit_committed_group(value: GeneratedCommittedGroup) -> String {
     format!(
-        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedOuterCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_slice_count: {} }}",
+        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_slice_count: {} }}",
         emit_geometry(value.geometry),
         value.inner_commit_matrix.ring_dimension,
         value.inner_commit_matrix.log_basis,
@@ -477,20 +467,11 @@ fn emit_committed_group(value: GeneratedCommittedGroup) -> String {
     )
 }
 
-fn emit_open_matrix(value: GeneratedOpenCommitMatrix) -> String {
+fn emit_open_matrix(value: GeneratedMatrix) -> String {
     format!(
-        "GeneratedOpenCommitMatrix {{ ring_dimension: {}, log_basis: {} }}",
+        "GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}",
         value.ring_dimension, value.log_basis
     )
-}
-
-fn emit_partition(value: GeneratedWitnessPartition) -> String {
-    match value {
-        GeneratedWitnessPartition::Single => "GeneratedWitnessPartition::Single".to_string(),
-        GeneratedWitnessPartition::Distributed { num_chunks } => {
-            format!("GeneratedWitnessPartition::Distributed {{ num_chunks: {num_chunks} }}")
-        }
-    }
 }
 
 fn emit_payload_mode(value: akita_types::CommitmentPayloadMode) -> &'static str {
@@ -606,8 +587,8 @@ fn emit_schedule_entry(
     .map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "            witness_partition: {},",
-        emit_partition(entry.root.witness_partition),
+        "            witness_chunks: {},",
+        entry.root.witness_chunks,
     )
     .map_err(|e| e.to_string())?;
     writeln!(out, "        }},").map_err(|e| e.to_string())?;
@@ -618,7 +599,7 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ payload_mode: {}, opening_method: {}, witness: {}, num_digits_fold: {}, response_l2_sq_cap: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, opening_method: {}, witness: {}, num_digits_fold: {}, response_l2_sq_cap: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_chunks: {} }},",
                 emit_payload_mode(fold.payload_mode),
                 emit_opening_method(fold.opening_method),
                 emit_committed_group(fold.witness),
@@ -629,7 +610,7 @@ fn emit_schedule_entry(
                 ),
                 emit_open_matrix(fold.open_commit_matrix),
                 emit_setup_prefix(fold.incoming_setup_prefix),
-                emit_partition(fold.witness_partition),
+                fold.witness_chunks,
             )
             .map_err(|e| e.to_string())?;
         }
@@ -637,7 +618,7 @@ fn emit_schedule_entry(
     }
     writeln!(
         out,
-        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, fold_log_basis: {}, fold_digit_count: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, fold_log_basis: {}, fold_digit_count: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, response_l2_sq_cap: {}, z_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
         emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
@@ -829,14 +810,14 @@ pub(super) fn emit_family_module_from_entries(
     writeln!(
         out,
         "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedBlockGeometry, \
-         GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, \
-         GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix, GeneratedRecursiveFold, \
+         GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedMatrix, \
+         GeneratedRecursiveFold, \
          GeneratedRootFinalGroup, GeneratedRootFold, \
          GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
-         GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
+         GeneratedSetupPrefixInput, GeneratedTerminalFold, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, GroupCommitPhaseParams, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
-         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,\n}};"
+         CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \n}};"
     )
     .map_err(|e| e.to_string())?;
     writeln!(out).map_err(|e| e.to_string())?;

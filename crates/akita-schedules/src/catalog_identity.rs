@@ -18,8 +18,8 @@ use akita_types::{
 
 use crate::generated::{
     generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
-    GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix, GeneratedScheduleCatalogIdentity,
-    GeneratedScheduleTable, GeneratedWitnessPartition,
+    GeneratedFoldScheduleEntry, GeneratedMatrix, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleTable,
 };
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
@@ -571,13 +571,13 @@ fn entries_key_digest_with_setup_prefix_content_mode(
             write_opening_method(&mut h, group.opening_method);
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
-        write_generated_partition(&mut h, entry.root.witness_partition);
+        write_generated_partition(&mut h, entry.root.witness_chunks);
         h.write_u64(entry.recursive_folds.len() as u64);
         for fold in entry.recursive_folds {
             write_opening_method(&mut h, fold.opening_method);
             write_generated_group(&mut h, fold.witness);
             write_generated_open_matrix(&mut h, fold.open_commit_matrix);
-            write_generated_partition(&mut h, fold.witness_partition);
+            write_generated_partition(&mut h, fold.witness_chunks);
             h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
             if let Some(prefix) = fold.incoming_setup_prefix {
                 if write_full_prefix_content_mode {
@@ -624,19 +624,13 @@ fn write_generated_group(h: &mut Fnv64, value: GeneratedCommittedGroup) {
     h.write_u64(u64::from(value.outer_slice_count));
 }
 
-fn write_generated_open_matrix(h: &mut Fnv64, value: GeneratedOpenCommitMatrix) {
+fn write_generated_open_matrix(h: &mut Fnv64, value: GeneratedMatrix) {
     h.write_u64(u64::from(value.ring_dimension));
     h.write_u64(u64::from(value.log_basis));
 }
 
-fn write_generated_partition(h: &mut Fnv64, value: GeneratedWitnessPartition) {
-    match value {
-        GeneratedWitnessPartition::Single => h.write_u64(1),
-        GeneratedWitnessPartition::Distributed { num_chunks } => {
-            h.write_u64(2);
-            h.write_u64(u64::from(num_chunks));
-        }
-    }
+fn write_generated_partition(h: &mut Fnv64, witness_chunks: u32) {
+    h.write_u64(u64::from(witness_chunks));
 }
 
 fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
