@@ -502,6 +502,25 @@ the descriptor fixtures as the oracle; only slice 4 changes what is stored.
    `final_group()` / `groups()` stop being views. This is the slice that
    satisfies the acceptance criterion and should land the projected sizes.
 
+**Slice 1 recipe, validated to 47 remaining errors.** The read rewrite is
+mechanical and safe in bulk; the construction sites are not. In order:
+
+1. Replace the six flat fields in `CommittedGroupParams` with
+   `pub inner: crate::InnerRoleParams` and `pub outer: crate::OuterRoleParams`.
+2. Rewrite reads across every non-generated `.rs` file, longest pattern first:
+   `.log_basis_inner` → `.inner.digits.log_basis`, `.num_digits_inner` →
+   `.inner.digits.num_digits`, `.inner_commit_matrix` → `.inner.matrix`, and
+   the three `outer` equivalents. This touches ~106 files.
+3. **Immediately undo the substring damage**: step 2 also rewrites
+   `.inner_commit_matrix_params()` into `.inner.matrix_params()`, because the
+   field name is a prefix of the accessor name. Restore
+   `.inner_commit_matrix_params(` and `.outer_commit_matrix_params(`. This is
+   31 of the errors step 2 produces.
+4. What remains is ~47 errors, almost all `E0560` struct-literal construction
+   sites where three formerly-separate fields must become one
+   `RoleParams::new(GadgetDigits::new(log_basis, num_digits), matrix)`. These
+   need hand conversion; there is no safe substitution for them.
+
 **Two cautions, both learned the hard way on this branch.** Verify every slice
 under the *test job's* feature set —
 `parallel,disk-persistence,schedules-default,catalog-gen,transcript-blake2b` —
