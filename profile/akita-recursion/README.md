@@ -23,7 +23,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
-crate pins, `f823a9f854f0...`). The first prove run downloads a ~30 GB
+crate pins, `c4207de4b9c7...`). The first prove run downloads a ~30 GB
 Dory PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on
 first run, instant on subsequent).
 
@@ -171,14 +171,20 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 ## Trusted fp128 field decode
 
-The trusted benchmark decoder keeps the byte wire format and validates every
-fp128 value canonically. It views the checked matrix payload as pairs of
-little-endian `u64` words. When the payload address is eight-byte aligned, the
-decoder reads it directly and the RISC V loop uses two aligned loads per
-field. When an outer input ABI places the same bytes at a different alignment,
-the decoder uses unaligned reads directly without a payload-sized staging
-allocation. Alignment therefore selects the load primitive; it does not decide
-whether otherwise valid wire bytes are accepted or change the memory envelope.
+Blob version 4 puts an explicit, bounded zero-padding record before the setup
+matrix. The host chooses the smallest padding that aligns the matrix payload
+inside Jolt's Postcard-encoded byte-slice input. The decoder checks the padding
+count, every padding byte, and the alignment calculation before it reads the
+matrix. This keeps transcript domains independent of memory layout.
+
+The trusted benchmark decoder validates every fp128 value canonically. It
+views the checked matrix payload as pairs of little-endian `u64` words. When
+the payload address is eight-byte aligned, the decoder reads it directly and
+the RISC V loop uses two aligned loads per field. When an outer input ABI
+places the same bytes at a different alignment, the decoder uses unaligned
+reads directly without a payload-sized staging allocation. Alignment therefore
+selects the load primitive; it does not decide whether otherwise valid wire
+bytes are accepted or change the memory envelope.
 
 The specialized decoder is used only by the explicitly trusted cached-matrix
 path. Strict setup decoding remains unchanged and still derives the public

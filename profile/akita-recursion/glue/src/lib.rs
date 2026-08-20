@@ -11,7 +11,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 use akita_config::CommitmentConfig;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -45,11 +45,66 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
-const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv3";
+const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv4";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 const MAX_BLOB_GROUPS: usize = 16;
 const MAX_BLOB_OPENINGS_PER_GROUP: usize = 16;
+const SETUP_MATRIX_WIRE_ALIGNMENT: usize = 8;
+const SETUP_MATRIX_LENGTH_BYTES: usize = core::mem::size_of::<u64>();
+const SETUP_MATRIX_MAX_PADDING_BYTES: usize = 15;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BlobEncodingLayout {
+    encoded_size: usize,
+    setup_matrix_padding: usize,
+}
+
+fn postcard_length_prefix_bytes(mut value: usize) -> usize {
+    let mut bytes = 1;
+    while value >= 0x80 {
+        value >>= 7;
+        bytes += 1;
+    }
+    bytes
+}
+
+fn setup_matrix_padding(
+    unpadded_blob_len: usize,
+    padding_record_offset: usize,
+) -> Result<usize, SerializationError> {
+    for padding in 0..=SETUP_MATRIX_MAX_PADDING_BYTES {
+        let record_len = padding.checked_add(1).ok_or_else(|| {
+            SerializationError::InvalidData(
+                "akita-jolt setup matrix padding length overflow".to_string(),
+            )
+        })?;
+        let encoded_blob_len = unpadded_blob_len.checked_add(record_len).ok_or_else(|| {
+            SerializationError::InvalidData("akita-jolt blob length overflow".to_string())
+        })?;
+        let matrix_payload_offset = padding_record_offset
+            .checked_add(record_len)
+            .and_then(|offset| offset.checked_add(SETUP_MATRIX_LENGTH_BYTES))
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "akita-jolt setup matrix payload offset overflow".to_string(),
+                )
+            })?;
+        let framed_matrix_offset = postcard_length_prefix_bytes(encoded_blob_len)
+            .checked_add(matrix_payload_offset)
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "akita-jolt framed setup matrix offset overflow".to_string(),
+                )
+            })?;
+        if framed_matrix_offset.is_multiple_of(SETUP_MATRIX_WIRE_ALIGNMENT) {
+            return Ok(padding);
+        }
+    }
+    Err(SerializationError::InvalidData(
+        "akita-jolt could not align the setup matrix in the Postcard input frame".to_string(),
+    ))
+}
 
 fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
     if rest.is_empty() {
@@ -173,14 +228,15 @@ where
             })?,
             self.opening_point.len(),
         )?;
-        let encoded_size = self.encoded_size();
+        let layout = self.encoding_layout()?;
+        let encoded_size = layout.encoded_size;
         if encoded_size as u64 > MAX_JOLT_BLOB_BYTES {
             return Err(SerializationError::LengthLimitExceeded {
                 len: encoded_size as u64,
                 max: MAX_JOLT_BLOB_BYTES as usize,
             });
         }
-        let mut bytes = Vec::with_capacity(self.encoded_size());
+        let mut bytes = Vec::with_capacity(encoded_size);
         bytes.extend_from_slice(&BLOB_MAGIC);
         // D is encoded so the guest can fail loudly on a mismatched
         // monomorphization.
@@ -210,36 +266,98 @@ where
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
+            .expanded
+            .seed
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        bytes.push(u8::try_from(layout.setup_matrix_padding).map_err(|_| {
+            SerializationError::InvalidData(
+                "akita-jolt setup matrix padding does not fit u8".to_string(),
+            )
+        })?);
+        bytes.resize(
+            bytes
+                .len()
+                .checked_add(layout.setup_matrix_padding)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "akita-jolt setup matrix padding overflow".to_string(),
+                    )
+                })?,
+            0,
+        );
+        self.verifier_setup
+            .expanded
+            .shared_matrix
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        self.verifier_setup
+            .prefix_slots
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.proof_shape
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.proof.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        if bytes.len() != encoded_size {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt encoded-size mismatch: expected {encoded_size}, wrote {}",
+                bytes.len()
+            )));
+        }
         Ok(bytes)
     }
 
-    /// Total encoded size in bytes (cheap pre-allocation sizing).
-    pub fn encoded_size(&self) -> usize {
-        BLOB_MAGIC.len()
-            + (D as u64).serialized_size(BLOB_COMPRESS)
-            + self.transcript_domain.serialized_size(BLOB_COMPRESS)
-            + self.num_vars.serialized_size(BLOB_COMPRESS)
-            + self.opening_point.serialized_size(BLOB_COMPRESS)
-            + self.openings.serialized_size(BLOB_COMPRESS)
-            + self
-                .precommitted_groups
-                .iter()
-                .map(|group| {
-                    group.opening_point.serialized_size(BLOB_COMPRESS)
-                        + group.openings.serialized_size(BLOB_COMPRESS)
-                        + group.commitment.serialized_size(BLOB_COMPRESS)
-                })
-                .sum::<usize>()
-            + (self.precommitted_groups.len() as u64).serialized_size(BLOB_COMPRESS)
-            + self.schedule_selection.serialized_size(BLOB_COMPRESS)
-            + self.commitment.serialized_size(BLOB_COMPRESS)
-            + self.verifier_setup.serialized_size(BLOB_COMPRESS)
-            + self.proof_shape.serialized_size(BLOB_COMPRESS)
-            + self.proof.serialized_size(BLOB_COMPRESS)
+    fn encoding_layout(&self) -> Result<BlobEncodingLayout, SerializationError> {
+        let groups_size = checked::sum(self.precommitted_groups.iter().flat_map(|group| {
+            [
+                group.opening_point.serialized_size(BLOB_COMPRESS),
+                group.openings.serialized_size(BLOB_COMPRESS),
+                group.commitment.serialized_size(BLOB_COMPRESS),
+            ]
+        }))
+        .ok_or_else(|| {
+            SerializationError::InvalidData("akita-jolt opening-group size overflow".to_string())
+        })?;
+        let padding_record_offset = checked::sum([
+            BLOB_MAGIC.len(),
+            (D as u64).serialized_size(BLOB_COMPRESS),
+            self.transcript_domain.serialized_size(BLOB_COMPRESS),
+            self.num_vars.serialized_size(BLOB_COMPRESS),
+            self.opening_point.serialized_size(BLOB_COMPRESS),
+            self.openings.serialized_size(BLOB_COMPRESS),
+            (self.precommitted_groups.len() as u64).serialized_size(BLOB_COMPRESS),
+            groups_size,
+            self.schedule_selection.serialized_size(BLOB_COMPRESS),
+            self.commitment.serialized_size(BLOB_COMPRESS),
+            self.verifier_setup
+                .expanded
+                .seed
+                .serialized_size(BLOB_COMPRESS),
+        ])
+        .ok_or_else(|| {
+            SerializationError::InvalidData("akita-jolt blob prefix size overflow".to_string())
+        })?;
+        let unpadded_size = checked::sum([
+            padding_record_offset,
+            self.verifier_setup
+                .expanded
+                .shared_matrix
+                .serialized_size(BLOB_COMPRESS),
+            self.verifier_setup
+                .prefix_slots
+                .serialized_size(BLOB_COMPRESS),
+            self.proof_shape.serialized_size(BLOB_COMPRESS),
+            self.proof.serialized_size(BLOB_COMPRESS),
+        ])
+        .ok_or_else(|| {
+            SerializationError::InvalidData("akita-jolt blob size overflow".to_string())
+        })?;
+        let setup_matrix_padding = setup_matrix_padding(unpadded_size, padding_record_offset)?;
+        let encoded_size =
+            checked::sum([unpadded_size, 1, setup_matrix_padding]).ok_or_else(|| {
+                SerializationError::InvalidData("akita-jolt blob size overflow".to_string())
+            })?;
+        Ok(BlobEncodingLayout {
+            encoded_size,
+            setup_matrix_padding,
+        })
     }
 }
 
@@ -401,6 +519,7 @@ where
 
     fn decode_seed_and_matrix_with(
         rest: &mut &[u8],
+        total_blob_len: usize,
         decode_matrix: impl FnOnce(&mut &[u8], usize) -> Result<FlatMatrix<F>, SerializationError>,
     ) -> Result<(AkitaSetupDescriptor, FlatMatrix<F>), SerializationError> {
         let seed = AkitaSetupDescriptor::deserialize_with_mode(
@@ -416,9 +535,63 @@ where
                 max: MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
             });
         }
+        Self::decode_setup_matrix_padding(rest, total_blob_len)?;
         Self::check_setup_matrix_bytes_available(rest, matrix_fields)?;
         let shared_matrix = decode_matrix(rest, seed.num_field_elements)?;
         Ok((seed, shared_matrix))
+    }
+
+    fn decode_setup_matrix_padding(
+        rest: &mut &[u8],
+        total_blob_len: usize,
+    ) -> Result<(), SerializationError> {
+        let padding_record_offset = total_blob_len.checked_sub(rest.len()).ok_or_else(|| {
+            SerializationError::InvalidData(
+                "akita-jolt setup matrix padding offset is outside the blob".to_string(),
+            )
+        })?;
+        let (&encoded_padding, tail) = rest.split_first().ok_or_else(|| {
+            SerializationError::InvalidData(
+                "akita-jolt setup matrix padding record is missing".to_string(),
+            )
+        })?;
+        let padding = usize::from(encoded_padding);
+        if padding > SETUP_MATRIX_MAX_PADDING_BYTES {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt setup matrix padding {padding} exceeds {SETUP_MATRIX_MAX_PADDING_BYTES}"
+            )));
+        }
+        if tail.len() < padding {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt setup matrix padding claims {padding} bytes but only {} remain",
+                tail.len()
+            )));
+        }
+        let (padding_bytes, matrix_bytes) = tail.split_at(padding);
+        if padding_bytes.iter().any(|byte| *byte != 0) {
+            return Err(SerializationError::InvalidData(
+                "akita-jolt setup matrix padding must be zero".to_string(),
+            ));
+        }
+        let unpadded_blob_len = total_blob_len
+            .checked_sub(padding.checked_add(1).ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "akita-jolt setup matrix padding length overflow".to_string(),
+                )
+            })?)
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "akita-jolt setup matrix padding exceeds the blob".to_string(),
+                )
+            })?;
+        let expected_padding = setup_matrix_padding(unpadded_blob_len, padding_record_offset)?;
+        if padding != expected_padding {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt setup matrix padding {padding} does not match expected {expected_padding}"
+            )));
+        }
+        *rest = matrix_bytes;
+        Ok(())
     }
 
     fn decode_prefix_slots(
@@ -434,7 +607,10 @@ where
 
     fn decode_from_bytes_with_setup<Cfg>(
         bytes: &[u8],
-        decode_setup: impl FnOnce(&mut &[u8]) -> Result<AkitaVerifierSetup<F>, SerializationError>,
+        decode_setup: impl FnOnce(
+            &mut &[u8],
+            usize,
+        ) -> Result<AkitaVerifierSetup<F>, SerializationError>,
     ) -> Result<Self, SerializationError>
     where
         Cfg: CommitmentConfig<Field = F, ExtField = F>,
@@ -497,7 +673,7 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
-        let verifier_setup = decode_setup(&mut rest)?;
+        let verifier_setup = decode_setup(&mut rest, bytes.len())?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
@@ -571,9 +747,10 @@ where
 {
     fn deserialize_strict_host_setup(
         rest: &mut &[u8],
+        total_blob_len: usize,
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
         let (seed, shared_matrix) =
-            Self::decode_seed_and_matrix_with(rest, |rest, matrix_fields| {
+            Self::decode_seed_and_matrix_with(rest, total_blob_len, |rest, matrix_fields| {
                 FlatMatrix::<F>::deserialize_with_expected_shape(
                     &mut *rest,
                     BLOB_COMPRESS,
@@ -698,10 +875,73 @@ mod tests {
     #[test]
     fn previous_blob_version_is_rejected_at_the_magic_boundary() {
         let mut bytes = blob_prefix();
-        bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv2");
+        bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv3");
         let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes)
-            .expect_err("v2 blob must not reach payload decoding");
+            .expect_err("v3 blob must not reach payload decoding");
         assert!(error.to_string().contains("magic mismatch"));
+    }
+
+    #[test]
+    fn setup_matrix_padding_aligns_across_postcard_length_boundaries() {
+        assert_eq!(
+            SETUP_MATRIX_LENGTH_BYTES,
+            0usize.serialized_size(BLOB_COMPRESS)
+        );
+        for boundary in [128usize, 16_384, 2_097_152, 268_435_456] {
+            for unpadded_blob_len in (boundary - 16)..(boundary + 16) {
+                for padding_record_offset in 0..SETUP_MATRIX_WIRE_ALIGNMENT {
+                    let padding = setup_matrix_padding(unpadded_blob_len, padding_record_offset)
+                        .expect("bounded alignment padding");
+                    assert!(padding <= SETUP_MATRIX_MAX_PADDING_BYTES);
+                    let encoded_blob_len = unpadded_blob_len + 1 + padding;
+                    let matrix_payload_offset =
+                        padding_record_offset + 1 + padding + SETUP_MATRIX_LENGTH_BYTES;
+                    assert!((postcard_length_prefix_bytes(encoded_blob_len)
+                        + matrix_payload_offset)
+                        .is_multiple_of(SETUP_MATRIX_WIRE_ALIGNMENT));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn setup_matrix_padding_record_is_canonical_and_zeroed() {
+        let bytes = [
+            u8::try_from(SETUP_MATRIX_MAX_PADDING_BYTES + 1).expect("test padding count fits u8")
+        ];
+        let mut rest = &bytes[..];
+        let error =
+            AkitaJoltInputs::<TestF, TEST_D>::decode_setup_matrix_padding(&mut rest, bytes.len())
+                .expect_err("padding count must be bounded");
+        assert!(error.to_string().contains("exceeds"));
+
+        let unpadded_blob_len = 120;
+        let padding_record_offset = 6;
+        let noncanonical_padding = 7;
+        let total_blob_len = unpadded_blob_len + 1 + noncanonical_padding;
+        let mut bytes = vec![0u8; total_blob_len];
+        bytes[padding_record_offset] = noncanonical_padding as u8;
+        let mut rest = &bytes[padding_record_offset..];
+        let error = AkitaJoltInputs::<TestF, TEST_D>::decode_setup_matrix_padding(
+            &mut rest,
+            total_blob_len,
+        )
+        .expect_err("the smallest valid padding is canonical");
+        assert!(error.to_string().contains("does not match expected 0"));
+
+        let padding = setup_matrix_padding(200, 0).expect("alignment padding");
+        assert!(padding > 0);
+        let total_blob_len = 200 + 1 + padding;
+        let mut bytes = vec![0u8; total_blob_len];
+        bytes[0] = padding as u8;
+        bytes[1] = 1;
+        let mut rest = &bytes[..];
+        let error = AkitaJoltInputs::<TestF, TEST_D>::decode_setup_matrix_padding(
+            &mut rest,
+            total_blob_len,
+        )
+        .expect_err("padding bytes must be zero");
+        assert!(error.to_string().contains("must be zero"));
     }
 
     #[test]
@@ -776,6 +1016,17 @@ mod tests {
 
         let mut bytes = Vec::new();
         seed.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
+        let padding_record_offset = bytes.len();
+        let unpadded_blob_len = checked::sum([
+            padding_record_offset,
+            shared_matrix.serialized_size(BLOB_COMPRESS),
+            prefix_slots.serialized_size(BLOB_COMPRESS),
+        ])
+        .expect("test setup size");
+        let padding = setup_matrix_padding(unpadded_blob_len, padding_record_offset)
+            .expect("test setup alignment");
+        bytes.push(padding as u8);
+        bytes.resize(bytes.len() + padding, 0);
         shared_matrix
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
             .unwrap();
@@ -784,8 +1035,12 @@ mod tests {
             .unwrap();
 
         let mut rest = &bytes[..];
-        let decoded = AkitaJoltInputs::<TestF, TEST_D>::deserialize_strict_host_setup(&mut rest)
-            .expect("decode setup");
+        let total_blob_len = bytes.len();
+        let decoded = AkitaJoltInputs::<TestF, TEST_D>::deserialize_strict_host_setup(
+            &mut rest,
+            total_blob_len,
+        )
+        .expect("decode setup");
 
         assert!(rest.is_empty());
         assert!(decoded.prefix_slots.get(&id).is_some());

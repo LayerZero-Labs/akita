@@ -53,10 +53,7 @@ where
                 let pair = if ALIGNED {
                     (word_ptr.read(), word_ptr.add(1).read())
                 } else {
-                    (
-                        word_ptr.read_unaligned(),
-                        word_ptr.add(1).read_unaligned(),
-                    )
+                    (word_ptr.read_unaligned(), word_ptr.add(1).read_unaligned())
                 };
                 word_ptr = word_ptr.add(FP128_WORDS);
                 pair
@@ -108,9 +105,13 @@ where
 
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],
+        total_blob_len: usize,
     ) -> Result<AkitaVerifierSetup<Fp128<P>>, SerializationError> {
-        let (seed, shared_matrix) =
-            Self::decode_seed_and_matrix_with(rest, Self::deserialize_trusted_fp128_setup_matrix)?;
+        let (seed, shared_matrix) = Self::decode_seed_and_matrix_with(
+            rest,
+            total_blob_len,
+            Self::deserialize_trusted_fp128_setup_matrix,
+        )?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
         AkitaVerifierSetup::from_parts(
             Arc::new(
