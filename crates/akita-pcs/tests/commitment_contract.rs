@@ -23,7 +23,9 @@ use akita_prover::compute::{
 use akita_prover::{
     AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext, UniformProverStack,
 };
-use akita_types::{CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
+use akita_types::{
+    CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout, PolynomialGroupLayout,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Cfg = fp64::Dense;
@@ -257,4 +259,35 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     .expect_err("malformed explicit params must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn scheduler_precommit_uses_the_catalog_profile() {
+    let len = 1usize << CONTRACT_NUM_VARS;
+    let evals = (0..len)
+        .map(|index| F::from_u64(index as u64 + 1))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals)
+        .expect("catalog precommit polynomial");
+    let group = PolynomialGroupLayout::singleton(CONTRACT_NUM_VARS);
+    let expected = Cfg::precommit_profile(group).expect("catalog precommit profile");
+    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
+        .expect("setup");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepared setup");
+    let stack =
+        UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
+            .expect("prover stack");
+
+    let output = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
+        std::slice::from_ref(&poly),
+        setup.expanded.as_ref(),
+        &stack,
+        GroupContext::scheduler_precommit(),
+    )
+    .expect("catalog precommit");
+
+    assert_eq!(*output.committed_group.profile(), expected);
 }

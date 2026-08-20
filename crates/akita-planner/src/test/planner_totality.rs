@@ -222,3 +222,38 @@ fn valid_small_grouped_root_has_a_schedule() {
         .validate_structure()
         .expect("the grouped fallback schedule must pass structural validation");
 }
+
+#[test]
+fn exact_partial_ring_precommit_has_a_grouped_schedule() {
+    let policy = policy_of::<Dense>();
+    let precommitted_group = PolynomialGroupLayout::singleton(4);
+    let profile = plan_precommit_profile(
+        precommitted_group,
+        honest_fold_policy_of::<Dense>(),
+        &policy,
+    )
+    .expect("plan an exact sixteen-cell commitment profile");
+
+    assert_eq!(profile.group, precommitted_group);
+    assert_eq!(profile.num_live_ring_elements_per_claim, 1);
+    assert!(profile.inner_commit_matrix.ring_dimension() > 16);
+
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::singleton(16),
+        precommitteds: vec![profile],
+    };
+    let schedule = find_schedule(
+        &key,
+        honest_fold_policy_of::<Dense>(),
+        &[honest_fold_policy_of::<Dense>()],
+        &policy,
+        Dense::ring_challenge_config,
+    )
+    .expect("open the exact partial-ring precommit under a grouped schedule");
+
+    assert_eq!(schedule.schedule.root.params.precommitted_groups.len(), 1);
+    schedule
+        .schedule
+        .validate_structure()
+        .expect("partial-ring grouped schedule must validate");
+}

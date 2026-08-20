@@ -307,6 +307,65 @@ pub fn resolve_generated_schedule_selection(
     })
 }
 
+/// Resolve the unique catalog-authorized profile for a group committed before
+/// a later multi-group opening.
+///
+/// A matching scalar row is the producer's canonical profile and takes
+/// precedence over grouped rows, which may contain a different producer with
+/// the same logical layout. When no scalar row exists, grouped rows authorize
+/// exact partial-ring profiles. Repeated equal profiles within either class
+/// are accepted, while conflicts within the selected class are rejected.
+pub fn resolve_generated_precommit_profile(
+    group: akita_types::PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+    catalog: Option<GeneratedScheduleTable>,
+) -> Result<CommittedGroupProfile, AkitaError> {
+    group.validate()?;
+    validate_policy(policy)?;
+    let table = catalog.ok_or_else(|| {
+        AkitaError::UnsupportedSchedule("schedule catalog is not enabled".to_string())
+    })?;
+    let catalog = materialized_catalog(table, policy, &ring_challenge_config)?;
+    let mut scalar = None;
+    for row in &catalog.rows_by_digest {
+        let profiles = row.profiles();
+        if profiles.precommitteds.is_empty() && profiles.final_group.group == group {
+            if scalar.is_some_and(|existing| existing != profiles.final_group) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "generated catalog contains conflicting scalar precommit profiles for {group:?}"
+                )));
+            }
+            scalar = Some(profiles.final_group);
+        }
+    }
+    if let Some(profile) = scalar {
+        return Ok(profile);
+    }
+
+    let mut partial = None;
+    for row in &catalog.rows_by_digest {
+        for candidate in row
+            .profiles()
+            .precommitteds
+            .iter()
+            .filter(|candidate| candidate.group == group)
+        {
+            if partial.is_some_and(|existing| existing != *candidate) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "generated catalog contains conflicting partial precommit profiles for {group:?}"
+                )));
+            }
+            partial = Some(*candidate);
+        }
+    }
+    partial.ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "no generated precommit profile for group {group:?}"
+        ))
+    })
+}
+
 fn resolve_generated_catalog_row_matching(
     key: &AkitaScheduleLookupKey,
     exact_profiles: Option<&CommittedGroupBatchProfile>,

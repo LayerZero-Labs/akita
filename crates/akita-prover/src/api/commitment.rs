@@ -59,6 +59,9 @@ impl PrecommittedGroupContext<'_> {
 enum GroupParameterSource<'a> {
     /// Select an existing scalar or grouped row from the generated catalog.
     Scheduler,
+    /// Select the exact profile authorized for a group committed before a
+    /// later multi-group opening.
+    PrecommitProfile,
     /// Use caller-supplied root parameters without catalog selection.
     Explicit(&'a CommittedGroupParams),
 }
@@ -88,6 +91,16 @@ impl<'a> GroupContext<'a> {
         Self {
             precommitted_groups: PrecommittedGroupContext::WithPrecommittedGroups(precommitteds),
             parameter_source: GroupParameterSource::Scheduler,
+        }
+    }
+
+    /// Select the catalog-authorized profile for a group committed before a
+    /// later multi-group opening.
+    #[must_use]
+    pub const fn scheduler_precommit() -> Self {
+        Self {
+            precommitted_groups: PrecommittedGroupContext::NoPrecommittedGroups,
+            parameter_source: GroupParameterSource::PrecommitProfile,
         }
     }
 
@@ -149,6 +162,23 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
             num_digits_outer: params.num_digits_outer,
             outer_matrix: &params.outer_commit_matrix,
             outer_slice_count: params.outer_slice_count,
+        }
+    }
+}
+
+impl<'a> From<&'a CommittedGroupProfile> for CommitmentGeometry<'a> {
+    fn from(profile: &'a CommittedGroupProfile) -> Self {
+        Self {
+            context: "catalog precommit profile",
+            num_positions_per_block: profile.num_positions_per_block,
+            num_live_blocks: profile.num_live_blocks,
+            log_basis_inner: profile.log_basis_inner,
+            num_digits_inner: profile.num_digits_inner,
+            inner_matrix: &profile.inner_commit_matrix,
+            log_basis_outer: profile.log_basis_outer,
+            num_digits_outer: profile.num_digits_outer,
+            outer_matrix: &profile.outer_commit_matrix,
+            outer_slice_count: profile.outer_slice_count,
         }
     }
 }
@@ -561,11 +591,44 @@ fn validate_explicit_context(
     CommittedGroupProfile::try_from_params(group_layout, params)
 }
 
+fn validate_precommit_profile<F>(
+    group_layout: akita_types::PolynomialGroupLayout,
+    profile: &CommittedGroupProfile,
+    setup: &AkitaExpandedSetup<F>,
+) -> Result<akita_types::CommitmentSliceGeometry, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if profile.group != group_layout {
+        return Err(AkitaError::InvalidSetup(
+            "catalog precommit profile does not match the committed group".into(),
+        ));
+    }
+    profile.validate_frozen_precommit(
+        profile
+            .inner_commit_matrix
+            .sis_modulus_profile()
+            .field_bits(),
+    )?;
+    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+        profile.outer_slice_count,
+        profile.num_live_blocks,
+        group_layout.num_polynomials(),
+        profile.inner_commit_matrix.output_rank(),
+        profile.num_digits_outer,
+        profile.inner_commit_matrix.ring_dimension(),
+        profile.outer_commit_matrix.ring_dimension(),
+    )?;
+    validate_commitment_geometry::<F>(profile.into(), setup)?;
+    Ok(slice_geometry)
+}
+
 /// Commit one homogeneous polynomial group in its complete parameter context.
 ///
-/// Scheduler contexts select an existing S or G catalog row. Explicit
+/// Scheduler contexts select an existing S or G catalog row. Precommit
+/// contexts select an exact profile from the same generated catalog. Explicit
 /// contexts validate caller-supplied root parameters without catalog lookup.
-/// Root commitments always consume the canonical coefficient table.
+/// Commitments always consume the canonical coefficient table.
 ///
 /// # Errors
 ///
@@ -595,12 +658,36 @@ where
     let group_layout = opening_layout.root_final_group_layout()?;
 
     let scheduled_row;
-    let (params, profile): (&CommittedGroupParams, CommittedGroupProfile) =
-        if let GroupParameterSource::Explicit(params) = context.parameter_source {
-            let profile =
-                validate_explicit_context(group_layout, context.precommitted_groups, params)?;
-            (params, profile)
-        } else {
+    let profile;
+    let geometry;
+    let slice_geometry;
+    match context.parameter_source {
+        GroupParameterSource::PrecommitProfile => {
+            if !matches!(
+                context.precommitted_groups,
+                PrecommittedGroupContext::NoPrecommittedGroups
+            ) {
+                return Err(AkitaError::InvalidSetup(
+                    "a precommit profile cannot carry earlier commitment groups".into(),
+                ));
+            }
+            profile = Cfg::precommit_profile(group_layout)?;
+            slice_geometry =
+                validate_precommit_profile::<Cfg::Field>(group_layout, &profile, expanded)?;
+            geometry = (&profile).into();
+        }
+        GroupParameterSource::Explicit(params) => {
+            profile = validate_explicit_context(group_layout, context.precommitted_groups, params)?;
+            slice_geometry =
+                validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
+            geometry = params.into();
+            if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
+                return Err(AkitaError::InvalidSetup(
+                    "root commitments require canonical coefficient-table source encoding".into(),
+                ));
+            }
+        }
+        GroupParameterSource::Scheduler => {
             let key = AkitaScheduleLookupKey {
                 final_group: group_layout,
                 precommitteds: context.precommitted_groups.as_slice().to_vec(),
@@ -625,20 +712,21 @@ where
             // `audit_resolved_schedule` already proved this row's profile
             // agrees with its parameters, so no re-derivation happens here.
             let params = &scheduled_row.schedule().root.params.final_group.commitment;
-            (params, scheduled_row.profiles().final_group)
-        };
+            profile = scheduled_row.profiles().final_group;
+            slice_geometry =
+                validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
+            geometry = params.into();
+            if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
+                return Err(AkitaError::InvalidSetup(
+                    "root commitments require canonical coefficient-table source encoding".into(),
+                ));
+            }
+        }
+    }
 
     let contract = Cfg::committed_source_contract()?;
     ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
 
-    let slice_geometry =
-        validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
-    let geometry: CommitmentGeometry<'_> = params.into();
-    if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
-        return Err(AkitaError::InvalidSetup(
-            "root commitments require canonical coefficient-table source encoding".into(),
-        ));
-    }
     let (commitment, hint) = commit_with_validated_geometry::<Cfg::Field, P, B>(
         polys,
         stack.commit(),

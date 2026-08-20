@@ -360,9 +360,13 @@ cargo run --release -p akita-planner --features catalog-gen \
 The generator expands the cartesian product of the final-group range and every
 precommitted-group range. With no `--precommitted-group` flags, it emits
 final-only scalar rows. With precommitted groups, it emits grouped-root rows and
-the required standalone precommit profile registry rows. Repeating a
-precommitted group preserves its multiplicity in the lookup key, while the
-standalone precommit profile registry remains deduplicated.
+records each exact precommit profile in those rows. When a group has its own
+scalar row, the grouped row uses that same profile. When the logical group is
+too small for a complete standalone opening schedule, the planner sizes its A
+and B commitment profile directly. It does not copy a profile from a different
+group. Repeating a precommitted group preserves its multiplicity in the lookup
+key. Every generated catalog must contain at most one profile for a given
+precommit group.
 
 ## Supported Features
 
