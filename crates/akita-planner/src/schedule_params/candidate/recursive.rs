@@ -238,6 +238,11 @@ impl RecursiveCandidateContext<'_, '_> {
                 continue;
             };
             candidates.push(CommittedGroupParams {
+                // A recursive candidate commits one polynomial over the
+                // witness arriving at its level.
+                group: akita_types::PolynomialGroupLayout::singleton(
+                    akita_types::padded_boolean_opening_vars(request.current_witness_len)?,
+                ),
                 payload_mode: request.payload_mode,
                 source_encoding,
                 opening_method: request.opening.method(),

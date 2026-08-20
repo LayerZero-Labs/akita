@@ -369,11 +369,8 @@ fn build_relation_rhs_layout(
         // Use the layout the opening batch already carries rather than
         // deriving one: it is the authority, and it is correct even for a
         // fixture whose geometry has not been through validate_root_geometry.
-        let opening_geometry = opening_row_geometry(
-            &lp.final_group(*opening_batch.group_layout(group_indices[0])?),
-            lp.source_encoding,
-            extension_degree,
-        )?;
+        let opening_geometry =
+            opening_row_geometry(&lp.final_group(), lp.source_encoding, extension_degree)?;
         let groups = group_indices
             .iter()
             .map(|&group_index| RelationGroupRows {
@@ -418,7 +415,7 @@ fn build_relation_rhs_layout(
         group_index: final_group_index,
         role_dims: final_role_dims,
         opening_geometry: opening_row_geometry(
-            &lp.final_group(*opening_batch.group_layout(final_group_index)?),
+            &lp.final_group(),
             lp.source_encoding,
             extension_degree,
         )?,

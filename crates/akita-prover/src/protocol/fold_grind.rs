@@ -648,20 +648,9 @@ mod tests {
         params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
-        let challenges = draw_group_fold_challenges::<F, F, _>(
-            &mut draw,
-            &params.final_group(akita_types::PolynomialGroupLayout::singleton(
-                params
-                    .blocks
-                    .live_ring_elements_per_claim
-                    .next_power_of_two()
-                    .trailing_zeros() as usize,
-            )),
-            3,
-            2,
-            7,
-        )
-        .unwrap();
+        let challenges =
+            draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 3, 2, 7)
+                .unwrap();
         assert_eq!(draw.draws, 1);
         let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
@@ -710,13 +699,7 @@ mod tests {
             let mut draw = FixedDraw::default();
             assert!(draw_group_fold_challenges::<F, F, _>(
                 &mut draw,
-                &params.final_group(akita_types::PolynomialGroupLayout::singleton(
-                    params
-                        .blocks
-                        .live_ring_elements_per_claim
-                        .next_power_of_two()
-                        .trailing_zeros() as usize,
-                )),
+                &params.final_group(),
                 0,
                 1,
                 0

@@ -244,6 +244,7 @@ impl GeneratedGroup {
         generated_num_digits_fold: u32,
         response_l2_sq_cap: Option<u128>,
         open_commit_matrix: GeneratedMatrix,
+        group: akita_types::PolynomialGroupLayout,
         source: GroupLengthSource,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let num_claims = source.num_claims();
@@ -541,6 +542,7 @@ impl GeneratedGroup {
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {
+            group,
             payload_mode,
             source_encoding: CommittedSourceEncoding::for_producer(
                 opening_method,

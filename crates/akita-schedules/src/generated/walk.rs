@@ -77,6 +77,8 @@ pub(crate) fn walk_generated_schedule_entry(
         entry.root.group.num_digits_fold,
         None,
         entry.root.open_commit_matrix,
+        // The root's own group *is* the row's lookup key.
+        key.final_group,
         length_source,
     )?;
     let distributed_levels = distributed_activation_depth(
@@ -118,6 +120,11 @@ pub(crate) fn walk_generated_schedule_entry(
             fold.group.num_digits_fold,
             fold.response_l2_sq_cap,
             fold.open_commit_matrix,
+            // A recursive fold commits one polynomial over the witness it
+            // receives, so its layout follows from that length.
+            akita_types::PolynomialGroupLayout::singleton(
+                akita_types::padded_boolean_opening_vars(input_witness_len)?,
+            ),
             crate::generated::expand::GroupLengthSource::IncomingWitness {
                 input_witness_len,
                 num_claims: 1,

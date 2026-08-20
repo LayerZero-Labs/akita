@@ -87,6 +87,15 @@ pub fn shared_d_digit_log_basis(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroupParams {
     /// Public B/D payload encoding selected for this fold level.
+    /// Polynomial layout of this fold's own new group.
+    ///
+    /// Stored rather than passed in. Step 5b left it out to avoid threading a
+    /// layout through the `with_decomp` call sites, and the cost was that
+    /// callers each supplied their own: `final_group_scalar` derived
+    /// `singleton(N * d_a)` while the opening batch supplied `(nv, k)`. Those
+    /// agree for a scalar group and disagree for a batched root, so the fold now
+    /// owns the answer instead of every caller guessing it.
+    pub group: crate::PolynomialGroupLayout,
     pub payload_mode: crate::CommitmentPayloadMode,
     /// Physical source encoding authenticated by A and B.
     pub source_encoding: crate::CommittedSourceEncoding,
@@ -260,6 +269,7 @@ impl CommittedGroupParams {
         fold_challenge_config: SparseChallengeConfig,
     ) -> Self {
         Self {
+            group: crate::PolynomialGroupLayout::singleton(0),
             payload_mode: crate::CommitmentPayloadMode::Compressed,
             source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
             opening_method: OpeningMethod::EvaluationTrace,
@@ -767,6 +777,11 @@ impl CommittedGroupParams {
                 "opening group count does not match level params".to_string(),
             ));
         }
+        // No equality check against `opening_batch` here. The batch's final-group
+        // entry is a placeholder in the catalog-validation path -- it arrives as
+        // `(num_vars: 0, num_polynomials: 1)` -- so it is not an authority on
+        // this fold's own group and comparing them rejects every shipped
+        // recursive row.
         for group_index in 0..self.precommitted_group_count() {
             let group_params = self
                 .precommitted_group_params(group_index)
@@ -906,20 +921,17 @@ impl CommittedGroupParams {
             .logical_output_rows(group.profile.outer.matrix.output_rank())
     }
 
-    /// Group-local parameter view for folded opening work.
-    /// This fold's final/new group, as a group.
+    /// This fold's own new group.
     ///
-    /// The fold stores its final group's parameters as flat fields; the only
-    /// piece it does not carry is that group's `PolynomialGroupLayout`, which
-    /// the opening batch already knows. Materialising it here is what lets every
-    /// group in a fold have one type without threading a layout through the 77
-    /// `with_decomp` call sites.
+    /// Takes no layout: the fold stores its own. Step 5b passed one in to avoid
+    /// threading it through the `with_decomp` call sites, which meant each
+    /// caller supplied a layout and they did not always agree.
     ///
     /// Cheap: `GroupOpenPhaseParams` is `Copy` and all of its fields already
     /// were.
-    pub fn final_group(&self, group: crate::PolynomialGroupLayout) -> crate::GroupOpenPhaseParams {
+    pub fn final_group(&self) -> crate::GroupOpenPhaseParams {
         crate::GroupOpenPhaseParams {
-            profile: crate::GroupCommitPhaseParams::from_params_fields_pub(group, self),
+            profile: crate::GroupCommitPhaseParams::from_params_fields_pub(self.group, self),
             opening: GroupOpeningPlan {
                 opening_method: self.opening_method,
                 fold_challenge_config: self.fold_challenge_config,
@@ -951,9 +963,7 @@ impl CommittedGroupParams {
                 "scalar final-group source length is not a power of two".to_string(),
             ));
         }
-        Ok(self.final_group(crate::PolynomialGroupLayout::singleton(
-            source_len.trailing_zeros() as usize,
-        )))
+        Ok(self.final_group())
     }
 
     /// Physical source encoding of the group at `group_index`.
@@ -977,13 +987,10 @@ impl CommittedGroupParams {
     /// An incoming setup prefix is group 0, earlier precommitted groups follow,
     /// and the fold's own final/new group is last. This is the one ordering the
     /// schedule commits to; see `validate_nonterminal_opening_execution`.
-    pub fn groups(
-        &self,
-        final_group: crate::PolynomialGroupLayout,
-    ) -> Vec<crate::GroupOpenPhaseParams> {
+    pub fn groups(&self) -> Vec<crate::GroupOpenPhaseParams> {
         let mut groups: Vec<crate::GroupOpenPhaseParams> =
             self.precommitted_group_iter().copied().collect();
-        groups.push(self.final_group(final_group));
+        groups.push(self.final_group());
         groups
     }
 
@@ -1001,7 +1008,7 @@ impl CommittedGroupParams {
     ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index == final_group_index {
-            return Ok(self.final_group(*opening_batch.group_layout(group_index)?));
+            return Ok(self.final_group());
         }
         self.precommitted_group_params(group_index)
             .copied()
@@ -1022,7 +1029,7 @@ impl CommittedGroupParams {
     ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
         let final_group_index = self.validate_opening_batch_geometry(opening_batch)?;
         if group_index == final_group_index {
-            return Ok(self.final_group(*opening_batch.group_layout(group_index)?));
+            return Ok(self.final_group());
         }
         self.precommitted_group_params(group_index)
             .copied()
@@ -1361,6 +1368,7 @@ impl CommittedGroupParams {
             .checked_mul(num_live_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
+            group: self.group,
             payload_mode: self.payload_mode,
             source_encoding: self.source_encoding,
             opening_method: self.opening_method,
@@ -1426,6 +1434,7 @@ impl CommittedGroupParams {
     /// role-specific commit-matrix constructors short-circuit silently.
     pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
+            group: other.group,
             payload_mode: other.payload_mode,
             source_encoding: other.source_encoding,
             opening_method: other.opening_method,

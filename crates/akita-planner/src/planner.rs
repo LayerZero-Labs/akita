@@ -462,6 +462,7 @@ fn root_final_group_level_params_candidate(
     };
 
     let params = CommittedGroupParams {
+        group: akita_types::PolynomialGroupLayout::new(ctx.final_num_vars, ctx.main_num_polys),
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         source_encoding: akita_types::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
