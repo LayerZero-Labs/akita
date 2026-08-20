@@ -33,6 +33,8 @@ type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
 /// Concrete ring view used by the recursion artifact's fixed input schema.
 const SOURCE_VIEW_D: usize = 512;
 
+include!(concat!(env!("OUT_DIR"), "/prepared_verifier_cache.rs"));
+
 fn verification_status(result: Result<(), AkitaError>) -> u32 {
     match result {
         Ok(()) => 0,
@@ -90,6 +92,22 @@ fn akita_verify(input: &[u8]) -> u32 {
         }
     };
     end_cycle_tracking("deserialize_input");
+
+    if let Some(cache) = PROGRAM_BOUND_VERIFIER_CACHE {
+        start_cycle_tracking("install_terminal_cache");
+        if decoded
+            .verifier_setup
+            .install_trusted_prepared_verifier_ntt_cache(
+                cache,
+                decoded.schedule_selection.row_digest,
+            )
+            .is_err()
+        {
+            end_cycle_tracking("install_terminal_cache");
+            return 1;
+        }
+        end_cycle_tracking("install_terminal_cache");
+    }
 
     start_cycle_tracking("transcript_init");
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);

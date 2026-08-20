@@ -11,23 +11,24 @@
 
 #![allow(missing_docs)]
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::RecursiveCommitmentConfig;
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_recursion_glue::{AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_transcript::AkitaTranscript;
-use akita_types::BasisMode;
-use akita_verifier::batched_verify;
+use akita_types::{prepared_verifier_ntt_cache_metadata, BasisMode};
+use akita_verifier::{batched_verify, build_riscv64_terminal_ntt_cache};
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const TRUSTED_BENCHMARK_ARTIFACT_ENV: &str = "AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT";
+const PREPARED_VERIFIER_CACHE_ENV: &str = "AKITA_RECURSION_PREPARED_VERIFIER_CACHE";
 type F = fp128::Field;
 type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
 /// Concrete ring view used by the recursion artifact's fixed input schema.
@@ -81,11 +82,16 @@ fn path_to_utf8<'a>(path: &'a Path, context: &str) -> Result<&'a str, String> {
     }
 }
 
-fn enable_trusted_benchmark_guest_build() {
+fn enable_trusted_benchmark_guest_build(prepared_cache: &Path) -> Result<(), String> {
     // The pinned Jolt SDK builds guest ELFs with a hard-coded `--features guest`.
     // This checked build-script cfg keeps plain `guest` strict while letting
     // this benchmark harness opt the RISC-V build into trusted setup decode.
     std::env::set_var(TRUSTED_BENCHMARK_ARTIFACT_ENV, "1");
+    std::env::set_var(
+        PREPARED_VERIFIER_CACHE_ENV,
+        path_to_utf8(prepared_cache, "prepared verifier cache")?,
+    );
+    Ok(())
 }
 
 fn load_blob(input: &Path) -> Result<Vec<u8>, String> {
@@ -137,7 +143,7 @@ fn load_blob(input: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
+fn strict_host_preflight(blob: &[u8]) -> Result<Vec<u8>, String> {
     info!("strictly decoding and verifying verifier-input blob before trusted benchmark replay");
     let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(blob)
         .map_err(|err| format!("strict input decode failed: {err}"))?;
@@ -153,8 +159,108 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
         BasisMode::Lagrange,
     )
     .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
-    info!("strict host preflight OK");
-    Ok(())
+    let resolved = Cfg::resolve_schedule_selection(decoded.schedule_selection)
+        .map_err(|err| format!("strict schedule resolution failed: {err}"))?;
+    let cache = build_riscv64_terminal_ntt_cache(
+        &decoded.verifier_setup,
+        resolved.schedule(),
+        decoded.schedule_selection.row_digest,
+    )
+    .map_err(|err| format!("prepared verifier cache build failed: {err}"))?;
+    decoded
+        .verifier_setup
+        .install_trusted_prepared_verifier_ntt_cache(
+            &cache,
+            decoded.schedule_selection.row_digest,
+        )
+        .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?;
+    let mut cached_transcript =
+        AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
+    let cached_statement = decoded
+        .verifier_statement()
+        .map_err(|err| format!("cached input statement failed: {err}"))?;
+    batched_verify::<Cfg, _>(
+        &decoded.proof,
+        &decoded.verifier_setup,
+        &mut cached_transcript,
+        cached_statement,
+        BasisMode::Lagrange,
+    )
+    .map_err(|err| format!("prepared verifier cache self-check rejected proof: {err}"))?;
+    let metadata = prepared_verifier_ntt_cache_metadata(&cache)
+        .map_err(|err| format!("prepared verifier cache metadata failed: {err}"))?;
+    info!(
+        cache_bytes = cache.len(),
+        ring_d = metadata.ring_dimension,
+        prefix_rings = metadata.base_prefix_len,
+        width = metadata.width,
+        "strict host preflight and prepared cache self-check OK"
+    );
+    Ok(cache)
+}
+
+fn digest_prefix(digest: &[u8; 32]) -> String {
+    digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn publish_prepared_cache(target_dir: &Path, cache: &[u8]) -> Result<PathBuf, String> {
+    let metadata = prepared_verifier_ntt_cache_metadata(cache)
+        .map_err(|err| format!("prepared verifier cache metadata failed: {err}"))?;
+    fs::create_dir_all(target_dir).map_err(|err| {
+        format!(
+            "failed to create Jolt target directory `{}`: {err}",
+            target_dir.display()
+        )
+    })?;
+    let file_name = format!(
+        "akita-riscv64-q128-cache-{}-{}.bin",
+        digest_prefix(&metadata.binding.setup_seed_digest),
+        digest_prefix(metadata.binding.schedule_row_digest.as_bytes())
+    );
+    let output = target_dir.join(file_name);
+    if output.exists() {
+        let existing = fs::read(&output).map_err(|err| {
+            format!(
+                "failed to read existing prepared cache `{}`: {err}",
+                output.display()
+            )
+        })?;
+        if existing != cache {
+            return Err(format!(
+                "existing prepared cache `{}` disagrees with deterministic output",
+                output.display()
+            ));
+        }
+        return fs::canonicalize(&output).map_err(|err| {
+            format!(
+                "failed to resolve prepared cache `{}`: {err}",
+                output.display()
+            )
+        });
+    }
+    let temporary = output.with_extension(format!("bin.tmp.{}", std::process::id()));
+    fs::write(&temporary, cache).map_err(|err| {
+        format!(
+            "failed to write prepared cache `{}`: {err}",
+            temporary.display()
+        )
+    })?;
+    fs::rename(&temporary, &output).map_err(|err| {
+        let _ = fs::remove_file(&temporary);
+        format!(
+            "failed to publish prepared cache `{}`: {err}",
+            output.display()
+        )
+    })?;
+    fs::canonicalize(&output).map_err(|err| {
+        format!(
+            "failed to resolve prepared cache `{}`: {err}",
+            output.display()
+        )
+    })
 }
 
 fn run() -> Result<(), String> {
@@ -163,10 +269,12 @@ fn run() -> Result<(), String> {
     info!(input = %args.input.display(), "loading verifier-input blob");
     let blob = load_blob(&args.input)?;
     info!(bytes = blob.len(), "blob loaded");
-    strict_host_preflight(&blob)?;
+    let prepared_cache = strict_host_preflight(&blob)?;
+    let target_dir = PathBuf::from(&args.target_dir);
+    let prepared_cache_path = publish_prepared_cache(&target_dir, &prepared_cache)?;
 
     info!(target_dir = %args.target_dir, "compiling Akita verifier guest program");
-    enable_trusted_benchmark_guest_build();
+    enable_trusted_benchmark_guest_build(&prepared_cache_path)?;
     let mut program = guest::compile_akita_verify(&args.target_dir);
 
     if args.trace_only {

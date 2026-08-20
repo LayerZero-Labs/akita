@@ -168,6 +168,42 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
 }
 
 impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
+    /// Install a prepared scalar Q128 cache whose bytes have trusted provenance.
+    ///
+    /// The artifact format checks its setup and schedule identities, target
+    /// representation, geometry, lengths, and residue ranges. It cannot prove
+    /// that the transformed payload was derived from the named setup seed.
+    /// Callers must bind the bytes to trusted setup provisioning or to the
+    /// verifier program identity before calling this method.
+    pub fn install_trusted_prepared_verifier_ntt_cache(
+        &self,
+        artifact: &[u8],
+        schedule_row_digest: crate::ScheduleRowDigest,
+    ) -> Result<(), AkitaError> {
+        let metadata = crate::prepared_verifier_ntt_cache_metadata(artifact)?;
+        let setup_seed_digest = crate::setup_seed_digest(&self.expanded.seed.setup_seed)
+            .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
+        let expected_binding = crate::PreparedVerifierNttCacheBinding {
+            setup_seed_digest,
+            schedule_row_digest,
+            setup_field_elements: self.expanded.seed.num_field_elements,
+        };
+        crate::dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            metadata.ring_dimension,
+            |D| {
+                let (decoded_metadata, prepared) =
+                    crate::ntt_cache::decode_riscv64_scalar_q128_cache::<F, D>(
+                        artifact,
+                        expected_binding,
+                    )?;
+                self.verifier_ntt
+                    .install_trusted(decoded_metadata, prepared)
+            }
+        )
+    }
+
     /// Return an exact or covering negacyclic prefix, preparing it on demand.
     pub fn prepared_verifier_ntt_prefix<const D: usize>(
         &self,

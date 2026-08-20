@@ -6,43 +6,35 @@ use akita_types::{
     dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, FoldSchedule,
 };
 
-pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
-const TERMINAL_I16_ABS_BOUND: u64 = 1 << (TERMINAL_I16_LOG_BASIS - 1);
+use crate::prepared_cache::{
+    terminal_ntt_cache_requirement, TERMINAL_I16_ABS_BOUND, TERMINAL_I16_LOG_BASIS,
+};
 
 /// Warm every exact terminal i16 representation selected by a validated schedule.
 pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
     setup: &AkitaVerifierSetup<F>,
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError> {
-    let terminal_params = &schedule.terminal.params.witness;
-    let ring_d = terminal_params.d_a();
+    let requirement = terminal_ntt_cache_requirement(schedule)?;
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
-        ring_d,
+        requirement.ring_dimension,
         |D| {
-            let max_width = terminal_params.inner_width();
-            let base_prefix_len = terminal_params
-                .inner_commit_matrix
-                .output_rank()
-                .checked_mul(max_width)
-                .ok_or(AkitaError::InvalidSetup(
-                    "terminal A cache prefix length overflow".into(),
-                ))?;
-            let tail_prefix_len =
-                if ntt_cache_requires_i16_tail::<F, D>(max_width, TERMINAL_I16_ABS_BOUND)? {
-                    base_prefix_len
-                } else {
-                    0
-                };
-            if base_prefix_len > 0 {
-                setup.prepared_verifier_ntt_prefix::<D>(
-                    base_prefix_len,
-                    tail_prefix_len,
-                    max_width,
-                    TERMINAL_I16_ABS_BOUND,
-                )?;
-            }
+            let tail_prefix_len = if ntt_cache_requires_i16_tail::<F, D>(
+                requirement.width,
+                TERMINAL_I16_ABS_BOUND,
+            )? {
+                requirement.prefix_len
+            } else {
+                0
+            };
+            setup.prepared_verifier_ntt_prefix::<D>(
+                requirement.prefix_len,
+                tail_prefix_len,
+                requirement.width,
+                TERMINAL_I16_ABS_BOUND,
+            )?;
             Ok::<(), AkitaError>(())
         }
     )
