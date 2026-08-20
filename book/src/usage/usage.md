@@ -69,7 +69,8 @@ every table into a dense allocation.
 | Choose Cargo features | [Feature flags](./feature-flags.md) |
 | Measure time, memory, and proof size | [Profiling](./profiling.md) |
 | Diagnose a failed run | [Troubleshooting](./troubleshooting.md) |
-| Verify Akita inside Jolt | [Jolt recursion](./jolt-recursion.md) |
+| Add Akita to another proof system | [Integrating with a proof system](./integrations.md) |
+| Verify Akita inside a zkVM | [Jolt recursion](./jolt-recursion.md) |
 
 Readers who want to understand the protocol itself can continue to
 [How it works](../how/how-it-works.md). Readers who need the mathematical ideas

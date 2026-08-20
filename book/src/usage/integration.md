@@ -87,3 +87,8 @@ Akita crate together and revalidate proof exchange when upgrading.
 The protocol chapters under [How it works](../how/how-it-works.md) explain why
 these contracts are sufficient. Application code can use them without
 reimplementing the protocol internals.
+
+If Akita will sit inside a larger proof system, continue to [Integrating with a
+proof system](./integrations.md). That chapter explains the adapter around this
+PCS lifecycle: field conversion, statement ownership, artifact transport, and
+verifier placement.

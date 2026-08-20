@@ -23,7 +23,8 @@
     - [Reading benchmark reports](./usage/benchmark-reports.md)
     - [Arithmetic microbenchmarks](./usage/arithmetic-benchmarks.md)
     - [Troubleshooting](./usage/troubleshooting.md)
-  - [Jolt recursion](./usage/jolt-recursion.md)
+  - [Integrating with a proof system](./usage/integrations.md)
+    - [Jolt recursion](./usage/jolt-recursion.md)
 
 # How it works
 
