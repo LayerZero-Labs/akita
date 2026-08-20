@@ -551,7 +551,13 @@ struct DirectRangePrefixState<E: FieldCore> {
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
-pub(crate) struct LowBasisRangeCheckProver<E: FieldCore> {
+///
+/// For `basis <= 8` this is the complete stage-1 instance prover: it
+/// implements [`EqFactoredSumcheckInstanceProver`], so callers that batch
+/// several stage-1 instances over one shared equality point can drive its
+/// rounds directly instead of going through the single-instance
+/// [`DigitRangeProver`](crate::DigitRangeProver) wrapper.
+pub struct LowBasisRangeCheckProver<E: FieldCore> {
     range_image: LowBasisRangeImageStorage<E>,
     split_eq: GruenSplitEq<E>,
     polynomial_precomputation: RangePolynomialPrecomputation,

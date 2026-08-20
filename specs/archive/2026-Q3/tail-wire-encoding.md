@@ -19,9 +19,9 @@
 |-------------|-----------------------------------------------------------|
 | Author(s)   | Quang Dao                                                 |
 | Created     | 2026-06-13                                                |
-| Status      | implemented                                               |
+| Status      | archived                                               |
 | PR          | #190, #209, #311                                          |
-| Book-chapter | how/recursion.md                                         |
+| Book-chapter | book/src/how/recursion.md                                         |
 
 ## Summary
 

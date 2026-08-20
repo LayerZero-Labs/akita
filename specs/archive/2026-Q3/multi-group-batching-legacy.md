@@ -3,7 +3,8 @@
 > **Archived 2026-08-09.** This record preserves the staged design history.
 > Its `ConservativeCommitmentConfig`, layout reconstruction, ordinary
 > `batched_commit` precommit flow, and rejection of `commit_group` are not
-> current contracts. See `specs/multi-group-batching.md` for the live API.
+> current contracts. The historical live API record is now
+> `specs/archive/2026-Q3/multi-group-batching.md`.
 
 > **Point-model supersession (2026-07-22).** The shared-point restriction and
 > prefix/suffix routing described in this record are superseded by

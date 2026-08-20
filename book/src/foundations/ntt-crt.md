@@ -85,7 +85,7 @@ bound requires it.
 **Sources to fold in**
 
 - Paper App B.2.4 `sec:akita-crt-capacity`.
-- `specs/crt-ntt-accumulation-safety.md`, `docs/crt-ntt-capacity-profile.md`.
+- `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md`, `docs/crt-ntt-capacity-profile.md`.
 
 ## Smooth-subgroup mixed-radix FFT
 

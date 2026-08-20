@@ -4,18 +4,18 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao (spec) → hand-off for implementation |
 | Created     | 2026-06-02                     |
-| Status      | ready for implementation (suffix/terminal EOR only; Stage 1/2 blocked) |
+| Status      | approved |
 | Pilot       | recursive suffix/terminal EOR, then stage1 / stage2 |
-| Related     | [`eor-streamed-prover.md`](archive/2026-Q3/eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
+| Related     | [`eor-streamed-prover.md`](archive/2026-Q3/eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](archive/2026-Q3/digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/archive/2026-Q3/cross-repo-field-microbench.md`) |
 
 ## Summary
 
-> **Coordination gate.** EOR packing may proceed. Stage 1 packing must target the canonical
-> scalar implementation in PR #312. Stage 2 packing is blocked until the stacked
-> relation/range-image rewrite in
-> [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md) lands. Packing must
-> target the resulting flat, address-major scalar buffers and may not preserve or extend
-> the current x/y/prefix architecture.
+> **Current coordination.** EOR packing may proceed. Stage 1 packing must target
+> the canonical scalar implementation shipped in PR #312. The stacked
+> relation and range-image rewrite is also shipped in PR #337, so Stage 2 is no
+> longer waiting on that prerequisite. Packing must target the resulting flat,
+> address-major scalar buffers and may not preserve or extend the old x/y/prefix
+> architecture.
 
 Akita's sum-check and extension-opening-reduction (EOR) prover hot loops run on
 **scalar extension-field arithmetic** today: `Vec<E>` with `E = RingSubfieldFp4<Fp32>`,
@@ -289,18 +289,19 @@ The one-hot root EOR path described here was removed when L0/L1 folds became
 coefficient-packing-only. The following notes record the old experiment and are
 not part of the current implementation plan. The old one-hot EOR univariate plateau
 (`eor-streamed-prover.md`, 1.25 s) was a sparse
-`O(d_ext)`-per-query loop over a `2^24` support. It is **not excluded** — it can benefit
-from SIMD, but the kernels are arch-sensitive and are designed in a later slice:
+`O(d_ext)`-per-query loop over a `2^24` support. It is excluded from this
+implementation plan. The kernels are arch-sensitive, so the notes below remain
+historical context only:
 - **Factor fold** of a materialized (`SparseFactor::Dense`) residual is a dense `Vec<E>`
   fold → **packs exactly like the dense path** (no gather). Free once D1/D2 land.
 - **`factor_pair`'s `O(d_ext)` dot** over `suffix_tables[t][suffix_index]` is a tiny dense
   dot product — vectorizable per query, and **batchable across `WIDTH` support entries**
   if their suffix indices are gathered.
-- **Materialized-factor accumulate** (`m = 0` region, flat factor + O(1) reads) can pack
+- **Materialized-factor accumulate** (`m = 0` region, flat factor + O(1) reads) could pack
   `WIDTH` support entries by **gathering** their factor values, then packed-multiplying.
   Gather is the catch: AVX-512 has fast gather, AVX2's is slow, NEON has none — so the
-  one-hot packed accumulate is **arch-gated** and may stay scalar on NEON. Work this out
-  in Slice 4 against measured numbers; do not block the dense pilot on it.
+  one-hot packed accumulate was **arch-gated** and could stay scalar on NEON. It remains
+  historical context only and is not part of the current packed-sumcheck plan.
 
 ## Pilot: recursive suffix/terminal EOR
 
@@ -388,7 +389,7 @@ The scalar path is the oracle: assert packed fold/round/accumulate equal the sca
 field-exactly, and that end-to-end proof bytes are byte-identical (the strongest guard).
 Reuse PR #142's `field_arith/kernel/packed_macc` micro-bench (`acc += eq[i]*poly[i]` via
 `pack_slice`) and add an EOR-prover-level bench so perf is gated on the real loop, not just
-`field_arith` rows (per `cross-repo-field-microbench.md:252-257`).
+`field_arith` rows (per `archive/2026-Q3/cross-repo-field-microbench.md:252-257`).
 
 ### Performance
 
@@ -436,7 +437,7 @@ span, then build the packed unreduced accumulator (Slice 2) for the univariate a
   `:504-553`, `packing_unpack_sum` `:117-120`, split-eq `:557-639`); `split_eq.rs:5-103`;
   storage-permutation design `crates/sub_protocols/src/air_sumcheck.rs:9-30`,
   `quotient_gkr/mod.rs:19-26`; `pack` reinterpretation `mle_group_ref.rs:81-92`.
-- **PR #142** (`quang/plonky3-field-microbench`): `specs/cross-repo-field-microbench.md`
+- **PR #142** (`quang/plonky3-field-microbench`): `specs/archive/2026-Q3/cross-repo-field-microbench.md`
   (numbers `:216-243`, deferred `mul_add` for EOR `:252-257`), `bench-data/field-microbench.md`,
   `crates/akita-pcs/benches/field_arith/kernel.rs:8-57` (`packed_macc`).
 - **akita-field packed** (this branch): traits `crates/akita-field/src/fields/packed.rs`

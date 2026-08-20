@@ -91,7 +91,7 @@ ring dimension of the specific data one operation touches and enters the
 kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
 proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
-see `specs/mixed-ring-dimension-per-level.md`) reduce to feeding different
+see `specs/runtime-ring-cutover.md`) reduce to feeding different
 dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
 names the per-matrix ring dimensions; prove/verify hot paths dispatch on
 `d_a()`, `d_b()`, or `d_d()` per operation, not on a single fused dimension.

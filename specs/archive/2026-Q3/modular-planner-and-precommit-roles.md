@@ -4,10 +4,10 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-23 |
-| Status        | partially implemented |
+| Status        | superseded |
 | PR            | #327, #343, with planner unification deferred to a stacked PR |
 | Supersedes    | Planner-architecture portions of [`archive/2026-Q2/planner-refactor.md`](archive/2026-Q2/planner-refactor.md) and the shared-precommit model in [`distributed-setup-offloading.md`](distributed-setup-offloading.md) |
-| Superseded-by | |
+| Superseded-by | `specs/setup-offloading-planner.md` and `specs/heterogeneous-group-source-contracts.md` |
 | Book-chapter  | book/src/how/configuration.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,

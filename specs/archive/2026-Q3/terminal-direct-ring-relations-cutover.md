@@ -5,9 +5,9 @@
 | Author(s) | Quang Dao |
 | Created | 2026-07-19 |
 | Branch | `quang/terminal-direct-ring-relations` |
-| Status | implemented |
+| Status | archived |
 | PR | #311 |
-| Book-chapter | how/recursion.md |
+| Book-chapter | book/src/how/recursion.md |
 | Compatibility | hard protocol and wire cutover |
 
 ## Contract

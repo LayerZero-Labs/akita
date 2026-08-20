@@ -8,9 +8,9 @@
 > [`docs/verifier-contract.md`](verifier-contract.md). Scheduled to move to
 > `docs/archive/` in the spec/doc archive pass (see `specs/PRUNING.md`).
 
-This document records the verifier no-panic audit for the security-hardening
+This document records the verifier no-panic audit for the archived security-hardening
 work in PR #81. The verifier boundary is defined in
-`specs/security-hardening.md`: malformed verifier-facing proof, setup,
+`specs/archive/2026-Q3/security-hardening.md`: malformed verifier-facing proof, setup,
 schedule, claim, opening, commitment, direct-witness, transcript, or prepared
 state data must return `AkitaError` or `SerializationError` instead of
 panicking or allocating from an unchecked shape.

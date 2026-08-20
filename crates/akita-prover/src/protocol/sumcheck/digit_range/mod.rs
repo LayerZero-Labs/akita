@@ -22,6 +22,9 @@ pub(crate) mod direct_range_leaf;
 pub(in crate::protocol::sumcheck) mod exact_prefix;
 mod range_class_tables;
 mod round_accumulation;
+
+pub use direct_range_leaf::LowBasisRangeCheckProver;
+
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;

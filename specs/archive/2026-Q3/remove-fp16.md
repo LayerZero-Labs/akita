@@ -4,7 +4,7 @@
 |-----------|-------|
 | Author(s) | Quang Dao, Cursor assistant (GPT-5.2 draft, Claude Opus 4.8 revisions) |
 | Created   | 2026-06-04 |
-| Status    | implemented |
+| Status    | archived |
 | PR        | https://github.com/LayerZero-Labs/akita/pull/149 |
 
 ## Summary

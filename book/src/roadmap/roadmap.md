@@ -4,7 +4,6 @@
 
 In-flight and planned work. The larger threads get their own pages
 ([Verifier offloading](./verifier-offloading.md),
-[Modulus switching](./modulus-switching.md),
 [Zero-knowledge](./zero-knowledge.md),
 [Compute backends](./compute-backends.md)); shorter items stay here as sections.
 Keep each item honest about what has already landed versus what is still a spec.

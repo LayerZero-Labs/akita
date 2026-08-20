@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao |
 | Created | 2026-08-06 |
-| Status | active |
+| Status | implemented |
 | PR | [#371](https://github.com/LayerZero-Labs/akita/pull/371) |
 | Supersedes | The rectangular padded-chunk E-term design formerly in PR #371 |
 | Superseded-by | |

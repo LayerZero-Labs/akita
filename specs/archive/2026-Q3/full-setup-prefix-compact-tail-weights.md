@@ -941,7 +941,7 @@ tampering, old serialized registry/cache rejection, and recursive
 
 ## References
 
-- `[setup-product-sumcheck.md](../../setup-product-sumcheck.md)`
+- `[setup-product-sumcheck.md](setup-product-sumcheck.md)`
 - `[setup-prefix-ladder.md](setup-prefix-ladder.md)`
 - `[setup-offloading-planner.md](../../setup-offloading-planner.md)`
 - `[setup-layout-repack.md](../../setup-layout-repack.md)`

@@ -23,7 +23,7 @@ inside a larger PIOP, so ZK must hold through the whole stack, not just the PCS.
 Paper §6 `sec:zk-pipeline`: leakage inventory (sum-check rounds, level-transition
 commitments, terminal opening); the three regions that close it. The seam
 (`sec:zk-joint-sigma`) seals zero knowledge; the suffix is ordinary non-ZK
-opening of the masked response. Modulus switching runs only in the suffix.
+opening of the masked response.
 
 **Sources to fold in**
 

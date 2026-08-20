@@ -12,7 +12,7 @@ opening of a masked response.
 |--------|-------|------|
 | **Prefix** | `sec:zk-commitments`, `sec:zk-sumcheck-mask` | Single-modulus masked recursion: `Com_pre` binds all sum-check pads; per-round pads + LHL blinding columns hide transcript-visible messages. |
 | **Seam** | `sec:zk-joint-sigma` | Committed-response tail: rejection-sampled masked response `Z`, long **linear** bundle discharged by ordinary Akita, small **quadratic** interface proved by a native lattice quadratic proof (LNP22-style). |
-| **Suffix** | `sec:zk-pipeline` (suffix paragraph) | Open the committed response with transparent Akita; modulus switching (`sec:modulus-switching`) runs here only. |
+| **Suffix** | `sec:zk-pipeline` (suffix paragraph) | Open the committed response with transparent Akita. |
 
 **Implementation status (repo today).** The `zk` feature implements large parts of
 the **prefix** (commitment rerandomization, sumcheck/`y_ring` masking, deferred
