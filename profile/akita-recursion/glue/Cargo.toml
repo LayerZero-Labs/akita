@@ -23,6 +23,7 @@ transcript-keccak = [
 trusted-benchmark-artifact = []
 
 [dependencies]
+akita-error = { version = "0.1.0", path = "../../../crates/akita-error" }
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
 akita-field = { version = "0.1.0", path = "../../../crates/akita-field" }

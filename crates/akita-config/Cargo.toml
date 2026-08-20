@@ -77,6 +77,7 @@ schedules-fp64-dense = ["akita-schedules/fp64-dense"]
 schedules-fp64-onehot = ["akita-schedules/fp64-onehot"]
 
 [dependencies]
+akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }

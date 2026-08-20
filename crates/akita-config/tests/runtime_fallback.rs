@@ -74,7 +74,7 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let err = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key))
         .expect_err("resolve_catalog_row_for_key must reject uncataloged keys");
     assert!(
-        matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
+        matches!(err, akita_error::AkitaError::UnsupportedSchedule(_)),
         "expected UnsupportedSchedule for catalog miss, got {err:?}"
     );
 }
@@ -124,7 +124,7 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
             Cfg::ring_challenge_config,
             Some(catalog),
         ),
-        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+        Err(akita_error::AkitaError::UnsupportedSchedule(_))
     ));
 }
 
@@ -146,7 +146,7 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
         selected.selection(),
         &policy_of::<Cfg>(),
         |_| {
-            Err(akita_field::AkitaError::InvalidSetup(
+            Err(akita_error::AkitaError::InvalidSetup(
                 "test runtime-hook drift".to_string(),
             ))
         },
@@ -154,7 +154,7 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
     )
     .expect_err("a cache hit must still execute the supplied runtime hook");
     assert!(
-        matches!(error, akita_field::AkitaError::InvalidSetup(_)),
+        matches!(error, akita_error::AkitaError::InvalidSetup(_)),
         "expected runtime-hook validation failure, got {error:?}"
     );
 }
@@ -173,7 +173,7 @@ fn assert_mutated_row_is_rejected<Cfg: CommitmentConfig>(
     )
     .expect_err("security-invalid row must fail before digest admission");
     assert!(
-        matches!(error, akita_field::AkitaError::InvalidSetup(_)),
+        matches!(error, akita_error::AkitaError::InvalidSetup(_)),
         "expected InvalidSetup, got {error:?}"
     );
 }
@@ -308,7 +308,7 @@ fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     };
     assert!(matches!(
         akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::resolve_catalog_row_for_key(&key),
-        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+        Err(akita_error::AkitaError::UnsupportedSchedule(_))
     ));
 }
 
@@ -499,7 +499,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     assert!(
         matches!(
             Cfg::resolve_catalog_row_for_key(&reordered),
-            Err(akita_field::AkitaError::UnsupportedSchedule(_))
+            Err(akita_error::AkitaError::UnsupportedSchedule(_))
         ),
         "an unlisted mixed ordering must reject without runtime planner search"
     );

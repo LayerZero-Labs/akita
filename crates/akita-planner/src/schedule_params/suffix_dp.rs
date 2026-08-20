@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     active_setup_field_len, terminal_response_planner_bytes, AkitaScheduleLookupKey,
     CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,

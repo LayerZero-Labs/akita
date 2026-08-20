@@ -4,7 +4,9 @@
 //! linked to explicit terminal claims and then enforced through fused stage-2
 //! `trace_eval_target` and per-claim scales.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;

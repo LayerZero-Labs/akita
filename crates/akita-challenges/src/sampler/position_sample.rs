@@ -3,7 +3,7 @@
 //! Fisher-Yates partial shuffle helpers shared by the signed-sparse sampler.
 
 use crate::sampler::xof::XofCursor;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Max ring dimension supported by the stack-buffer sampling paths.
 ///

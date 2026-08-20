@@ -134,6 +134,21 @@
       ]
     },
     {
+      "id": "error-arithmetic",
+      "description": "Protocol error ownership and reusable checked integer formulas",
+      "code": [
+        "crates/akita-error/**",
+        "scripts/tests/test_checked_arithmetic_ownership.py"
+      ],
+      "consider_updating": [
+        "README.md",
+        "book/src/how/architecture.md",
+        "book/src/how/verification.md",
+        "docs/crate-graph.md",
+        "docs/verifier-contract.md"
+      ]
+    },
+    {
       "id": "extension-opening",
       "description": "Extension-opening reduction prover paths",
       "code": [

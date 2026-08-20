@@ -1,5 +1,6 @@
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
@@ -164,19 +165,19 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     witness: &akita_types::TerminalResponse<FF>,
     schedule: &FoldSchedule,
     field_bits: u32,
-) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
+) -> Result<ZFoldEncodingStats, akita_error::AkitaError> {
     let params = &schedule.terminal.params.witness;
     let group = witness
         .layout
         .groups
         .first()
-        .ok_or(akita_field::AkitaError::InvalidProof)?;
+        .ok_or(akita_error::AkitaError::InvalidProof)?;
     let encoding_abs_bound = group.z_linf_cap.unwrap_or(i16::MAX as u128);
     let z_values = akita_types::decode_terminal_z_golomb_payload(
         witness
             .z_payloads
             .first()
-            .ok_or(akita_field::AkitaError::InvalidProof)?,
+            .ok_or(akita_error::AkitaError::InvalidProof)?,
         group,
     )?
     .into_iter()

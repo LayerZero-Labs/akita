@@ -6,8 +6,9 @@
 
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::{EqPolynomial, SplitEqEvals};
+use akita_error::{checked, AkitaError};
 use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
+use akita_field::{ExtField, FieldCore, MulBaseUnreduced};
 use num_traits::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -775,13 +776,18 @@ pub fn validate_reduction_tables<E: FieldCore>(
     num_rounds_from_table_len(witness_evals.len()).map(|_| ())
 }
 
-pub fn checked_table_len(num_vars: usize) -> Result<usize, AkitaError> {
-    if num_vars >= usize::BITS as usize {
-        return Err(AkitaError::InvalidInput(format!(
+/// Return the exact length of a reduction table with `num_vars` Boolean variables.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidInput`] when `2^num_vars` does not fit in
+/// `usize`.
+pub fn reduction_table_len(num_vars: usize) -> Result<usize, AkitaError> {
+    checked::pow2(num_vars).ok_or_else(|| {
+        AkitaError::InvalidInput(format!(
             "extension-opening reduction table has too many variables: {num_vars}"
-        )));
-    }
-    Ok(1usize << num_vars)
+        ))
+    })
 }
 
 pub fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError> {

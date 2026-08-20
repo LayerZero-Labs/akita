@@ -3,8 +3,9 @@
 //! Each kernel dispatches a source-typed view to the dense or one-hot backend,
 //! falling back to a per-polynomial path for truly mixed batches.
 
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasCommitAccum, HasWide};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::FpExtEncoding;
 
 use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};

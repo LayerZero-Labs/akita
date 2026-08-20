@@ -14,7 +14,8 @@ use akita_algebra::ring::{
     eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, scalar_powers,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, MulBaseUnreduced};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, MulBaseUnreduced};
 use std::iter::repeat_n;
 
 #[path = "relation_layout.rs"]

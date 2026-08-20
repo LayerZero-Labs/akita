@@ -2,7 +2,8 @@
 
 use crate::{embed_subfield, FpExtEncoding, SubfieldParams};
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{ExtField, FieldCore};
 
 /// A validated pair of compact ring-subfield multiplier vectors.
 ///

@@ -1,12 +1,10 @@
-//! Field traits, concrete fields, and core error types for Akita.
+//! Field traits and concrete fields for Akita.
 
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
 /// Compatibility adapters for external trait hierarchies (the single Jolt seam).
 mod compat;
-/// Error types shared by Akita crates.
-pub mod error;
 mod ext;
 /// Smooth-domain FFT helpers.
 pub mod fft;
@@ -20,7 +18,6 @@ pub mod traits;
 /// Unreduced / wide-accumulator arithmetic.
 pub mod unreduced;
 
-pub use error::AkitaError;
 pub use ext::lift::{
     canonical_extension_basis, solve_frobenius_moore, validate_canonical_frobenius_thetas,
     ExtField, FrobeniusExtField, LiftBase, MulBase, MulBaseUnreduced,

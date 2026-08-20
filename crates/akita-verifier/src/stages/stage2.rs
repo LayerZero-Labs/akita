@@ -6,10 +6,10 @@ use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
 };
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced,
+    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, MulBaseUnreduced,
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{

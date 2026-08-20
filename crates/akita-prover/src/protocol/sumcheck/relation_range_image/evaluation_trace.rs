@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use akita_field::FieldCore;
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt, Invertible};
 use akita_types::{
     basis_weights_prefix, prepare_evaluation_trace_group_parameters, BasisMode,

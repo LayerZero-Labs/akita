@@ -37,7 +37,7 @@
 
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, GenerationPreplans, GroupedGenerationRequest,
@@ -434,7 +434,7 @@ fn table_backed_expanded(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
-) -> Result<FoldSchedule, akita_field::AkitaError> {
+) -> Result<FoldSchedule, akita_error::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
     let entry = table_entry(catalog, &lookup_key).ok_or_else(|| {
         AkitaError::UnsupportedSchedule(format!(

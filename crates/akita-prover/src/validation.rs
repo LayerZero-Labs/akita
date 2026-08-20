@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS};
 
 #[inline]

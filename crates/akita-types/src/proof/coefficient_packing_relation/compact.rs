@@ -2,8 +2,9 @@ use akita_algebra::offset_eq::{
     eq_eval_at_index, eval_affine_digit_intervals, eval_boolean_pair_tensor_families,
     EqPairTensorAxis, EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
 };
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, FieldCore};
+use akita_field::FieldCore;
 use std::ops::Range;
 use std::sync::Arc;
 

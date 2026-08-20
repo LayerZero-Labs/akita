@@ -13,7 +13,7 @@
 //! source-model envelope. The response multiplier then has a distribution-free
 //! Markov interpretation once that envelope bounds the conditional mean.
 
-use akita_field::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::sis::{compute_num_digits_field_width, HonestFoldPolicySpec};
 use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 use std::cell::RefCell;
@@ -621,9 +621,8 @@ pub(crate) fn tensor_packed_moments(
 }
 
 fn checked_logical_group_len(num_vars: usize, num_polynomials: usize) -> Result<usize, AkitaError> {
-    1usize
-        .checked_shl(num_vars as u32)
-        .and_then(|len| len.checked_mul(num_polynomials))
+    checked::pow2(num_vars)
+        .and_then(|len| checked::product([len, num_polynomials]))
         .ok_or_else(|| AkitaError::InvalidSetup("root source length overflow".into()))
 }
 

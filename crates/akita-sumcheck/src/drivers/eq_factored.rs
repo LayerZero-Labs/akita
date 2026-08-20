@@ -5,7 +5,7 @@ use crate::traits::{
     EqFactoredSumcheckRoundState,
 };
 use crate::types::{EqFactoredSumcheckProof, EqFactoredUniPoly};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;

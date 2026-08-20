@@ -49,15 +49,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let (outer_subcolumns, _) =
             SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
         let opening_subcolumns = group.opening_subcolumns;
-        let e_stride = checked_product(
-            opening_subcolumns,
-            group.depth_open,
-            "structured E stride overflow",
-        )?;
-        let t_stride = group
-            .n_a
-            .checked_mul(group.depth_commit)
-            .and_then(|stride| stride.checked_mul(outer_subcolumns))
+        let e_stride = checked::product([opening_subcolumns, group.depth_open])
+            .ok_or_else(|| AkitaError::InvalidSetup("structured E stride overflow".into()))?;
+        let t_stride = checked::product([group.n_a, group.depth_commit, outer_subcolumns])
             .ok_or_else(|| AkitaError::InvalidSetup("structured T stride overflow".into()))?;
         let opening_scales = (opening_subcolumns != 1)
             .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
@@ -102,11 +96,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let direct_commitment_gadget = projected_commitment_gadget
                 .as_deref()
                 .unwrap_or(&commitment_gadget);
-            let t_row_stride = checked_product(
-                outer_subcolumns,
-                group.depth_commit,
-                "structured T row stride overflow",
-            )?;
+            let t_row_stride = checked::product([outer_subcolumns, group.depth_commit])
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("structured T row stride overflow".into())
+                })?;
             if direct_opening_gadget.len() != e_stride
                 || direct_commitment_gadget.len() != t_row_stride
             {
@@ -420,11 +413,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 &[],
             )?
         } else {
-            let weighted_base_count = checked_product(
-                opening_a_evals.len(),
-                a_base_offsets.len(),
-                "structured weighted A base count overflow",
-            )?;
+            let weighted_base_count =
+                checked::product([opening_a_evals.len(), a_base_offsets.len()]).ok_or_else(
+                    || AkitaError::InvalidSetup("structured weighted A base count overflow".into()),
+                )?;
             let mut weighted_bases = Vec::new();
             let mut base_scales = Vec::new();
             weighted_bases
@@ -480,9 +472,4 @@ where
         .into_iter()
         .map(|weight| E::one().mul_base(weight))
         .collect()
-}
-
-fn checked_product(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }

@@ -1,7 +1,7 @@
 //! Shared batched schedule selection for prove and verify entry points.
 
 use crate::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::OpeningClaimsLayout;
 
 /// Select the effective folded runtime schedule for a batched opening.

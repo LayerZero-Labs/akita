@@ -243,7 +243,7 @@ fn materialized_entry(
             Ok(MaterializedRequestOutcome::ReusedPreplan(entry(schedule)))
         }
         Ok(schedule) => Ok(MaterializedRequestOutcome::Planned(entry(schedule))),
-        Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {
+        Err(akita_error::AkitaError::UnsupportedSchedule(_)) => {
             Ok(MaterializedRequestOutcome::Unsupported)
         }
         Err(error) => {

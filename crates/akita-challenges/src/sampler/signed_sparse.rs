@@ -36,7 +36,7 @@ impl SignedSparseScratch {
         d: usize,
         n: usize,
         cfg: &SparseChallengeConfig,
-    ) -> Result<Vec<SparseChallenge>, akita_field::AkitaError> {
+    ) -> Result<Vec<SparseChallenge>, akita_error::AkitaError> {
         let mut challenges = Vec::with_capacity(n);
         let mut scratch = Self::new(cfg.count_pm1, cfg.count_pm2);
         for _ in 0..n {
@@ -54,7 +54,7 @@ impl SignedSparseScratch {
         d: usize,
         count_pm1: usize,
         count_pm2: usize,
-    ) -> Result<(), akita_field::AkitaError> {
+    ) -> Result<(), akita_error::AkitaError> {
         debug_assert_eq!(self.total, count_pm1 + count_pm2);
         sample_distinct_positions_into(cursor, d, &mut self.positions, &mut self.position_scratch)?;
         self.coeffs.resize(self.total, 0);

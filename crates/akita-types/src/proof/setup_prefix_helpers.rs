@@ -3,7 +3,7 @@
 use crate::{
     CommittedGroupProfile, CompressionChainPlan, OpeningClaimsLayout, PolynomialGroupLayout,
 };
-use akita_field::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_serialization::SerializationError;
 
 use super::padded_setup_prefix_len;
@@ -16,19 +16,9 @@ pub fn suffix_opening_layout(
     current_witness_len: usize,
     incoming_setup_prefix: Option<usize>,
 ) -> Result<OpeningClaimsLayout, AkitaError> {
-    fn power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
-        if field_len == 0 {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{context} must be nonzero"
-            )));
-        }
-        let padded = field_len.checked_next_power_of_two().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("{context} power-of-two padding overflow"))
-        })?;
-        Ok(padded.trailing_zeros() as usize)
-    }
-
-    let witness_vars = power_of_two_vars(current_witness_len, "suffix witness length")?;
+    let witness_vars = checked::ceil_log2(current_witness_len).ok_or_else(|| {
+        AkitaError::InvalidSetup("suffix witness length is zero or too large".into())
+    })?;
     let witness_group = PolynomialGroupLayout::singleton(witness_vars);
     match incoming_setup_prefix {
         Some(natural_len) => {
@@ -38,7 +28,9 @@ pub fn suffix_opening_layout(
                     "incoming setup prefix length must be a nonzero power of two".to_string(),
                 ));
             }
-            let prefix_vars = power_of_two_vars(n_prefix, "incoming setup prefix length")?;
+            let prefix_vars = checked::ceil_log2(n_prefix).ok_or_else(|| {
+                AkitaError::InvalidSetup("incoming setup prefix length is zero or too large".into())
+            })?;
             OpeningClaimsLayout::from_groups(vec![
                 PolynomialGroupLayout::singleton(prefix_vars),
                 witness_group,
