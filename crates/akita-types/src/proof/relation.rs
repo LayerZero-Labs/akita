@@ -5,8 +5,8 @@ use crate::layout::{CommitmentRingDims, CommittedGroupParams};
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
 use crate::{
-    CommitmentSliceCount, CommittedSourceEncoding, CompressionChainPlan, LevelParamsLike,
-    OpeningMethod, SisModulusProfileId, SubringCoefficientPackingGeometry,
+    CommitmentSliceCount, CommittedSourceEncoding, CompressionChainPlan, OpeningMethod,
+    SisModulusProfileId, SubringCoefficientPackingGeometry,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -25,12 +25,21 @@ pub use layout_types::{
     RelationWitnessGeometry,
 };
 
+/// Row geometry for one group's opening.
+///
+/// `source_encoding` is passed in rather than read off the group. It is a
+/// property of the **fold** — `CommittedSourceEncoding` is commitment identity
+/// owned by the level that commits the witness, and a precommitted group has
+/// nowhere to store it, which is why the group's own accessor returns a
+/// hard-coded canonical value. Reading it from the group would make the
+/// tensor-projection mismatch below unreachable.
 pub(crate) fn opening_row_geometry(
-    params: &dyn LevelParamsLike,
+    params: &crate::GroupOpenPhaseParams,
+    source_encoding: CommittedSourceEncoding,
     extension_degree: usize,
 ) -> Result<RelationRowGeometry, AkitaError> {
     let d_a = params.inner_commit_matrix_params().ring_dimension();
-    match (params.opening_method(), params.source_encoding()) {
+    match (params.opening_method(), source_encoding) {
         (
             OpeningMethod::EvaluationTrace,
             CommittedSourceEncoding::TensorSubfieldProjection {
@@ -356,7 +365,14 @@ fn build_relation_rhs_layout(
         let role_dims = lp.role_dims();
         role_dims.validate_role_projection()?;
         let group_indices = opening_batch.root_group_order()?;
-        let opening_geometry = opening_row_geometry(lp, extension_degree)?;
+        // Use the layout the opening batch already carries rather than
+        // deriving one: it is the authority, and it is correct even for a
+        // fixture whose geometry has not been through validate_root_geometry.
+        let opening_geometry = opening_row_geometry(
+            &lp.final_group(*opening_batch.group_layout(group_indices[0])?),
+            lp.source_encoding,
+            extension_degree,
+        )?;
         let groups = group_indices
             .iter()
             .map(|&group_index| RelationGroupRows {
@@ -400,7 +416,11 @@ fn build_relation_rhs_layout(
     groups.push(RelationGroupRows {
         group_index: final_group_index,
         role_dims: final_role_dims,
-        opening_geometry: opening_row_geometry(lp, extension_degree)?,
+        opening_geometry: opening_row_geometry(
+            &lp.final_group(*opening_batch.group_layout(final_group_index)?),
+            lp.source_encoding,
+            extension_degree,
+        )?,
         opening_method: lp.opening_method,
         n_a: lp.inner_commit_matrix.output_rank(),
         physical_b_rows: lp.outer_commit_matrix.output_rank(),
@@ -420,7 +440,11 @@ fn build_relation_rhs_layout(
         groups.push(RelationGroupRows {
             group_index,
             role_dims,
-            opening_geometry: opening_row_geometry(group, extension_degree)?,
+            opening_geometry: opening_row_geometry(
+                group,
+                crate::CommittedSourceEncoding::CanonicalCoefficientTable,
+                extension_degree,
+            )?,
             opening_method: group.opening.opening_method,
             n_a: group.profile.inner.matrix.output_rank(),
             physical_b_rows: group.profile.outer.matrix.output_rank(),

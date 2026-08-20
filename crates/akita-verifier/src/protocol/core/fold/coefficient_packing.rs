@@ -60,7 +60,7 @@ fn prepare_prefix_points<F: FieldCore, E: ExtField<F>, C>(
                 claims.group_point(group_index)?,
                 basis,
                 layout.num_vars(),
-                group_params,
+                &group_params,
                 E::EXT_DEGREE,
             )?,
         ));

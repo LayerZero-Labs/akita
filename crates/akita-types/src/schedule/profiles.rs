@@ -120,6 +120,16 @@ impl GroupCommitPhaseParams {
         Ok(profile)
     }
 
+    /// Crate-visible so a fold can materialise its own final group without
+    /// re-running standalone-commit validation, which does not apply to a group
+    /// that is already part of a checked schedule.
+    pub(crate) fn from_params_fields_pub(
+        group: PolynomialGroupLayout,
+        params: &CommittedGroupParams,
+    ) -> Self {
+        Self::from_params_fields(group, params)
+    }
+
     fn from_params_fields(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
         Self {
             version: Self::VERSION,

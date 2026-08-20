@@ -574,6 +574,150 @@ impl LevelParamsLike for CommittedGroupParams {
     }
 }
 
+impl GroupOpenPhaseParams {
+    /// Logical B output rows after un-slicing the physical matrix.
+    ///
+    /// Mirrors the trait's default body.
+    pub fn logical_b_rows_len(&self) -> Result<usize, AkitaError> {
+        self.outer_slice_count()
+            .logical_output_rows(self.b_rows_len())
+    }
+}
+
+/// Inherent accessors, identical in body to the `LevelParamsLike` impl below.
+///
+/// Callers holding a concrete group no longer need the trait in scope. That is
+/// what makes the trait deletable: it exists only to let a caller treat a fold's
+/// final group and a precommitted group uniformly, and both are now the same
+/// type.
+impl GroupOpenPhaseParams {
+    #[inline]
+    #[must_use]
+    pub fn source_encoding(&self) -> crate::CommittedSourceEncoding {
+        crate::CommittedSourceEncoding::CanonicalCoefficientTable
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn opening_method(&self) -> OpeningMethod {
+        self.opening.opening_method
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
+        &self.profile.inner.matrix
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn a_rows_len(&self) -> usize {
+        self.profile.inner.matrix.output_rank()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn a_col_len(&self) -> usize {
+        self.profile.inner.matrix.input_width()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn b_rows_len(&self) -> usize {
+        self.profile.outer.matrix.output_rank()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
+        self.profile.outer_slice_count
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn b_col_len(&self) -> usize {
+        self.profile.outer.matrix.input_width()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn num_live_ring_elements_per_claim(&self) -> usize {
+        self.profile.blocks.live_ring_elements_per_claim
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn num_positions_per_block(&self) -> usize {
+        self.profile.blocks.positions_per_block
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn num_live_blocks(&self) -> usize {
+        self.profile.blocks.live_blocks
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn fold_challenge_config(&self) -> SparseChallengeConfig {
+        self.opening.fold_challenge_config
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn position_index_bits(&self) -> usize {
+        self.profile.blocks().position_index_bits()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn block_index_bits(&self) -> usize {
+        self.profile.blocks().block_index_bits()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn num_digits_inner(&self) -> usize {
+        self.profile.inner.digits.num_digits
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn num_digits_outer(&self) -> usize {
+        self.profile.outer.digits.num_digits
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn num_digits_open(&self) -> usize {
+        self.opening.num_digits_open
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn num_digits_fold(&self) -> usize {
+        self.opening.num_digits_fold
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn log_basis_outer(&self) -> u32 {
+        self.profile.outer.digits.log_basis
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn log_basis_inner(&self) -> u32 {
+        self.profile.inner.digits.log_basis
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn log_basis_open(&self) -> u32 {
+        self.opening.log_basis_open
+    }
+}
+
 impl LevelParamsLike for GroupOpenPhaseParams {
     fn source_encoding(&self) -> crate::CommittedSourceEncoding {
         crate::CommittedSourceEncoding::CanonicalCoefficientTable

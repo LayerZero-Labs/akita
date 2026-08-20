@@ -80,7 +80,7 @@ impl WitnessLayout {
         let mut cursor = 0usize;
         for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
             let (z_len, e_len, t_len) = witness_unit_lengths(
-                params,
+                &params,
                 role_dims,
                 opening_geometry,
                 num_claims,
@@ -490,7 +490,8 @@ mod tests {
                         .sum::<usize>();
                     assert_eq!(
                         crate::grouped_witness_body_coefficients(
-                            &params,
+                            &params.final_group_scalar().expect("scalar final group"),
+                            params.source_encoding,
                             params.role_dims(),
                             2,
                             opening_batch.num_total_polynomials(),
@@ -505,17 +506,23 @@ mod tests {
 
         let params = coefficient_packing_params(crate::CommitmentPayloadMode::Raw);
         assert!(crate::grouped_witness_body_coefficients(
-            &params,
+            &params.final_group_scalar().expect("scalar final group"),
+            params.source_encoding,
             params.role_dims(),
             2,
             usize::MAX,
             1,
         )
         .is_err());
-        assert!(
-            crate::grouped_witness_body_coefficients(&params, params.role_dims(), 2, 1, 0,)
-                .is_err()
-        );
+        assert!(crate::grouped_witness_body_coefficients(
+            &params.final_group_scalar().expect("scalar final group"),
+            params.source_encoding,
+            params.role_dims(),
+            2,
+            1,
+            0,
+        )
+        .is_err());
 
         for mutate in [
             |params: &mut CommittedGroupParams| params.num_positions_per_block = 0,
@@ -527,7 +534,8 @@ mod tests {
             let mut malformed = params.clone();
             mutate(&mut malformed);
             assert!(crate::grouped_witness_body_coefficients(
-                &malformed,
+                &malformed.final_group_scalar().expect("scalar final group"),
+                malformed.source_encoding,
                 malformed.role_dims(),
                 2,
                 1,
@@ -548,7 +556,10 @@ mod tests {
             inner.ring_dimension(),
         );
         assert!(crate::grouped_witness_body_coefficients(
-            &zero_a_rows,
+            &zero_a_rows
+                .final_group_scalar()
+                .expect("scalar final group"),
+            zero_a_rows.source_encoding,
             zero_a_rows.role_dims(),
             2,
             1,
@@ -561,7 +572,10 @@ mod tests {
             extension_degree: 2,
         };
         assert!(crate::grouped_witness_body_coefficients(
-            &wrong_source,
+            &wrong_source
+                .final_group_scalar()
+                .expect("scalar final group"),
+            wrong_source.source_encoding,
             wrong_source.role_dims(),
             2,
             1,
@@ -595,7 +609,8 @@ mod tests {
                 * dimensions.d_a();
             assert_eq!(
                 crate::grouped_witness_body_coefficients(
-                    &params,
+                    &params.final_group_scalar().expect("scalar final group"),
+                    params.source_encoding,
                     dimensions,
                     extension_degree,
                     claims,

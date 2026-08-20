@@ -218,7 +218,7 @@ where
 
 fn compute_group_a_relation_quotients<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
-    group: &PreparedRingSwitchGroup<'_, F>,
+    group: &PreparedRingSwitchGroup<F>,
     group_opening: &RingRelationGroupOpening<F>,
 ) -> Result<(RelationQuotientRow<F>, Vec<RelationQuotientRow<F>>), AkitaError>
 where
@@ -340,7 +340,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
     lp: &CommittedGroupParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
-    groups: &[PreparedRingSwitchGroup<'_, F>],
+    groups: &[PreparedRingSwitchGroup<F>],
     group_openings: &[RingRelationGroupOpening<F>],
     extension_degree: usize,
     d_quotients: &RingVec<F>,

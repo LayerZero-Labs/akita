@@ -163,6 +163,9 @@ impl SetupPrefixCandidateContext<'_> {
         };
         let physical_width = akita_types::grouped_witness_body_coefficients(
             &params,
+            // A setup prefix is a frozen standalone commitment, so canonical by
+            // admission.
+            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             self.dimensions,
             self.policy.claim_ext_degree,
             1,

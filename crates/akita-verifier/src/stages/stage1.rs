@@ -59,7 +59,7 @@ where
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         let drawn = draw_group_fold_challenges::<F, E, _>(
             &mut LiveFoldDraw::<F, T>::new(transcript),
-            group_lp,
+            &group_lp,
             group_index,
             k_g,
             grind_nonce,

@@ -128,15 +128,15 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
         .then_some(Some(response_l2_sq))
 }
 
-pub(crate) struct FoldGrindGroup<'params, 'group, G> {
+pub(crate) struct FoldGrindGroup<'group, G> {
     pub(crate) group_index: usize,
     pub(crate) group: &'group G,
-    pub(crate) params: &'params dyn LevelParamsLike,
+    pub(crate) params: akita_types::GroupOpenPhaseParams,
 }
 
-impl<G> Copy for FoldGrindGroup<'_, '_, G> {}
+impl<G> Copy for FoldGrindGroup<'_, G> {}
 
-impl<G> Clone for FoldGrindGroup<'_, '_, G> {
+impl<G> Clone for FoldGrindGroup<'_, G> {
     fn clone(&self) -> Self {
         *self
     }
@@ -305,8 +305,8 @@ where
     Ok(TerminalFoldGrindOutput { witness, nonce })
 }
 
-struct PreparedFoldGrindGroup<'params, 'group, G> {
-    input: FoldGrindGroup<'params, 'group, G>,
+struct PreparedFoldGrindGroup<'group, G> {
+    input: FoldGrindGroup<'group, G>,
     acceptance: FoldGrindAcceptanceCtx,
 }
 
@@ -398,7 +398,7 @@ fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B, T>(
     opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
-    groups: &[PreparedFoldGrindGroup<'_, '_, G>],
+    groups: &[PreparedFoldGrindGroup<'_, G>],
     max_grind_attempts: u32,
 ) -> Result<(Vec<FoldProbeOutput<F>>, u32), AkitaError>
 where
@@ -425,7 +425,7 @@ where
                     let group = &prepared_group.input;
                     let challenges = draw_group_fold_challenges::<F, E, _>(
                         &mut preview,
-                        group.params,
+                        &group.params,
                         group.group_index,
                         group.group.num_polynomials(),
                         nonce,
@@ -433,7 +433,7 @@ where
                     let output =
                         group
                             .group
-                            .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
+                            .probe_fold(opening_ctx, &challenges, root_lp, &group.params)?;
                     let observed_l2_sq = {
                         let _span = tracing::info_span!("fold_grind_acceptance_check").entered();
                         accepts_fold_witness_flat(
@@ -462,7 +462,7 @@ where
             let challenge_config = group.params.fold_challenge_config();
             let challenges = draw_group_fold_challenges::<F, E, _>(
                 &mut live,
-                group.params,
+                &group.params,
                 group.group_index,
                 group.group.num_polynomials(),
                 nonce,
@@ -538,7 +538,7 @@ pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    groups: &[FoldGrindGroup<'_, '_, G>],
+    groups: &[FoldGrindGroup<'_, G>],
     _tail_t_vectors: Option<usize>,
 ) -> Result<(Vec<FoldProbeOutput<F>>, u32), AkitaError>
 where

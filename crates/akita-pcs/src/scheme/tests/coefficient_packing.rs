@@ -3,9 +3,7 @@ use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
 use akita_field::LiftBase;
-use akita_types::{
-    basis_weights, AkitaScheduleLookupKey, LevelParamsLike, OpeningMethod, PolynomialGroupLayout,
-};
+use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
 type PackingField = <PackingCfg as CommitmentConfig>::Field;

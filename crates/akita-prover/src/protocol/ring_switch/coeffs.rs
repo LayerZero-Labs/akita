@@ -15,12 +15,12 @@ use akita_field::parallel::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
-    CommitmentRingDims, CompressionWitnessSpan, LevelParamsLike, PackedNegativeBinary, RingRole,
-    RingVec, WitnessLayout,
+    CommitmentRingDims, CompressionWitnessSpan, PackedNegativeBinary, RingRole, RingVec,
+    WitnessLayout,
 };
 
-pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
-    pub(crate) params: &'a dyn LevelParamsLike,
+pub(crate) struct PreparedRingSwitchGroup<F: FieldCore> {
+    pub(crate) params: akita_types::GroupOpenPhaseParams,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) e_hat: DigitBlocks,
     pub(crate) t_hat: DigitBlocks,
@@ -186,7 +186,7 @@ fn emit_group_witness_segments<F: CanonicalField>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
-    group: &PreparedRingSwitchGroup<'_, F>,
+    group: &PreparedRingSwitchGroup<F>,
     num_claims: usize,
 ) -> Result<(), AkitaError> {
     let num_digits_fold = group.params.num_digits_fold();
@@ -241,7 +241,7 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
-    group: &PreparedRingSwitchGroup<'_, F>,
+    group: &PreparedRingSwitchGroup<F>,
     num_claims: usize,
     num_digits_fold: usize,
 ) -> Result<(), AkitaError> {

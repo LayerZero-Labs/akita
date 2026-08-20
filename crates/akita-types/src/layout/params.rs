@@ -855,17 +855,103 @@ impl CommittedGroupParams {
     }
 
     /// Group-local parameter view for folded opening work.
-    pub fn group_params<'a>(
-        &'a self,
+    /// This fold's final/new group, as a group.
+    ///
+    /// The fold stores its final group's parameters as flat fields; the only
+    /// piece it does not carry is that group's `PolynomialGroupLayout`, which
+    /// the opening batch already knows. Materialising it here is what lets every
+    /// group in a fold have one type without threading a layout through the 77
+    /// `with_decomp` call sites.
+    ///
+    /// Cheap: `GroupOpenPhaseParams` is `Copy` and all of its fields already
+    /// were.
+    pub fn final_group(&self, group: crate::PolynomialGroupLayout) -> crate::GroupOpenPhaseParams {
+        crate::GroupOpenPhaseParams {
+            profile: crate::GroupCommitPhaseParams::from_params_fields_pub(group, self),
+            opening: GroupOpeningPlan {
+                opening_method: self.opening_method,
+                fold_challenge_config: self.fold_challenge_config,
+                log_basis_open: self.log_basis_open,
+                num_digits_open: self.num_digits_open,
+                num_digits_fold: self.num_digits_fold,
+            },
+            setup_natural_len: None,
+        }
+    }
+
+    /// This fold's final group, for a scalar (single-polynomial) fold.
+    ///
+    /// Derives the layout from geometry the fold already carries: a scalar fold
+    /// has one polynomial, and `N * d_a == 2^num_vars` is the invariant
+    /// `validate_root_geometry` enforces. A grouped fold must supply its layout
+    /// explicitly through [`Self::final_group`], because `num_polynomials` is
+    /// not derivable from the fold alone.
+    pub fn final_group_scalar(&self) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
+        let source_len = self
+            .num_live_ring_elements_per_claim
+            .checked_mul(self.d_a())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("scalar final-group source length overflow".to_string())
+            })?;
+        if !source_len.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "scalar final-group source length is not a power of two".to_string(),
+            ));
+        }
+        Ok(self.final_group(crate::PolynomialGroupLayout::singleton(
+            source_len.trailing_zeros() as usize,
+        )))
+    }
+
+    /// Physical source encoding of the group at `group_index`.
+    ///
+    /// The fold's own new witness carries this fold's encoding; every earlier
+    /// group is canonical by admission, because
+    /// `GroupCommitPhaseParams::try_from_params` refuses to freeze a
+    /// non-canonical standalone profile. This is the single owner that replaces
+    /// the group accessor's hard-coded constant.
+    #[must_use]
+    pub fn source_encoding_of(&self, group_index: usize) -> crate::CommittedSourceEncoding {
+        if group_index == self.precommitted_group_count() {
+            self.source_encoding
+        } else {
+            crate::CommittedSourceEncoding::CanonicalCoefficientTable
+        }
+    }
+
+    /// Every group this fold opens, in canonical transcript order.
+    ///
+    /// An incoming setup prefix is group 0, earlier precommitted groups follow,
+    /// and the fold's own final/new group is last. This is the one ordering the
+    /// schedule commits to; see `validate_nonterminal_opening_execution`.
+    pub fn groups(
+        &self,
+        final_group: crate::PolynomialGroupLayout,
+    ) -> Vec<crate::GroupOpenPhaseParams> {
+        let mut groups: Vec<crate::GroupOpenPhaseParams> =
+            self.precommitted_group_iter().copied().collect();
+        groups.push(self.final_group(final_group));
+        groups
+    }
+
+    /// One group of this fold's opening batch, as a concrete group.
+    ///
+    /// Formerly returned `&dyn LevelParamsLike`, because the final group was the
+    /// fold itself while the others were `GroupOpenPhaseParams` and callers had
+    /// to be prevented from caring which. Both are now the same type, so the
+    /// erasure is gone: the return is a value, `GroupOpenPhaseParams` being
+    /// `Copy`.
+    pub fn group_params(
+        &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+    ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index == final_group_index {
-            return Ok(self);
+            return Ok(self.final_group(*opening_batch.group_layout(group_index)?));
         }
         self.precommitted_group_params(group_index)
-            .map(|group| group as &dyn LevelParamsLike)
+            .copied()
             .ok_or(AkitaError::InvalidProof)
     }
 
@@ -875,17 +961,18 @@ impl CommittedGroupParams {
     /// Construction code uses this boundary while a new opening method is
     /// being prepared. Execution paths must use [`Self::group_params`], which
     /// additionally enforces the currently supported method set.
-    pub fn group_params_geometry<'a>(
-        &'a self,
+    /// As [`Self::group_params`], but validating geometry only.
+    pub fn group_params_geometry(
+        &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+    ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
         let final_group_index = self.validate_opening_batch_geometry(opening_batch)?;
         if group_index == final_group_index {
-            return Ok(self);
+            return Ok(self.final_group(*opening_batch.group_layout(group_index)?));
         }
         self.precommitted_group_params(group_index)
-            .map(|group| group as &dyn LevelParamsLike)
+            .copied()
             .ok_or(AkitaError::InvalidProof)
     }
 
