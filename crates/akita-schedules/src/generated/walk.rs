@@ -41,7 +41,10 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
-    let mut root_params = if is_multi_group {
+    // One expansion, two length sources. A grouped root pins its live length
+    // and carries the frozen precommitted D segments; a scalar root derives its
+    // length from the witness it was planned for.
+    let length_source = if is_multi_group {
         let (precommitted_groups, precommitted_d_width) =
             multi_group_root_precommitted_groups_for_open_basis(
                 key,
@@ -52,36 +55,30 @@ pub(crate) fn walk_generated_schedule_entry(
                 entry.root.open_commit_matrix.ring_dimension as usize,
             )?;
         validate_expanded_precommitted_groups(key, &precommitted_groups)?;
-        entry
-            .root
-            .group
-            .expand_to_multi_group_root_level_params_with_setup(
-                policy,
-                ring_challenge_config,
-                entry.root.group.opening_method,
-                key.final_group.num_polynomials(),
-                entry.root.group.num_digits_inner,
-                entry.root.group.num_digits_fold,
-                precommitted_groups,
-                precommitted_d_width,
-                entry.root.open_commit_matrix,
-            )?
+        crate::generated::expand::GroupLengthSource::PinnedGrouped {
+            num_claims: key.final_group.num_polynomials(),
+            precommitted_groups,
+            precommitted_d_width,
+        }
     } else {
-        entry.root.group.expand_to_level_params_with_setup(
-            policy,
-            akita_types::CommitmentPayloadMode::Compressed,
-            entry.root.group.opening_method,
-            ring_challenge_config,
-            0,
-            entry.root.group.num_digits_inner,
-            entry.root.group.num_digits_fold,
-            None,
-            expected_root_w_len,
-            key.final_group.num_polynomials(),
-            entry.root.open_commit_matrix,
-            None,
-        )?
+        crate::generated::expand::GroupLengthSource::IncomingWitness {
+            input_witness_len: expected_root_w_len,
+            num_claims: key.final_group.num_polynomials(),
+            setup_prefix: None,
+        }
     };
+    let mut root_params = entry.root.group.expand_group(
+        policy,
+        akita_types::CommitmentPayloadMode::Compressed,
+        entry.root.group.opening_method,
+        ring_challenge_config,
+        0,
+        entry.root.group.num_digits_inner,
+        entry.root.group.num_digits_fold,
+        None,
+        entry.root.open_commit_matrix,
+        length_source,
+    )?;
     let distributed_levels = distributed_activation_depth(
         entry.root.witness_chunks,
         entry.recursive_folds.iter().map(|fold| fold.witness_chunks),
@@ -111,7 +108,7 @@ pub(crate) fn walk_generated_schedule_entry(
     let mut expanded = vec![(root_params, expected_root_w_len, root_output_len)];
     let mut input_witness_len = root_output_len;
     for (index, fold) in entry.recursive_folds.iter().enumerate() {
-        let mut params = fold.group.expand_to_level_params_with_setup(
+        let mut params = fold.group.expand_group(
             policy,
             fold.payload_mode,
             fold.group.opening_method,
@@ -120,10 +117,12 @@ pub(crate) fn walk_generated_schedule_entry(
             None,
             fold.group.num_digits_fold,
             fold.response_l2_sq_cap,
-            input_witness_len,
-            1,
             fold.open_commit_matrix,
-            fold.setup_prefix,
+            crate::generated::expand::GroupLengthSource::IncomingWitness {
+                input_witness_len,
+                num_claims: 1,
+                setup_prefix: fold.setup_prefix,
+            },
         )?;
         params.witness_chunk = partition_to_chunk(fold.witness_chunks, distributed_levels)?;
         let output_witness_len = planned_next_witness_len(
