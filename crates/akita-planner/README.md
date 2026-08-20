@@ -156,8 +156,8 @@ schedule property, not a proof-derived layout guess.
 
 The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix may
 terminate only if doing so still produces the required root-plus-suffix folded
-topology. In the supported parameter ranges, schedules do not need deeper
-recursion, and the cap keeps verifier-reachable fallback work bounded.
+topology. In the supported parameter ranges, offline schedule generation does
+not need deeper recursion. Runtime verification never invokes this search.
 
 ## Proof-Size Accounting
 

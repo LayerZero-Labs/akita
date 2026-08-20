@@ -1,12 +1,16 @@
 # Zero-knowledge background
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+> **Status:** paper background only. The current repository does not implement
+> zero knowledge and has no `zk` Cargo feature.
 
-The background needed to follow Akita's zero-knowledge work: why lattice PCS
-leaks witness data through sum-check rounds, commitments, and terminal openings;
-the committed-pad masking idea; and the prefix / seam / suffix pipeline from
-paper §6 `sec:zk`. The roadmap page tracks implementation against that design:
-[Roadmap → Zero-knowledge](../roadmap/zero-knowledge.md).
+This page gives the background needed to follow the zero-knowledge construction
+in Akita paper §6 `sec:zk`. It covers why a lattice PCS leaks witness data
+through sum-check rounds, commitments, and terminal openings. It also introduces
+the committed-pad masking idea and the prefix, seam, and suffix pipeline.
+
+The current implementation is transparent only. Earlier prefix experiments
+were removed from the main codebase and preserved as historical records. See
+[Roadmap → Zero-knowledge](../roadmap/zero-knowledge.md) for the exact status.
 
 ## Why ZK is hard over lattices
 

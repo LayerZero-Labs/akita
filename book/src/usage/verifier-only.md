@@ -1,17 +1,26 @@
 # Verifier-only integration
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+> **Status:** current integration outline. A complete standalone example remains
+> part of the reader-path follow-up.
 
-For consumers that only verify (e.g. the Jolt guest): depend on `akita-verifier`
-+ `akita-types` + `akita-config`, call `batched_verify::<Cfg, T>` directly
-(bypassing `AkitaCommitmentScheme::batched_verify`, which uses `Instant::now()`),
-with no caller-selected setup-contribution mode. The verifier derives that
-behavior from the resolved schedule. Note that the planner is reached
-transitively via `akita-config` (the DP
-fallback is verifier-reachable). State the no-panic contract expectation.
+Consumers that only verify, such as the Jolt guest, should depend on
+`akita-verifier`, `akita-types`, and `akita-config`. They can call
+`batched_verify::<Cfg, T>` directly. This bypasses
+`AkitaCommitmentScheme::batched_verify`, whose timing log uses `Instant::now()`.
+
+The verifier accepts an explicit `OpeningScheduleSelection` and resolves it
+through the enabled generated catalog in `akita-schedules`. It never invokes
+the schedule search in `akita-planner`. The selected schedule also determines
+whether each nonterminal fold uses direct setup evaluation or the Stage 3
+setup-prefix proof. The caller does not select that mode independently.
+
+All verifier-facing proof, setup, schedule, claim, and transcript data is
+untrusted. Malformed input must return `AkitaError` or `SerializationError`
+without panicking. See [Verification](../how/verification.md) for the complete
+contract.
 
 ## Sources to fold in
 
 - `crates/akita-verifier/src/lib.rs`
-- `AGENTS.md` (Verifier No-Panic Contract; crate roles)
-- `scripts/check-crate-deps.sh` (dependency hygiene)
+- `docs/verifier-contract.md`
+- `scripts/check-crate-deps.sh`

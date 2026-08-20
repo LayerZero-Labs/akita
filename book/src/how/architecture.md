@@ -32,8 +32,11 @@ CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 
 Key structural facts:
 
-- `akita-planner` sits **below** `akita-config` and names no `CommitmentConfig` type.
-- `akita-verifier` depends on `akita-config` and therefore reaches `akita-planner` transitively; the schedule DP is verifier-reachable.
+- `akita-planner` owns offline schedule search and table emission. It names no
+  `CommitmentConfig` type and is not on the verifier runtime dependency path.
+- `akita-verifier` depends on `akita-config`, which resolves rows through
+  `akita-schedules`. Verification reaches generated row expansion, not planner
+  search.
 - Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
 
 ## End-to-end lifecycle

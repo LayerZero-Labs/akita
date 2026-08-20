@@ -45,10 +45,11 @@ re-derives rather than trusts.
 
 ## The planner and proof size
 
-The `Cfg`-free planner: catalog validation, on-demand compact→`LevelParams`
-expansion, and the schedule-search DP fallback (verifier-reachable, so it must
-reject malformed input, never panic). The feature-gated `akita-schedules` crate
-owns shipped table data. The verifier-reachable proof-size formula.
+The `Cfg`-free planner owns offline schedule search and table emission. The
+feature-gated `akita-schedules` crate owns shipped table data and runtime
+compact to `LevelParams` expansion. Verification resolves an enabled generated
+row and never runs planner search. The shared proof-size formulas remain
+verifier-reachable and must reject malformed input without panicking.
 
 **Implementation map**
 

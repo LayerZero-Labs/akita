@@ -1,17 +1,28 @@
 # Verifier offloading
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+> **Status:** recursive setup-prefix offloading is implemented. The broader
+> construction in paper §4 is not claimed as a separate production feature.
 
-Reducing per-level verifier cost by turning the setup matrix contribution into a
-cheaper inner-product claim on a preprocessed prefix commitment, via an extra
-reduction sum-check. Parts of this are already landed (the setup product
-sum-check exists); the full offloaded verifier path is still in progress.
+Akita can replace a direct setup matrix contribution at a nonterminal fold with
+an opening of a precommitted setup prefix and a Stage 3 product sumcheck. The
+generated recursive schedule selects this mode. The caller cannot add or remove
+it after schedule selection.
+
+The prover emits `SetupSumcheckProof` for each selected producer. The proof
+contains the setup claim, the setup-prefix evaluation, and a degree-two
+sumcheck. The verifier resolves the same generated schedule, authenticates the
+carried setup-prefix opening, and checks the Stage 3 proof. Missing or extra
+Stage 3 payloads are rejected.
+
+This implemented path covers recursive setup-prefix offloading, including the
+generated distributed profile. Paper §4 describes a broader verifier
+offloading construction. The repository does not present every part of that
+paper construction as implemented.
 
 **Sources to fold in**
 
-- Paper §4 `sec:verifier-offloading` (the full construction), §4.3 `sec:claim-reduction`.
-- `specs/archive/2026-Q3/setup-layout-repack.md`, `book/src/how/proving/sumcheck-stages.md`,
-  `specs/archive/2026-Q3/setup-prefix-ladder.md`,
-  `specs/setup-offloading-planner.md`.
-- `specs/heterogeneous-group-source-contracts.md` (batching at the recursive boundary).
-- `book/src/how/proving/sumcheck-stages.md` (stage 3 setup product sumcheck).
+- `specs/setup-offloading-planner.md`
+- `specs/archive/2026-Q3/distributed-setup-offloading.md`
+- `book/src/how/proving/sumcheck-stages.md`
+- `book/src/how/verifying/setup_contribution.md`
+- Paper §4 `sec:verifier-offloading` and §4.3 `sec:claim-reduction`
