@@ -164,6 +164,7 @@ dependencies = [
  "akita-pcs",
  "akita-prover",
  "akita-recursion-glue",
+ "akita-serialization",
  "akita-transcript",
  "akita-types",
  "akita-verifier",

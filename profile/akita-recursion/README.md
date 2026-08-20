@@ -19,7 +19,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
 | `guest/`     | bin  | `#[jolt::provable]` RISC-V program that runs the Akita verifier. |
 
-## Quick start (`nv=32`, recursive multi-group OneHot — canonical target)
+## Quick start with an exact CI case
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
@@ -35,11 +35,11 @@ cd profile/akita-recursion
 # 1. Build the host binaries.
 cargo build --release
 
-# 2. Generate the verifier-input blob (artifact prints exact size).
-#    REQUIRED before step 3 — `host` reads this file from disk.
-AKITA_NUM_VARS=32 \
-    AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
-    ./target/release/akita-recursion-artifact
+# 2. Generate one exact CI case (artifact prints its identity and size).
+#    REQUIRED before step 3 because `host` reads this file from disk.
+AKITA_RECURSION_BLOB=target/onehot_fp128_nv36_recursive.bin \
+    ./target/release/akita-recursion-artifact \
+    --case onehot_fp128:36:1:recursive
 
 # 3. Compile the guest to RISC-V, emulate it, and report cycle markers.
 #    Start with trace-only (no Jolt prover) when measuring the recursive
@@ -51,8 +51,23 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --trace-only \
     --trace-output /dev/null \
-    --input target/akita_recursion_inputs_nv32.bin
+    --input target/onehot_fp128_nv36_recursive.bin
 ```
+
+The reusable scalar OneHot cases are the exact cases from the CI profile
+catalog:
+
+| Case | Guest field | Setup mode | Root envelope |
+| --- | --- | --- | --- |
+| `onehot_fp32:30:1` | fp32 with degree four extension claims | direct | D2048 |
+| `onehot_fp64:30:1` | fp64 with degree two extension claims | direct | D512 |
+| `onehot_fp128:36:1:direct` | fp128 | direct | D512 |
+| `onehot_fp128:36:1:recursive` | fp128 | recursive | D512 |
+
+The blob stores this identity, and the host dispatches to a separate Jolt
+entrypoint for each verifier monomorphization. A blob cannot be replayed by a
+different case entrypoint. Omitting `--case` retains the older grouped fp128
+nv32 recursive example.
 
 Expected output shape (rerun `--trace-only` for current recursive numbers):
 
@@ -72,11 +87,11 @@ that lives inside the blob; the proof itself is a tiny fraction.
 
 The full pipeline (Dory preprocessing → Jolt prove → Jolt verify) runs
 end-to-end at arities where the trace fits under `max_trace_length = 4 G`.
-Start with `AKITA_NUM_VARS=32`, measure it with `--trace-only`, and then remove
-`--trace-only` once the trace bound is confirmed:
+Measure the selected case with `--trace-only`, and then remove `--trace-only`
+once the trace bound is confirmed:
 
 ```bash
-AKITA_NUM_VARS=32 ./target/release/akita-recursion-artifact
+./target/release/akita-recursion-artifact --case onehot_fp64:30:1
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --input target/akita_recursion_inputs.bin
@@ -115,7 +130,8 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 | Variable                  | Default                                  | Effect                                  |
 | ------------------------- | ---------------------------------------- | --------------------------------------- |
-| `AKITA_NUM_VARS`          | `32`                                     | Polynomial arity for the prover.        |
+| `AKITA_RECURSION_CASE`    | grouped fp128 nv32 recursive             | Case used when `artifact --case` is omitted. |
+| `AKITA_NUM_VARS`          | `32`                                     | Arity for the legacy grouped case only. |
 | `AKITA_RECURSION_BLOB`    | `target/akita_recursion_inputs.bin`      | Output path for the blob (`artifact`).  |
 | `AKITA_RECURSION_LOG`     | `info`                                   | `tracing-subscriber` filter (`host`).   |
 | `ZEROOS_GUEST_RUSTFLAGS`  | unset                                    | Pass `-Zunstable-options` when Rust requires it for Jolt's custom `riscv64imac-zero-linux-musl` target. |
@@ -131,20 +147,23 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 | `--trace-output <path>` | `<target-dir>/akita_verify.trace`  | Trace file path for `--trace-only`.          |
 | `--trace-only`        | off                                  | Skip preprocessing + Jolt prove/verify.      |
 
+The artifact accepts `--case <catalog-case>`. The case fixes the field, arity,
+polynomial count, setup mode, and root envelope. It does not accept separate
+overrides for those values.
+
 ## How it works
 
-1. **`artifact`** runs the recursive companion of `fp128::OneHot` →
-   `setup_prover` → two base-config precommits → a recursive-config
-   two-polynomial final commit → `batched_prove` over synthetic OneHot
-   polynomials. It sanity-verifies on the host and serializes the three
-   ordered commitment groups, verifier setup, proof shape, and proof into
-   one blob via [`AkitaJoltInputs::write_to_bytes`](glue/src/lib.rs).
-2. **`host`** strictly decodes and verifies the blob. It then derives the
-   terminal scalar Q128 NTT cache from that verified setup and verifies the
-   proof again through the installed cache. The host writes the cache under
-   `--target-dir` and passes its path into the guest build. It then compiles
-   the guest to `riscv64imac-zero-linux-musl`, runs Jolt, and forwards each
-   cycle count through `tracing`.
+1. **`artifact`** resolves the selected catalog row, runs setup, commit, and
+   `batched_prove` over a deterministic synthetic OneHot polynomial, verifies
+   it on the host, and serializes its case identity, verifier setup, proof
+   shape, and proof with [`AkitaJoltInputs::write_to_bytes`](glue/src/lib.rs).
+   The older grouped case uses the same envelope with three ordered groups.
+2. **`host`** strictly decodes and verifies every blob before benchmark
+   replay. For fp128 it also derives and self-checks the terminal scalar Q128
+   NTT cache. The guest replay may trust the already validated setup matrix.
+   The host then compiles the case-specific entrypoint to
+   `riscv64imac-zero-linux-musl`, runs Jolt, and forwards each cycle count
+   through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
    blob and invokes `akita_verifier::batched_verify` directly —
    bypassing `akita-scheme::batched_verify`, which would otherwise

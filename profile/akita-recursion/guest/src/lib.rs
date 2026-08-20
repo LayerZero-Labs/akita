@@ -2,10 +2,11 @@
 //! bundle (from [`akita_recursion_glue::AkitaJoltInputs`]) and runs the
 //! Akita batched verifier inside the Jolt RISC-V emulator.
 //!
-//! Three cycle-tracking markers wrap the per-phase work so the host driver
+//! Cycle-tracking markers wrap the per-phase work so the host driver
 //! can attribute total cycles to:
 //!
 //! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
+//! - `install_terminal_cache`: install the optional fp128 terminal cache.
 //! - `transcript_init`:   construct the `AkitaTranscript`.
 //! - `akita_verify`:      `akita_verifier::batched_verify` (the kernel
 //!   that `akita-pcs::AkitaCommitmentScheme::batched_verify` wraps; we call it directly to
@@ -18,20 +19,15 @@
 //! - `1` — decode failure.
 //! - `2` — verifier rejected the proof.
 
-use akita_config::proof_optimized::fp128;
+use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::RecursiveCommitmentConfig;
 use akita_error::AkitaError;
-use akita_recursion_glue::AkitaJoltInputs;
+use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
 use akita_verifier::batched_verify;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
-
-type F = fp128::Field;
-type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
-/// Concrete ring view used by the recursion artifact's fixed input schema.
-const SOURCE_VIEW_D: usize = 512;
 
 include!(concat!(env!("OUT_DIR"), "/prepared_verifier_cache.rs"));
 
@@ -59,87 +55,167 @@ fn verification_status(result: Result<(), AkitaError>) -> u32 {
 // path (no frame-pointer save/restore around every Rust function call).
 // Re-enable `backtrace = "dwarf"` temporarily to symbolicate a guest
 // panic; the `host` driver already plumbs `JOLT_BACKTRACE=full`.
-#[jolt::provable(
-    backtrace = "off",
-    stack_size = 16777216,
-    heap_size = 1610612736,
-    max_input_size = 805306368,
-    max_output_size = 1024,
-    max_trace_length = 4294967296
-)]
-fn akita_verify(input: &[u8]) -> u32 {
-    // `&[u8]` (rather than `Vec<u8>`) so the postcard-decoded input is a
-    // zero-copy borrow into the guest's input region: no megabyte-scale copy
-    // before verifier replay.
-    start_cycle_tracking("deserialize_input");
-    #[cfg(any(
-        feature = "trusted-benchmark-artifact",
-        akita_trusted_benchmark_artifact
-    ))]
-    let decoded_result =
-        AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_trusted_host_artifact_bytes::<Cfg>(input);
-    #[cfg(not(any(
-        feature = "trusted-benchmark-artifact",
-        akita_trusted_benchmark_artifact
-    )))]
-    let decoded_result = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(input);
-
-    let decoded = match decoded_result {
-        Ok(decoded) => decoded,
-        Err(_) => {
-            end_cycle_tracking("deserialize_input");
-            return 1;
-        }
+macro_rules! decode_artifact {
+    (strict, $input:expr, $field:ty, $cfg:ty, $d:expr) => {
+        AkitaJoltInputs::<$field, $d, <$cfg as akita_config::CommitmentConfig>::ExtField>::read_from_bytes::<$cfg>($input)
     };
-    end_cycle_tracking("deserialize_input");
-
-    if let Some(cache) = PROGRAM_BOUND_VERIFIER_CACHE {
-        start_cycle_tracking("install_terminal_cache");
-        if decoded
-            .verifier_setup
-            .install_trusted_prepared_verifier_ntt_cache(
-                cache,
-                decoded.schedule_selection.row_digest,
-            )
-            .is_err()
+    (trusted_generic, $input:expr, $field:ty, $cfg:ty, $d:expr) => {{
+        #[cfg(any(
+            feature = "trusted-benchmark-artifact",
+            akita_trusted_benchmark_artifact
+        ))]
         {
-            end_cycle_tracking("install_terminal_cache");
-            return 1;
+            AkitaJoltInputs::<
+                $field,
+                $d,
+                <$cfg as akita_config::CommitmentConfig>::ExtField,
+            >::read_trusted_host_artifact_bytes::<$cfg>($input)
         }
-        end_cycle_tracking("install_terminal_cache");
-    }
+        #[cfg(not(any(
+            feature = "trusted-benchmark-artifact",
+            akita_trusted_benchmark_artifact
+        )))]
+        {
+            AkitaJoltInputs::<
+                $field,
+                $d,
+                <$cfg as akita_config::CommitmentConfig>::ExtField,
+            >::read_from_bytes::<$cfg>($input)
+        }
+    }};
+    (trusted_fp128, $input:expr, $field:ty, $cfg:ty, $d:expr) => {{
+        #[cfg(any(
+            feature = "trusted-benchmark-artifact",
+            akita_trusted_benchmark_artifact
+        ))]
+        {
+            AkitaJoltInputs::<$field, $d>::read_trusted_fp128_host_artifact_bytes::<$cfg>($input)
+        }
+        #[cfg(not(any(
+            feature = "trusted-benchmark-artifact",
+            akita_trusted_benchmark_artifact
+        )))]
+        {
+            AkitaJoltInputs::<$field, $d>::read_from_bytes::<$cfg>($input)
+        }
+    }};
+}
 
-    start_cycle_tracking("transcript_init");
-    let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
-    end_cycle_tracking("transcript_init");
-
-    // We call `batched_verify` directly (rather than the public
-    // `AkitaCommitmentScheme::<Cfg>::batched_verify` wrapper) to skip
-    // its `Instant::now()` + final `tracing::info!` wall-clock log. The
-    // Jolt RISC-V runtime panics on `std::time::Instant::now()` (no
-    // `clock_gettime` support), so the scheme entry point would abort
-    // before any real verifier work runs. The new `batched_verify`
-    // surface is `<Cfg>`-generic and routes every policy through `Cfg`
-    // internally — no closures to thread through.
-    start_cycle_tracking("akita_verify");
-    let statement = match decoded.verifier_statement() {
-        Ok(statement) => statement,
-        Err(_) => {
-            end_cycle_tracking("akita_verify");
-            return 1;
+macro_rules! install_program_cache {
+    (none, $decoded:expr) => {};
+    (fp128, $decoded:expr) => {
+        if let Some(cache) = PROGRAM_BOUND_VERIFIER_CACHE {
+            start_cycle_tracking("install_terminal_cache");
+            if $decoded
+                .verifier_setup
+                .install_trusted_prepared_verifier_ntt_cache(
+                    cache,
+                    $decoded.schedule_selection.row_digest,
+                )
+                .is_err()
+            {
+                end_cycle_tracking("install_terminal_cache");
+                return 1;
+            }
+            end_cycle_tracking("install_terminal_cache");
         }
     };
-    let result = batched_verify::<Cfg, _>(
-        &decoded.proof,
-        &decoded.verifier_setup,
-        &mut transcript,
-        statement,
-        BasisMode::Lagrange,
-    );
-    end_cycle_tracking("akita_verify");
-
-    verification_status(result)
 }
+
+macro_rules! define_akita_guest {
+    ($name:ident, $case:expr, $field:ty, $cfg:ty, $d:expr, $decode:ident, $cache:ident) => {
+        #[jolt::provable(
+            backtrace = "off",
+            stack_size = 16777216,
+            heap_size = 1610612736,
+            max_input_size = 805306368,
+            max_output_size = 1024,
+            max_trace_length = 4294967296
+        )]
+        fn $name(input: &[u8]) -> u32 {
+            start_cycle_tracking("deserialize_input");
+            let decoded = match decode_artifact!($decode, input, $field, $cfg, $d) {
+                Ok(decoded) if decoded.case == $case => decoded,
+                Ok(_) | Err(_) => {
+                    end_cycle_tracking("deserialize_input");
+                    return 1;
+                }
+            };
+            end_cycle_tracking("deserialize_input");
+
+            install_program_cache!($cache, decoded);
+
+            start_cycle_tracking("transcript_init");
+            let mut transcript =
+                AkitaTranscript::<$field>::unbound_verifier(&decoded.transcript_domain);
+            end_cycle_tracking("transcript_init");
+
+            start_cycle_tracking("akita_verify");
+            let statement = match decoded.verifier_statement() {
+                Ok(statement) => statement,
+                Err(_) => {
+                    end_cycle_tracking("akita_verify");
+                    return 1;
+                }
+            };
+            let result = batched_verify::<$cfg, _>(
+                &decoded.proof,
+                &decoded.verifier_setup,
+                &mut transcript,
+                statement,
+                BasisMode::Lagrange,
+            );
+            end_cycle_tracking("akita_verify");
+            verification_status(result)
+        }
+    };
+}
+
+define_akita_guest!(
+    akita_verify_fp32,
+    AkitaJoltCase::OneHotFp32,
+    fp32::Field,
+    fp32::OneHot,
+    2048,
+    trusted_generic,
+    none
+);
+define_akita_guest!(
+    akita_verify_fp64,
+    AkitaJoltCase::OneHotFp64,
+    fp64::Field,
+    fp64::OneHot,
+    512,
+    trusted_generic,
+    none
+);
+define_akita_guest!(
+    akita_verify_fp128_direct,
+    AkitaJoltCase::OneHotFp128Direct,
+    fp128::Field,
+    fp128::OneHot,
+    512,
+    trusted_fp128,
+    fp128
+);
+define_akita_guest!(
+    akita_verify_fp128_recursive,
+    AkitaJoltCase::OneHotFp128Recursive,
+    fp128::Field,
+    RecursiveCommitmentConfig<fp128::OneHot>,
+    512,
+    trusted_fp128,
+    fp128
+);
+define_akita_guest!(
+    akita_verify,
+    AkitaJoltCase::OneHotFp128MultiGroupRecursive,
+    fp128::Field,
+    RecursiveCommitmentConfig<fp128::OneHot>,
+    512,
+    trusted_fp128,
+    fp128
+);
 
 #[cfg(test)]
 mod tests {

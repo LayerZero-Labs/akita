@@ -103,7 +103,7 @@ where
         Ok(matrix)
     }
 
-    fn deserialize_trusted_host_setup(
+    fn deserialize_trusted_fp128_host_setup(
         rest: &mut &[u8],
         total_blob_len: usize,
     ) -> Result<AkitaVerifierSetup<Fp128<P>>, SerializationError> {
@@ -129,11 +129,13 @@ where
     /// but deliberately skips rederiving matrix coefficients from the seed.
     /// Aligned matrix bytes use two word loads per field. Misaligned bytes use
     /// direct unaligned reads without a payload-sized staging allocation.
-    pub fn read_trusted_host_artifact_bytes<Cfg>(bytes: &[u8]) -> Result<Self, SerializationError>
+    pub fn read_trusted_fp128_host_artifact_bytes<Cfg>(
+        bytes: &[u8],
+    ) -> Result<Self, SerializationError>
     where
         Cfg: CommitmentConfig<Field = Fp128<P>, ExtField = Fp128<P>>,
     {
-        Self::decode_from_bytes_with_setup::<Cfg>(bytes, Self::deserialize_trusted_host_setup)
+        Self::decode_from_bytes_with_setup::<Cfg>(bytes, Self::deserialize_trusted_fp128_host_setup)
     }
 }
 

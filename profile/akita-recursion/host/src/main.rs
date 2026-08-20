@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use akita_config::proof_optimized::fp128;
+use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_recursion_glue::{AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
+use akita_recursion_glue::{read_blob_case, AkitaJoltCase, AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_transcript::AkitaTranscript;
 use akita_types::{prepared_verifier_ntt_cache_metadata, BasisMode};
 use akita_verifier::{batched_verify, build_riscv64_terminal_ntt_cache};
@@ -29,11 +29,6 @@ use tracing_subscriber::EnvFilter;
 
 const TRUSTED_BENCHMARK_ARTIFACT_ENV: &str = "AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT";
 const PREPARED_VERIFIER_CACHE_ENV: &str = "AKITA_RECURSION_PREPARED_VERIFIER_CACHE";
-type F = fp128::Field;
-type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
-/// Concrete ring view used by the recursion artifact's fixed input schema.
-const SOURCE_VIEW_D: usize = 512;
-
 #[derive(Debug, Parser)]
 #[command(
     about = "Prove the Akita verifier inside Jolt and report cycle counts",
@@ -60,9 +55,15 @@ struct Args {
     trace_only: bool,
 }
 
-fn run_native_guest(blob: &[u8]) -> Result<(), String> {
+fn run_native_guest(case: AkitaJoltCase, blob: &[u8]) -> Result<(), String> {
     info!("running guest natively (sanity check)");
-    let native_output = guest::akita_verify(blob);
+    let native_output = match case {
+        AkitaJoltCase::OneHotFp32 => guest::akita_verify_fp32(blob),
+        AkitaJoltCase::OneHotFp64 => guest::akita_verify_fp64(blob),
+        AkitaJoltCase::OneHotFp128Direct => guest::akita_verify_fp128_direct(blob),
+        AkitaJoltCase::OneHotFp128Recursive => guest::akita_verify_fp128_recursive(blob),
+        AkitaJoltCase::OneHotFp128MultiGroupRecursive => guest::akita_verify(blob),
+    };
     info!(native_output, "native guest output");
     if native_output != 0 {
         return Err(format!(
@@ -82,15 +83,18 @@ fn path_to_utf8<'a>(path: &'a Path, context: &str) -> Result<&'a str, String> {
     }
 }
 
-fn enable_trusted_benchmark_guest_build(prepared_cache: &Path) -> Result<(), String> {
+fn enable_benchmark_guest_build(prepared_cache: Option<&Path>) -> Result<(), String> {
     // The pinned Jolt SDK builds guest ELFs with a hard-coded `--features guest`.
     // This checked build-script cfg keeps plain `guest` strict while letting
     // this benchmark harness opt the RISC-V build into trusted setup decode.
     std::env::set_var(TRUSTED_BENCHMARK_ARTIFACT_ENV, "1");
-    std::env::set_var(
-        PREPARED_VERIFIER_CACHE_ENV,
-        path_to_utf8(prepared_cache, "prepared verifier cache")?,
-    );
+    match prepared_cache {
+        Some(prepared_cache) => std::env::set_var(
+            PREPARED_VERIFIER_CACHE_ENV,
+            path_to_utf8(prepared_cache, "prepared verifier cache")?,
+        ),
+        None => std::env::remove_var(PREPARED_VERIFIER_CACHE_ENV),
+    }
     Ok(())
 }
 
@@ -143,56 +147,91 @@ fn load_blob(input: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn strict_host_preflight(blob: &[u8]) -> Result<Vec<u8>, String> {
-    info!("strictly decoding and verifying verifier-input blob before trusted benchmark replay");
-    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(blob)
-        .map_err(|err| format!("strict input decode failed: {err}"))?;
-    let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
-    let statement = decoded
-        .verifier_statement()
-        .map_err(|err| format!("strict input statement failed: {err}"))?;
-    batched_verify::<Cfg, _>(
-        &decoded.proof,
-        &decoded.verifier_setup,
-        &mut transcript,
-        statement,
-        BasisMode::Lagrange,
-    )
-    .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
-    let resolved = Cfg::resolve_schedule_selection(decoded.schedule_selection)
-        .map_err(|err| format!("strict schedule resolution failed: {err}"))?;
-    let cache = build_riscv64_terminal_ntt_cache(
-        &decoded.verifier_setup,
-        resolved.schedule(),
-        decoded.schedule_selection.row_digest,
-    )
-    .map_err(|err| format!("prepared verifier cache build failed: {err}"))?;
-    decoded
-        .verifier_setup
-        .install_trusted_prepared_verifier_ntt_cache(&cache, decoded.schedule_selection.row_digest)
-        .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?;
-    let mut cached_transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
-    let cached_statement = decoded
-        .verifier_statement()
-        .map_err(|err| format!("cached input statement failed: {err}"))?;
-    batched_verify::<Cfg, _>(
-        &decoded.proof,
-        &decoded.verifier_setup,
-        &mut cached_transcript,
-        cached_statement,
-        BasisMode::Lagrange,
-    )
-    .map_err(|err| format!("prepared verifier cache self-check rejected proof: {err}"))?;
-    let metadata = prepared_verifier_ntt_cache_metadata(&cache)
-        .map_err(|err| format!("prepared verifier cache metadata failed: {err}"))?;
-    info!(
-        cache_bytes = cache.len(),
-        ring_d = metadata.ring_dimension,
-        prefix_rings = metadata.base_prefix_len,
-        width = metadata.width,
-        "strict host preflight and prepared cache self-check OK"
-    );
-    Ok(cache)
+macro_rules! strict_decode_and_verify {
+    ($blob:expr, $field:ty, $cfg:ty, $d:expr) => {{
+        type CaseExt = <$cfg as CommitmentConfig>::ExtField;
+        let decoded = AkitaJoltInputs::<$field, $d, CaseExt>::read_from_bytes::<$cfg>($blob)
+            .map_err(|err| format!("strict input decode failed: {err}"))?;
+        let mut transcript =
+            AkitaTranscript::<$field>::unbound_verifier(&decoded.transcript_domain);
+        batched_verify::<$cfg, _>(
+            &decoded.proof,
+            &decoded.verifier_setup,
+            &mut transcript,
+            decoded
+                .verifier_statement()
+                .map_err(|err| format!("strict input statement failed: {err}"))?,
+            BasisMode::Lagrange,
+        )
+        .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;
+        decoded
+    }};
+}
+
+macro_rules! strict_fp128_preflight {
+    ($blob:expr, $cfg:ty) => {{
+        let decoded = strict_decode_and_verify!($blob, fp128::Field, $cfg, 512);
+        let resolved = <$cfg>::resolve_schedule_selection(decoded.schedule_selection)
+            .map_err(|err| format!("strict schedule resolution failed: {err}"))?;
+        let cache = build_riscv64_terminal_ntt_cache(
+            &decoded.verifier_setup,
+            resolved.schedule(),
+            decoded.schedule_selection.row_digest,
+        )
+        .map_err(|err| format!("prepared verifier cache build failed: {err}"))?;
+        decoded
+            .verifier_setup
+            .install_trusted_prepared_verifier_ntt_cache(
+                &cache,
+                decoded.schedule_selection.row_digest,
+            )
+            .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?;
+        let mut cached_transcript =
+            AkitaTranscript::<fp128::Field>::unbound_verifier(&decoded.transcript_domain);
+        batched_verify::<$cfg, _>(
+            &decoded.proof,
+            &decoded.verifier_setup,
+            &mut cached_transcript,
+            decoded
+                .verifier_statement()
+                .map_err(|err| format!("cached input statement failed: {err}"))?,
+            BasisMode::Lagrange,
+        )
+        .map_err(|err| format!("prepared verifier cache self-check rejected proof: {err}"))?;
+        let metadata = prepared_verifier_ntt_cache_metadata(&cache)
+            .map_err(|err| format!("prepared verifier cache metadata failed: {err}"))?;
+        info!(
+            cache_bytes = cache.len(),
+            ring_d = metadata.ring_dimension,
+            prefix_rings = metadata.base_prefix_len,
+            width = metadata.width,
+            "strict host preflight and prepared cache self-check OK"
+        );
+        Ok(Some(cache))
+    }};
+}
+
+fn strict_host_preflight(case: AkitaJoltCase, blob: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    info!(%case, "strictly decoding and verifying verifier-input blob before benchmark replay");
+    match case {
+        AkitaJoltCase::OneHotFp32 => {
+            let _decoded = strict_decode_and_verify!(blob, fp32::Field, fp32::OneHot, 2048);
+            Ok(None)
+        }
+        AkitaJoltCase::OneHotFp64 => {
+            let _decoded = strict_decode_and_verify!(blob, fp64::Field, fp64::OneHot, 512);
+            Ok(None)
+        }
+        AkitaJoltCase::OneHotFp128Direct => {
+            strict_fp128_preflight!(blob, fp128::OneHot)
+        }
+        AkitaJoltCase::OneHotFp128Recursive => {
+            strict_fp128_preflight!(blob, RecursiveCommitmentConfig<fp128::OneHot>)
+        }
+        AkitaJoltCase::OneHotFp128MultiGroupRecursive => {
+            strict_fp128_preflight!(blob, RecursiveCommitmentConfig<fp128::OneHot>)
+        }
+    }
 }
 
 fn digest_prefix(digest: &[u8; 32]) -> String {
@@ -259,72 +298,151 @@ fn publish_prepared_cache(target_dir: &Path, cache: &[u8]) -> Result<PathBuf, St
     })
 }
 
+macro_rules! run_selected_guest {
+    (
+        $args:expr,
+        $blob:expr,
+        $case:expr,
+        $compile:ident,
+        $trace:ident,
+        $preprocess_shared:ident,
+        $preprocess_prover:ident,
+        $preprocess_verifier:ident,
+        $build_prover:ident,
+        $build_verifier:ident
+    ) => {{
+        info!(case = %$case, target_dir = %$args.target_dir, "compiling Akita verifier guest program");
+        let mut program = guest::$compile(&$args.target_dir);
+
+        if $args.trace_only {
+            info!(case = %$case, "trace-only mode: skipping preprocessing and proof generation");
+            run_native_guest($case, $blob)?;
+            let trace_path = $args.trace_output.clone().unwrap_or_else(|| {
+                let case_file = $case.as_str().replace(':', "_");
+                PathBuf::from(&$args.target_dir).join(format!("{case_file}.trace"))
+            });
+            info!(trace_file = %trace_path.display(), "tracing guest under emulator");
+            guest::$trace(path_to_utf8(&trace_path, "--trace-output")?, $blob);
+            info!(case = %$case, "trace done");
+            return Ok(());
+        }
+
+        info!(case = %$case, "running shared / prover / verifier preprocessing");
+        let shared_preprocessing = guest::$preprocess_shared(&mut program)
+            .map_err(|err| format!("shared preprocessing failed: {err}"))?;
+        let prover_preprocessing = guest::$preprocess_prover(shared_preprocessing.clone());
+        let verifier_preprocessing = guest::$preprocess_verifier(
+            shared_preprocessing,
+            prover_preprocessing.generators.to_verifier_setup(),
+            None,
+        );
+        let prove = guest::$build_prover(program, prover_preprocessing);
+        let verify = guest::$build_verifier(verifier_preprocessing);
+
+        run_native_guest($case, $blob)?;
+        info!(case = %$case, "invoking Jolt prover");
+        let now = Instant::now();
+        let (output, proof, program_io) = prove($blob);
+        let prover_secs = now.elapsed().as_secs_f64();
+        info!(prover_secs, "prover finished");
+        info!(
+            guest_output = output,
+            guest_panic = program_io.panic,
+            "prover program-io"
+        );
+
+        let now = Instant::now();
+        let is_valid = verify($blob, output, program_io.panic, proof);
+        let verifier_secs = now.elapsed().as_secs_f64();
+        info!(verifier_secs, is_valid, "Jolt verifier finished");
+        if !is_valid {
+            return Err("Jolt verifier rejected the proof".to_string());
+        }
+        if output != 0 {
+            return Err(format!("guest reported Akita-verify failure: {output}"));
+        }
+        info!(case = %$case, "Akita-in-Jolt proof OK");
+        Ok(())
+    }};
+}
+
 fn run() -> Result<(), String> {
     let args = Args::parse();
 
     info!(input = %args.input.display(), "loading verifier-input blob");
     let blob = load_blob(&args.input)?;
-    info!(bytes = blob.len(), "blob loaded");
-    let prepared_cache = strict_host_preflight(&blob)?;
+    let case = read_blob_case(&blob).map_err(|err| format!("read blob case identity: {err}"))?;
+    info!(%case, bytes = blob.len(), "blob loaded");
+    let prepared_cache = strict_host_preflight(case, &blob)?;
     let target_dir = PathBuf::from(&args.target_dir);
-    let prepared_cache_path = publish_prepared_cache(&target_dir, &prepared_cache)?;
+    let prepared_cache_path = prepared_cache
+        .as_deref()
+        .map(|cache| publish_prepared_cache(&target_dir, cache))
+        .transpose()?;
+    enable_benchmark_guest_build(prepared_cache_path.as_deref())?;
 
-    info!(target_dir = %args.target_dir, "compiling Akita verifier guest program");
-    enable_trusted_benchmark_guest_build(&prepared_cache_path)?;
-    let mut program = guest::compile_akita_verify(&args.target_dir);
-
-    if args.trace_only {
-        info!("trace-only mode: skipping preprocessing and proof generation");
-        run_native_guest(&blob)?;
-
-        let trace_path = args
-            .trace_output
-            .unwrap_or_else(|| PathBuf::from(&args.target_dir).join("akita_verify.trace"));
-        info!(trace_file = %trace_path.display(), "tracing guest under emulator");
-        guest::trace_akita_verify_to_file(path_to_utf8(&trace_path, "--trace-output")?, &blob);
-        info!("trace done");
-        return Ok(());
+    match case {
+        AkitaJoltCase::OneHotFp32 => run_selected_guest!(
+            args,
+            &blob,
+            case,
+            compile_akita_verify_fp32,
+            trace_akita_verify_fp32_to_file,
+            preprocess_shared_akita_verify_fp32,
+            preprocess_prover_akita_verify_fp32,
+            preprocess_verifier_akita_verify_fp32,
+            build_prover_akita_verify_fp32,
+            build_verifier_akita_verify_fp32
+        ),
+        AkitaJoltCase::OneHotFp64 => run_selected_guest!(
+            args,
+            &blob,
+            case,
+            compile_akita_verify_fp64,
+            trace_akita_verify_fp64_to_file,
+            preprocess_shared_akita_verify_fp64,
+            preprocess_prover_akita_verify_fp64,
+            preprocess_verifier_akita_verify_fp64,
+            build_prover_akita_verify_fp64,
+            build_verifier_akita_verify_fp64
+        ),
+        AkitaJoltCase::OneHotFp128Direct => run_selected_guest!(
+            args,
+            &blob,
+            case,
+            compile_akita_verify_fp128_direct,
+            trace_akita_verify_fp128_direct_to_file,
+            preprocess_shared_akita_verify_fp128_direct,
+            preprocess_prover_akita_verify_fp128_direct,
+            preprocess_verifier_akita_verify_fp128_direct,
+            build_prover_akita_verify_fp128_direct,
+            build_verifier_akita_verify_fp128_direct
+        ),
+        AkitaJoltCase::OneHotFp128Recursive => run_selected_guest!(
+            args,
+            &blob,
+            case,
+            compile_akita_verify_fp128_recursive,
+            trace_akita_verify_fp128_recursive_to_file,
+            preprocess_shared_akita_verify_fp128_recursive,
+            preprocess_prover_akita_verify_fp128_recursive,
+            preprocess_verifier_akita_verify_fp128_recursive,
+            build_prover_akita_verify_fp128_recursive,
+            build_verifier_akita_verify_fp128_recursive
+        ),
+        AkitaJoltCase::OneHotFp128MultiGroupRecursive => run_selected_guest!(
+            args,
+            &blob,
+            case,
+            compile_akita_verify,
+            trace_akita_verify_to_file,
+            preprocess_shared_akita_verify,
+            preprocess_prover_akita_verify,
+            preprocess_verifier_akita_verify,
+            build_prover_akita_verify,
+            build_verifier_akita_verify
+        ),
     }
-
-    info!("running shared / prover / verifier preprocessing");
-    let shared_preprocessing = guest::preprocess_shared_akita_verify(&mut program)
-        .map_err(|err| format!("shared preprocessing failed: {err}"))?;
-    let prover_preprocessing = guest::preprocess_prover_akita_verify(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_akita_verify(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
-
-    let prove_akita_verify = guest::build_prover_akita_verify(program, prover_preprocessing);
-    let verify_akita_verify = guest::build_verifier_akita_verify(verifier_preprocessing);
-
-    run_native_guest(&blob)?;
-
-    info!("invoking Jolt prover");
-    let now = Instant::now();
-    let (output, proof, program_io) = prove_akita_verify(&blob);
-    let prover_secs = now.elapsed().as_secs_f64();
-    info!(prover_secs, "prover finished");
-    info!(
-        guest_output = output,
-        guest_panic = program_io.panic,
-        "prover program-io"
-    );
-
-    let now = Instant::now();
-    let is_valid = verify_akita_verify(&blob, output, program_io.panic, proof);
-    let verifier_secs = now.elapsed().as_secs_f64();
-    info!(verifier_secs, is_valid, "Jolt verifier finished");
-
-    if !is_valid {
-        return Err("Jolt verifier rejected the proof".to_string());
-    }
-    if output != 0 {
-        return Err(format!("guest reported Akita-verify failure: {output}"));
-    }
-    info!("Akita-in-Jolt proof OK");
-    Ok(())
 }
 
 fn main() -> ExitCode {

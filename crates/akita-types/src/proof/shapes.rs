@@ -725,16 +725,17 @@ impl Valid for AkitaBatchedProofShape {
 }
 
 impl AkitaBatchedProofShape {
-    /// Reject a base-field proof shape whose aggregate declared payload cannot
-    /// fit in the bytes available to the proof decoder.
-    pub fn validate_base_field_decode_budget(
+    /// Reject a proof shape whose aggregate declared field payload cannot fit
+    /// in the bytes available to the proof decoder.
+    pub fn validate_decode_budget(
         &self,
         available_bytes: usize,
-        field_bytes: usize,
+        base_field_bytes: usize,
+        extension_field_bytes: usize,
     ) -> Result<(), SerializationError> {
-        if field_bytes == 0 {
+        if base_field_bytes == 0 || extension_field_bytes == 0 {
             return Err(SerializationError::InvalidData(
-                "base field wire size must be nonzero".to_string(),
+                "base and extension field wire sizes must be nonzero".to_string(),
             ));
         }
         fn add(total: &mut usize, value: usize) -> Result<(), SerializationError> {
@@ -751,7 +752,7 @@ impl AkitaBatchedProofShape {
             }
             Ok(())
         }
-        fn add_extension(
+        fn add_extension_opening(
             total: &mut usize,
             shape: Option<&ExtensionOpeningReductionShape>,
         ) -> Result<(), SerializationError> {
@@ -762,55 +763,80 @@ impl AkitaBatchedProofShape {
             }
             Ok(())
         }
-        fn add_level(total: &mut usize, shape: &LevelProofShape) -> Result<(), SerializationError> {
-            add_extension(total, shape.extension_opening_reduction.as_ref())?;
-            add(total, shape.opening_payload_coeffs)?;
+        fn add_level(
+            base: &mut usize,
+            extension: &mut usize,
+            shape: &LevelProofShape,
+        ) -> Result<(), SerializationError> {
+            add_extension_opening(extension, shape.extension_opening_reduction.as_ref())?;
+            add(base, shape.opening_payload_coeffs)?;
             for stage in &shape.stage1_stages {
                 let (rounds, stored_coefficients) = stage.sumcheck_proof;
                 add(
-                    total,
+                    extension,
                     rounds.checked_mul(stored_coefficients).ok_or_else(|| {
                         SerializationError::InvalidData(
                             "stage-1 proof shape field count overflow".to_string(),
                         )
                     })?,
                 )?;
-                add(total, stage.child_claims)?;
+                add(extension, stage.child_claims)?;
             }
-            add(total, 1)?;
-            add_sumcheck(total, &shape.stage2_sumcheck_proof)?;
+            add(extension, 1)?;
+            if let Some(norm) = &shape.stage1_norm {
+                add(extension, norm.subclaims)?;
+                add(extension, norm.virtual_evaluations)?;
+                add_sumcheck(extension, &norm.sumcheck)?;
+            }
+            add_sumcheck(extension, &shape.stage2_sumcheck_proof)?;
             match shape.next_witness_binding {
-                NextWitnessBindingShape::OuterPayload { coeffs } => add(total, coeffs)?,
+                NextWitnessBindingShape::OuterPayload { coeffs } => add(base, coeffs)?,
                 NextWitnessBindingShape::TerminalInnerState => {}
             }
-            add(total, 1)?;
+            add(extension, 1)?;
             if let Some(stage3) = &shape.stage3_sumcheck {
-                add(total, 2)?;
-                add_sumcheck(total, &stage3.sumcheck)?;
+                add(extension, 2)?;
+                add_sumcheck(extension, &stage3.sumcheck)?;
             }
             Ok(())
         }
 
-        let mut field_elements = 0usize;
-        add_level(&mut field_elements, &self.root)?;
+        let mut base_field_elements = 0usize;
+        let mut extension_field_elements = 0usize;
+        add_level(
+            &mut base_field_elements,
+            &mut extension_field_elements,
+            &self.root,
+        )?;
         for shape in &self.recursive_folds {
-            add_level(&mut field_elements, shape)?;
+            add_level(
+                &mut base_field_elements,
+                &mut extension_field_elements,
+                shape,
+            )?;
         }
-        add_extension(
-            &mut field_elements,
+        add_extension_opening(
+            &mut extension_field_elements,
             self.terminal.extension_opening_reduction.as_ref(),
         )?;
         add(
-            &mut field_elements,
+            &mut base_field_elements,
             self.terminal.terminal_response.layout.e_field_elems(),
         )?;
         add(
-            &mut field_elements,
+            &mut base_field_elements,
             self.terminal.terminal_response.layout.t_field_elems(),
         )?;
-        let required_bytes = field_elements.checked_mul(field_bytes).ok_or_else(|| {
-            SerializationError::InvalidData("aggregate proof byte budget overflow".to_string())
-        })?;
+        let required_bytes = base_field_elements
+            .checked_mul(base_field_bytes)
+            .and_then(|base_bytes| {
+                extension_field_elements
+                    .checked_mul(extension_field_bytes)
+                    .and_then(|extension_bytes| base_bytes.checked_add(extension_bytes))
+            })
+            .ok_or_else(|| {
+                SerializationError::InvalidData("aggregate proof byte budget overflow".to_string())
+            })?;
         if required_bytes > available_bytes {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(required_bytes).unwrap_or(u64::MAX),
