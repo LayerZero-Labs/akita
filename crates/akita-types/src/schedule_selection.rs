@@ -7,7 +7,7 @@
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::{CommittedGroupBatchProfile, FoldSchedule};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };

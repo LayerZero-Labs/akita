@@ -213,6 +213,10 @@ scanned=0
 generated_skipped=0
 
 for file in "${tracked_rust_paths[@]}"; do
+    if [ ! -f "$file" ]; then
+        continue
+    fi
+
     scanned=$((scanned + 1))
     idx=""
 

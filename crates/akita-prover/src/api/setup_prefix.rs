@@ -8,7 +8,8 @@ use crate::compute::{
 };
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_types::{
     dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CompressionChainPlan,
     GroupCommitPhaseParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,

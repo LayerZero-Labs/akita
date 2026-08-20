@@ -213,7 +213,7 @@ where
                 ))
             })?;
         let start = terms.len();
-        let expected_domain_len = checked_table_len(max_tail_vars)?;
+        let expected_domain_len = reduction_table_len(max_tail_vars)?;
         for term in group_terms {
             let term = term.extend_cylindrically(vec![E::zero(); extra_vars])?;
             if term.domain_len() != expected_domain_len {

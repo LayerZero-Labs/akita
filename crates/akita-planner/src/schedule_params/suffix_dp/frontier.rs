@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::{schedule_params::CompleteObjectiveBound, PlannerPolicy};
 

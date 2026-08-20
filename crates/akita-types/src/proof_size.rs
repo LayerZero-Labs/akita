@@ -11,7 +11,7 @@ use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{
     CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan, InnerCommitSecurityRoute,
 };
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
 pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
@@ -183,7 +183,7 @@ mod tests {
     use super::*;
 
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::AkitaError;
+    use akita_error::AkitaError;
     use akita_field::{
         CanonicalField, Ext2, FieldCore, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
         Prime64Offset59,

@@ -1,6 +1,8 @@
 //! Prover setup artifact and config-free setup expansion helpers.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_error::AkitaError;
+
+use akita_field::{CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,

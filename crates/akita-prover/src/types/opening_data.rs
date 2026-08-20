@@ -4,7 +4,8 @@ use crate::compute::RootPolyMeta;
 use crate::protocol::core::RootProverGroupMeta;
 use crate::PreparedProverGroup;
 use akita_config::CommitmentConfig;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,

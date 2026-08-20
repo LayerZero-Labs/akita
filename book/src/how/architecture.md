@@ -11,6 +11,7 @@ orchestration lives in `akita-pcs`.
 
 | Crate | Role |
 |-------|------|
+| `akita-error` | Shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges |
 | `akita-field` | Field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros |
 | `akita-witness` | Shared borrowed witness/polynomial view vocabulary (`PolynomialView`, `WitnessProvider`) for sumcheck and polyops paths |
 | `akita-serialization` | Serialization, validation, and compression traits |
@@ -32,6 +33,10 @@ CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 
 Key structural facts:
 
+- `akita-error` is the lowest shared failure layer. It owns `AkitaError` and
+  reusable exact `usize` formulas in `akita_error::checked`. These formulas
+  return `Option`; each caller maps failure to the `AkitaError` variant that
+  describes its protocol boundary. Field arithmetic remains in `akita-field`.
 - `akita-planner` sits **below** `akita-config` and names no `CommitmentConfig` type.
 - `akita-verifier` depends on `akita-config` and therefore reaches `akita-planner` transitively; the schedule DP is verifier-reachable.
 - Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
@@ -105,6 +110,7 @@ Mixed-dimension malformed proof rejection is covered by
 
 | Type | Role |
 |------|------|
+| `AkitaError`, `akita_error::checked` | Shared protocol failures and reusable checked formulas for sizes, offsets, ranges, alignment, and exact division |
 | `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
 | `AkitaProverSetup<F>` | Prover setup wrapper around a materialized prefix of the dimension-free public field stream |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |

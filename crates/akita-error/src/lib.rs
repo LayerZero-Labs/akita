@@ -1,29 +1,37 @@
-/// Errors that can occur in Akita PCS operations
+//! Protocol errors and checked integer arithmetic shared by Akita crates.
+
+#![deny(missing_docs)]
+#![warn(unreachable_pub)]
+
+/// Checked integer formulas shared by Akita's layout and validation code.
+pub mod checked;
+
+/// Errors that can occur in Akita PCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AkitaError {
-    /// The proof verification failed
+    /// Proof verification failed.
     #[error("Invalid proof")]
     InvalidProof,
 
-    /// Polynomial size is invalid for the given parameters
+    /// A polynomial or protocol object has an invalid size.
     #[error("Invalid polynomial size: expected {expected}, got {actual}")]
     InvalidSize {
-        /// Expected size
+        /// Expected size.
         expected: usize,
-        /// Actual size
+        /// Actual size.
         actual: usize,
     },
 
-    /// Evaluation point has wrong dimension
+    /// An evaluation point has the wrong dimension.
     #[error("Invalid evaluation point dimension: expected {expected}, got {actual}")]
     InvalidPointDimension {
-        /// Expected dimension
+        /// Expected dimension.
         expected: usize,
-        /// Actual dimension
+        /// Actual dimension.
         actual: usize,
     },
 
-    /// Invalid input parameters
+    /// Input parameters are invalid.
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
@@ -31,7 +39,7 @@ pub enum AkitaError {
     #[error("Unsupported proof schedule: {0}")]
     UnsupportedSchedule(String),
 
-    /// Setup file not found or corrupted
+    /// Setup data is missing or invalid.
     #[error("Invalid or missing setup file: {0}")]
     InvalidSetup(String),
 }

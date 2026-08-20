@@ -7,7 +7,8 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_challenges::LiveFoldDraw;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels;

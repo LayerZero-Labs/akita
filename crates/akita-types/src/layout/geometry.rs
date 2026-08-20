@@ -10,7 +10,7 @@
 //! contiguous in every descriptor encoder that writes it, so an atomic encoder
 //! for this type is byte-neutral wherever it replaces three field writes.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::signed_digit::SignedDigitKernel;

@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, DecompositionParams, SetupMatrixCapacity, SisModulusProfileId,
 };

@@ -7,9 +7,10 @@ use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 #[cfg(test)]
 use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::ring::evaluate_power_sequence_mle;
+use akita_error::AkitaError;
 #[cfg(test)]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{
     ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,

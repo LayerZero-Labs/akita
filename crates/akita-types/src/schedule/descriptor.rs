@@ -2,7 +2,7 @@ use super::{FoldSchedule, FoldScheduleDescriptorStep, GroupCommitPhaseParams, Te
 use crate::descriptor_bytes::push_usize;
 use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::CommittedGroupParams;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 impl FoldSchedule {
     /// Canonical byte encoding used to order semantically distinct schedules.

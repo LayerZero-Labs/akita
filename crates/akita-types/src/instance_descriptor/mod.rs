@@ -24,7 +24,8 @@ use crate::{
     DecompositionParams, FoldSchedule, OpeningClaimsLayout, SisModulusProfileId,
     COMPRESSION_POLICY,
 };
-use akita_field::{AkitaError, CanonicalField, ExtField};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
     DEFAULT_MAX_SEQUENCE_LEN,

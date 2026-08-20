@@ -28,7 +28,7 @@ use super::honest_fold_policy::{
     BalancedSignedDigitFoldPolicy, HonestFoldPolicySpec, UnitOneHotFoldPolicy,
 };
 use crate::DecompositionParams;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// What a committed source must **be**, independent of how wide its
 /// coefficients are.

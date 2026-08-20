@@ -5,8 +5,9 @@ use crate::compute::{
     RuntimeOpeningSource,
 };
 use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{

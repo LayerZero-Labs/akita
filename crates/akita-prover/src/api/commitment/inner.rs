@@ -4,8 +4,9 @@ use crate::compute::{
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::CommitInnerWitness;
 use akita_algebra::ring::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{DigitBlocks, RingVec};
 
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]

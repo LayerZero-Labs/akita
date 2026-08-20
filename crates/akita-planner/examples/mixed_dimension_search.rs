@@ -48,7 +48,7 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     );
 }
 
-fn main() -> Result<(), akita_field::AkitaError> {
+fn main() -> Result<(), akita_error::AkitaError> {
     let num_vars = std::env::args()
         .nth(1)
         .and_then(|value| value.parse().ok())

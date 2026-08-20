@@ -4,7 +4,7 @@ use crate::{
     CommittedGroupParams, InnerCommitSecurityRoute, OpeningMethod, RelationAddressGeometry,
     SetupContributionMode, TerminalResponseShape,
 };
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 mod descriptor;
 mod profiles;

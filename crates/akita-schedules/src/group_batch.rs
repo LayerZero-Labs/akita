@@ -1,7 +1,7 @@
 //! Runtime helpers for materializing cataloged multi-group root precommits.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, GroupOpenPhaseParams, PrecommittedGroupAdmissionPolicy};
 
 use crate::generated::GeneratedRootPrecommittedGroup;

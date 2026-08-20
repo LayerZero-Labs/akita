@@ -1,6 +1,6 @@
 //! Planner-free runtime schedule expansion support.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
     FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule,

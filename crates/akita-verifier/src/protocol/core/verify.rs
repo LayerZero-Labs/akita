@@ -6,8 +6,9 @@ use akita_config::{
     bind_transcript_instance_descriptor, effective_batched_schedule,
     ensure_verifier_schedule_fits_setup, CommitmentConfig,
 };
+use akita_error::AkitaError;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::{AkitaSerialize, Valid};

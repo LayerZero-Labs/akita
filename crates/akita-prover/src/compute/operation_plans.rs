@@ -1,6 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use akita_types::{
     CommittedGroupParams, GroupCommitPhaseParams, PreparedSubringCoefficientPackingPoint,
     SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,

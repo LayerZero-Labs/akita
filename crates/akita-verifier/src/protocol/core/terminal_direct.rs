@@ -2,10 +2,9 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_types::{
     decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
     AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint,

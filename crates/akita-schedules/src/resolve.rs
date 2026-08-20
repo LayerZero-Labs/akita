@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     root_input_witness_len, schedule_row_digest, validate_schedule_ring_dims,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,

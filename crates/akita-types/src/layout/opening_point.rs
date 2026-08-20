@@ -1,7 +1,7 @@
 //! Ring-native opening point for the Akita protocol.
 
 use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::FieldCore;
 use akita_field::FromPrimitiveInt;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;

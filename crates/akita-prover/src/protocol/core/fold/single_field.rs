@@ -6,9 +6,10 @@ use crate::compute::{
 };
 use crate::protocol::core::RootProverGroupOpening;
 use crate::{ProverOpeningData, ProverTranscriptGrind};
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
+    AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
     MulBaseUnreduced, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;

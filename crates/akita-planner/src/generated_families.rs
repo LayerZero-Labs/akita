@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{

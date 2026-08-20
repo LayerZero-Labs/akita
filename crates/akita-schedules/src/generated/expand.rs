@@ -11,7 +11,7 @@
 //! panicking.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{

@@ -1,9 +1,10 @@
 //! Sampled sparse challenges for one folding round.
 
 use crate::SparseChallenge;
+use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_field::{FieldCore, FromPrimitiveInt, MulBase};
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an

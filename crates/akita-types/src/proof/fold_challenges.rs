@@ -1,7 +1,8 @@
 //! Canonical method-aware fold-challenge dispatch shared by prover and verifier.
 
 use akita_challenges::{Challenges, FoldChallengeDrawDomain, FoldDraw};
-use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{ExtField, FieldCore};
 
 use crate::{
     CoefficientPackingChallenges, InnerCommitSecurityRoute, OpeningFamily, OpeningMethod,

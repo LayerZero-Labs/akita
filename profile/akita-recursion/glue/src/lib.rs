@@ -11,7 +11,8 @@
 #![allow(clippy::missing_errors_doc)]
 
 use akita_config::CommitmentConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };

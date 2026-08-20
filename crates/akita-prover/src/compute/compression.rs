@@ -1,7 +1,8 @@
 //! Reusable bounded-memory compressed-commitment execution.
 
 use super::{CompressionComputeBackend, OperationCtx};
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{
     dispatch_for_field, field_modulus, CompressionChainPlan, CompressionChainWitness,
     CompressionTerminalPayload, PackedNegativeBinary, RingVec,

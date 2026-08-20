@@ -14,9 +14,10 @@ use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Ver
 use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheckVerifier};
 use akita_challenges::{FoldDraw, LiveFoldDraw};
+use akita_error::AkitaError;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
+    CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;

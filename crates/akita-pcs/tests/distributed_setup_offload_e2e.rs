@@ -60,9 +60,9 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         .iter()
         .map(|fold| {
             fold.params
-                .incoming_setup_prefix
+                .setup_prefix
                 .as_ref()
-                .map(|slot| slot.natural_len)
+                .and_then(|slot| slot.setup_natural_len)
         })
         .collect::<Vec<_>>();
     assert_eq!(setup_for_two.num_field_elements, 32_768);
@@ -94,8 +94,8 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     // the expectation from the same primitive commit-time admission uses.
     let frozen_precommit = key.precommitteds[0];
     let precommit_footprint = akita_types::commit_only_setup_field_elements(
-        &frozen_precommit.inner_commit_matrix,
-        &frozen_precommit.outer_commit_matrix,
+        &frozen_precommit.inner.matrix,
+        &frozen_precommit.outer.matrix,
         frozen_precommit.outer_slice_count,
     )
     .expect("frozen precommit footprint");
@@ -110,13 +110,13 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
         .expect("W8R2 schedule")
         .into_schedule();
     let first_recursive = &schedule.recursive_folds[0].params;
-    assert_eq!(first_recursive.witness_chunks.num_chunks(), 8);
+    assert_eq!(first_recursive.witness_chunk.num_chunks, 8);
     let prefix = first_recursive
-        .incoming_setup_prefix
+        .setup_prefix
         .as_ref()
         .expect("W8R2 first recursive fold must consume a setup prefix");
-    let witness_a = &first_recursive.witness.inner_commit_matrix;
-    let prefix_a = &prefix.layout.inner_commit_matrix;
+    let witness_a = &first_recursive.inner_commit_matrix;
+    let prefix_a = &prefix.profile.inner.matrix;
     assert_eq!(
         (
             witness_a.ring_dimension(),
@@ -173,8 +173,8 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         1 + schedule.recursive_folds.len()
     );
     for (level, params) in [
-        &schedule.root.params.final_group.commitment,
-        &schedule.recursive_folds[0].params.witness,
+        &schedule.root.params,
+        &schedule.recursive_folds[0].params,
     ]
     .into_iter()
     .enumerate()
@@ -217,12 +217,12 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     );
     for (group_index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
         assert_eq!(
-            group.commitment.layout.inner_commit_matrix.ring_dimension(),
+            group.profile.inner.matrix.ring_dimension(),
             512
         );
         let expected_subring_dimension = if group_index == 0 { 64 } else { 128 };
         assert_eq!(
-            group.commitment.opening.opening_method,
+            group.opening.opening_method,
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: expected_subring_dimension,
             },
@@ -230,7 +230,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         );
         let geometry = SubringCoefficientPackingGeometry::try_new(
             W8R2Cfg::EXT_DEGREE,
-            group.commitment.layout.inner_commit_matrix.ring_dimension(),
+            group.profile.inner.matrix.ring_dimension(),
             expected_subring_dimension,
         )
         .expect("valid precommitted packing geometry");
@@ -240,7 +240,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         );
     }
     assert_eq!(
-        schedule.recursive_folds[1].params.witness.opening_method,
+        schedule.recursive_folds[1].params.opening_method,
         OpeningMethod::EvaluationTrace,
         "the level-2 fold must consume the packing-produced flat witness through EvaluationTrace"
     );
@@ -248,8 +248,8 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     // Levels 0 and 1 both use the W8R2 witness partition: 8 chunks over the two
     // leading levels.
     for (level, params) in [
-        &schedule.root.params.final_group.commitment,
-        &schedule.recursive_folds[0].params.witness,
+        &schedule.root.params,
+        &schedule.recursive_folds[0].params,
     ]
     .into_iter()
     .enumerate()
@@ -265,9 +265,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     }
 
     assert_eq!(
-        schedule.recursive_folds[0]
-            .params
-            .predecessor_setup_contribution_mode(),
+        schedule.recursive_folds[0].predecessor_setup_contribution_mode(),
         SetupContributionMode::Recursive,
         "level 0 must run the planner-selected recursive setup-offload path"
     );
@@ -276,14 +274,14 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     assert!(
         schedule.recursive_folds[0]
             .params
-            .incoming_setup_prefix
+            .setup_prefix
             .is_some(),
         "level 1 must consume the level-0 setup prefix"
     );
     assert!(matches!(
         schedule.recursive_folds[0]
             .params
-            .incoming_setup_prefix
+            .setup_prefix
             .as_ref()
             .expect("level-1 setup prefix")
             .opening
@@ -294,14 +292,14 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     // Level 2 is the single-chunk direct fold after the selected offload edge.
     let level2 = &schedule.recursive_folds[1].params;
     assert_eq!(
-        level2.witness.witness_chunk.num_chunks, 1,
+        level2.witness_chunk.num_chunks, 1,
         "level 2 must be single-chunk (chunking activates only levels 0 and 1)"
     );
     let level2_mode = schedule
         .recursive_folds
         .get(2)
         .map_or(SetupContributionMode::Direct, |consumer| {
-            consumer.params.predecessor_setup_contribution_mode()
+            consumer.predecessor_setup_contribution_mode()
         });
     assert_eq!(
         level2_mode,
@@ -309,7 +307,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "level 2 must be Direct (no Stage-3 sum-check after the activated window)"
     );
     assert!(
-        level2.incoming_setup_prefix.is_none(),
+        level2.setup_prefix.is_none(),
         "level 2 must not carry an unselected setup prefix"
     );
 }

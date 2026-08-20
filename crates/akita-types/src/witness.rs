@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use akita_field::AkitaError;
+use akita_error::{checked, AkitaError};
 
 use crate::{
     CommitmentRingDims, CommittedGroupParams, CompressionMapPlan, OpeningClaimsLayout,
@@ -194,14 +194,10 @@ impl WitnessUnitLayout {
         digit: usize,
         role_coefficient: usize,
     ) -> Result<usize, AkitaError> {
-        let expected_len = checked_mul3(
-            num_claims,
-            self.num_live_blocks,
-            depth_open,
-            "witness E shape overflow",
-        )?
-        .checked_mul(self.e_geometry.physical_coefficient_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?;
+        let expected_len = checked::product([num_claims, self.num_live_blocks, depth_open])
+            .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?
+            .checked_mul(self.e_geometry.physical_coefficient_width())
+            .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?;
         if self.e_range.len() != expected_len {
             return Err(AkitaError::InvalidSetup(
                 "witness E shape disagrees with resolved range".into(),
@@ -304,14 +300,10 @@ impl WitnessUnitLayout {
         fold_digit: usize,
         coefficient: usize,
     ) -> Result<usize, AkitaError> {
-        let expected_len = checked_mul3(
-            num_positions_per_block,
-            depth_witness,
-            depth_fold,
-            "witness Z shape overflow",
-        )?
-        .checked_mul(source_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness Z shape overflow".into()))?;
+        let expected_len = checked::product([num_positions_per_block, depth_witness, depth_fold])
+            .ok_or_else(|| AkitaError::InvalidSetup("witness Z shape overflow".into()))?
+            .checked_mul(source_ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("witness Z shape overflow".into()))?;
         if self.z_range.len() != expected_len {
             return Err(AkitaError::InvalidSetup(
                 "witness Z shape disagrees with resolved range".into(),
@@ -590,9 +582,9 @@ impl WitnessLayout {
                     num_claims,
                     chunk_num_live_blocks,
                 )?;
-                let z_range = checked_range(cursor, z_len, "witness Z range overflow")?;
-                let e_range = checked_range(z_range.end, e_len, "witness E range overflow")?;
-                let t_range = checked_range(e_range.end, t_len, "witness T range overflow")?;
+                let z_range = witness_range(cursor, z_len, "witness Z range overflow")?;
+                let e_range = witness_range(z_range.end, e_len, "witness E range overflow")?;
+                let t_range = witness_range(e_range.end, t_len, "witness T range overflow")?;
                 cursor = t_range.end;
                 units.push(WitnessUnitLayout {
                     group_index,
@@ -624,7 +616,7 @@ impl WitnessLayout {
             let len = quotient_depth
                 .checked_mul(geometry.physical_coefficient_width())
                 .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
-            let range = checked_range(cursor, len, "witness R range overflow")?;
+            let range = witness_range(cursor, len, "witness R range overflow")?;
             cursor = range.end;
             r_rows[row_index] = Some(WitnessQuotientRowLayout { geometry, range });
         }
@@ -651,7 +643,7 @@ impl WitnessLayout {
         }
         let relation_coefficient_block = relation_geometry.relation_coefficient_block_len()?;
         let mut compression_alignment_ranges = Vec::with_capacity(COMPRESSION_MAP_COUNT + 1);
-        let aligned_compression_start = checked_align_up(
+        let aligned_compression_start = align_witness_offset(
             cursor,
             relation_coefficient_block,
             "compression witness alignment overflow",
@@ -677,7 +669,7 @@ impl WitnessLayout {
                 .into_iter()
                 .max()
                 .ok_or_else(|| AkitaError::InvalidSetup("compression layer is empty".into()))?;
-            let aligned_layer_start = checked_align_up(
+            let aligned_layer_start = align_witness_offset(
                 cursor,
                 layer_alignment,
                 "compression layer alignment overflow",
@@ -692,12 +684,12 @@ impl WitnessLayout {
                     relation_layout.group_compression_plan(relation_group_index)?;
                 let map = plan.maps()[map_index];
                 let range =
-                    checked_range(cursor, map.padded_digit_count(), "witness F range overflow")?;
+                    witness_range(cursor, map.padded_digit_count(), "witness F range overflow")?;
                 cursor = range.end;
                 f_spans.push((group_index, CompressionWitnessSpan { map, range }));
             }
             let h_map = relation_layout.opening_compression_plan()?.maps()[map_index];
-            let h_range = checked_range(
+            let h_range = witness_range(
                 cursor,
                 h_map.padded_digit_count(),
                 "witness H range overflow",
@@ -725,7 +717,7 @@ impl WitnessLayout {
                         ))
                     }
                 };
-                let range = checked_range(
+                let range = witness_range(
                     cursor,
                     quotient_depth
                         .checked_mul(geometry.physical_coefficient_width())
@@ -757,7 +749,7 @@ impl WitnessLayout {
                     ))
                 }
             };
-            let h_quotient_range = checked_range(
+            let h_quotient_range = witness_range(
                 cursor,
                 quotient_depth
                     .checked_mul(h_geometry.physical_coefficient_width())
@@ -796,7 +788,7 @@ impl WitnessLayout {
         } else {
             relation_coefficient_block
         };
-        let aligned_witness_end = checked_align_up(
+        let aligned_witness_end = align_witness_offset(
             cursor,
             successor_a_alignment,
             "compression witness suffix alignment overflow",
@@ -1020,26 +1012,23 @@ impl WitnessLayout {
     }
 }
 
-fn checked_range(start: usize, len: usize, context: &str) -> Result<Range<usize>, AkitaError> {
-    let end = start
-        .checked_add(len)
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))?;
-    Ok(start..end)
+fn witness_range(start: usize, len: usize, context: &str) -> Result<Range<usize>, AkitaError> {
+    checked::range(start, len).ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }
 
-fn checked_align_up(value: usize, alignment: usize, context: &str) -> Result<usize, AkitaError> {
-    if alignment == 0 || !alignment.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "witness alignment must be a nonzero power of two".into(),
-        ));
-    }
-    let remainder = value % alignment;
-    if remainder == 0 {
-        return Ok(value);
-    }
-    value
-        .checked_add(alignment - remainder)
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+fn align_witness_offset(
+    value: usize,
+    alignment: usize,
+    context: &str,
+) -> Result<usize, AkitaError> {
+    checked::align_up(value, alignment).ok_or_else(|| {
+        let message = if alignment.is_power_of_two() {
+            context.into()
+        } else {
+            "witness alignment must be a nonzero power of two".into()
+        };
+        AkitaError::InvalidSetup(message)
+    })
 }
 
 fn witness_unit_lengths(
@@ -1049,28 +1038,26 @@ fn witness_unit_lengths(
     num_claims: usize,
     chunk_num_live_blocks: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
-    let z_len = checked_mul3(
+    let z_len = checked::product([
         params.num_positions_per_block(),
         params.num_digits_inner(),
         params.num_digits_fold(),
-        "witness Z width overflow",
-    )?
+    ])
+    .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".into()))?
     .checked_mul(role_dims.d_a())
     .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".into()))?;
-    let e_len = checked_mul3(
+    let e_len = checked::product([num_claims, chunk_num_live_blocks, params.num_digits_open()])
+        .ok_or_else(|| AkitaError::InvalidSetup("witness E width overflow".into()))?
+        .checked_mul(opening_geometry.physical_coefficient_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("witness E width overflow".into()))?;
+    let t_len = checked::product([
         num_claims,
         chunk_num_live_blocks,
-        params.num_digits_open(),
-        "witness E width overflow",
-    )?
-    .checked_mul(opening_geometry.physical_coefficient_width())
-    .ok_or_else(|| AkitaError::InvalidSetup("witness E width overflow".into()))?;
-    let t_len = num_claims
-        .checked_mul(chunk_num_live_blocks)
-        .and_then(|n| n.checked_mul(params.a_rows_len()))
-        .and_then(|n| n.checked_mul(params.num_digits_outer()))
-        .and_then(|n| n.checked_mul(role_dims.d_a()))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
+        params.a_rows_len(),
+        params.num_digits_outer(),
+        role_dims.d_a(),
+    ])
+    .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
     Ok((z_len, e_len, t_len))
 }
 
@@ -1165,12 +1152,6 @@ fn checked_owned_block(unit: &WitnessUnitLayout, global_block: usize) -> Result<
         return Err(ownership_error());
     }
     Ok(local)
-}
-
-fn checked_mul3(a: usize, b: usize, c: usize, context: &str) -> Result<usize, AkitaError> {
-    a.checked_mul(b)
-        .and_then(|n| n.checked_mul(c))
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }
 
 /// Upper bound on [`ChunkedWitnessCfg::num_chunks`] enforced at layout validation

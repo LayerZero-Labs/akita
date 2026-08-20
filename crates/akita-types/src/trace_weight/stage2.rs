@@ -4,7 +4,8 @@ use std::marker::PhantomData;
 
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::{checked, AkitaError};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
 use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
@@ -97,7 +98,8 @@ pub fn trace_weight_layout_from_segment(
             "trace block count disagrees with witness layout".to_string(),
         ));
     }
-    let block_index_bits = num_trace_blocks.next_power_of_two().trailing_zeros() as usize;
+    let block_index_bits = checked::ceil_log2(num_trace_blocks)
+        .ok_or_else(|| AkitaError::InvalidInput("trace-weight block count is too large".into()))?;
     let layout = TraceWeightLayout {
         ring_bits,
         col_bits,
@@ -506,7 +508,11 @@ where
             num_digits_open: group_lp.num_digits_open(),
             source_ring_dim: group_dims.d_a(),
             opening_ring_dim: group_dims.d_d(),
-            block_index_bits: num_live_blocks.next_power_of_two().trailing_zeros() as usize,
+            block_index_bits: checked::ceil_log2(num_live_blocks).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "trace-weight group block count is zero or too large".into(),
+                )
+            })?,
             log_basis_open: group_lp.log_basis_open(),
             witness_layout: layout.witness_layout.clone(),
             opening_source_len: layout.opening_source_len,

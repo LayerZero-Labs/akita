@@ -21,7 +21,8 @@ type MatrixFields = (
     usize,
 );
 use akita_algebra::ring::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };

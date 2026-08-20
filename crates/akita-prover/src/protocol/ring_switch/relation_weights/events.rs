@@ -1,6 +1,7 @@
 use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
 use akita_algebra::poly::multilinear_eval;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use akita_types::{RelationWeightContribution, RelationWeightEvent};
 
 /// Checked relation events plus the domain data needed by every consumer.

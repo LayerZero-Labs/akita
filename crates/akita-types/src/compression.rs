@@ -7,7 +7,8 @@
 use crate::field_modulus;
 use crate::sis::compression::{min_compression_secure_rank, COMPRESSION_SIS_COEFF_LINF_BOUND};
 use crate::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::{checked, AkitaError};
+use akita_field::{CanonicalField, FieldCore};
 
 mod chain;
 
@@ -242,18 +243,6 @@ fn profile_field_bits(profile: SisModulusProfileId) -> usize {
     profile.field_bits() as usize
 }
 
-fn checked_div_ceil(value: usize, divisor: usize, context: &str) -> Result<usize, AkitaError> {
-    if divisor == 0 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{context} divisor is zero"
-        )));
-    }
-    value
-        .checked_add(divisor - 1)
-        .map(|sum| sum / divisor)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
-}
-
 /// One checked rank-one negative-binary compression map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompressionMapPlan {
@@ -296,8 +285,9 @@ impl CompressionMapPlan {
         let real_digit_count = input_coefficients
             .checked_mul(field_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("compression digit length overflow".into()))?;
-        let input_width =
-            checked_div_ceil(real_digit_count, ring_dimension, "compression input width")?;
+        let input_width = checked::div_ceil(real_digit_count, ring_dimension).ok_or_else(|| {
+            AkitaError::InvalidSetup("compression input width divisor is zero".into())
+        })?;
         let padded_digit_count = input_width.checked_mul(ring_dimension).ok_or_else(|| {
             AkitaError::InvalidSetup("compression digit capacity overflow".into())
         })?;

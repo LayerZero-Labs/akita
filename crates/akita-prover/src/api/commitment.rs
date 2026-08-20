@@ -8,10 +8,11 @@ use crate::compute::{
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
+#[cfg(test)]
+use akita_error::checked;
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
-};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling};
 use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
@@ -304,7 +305,7 @@ where
 
 #[cfg(test)]
 fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usize, AkitaError> {
-    total_polys.checked_mul(per_poly).ok_or_else(|| {
+    checked::product([total_polys, per_poly]).ok_or_else(|| {
         AkitaError::InvalidInput(format!(
             "commit B digit input length overflow for {total_polys} polynomials with {per_poly} digits each"
         ))

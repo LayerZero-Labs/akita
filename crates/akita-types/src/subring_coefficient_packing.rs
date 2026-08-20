@@ -1,7 +1,8 @@
 //! Checked subring coefficient packing geometry.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::{checked, AkitaError};
+use akita_field::FieldCore;
 
 #[cfg(test)]
 use akita_field::{ExtField, FromPrimitiveInt};
@@ -162,11 +163,13 @@ impl SubringCoefficientPackingGeometry {
                 "subring coefficient coordinates are outside the A ring".into(),
             ));
         }
-        subring_coefficient_index
-            .checked_mul(self.subring_embedding_stride)
-            .and_then(|offset| offset.checked_add(low_coefficient_index))
-            .filter(|&index| index < self.a_ring_dimension)
-            .ok_or_else(|| AkitaError::InvalidSetup("A ring coefficient index overflow".into()))
+        checked::mul_add(
+            subring_coefficient_index,
+            self.subring_embedding_stride,
+            low_coefficient_index,
+        )
+        .filter(|&index| index < self.a_ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("A ring coefficient index overflow".into()))
     }
 
     /// Split one A ring coefficient into
@@ -209,11 +212,13 @@ impl SubringCoefficientPackingGeometry {
                 "partial opening coordinates are outside subring packing geometry".into(),
             ));
         }
-        extension_coordinate
-            .checked_mul(self.challenge_subring_dimension)
-            .and_then(|offset| offset.checked_add(subring_coefficient_index))
-            .filter(|&index| index < self.partial_base_field_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("partial opening index overflow".into()))
+        checked::mul_add(
+            extension_coordinate,
+            self.challenge_subring_dimension,
+            subring_coefficient_index,
+        )
+        .filter(|&index| index < self.partial_base_field_width)
+        .ok_or_else(|| AkitaError::InvalidSetup("partial opening index overflow".into()))
     }
 
     /// Split one partial opening index into

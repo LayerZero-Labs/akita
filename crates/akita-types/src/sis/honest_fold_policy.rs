@@ -4,7 +4,7 @@
 //! are not runtime protocol metadata and are never evaluated by the verifier.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 #[cfg(test)]
 use super::onehot_source::SourceClass;

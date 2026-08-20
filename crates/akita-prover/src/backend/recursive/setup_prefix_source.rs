@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
 use akita_types::{AkitaExpandedSetup, FlatMatrix, SetupPrefixSlot};
 
 use crate::backend::poly_helpers::{

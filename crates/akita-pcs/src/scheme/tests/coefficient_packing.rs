@@ -115,7 +115,7 @@ fn packing_setup_prefix_dispatch_rejects_an_unsupported_dimension() {
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         PackingField,
         96,
-        |D_SETUP| Ok::<usize, akita_field::AkitaError>(D_SETUP)
+        |D_SETUP| Ok::<usize, akita_error::AkitaError>(D_SETUP)
     );
     assert!(result.is_err());
 }
@@ -263,7 +263,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         );
                         assert_eq!(*actual, expected, "A hint row {row} mismatch");
                     }
-                    Ok::<(), akita_field::AkitaError>(())
+                    Ok::<(), akita_error::AkitaError>(())
                 }
             )
             .unwrap();

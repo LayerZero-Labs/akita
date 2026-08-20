@@ -32,7 +32,8 @@ use crate::{
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};

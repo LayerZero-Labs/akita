@@ -2,9 +2,10 @@
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
+use akita_error::AkitaError;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };

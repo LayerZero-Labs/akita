@@ -1,7 +1,8 @@
 use std::array::from_fn;
 
 use crate::ntt::crt::modular_inverse;
-use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
+use crate::{CanonicalField, CyclotomicRing, FieldCore};
+use akita_error::AkitaError;
 
 use super::{CrtNttParamSet, CyclotomicCrtNtt};
 

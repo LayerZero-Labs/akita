@@ -1,7 +1,10 @@
 # CRT/NTT Capacity Profile
 
-This artifact pins the single-CRT-lift capacity of the prime profiles used by
-the prover i8 kernels. Regenerate the table with:
+This artifact pins the single-CRT-lift capacity of the portable prime profiles
+used by the prover i8 kernels. It does not enumerate the host-dependent
+AVX-512IFMA exact cache. That 50-bit u64 representation is documented in
+book/src/foundations/ntt-crt.md and specs/large-digit-ntt-infrastructure.md.
+Regenerate the table with:
 
 ```bash
 python3 scripts/gen_crt_capacity_profile.py > docs/crt-ntt-capacity-profile.md

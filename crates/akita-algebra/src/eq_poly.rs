@@ -13,7 +13,9 @@
 //! bit `k` of `b` equals `x[k]`. In other words, `r[0]` corresponds to the
 //! **least-significant bit** (bit 0) and `r[n-1]` to the MSB.
 
-use crate::{AkitaError, FieldCore};
+use akita_error::{checked, AkitaError};
+
+use crate::FieldCore;
 use std::marker::PhantomData;
 use std::mem;
 use std::panic::Location;
@@ -48,14 +50,8 @@ impl<E: FieldCore> EqPolynomial<E> {
     }
 
     fn table_len(num_vars: usize) -> Result<usize, AkitaError> {
-        let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
-            expected: usize::BITS as usize,
-            actual: num_vars,
-        })?;
-        let len = 1usize
-            .checked_shl(shift)
-            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".to_string()))?;
-        Ok(len)
+        checked::pow2(num_vars)
+            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".to_string()))
     }
 
     #[track_caller]
@@ -76,7 +72,7 @@ impl<E: FieldCore> EqPolynomial<E> {
     }
 
     #[track_caller]
-    fn checked_table_len(label: &str, num_vars: usize) -> Result<usize, AkitaError> {
+    fn materialized_table_len(label: &str, num_vars: usize) -> Result<usize, AkitaError> {
         let len = Self::table_len(num_vars)?;
         Self::check_element_budget(label, len)?;
         Ok(len)
@@ -196,7 +192,7 @@ impl<E: FieldCore> EqPolynomial<E> {
     /// Uses **little-endian** index order.
     #[track_caller]
     pub fn evals_serial(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
-        let size = Self::checked_table_len("eq evaluation table", r.len())?;
+        let size = Self::materialized_table_len("eq evaluation table", r.len())?;
         let mut evals = Self::zero_vec("eq evaluation table", size)?;
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut len = 1usize;
@@ -266,7 +262,7 @@ impl<E: FieldCore> EqPolynomial<E> {
     pub fn evals_parallel(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
         use rayon::prelude::*;
 
-        let final_size = Self::checked_table_len("eq evaluation table", r.len())?;
+        let final_size = Self::materialized_table_len("eq evaluation table", r.len())?;
         let mut evals = Self::zero_vec("eq evaluation table", final_size)?;
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut size = 1;
