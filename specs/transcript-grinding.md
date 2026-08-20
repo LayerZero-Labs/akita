@@ -77,17 +77,17 @@ error at most `d / |E|`. The goal of this feature is to charge about
 `2^ceil(log2(d))` work before that challenge, so finding an accepted bad challenge again
 costs about `2^128` classical random-oracle trials.
 
-The sparse fold path has a separate security mismatch. For each commitment
+Before Slice 1, the sparse fold path had a separate security mismatch. For each commitment
 group, `FoldDraw::draw_folding_challenges_with_rejection` absorbs the group
 context and the shared fold-response nonce, squeezes one 32-byte seed, and
 expands `num_claims * num_live_blocks` sparse challenges. The signed-sparse
-path uses batches of 128 challenges per SHAKE stream. The operator-rejected
-path uses one SHAKE stream for the complete vector. A rewind of the seed changes
+path used batches of 128 challenges per SHAKE stream. The operator-rejected
+path used one SHAKE stream for the complete vector. A rewind of the seed changed
 the complete vector. The CWSS argument in
 [`specs/subring-coefficient-packing.md`](subring-coefficient-packing.md), and
 the same argument for `EvaluationTrace`, instead requires forks that change one
 coordinate while all other coordinates stay fixed. PR #394 identified this
-gap and left it open.
+gap. Slice 1 replaces both paths with the indexed construction below.
 
 The old unmerged design proposed one `u16` per nonzero query, a nine-bit cap,
 and a new byte-granular transcript squeeze cursor. The current code makes those
@@ -396,8 +396,8 @@ policy.
 ### Sparse fold CWSS structure
 
 Let `m_g = num_claims_g * num_live_blocks_g` for commitment group `g`. The
-current sampler makes one transcript query for a 32-byte group root and then
-consumes the complete vector from one or more shared SHAKE streams. This gives
+pre-Slice-1 sampler made one transcript query for a 32-byte group root and then
+consumed the complete vector from one or more shared SHAKE streams. This gave
 the required marginal sparse challenge family, but it does not give the CWSS
 extractor transcripts that differ at exactly one coordinate.
 
@@ -984,15 +984,15 @@ generated output.
       4096-attempt cap, remain one shared value per fold across all groups, and
       produce the same group root for the same transcript prefix and numeric
       nonce across the wire cutover.
-- [ ] Every fold group derives exactly `num_claims * num_live_blocks` challenges
+- [x] Every fold group derives exactly `num_claims * num_live_blocks` challenges
       from fresh indexed SHAKE256 cursors using the normative coordinate input
       and claim-major block order. Reprogramming a test oracle at coordinate
       `j` changes only `j`.
-- [ ] Indexed sampling preserves the certified marginal challenge law for the
+- [x] Indexed sampling preserves the certified marginal challenge law for the
       signed-sparse and operator-rejected families. Their support, LS18 unit
       difference, and norm-policy tests remain green for `EvaluationTrace` and
       `SubringCoefficientPacking`.
-- [ ] The subring coefficient-packing spec and Book security text no longer
+- [x] The subring coefficient-packing spec and Book security text no longer
       list full-vector CWSS structure as an open blocker. They state the
       coordinatewise construction and complete multi-fork accounting used by
       both opening methods.
