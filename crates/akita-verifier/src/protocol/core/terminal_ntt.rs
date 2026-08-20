@@ -23,7 +23,8 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
         |D| {
             let max_width = terminal_params.inner_width();
             let base_prefix_len = terminal_params
-                .inner_commit_matrix
+                .inner
+                .matrix
                 .output_rank()
                 .checked_mul(max_width)
                 .ok_or(AkitaError::InvalidSetup(
@@ -340,7 +341,8 @@ mod tests {
             .into_schedule();
         let params = &schedule.terminal.params.witness;
         let prefix_len = params
-            .inner_commit_matrix
+            .inner
+            .matrix
             .output_rank()
             .checked_mul(params.inner_width())
             .expect("terminal prefix");

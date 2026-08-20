@@ -35,7 +35,8 @@ impl FoldSchedule {
                 "a fold schedule descriptor requires a root fold".to_string(),
             )
         })?;
-        bytes.push(1);
+        // Schedule descriptor epoch. Bumped with the step-5 byte break.
+        bytes.push(2);
         append_root_fold_descriptor_bytes(
             bytes,
             root.params,
@@ -69,7 +70,8 @@ impl FoldSchedule {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(1);
+        // Schedule descriptor epoch. Bumped with the step-5 byte break.
+        bytes.push(2);
         append_root_fold_descriptor_bytes(
             bytes,
             &self.root.params,

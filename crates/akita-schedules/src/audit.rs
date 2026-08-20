@@ -344,36 +344,38 @@ fn audit_terminal(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let label = "terminal fold";
-    audit_inner_matrix(label, &params.inner_commit_matrix, policy)?;
+    audit_inner_matrix(label, &params.inner.matrix, policy)?;
     sparse
         .validate_for_ring_dim(params.d_a())
         .map_err(|message| invalid(label, message))?;
-    if params.fold_log_basis == 0
-        || params.fold_digit_count == 0
-        || params.num_live_ring_elements_per_claim == 0
-        || params.num_positions_per_block == 0
-        || !params.num_positions_per_block.is_power_of_two()
-        || params.num_live_blocks
+    if params.fold.log_basis == 0
+        || params.fold.num_digits == 0
+        || params.blocks.live_ring_elements_per_claim == 0
+        || params.blocks.positions_per_block == 0
+        || !params.blocks.positions_per_block.is_power_of_two()
+        || params.blocks.live_blocks
             != params
-                .num_live_ring_elements_per_claim
-                .div_ceil(params.num_positions_per_block)
+                .blocks
+                .live_ring_elements_per_claim
+                .div_ceil(params.blocks.positions_per_block)
     {
         return Err(invalid(label, "invalid terminal fold or block geometry"));
     }
 
     let expected_digits = num_digits_inner(
         DecompositionParams {
-            log_basis: params.log_basis_inner,
+            log_basis: params.inner.digits.log_basis,
             ..policy.decomposition
         },
         false,
     );
     let expected_width = params
-        .num_positions_per_block
+        .blocks
+        .positions_per_block
         .checked_mul(expected_digits)
         .ok_or_else(|| invalid(label, "A width overflow"))?;
-    if params.num_digits_inner != expected_digits
-        || params.inner_commit_matrix.input_width() != expected_width
+    if params.inner.digits.num_digits != expected_digits
+        || params.inner.matrix.input_width() != expected_width
     {
         return Err(invalid(
             label,
@@ -392,12 +394,14 @@ fn audit_terminal(
         .checked_mul(d)
         .ok_or_else(|| invalid(label, "terminal z coordinates overflow"))?;
     let expected_e_field_elems = params
-        .num_live_blocks
+        .blocks
+        .live_blocks
         .checked_mul(d)
         .ok_or_else(|| invalid(label, "terminal e coordinates overflow"))?;
     let expected_t_field_elems = params
-        .num_live_blocks
-        .checked_mul(params.inner_commit_matrix.output_rank())
+        .blocks
+        .live_blocks
+        .checked_mul(params.inner.matrix.output_rank())
         .and_then(|value| value.checked_mul(d))
         .ok_or_else(|| invalid(label, "terminal t coordinates overflow"))?;
     let expected_logical_num_elems = expected_z_coords
@@ -405,14 +409,14 @@ fn audit_terminal(
         .and_then(|value| value.checked_add(expected_t_field_elems))
         .ok_or_else(|| invalid(label, "terminal response coordinates overflow"))?;
     if matches!(
-        params.inner_commit_matrix.security_route(),
+        params.inner.matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     ) {
         if akita_challenges::selective_l2_operator_norm_rejection(d, sparse).is_none() {
             return Err(invalid(label, "terminal L2 challenge is not certified"));
         }
         let fold_basis = 1usize
-            .checked_shl(params.fold_log_basis)
+            .checked_shl(params.fold.log_basis)
             .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
         let expected = selective_l2_inner_matrix(
             policy,
@@ -423,7 +427,7 @@ fn audit_terminal(
                 inner_width: expected_width,
                 ring_dimension: d,
                 fold_basis,
-                fold_digit_count: params.fold_digit_count,
+                fold_digit_count: params.fold.num_digits,
                 fold_challenge_config: sparse,
                 response_l2_sq_cap: params.response_l2_sq_cap(),
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
@@ -437,7 +441,7 @@ fn audit_terminal(
                 "L2 route is not admitted by the frozen terminal response cap",
             )
         })?;
-        if params.inner_commit_matrix != expected {
+        if params.inner.matrix != expected {
             return Err(invalid(
                 label,
                 "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
@@ -654,12 +658,12 @@ mod tests {
             .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
             .expect("frozen cap expansion must preserve stored fold digits");
         assert_eq!(
-            expanded_wrong_fold_digits.fold_digit_count,
+            expanded_wrong_fold_digits.fold.num_digits,
             wrong_fold_digits.fold_digit_count as usize
         );
         assert_ne!(
-            expanded_wrong_fold_digits.fold_digit_count,
-            terminal.fold_digit_count
+            expanded_wrong_fold_digits.fold.num_digits,
+            terminal.fold.num_digits
         );
         let alternate_fold_basis = GeneratedTerminalFold {
             fold_log_basis: 3,
@@ -668,10 +672,10 @@ mod tests {
         let expanded_alternate_fold_basis = alternate_fold_basis
             .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
             .expect("basis-eight L2 geometry must remain eligible");
-        assert_eq!(expanded_alternate_fold_basis.fold_log_basis, 3);
+        assert_eq!(expanded_alternate_fold_basis.fold.log_basis, 3);
         assert_ne!(
-            expanded_alternate_fold_basis.fold_log_basis,
-            terminal.fold_log_basis
+            expanded_alternate_fold_basis.fold.log_basis,
+            terminal.fold.log_basis
         );
 
         let response_shape =
@@ -685,7 +689,7 @@ mod tests {
         )
         .expect("canonical terminal matrix");
 
-        let (table_key, norm_proof_shape) = match terminal.inner_commit_matrix.security_route() {
+        let (table_key, norm_proof_shape) = match terminal.inner.matrix.security_route() {
             InnerCommitSecurityRoute::L2 {
                 table_key,
                 norm_proof_shape,
@@ -693,7 +697,7 @@ mod tests {
             } => (table_key, norm_proof_shape),
             InnerCommitSecurityRoute::Linf(_) => panic!("expected L2 terminal"),
         };
-        terminal.inner_commit_matrix = InnerCommitMatrixParams::try_new_l2_with_min_rank(
+        terminal.inner.matrix = InnerCommitMatrixParams::try_new_l2_with_min_rank(
             table_key,
             INNER_WIDTH,
             RESPONSE_CAP * 16,

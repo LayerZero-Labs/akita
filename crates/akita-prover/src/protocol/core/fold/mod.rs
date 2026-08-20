@@ -355,7 +355,7 @@ impl<'a> FoldSuccessorParams<'a> {
     fn log_basis_inner(self) -> u32 {
         match self {
             Self::Recursive(params) => params.params.log_basis_open,
-            Self::Terminal(params) => params.log_basis_inner,
+            Self::Terminal(params) => params.inner.digits.log_basis,
         }
     }
 

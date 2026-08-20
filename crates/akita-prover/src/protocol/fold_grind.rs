@@ -210,7 +210,7 @@ where
                 akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
                 0,
-                params.num_live_blocks,
+                params.blocks.live_blocks,
                 1,
                 sparse,
                 nonce,
@@ -227,9 +227,9 @@ where
                         &challenges,
                         &polys,
                         &point_indices,
-                        params.num_positions_per_block,
-                        params.num_digits_inner,
-                        params.log_basis_inner,
+                        params.blocks.positions_per_block,
+                        params.inner.digits.num_digits,
+                        params.inner.digits.log_basis,
                     )
                 }
             )?;
@@ -262,7 +262,7 @@ where
         akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
         0,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         1,
         sparse,
         nonce,

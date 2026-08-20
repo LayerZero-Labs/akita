@@ -81,7 +81,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128, 256, 512, 2048];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp32_dense",
-    protocol_epoch: 1,
+    protocol_epoch: 2,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
     selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,

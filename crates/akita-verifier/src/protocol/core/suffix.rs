@@ -347,7 +347,7 @@ where
         akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
         0,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         1,
         &scheduled.sparse_challenge_config,
         proof.fold_grind_nonce,

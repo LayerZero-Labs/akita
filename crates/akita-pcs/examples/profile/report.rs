@@ -89,7 +89,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             final_w_num_elems = num_elems,
             final_w_encoding = "terminal_response",
             final_w_policy = "non_zk_default",
-            tail_log_basis_inner = schedule.terminal.params.witness.log_basis_inner,
+            tail_log_basis_inner = schedule.terminal.params.witness.inner.digits.log_basis,
             tail_z_prefix_bytes = z_prefix_bytes,
             tail_z_golomb_bytes = z_golomb_bytes,
             tail_z_bytes = z_wire_bytes,
@@ -143,7 +143,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         eprintln!(
             "[{label}]   final_w: encoding=terminal_response (non-zk default), total={tail_bytes} bytes, \
              logical_elems={num_elems}, inner_log_basis={}{}",
-            schedule.terminal.params.witness.log_basis_inner,
+            schedule.terminal.params.witness.inner.digits.log_basis,
             golomb_line,
         );
         eprintln!(
@@ -184,14 +184,14 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     .collect::<Vec<_>>();
     let log_cap = u128::BITS - encoding_abs_bound.leading_zeros();
     let hypothetical_digits =
-        num_digits_for_bound(log_cap, field_bits, params.log_basis_inner).max(1);
+        num_digits_for_bound(log_cap, field_bits, params.inner.digits.log_basis).max(1);
     analyze_z_fold_golomb_encoding(
         &z_values,
         encoding_abs_bound,
         group.z_rice_low_bits,
         golomb_rice_zigzag_width(encoding_abs_bound),
         hypothetical_digits,
-        params.log_basis_inner,
+        params.inner.digits.log_basis,
         witness.z_payloads.first().map_or(0, Vec::len),
     )
 }
@@ -916,7 +916,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     let terminal = &schedule.terminal;
     let witness = &terminal.params.witness;
     let challenge = &terminal.params.sparse_challenge_config;
-    let security_route = witness.inner_commit_matrix.security_route();
+    let security_route = witness.inner.matrix.security_route();
     let response_l2_sq_cap = witness.response_l2_sq_cap();
     let z_linf_cap = terminal
         .params
@@ -932,14 +932,14 @@ pub(crate) fn emit_runtime_schedule_summary(
         level = terminal_level,
         input_witness_len = terminal.input_witness_len,
         d_a = witness.d_a(),
-        n_a = witness.inner_commit_matrix.output_rank(),
+        n_a = witness.inner.matrix.output_rank(),
         inner_width = witness.inner_width(),
-        a_input_raw_dimension = ?witness.inner_commit_matrix.raw_input_dimension(),
-        a_output_raw_dimension = ?witness.inner_commit_matrix.raw_output_dimension(),
-        log_basis_inner = witness.log_basis_inner,
-        num_digits_inner = witness.num_digits_inner,
-        fold_log_basis = witness.fold_log_basis,
-        fold_digit_count = witness.fold_digit_count,
+        a_input_raw_dimension = ?witness.inner.matrix.raw_input_dimension(),
+        a_output_raw_dimension = ?witness.inner.matrix.raw_output_dimension(),
+        log_basis_inner = witness.inner.digits.log_basis,
+        num_digits_inner = witness.inner.digits.num_digits,
+        fold_log_basis = witness.fold.log_basis,
+        fold_digit_count = witness.fold.num_digits,
         challenge_l1_mass = challenge.l1_norm(),
         challenge_count_pm1 = challenge.count_pm1,
         challenge_count_pm2 = challenge.count_pm2,
@@ -947,11 +947,11 @@ pub(crate) fn emit_runtime_schedule_summary(
         security_route = ?security_route,
         response_l2_sq_cap = ?response_l2_sq_cap,
         z_linf_cap = ?z_linf_cap,
-        num_live_ring_elements_per_claim = witness.num_live_ring_elements_per_claim,
-        num_positions_per_block = witness.num_positions_per_block,
-        num_live_blocks = witness.num_live_blocks,
+        num_live_ring_elements_per_claim = witness.blocks.live_ring_elements_per_claim,
+        num_positions_per_block = witness.blocks.positions_per_block,
+        num_live_blocks = witness.blocks.live_blocks,
         block_index_domain_size = witness
-            .num_live_blocks
+            .blocks.live_blocks
             .checked_next_power_of_two()
             .unwrap_or(0),
         "planned terminal state"

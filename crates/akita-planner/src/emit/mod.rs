@@ -354,35 +354,33 @@ fn generated_entry(
                     .terminal
                     .params
                     .witness
-                    .num_live_ring_elements_per_claim
+                    .blocks
+                    .live_ring_elements_per_claim
                     as u64,
-                positions_per_block: schedule.terminal.params.witness.num_positions_per_block
+                positions_per_block: schedule.terminal.params.witness.blocks.positions_per_block
                     as u64,
-                live_blocks: schedule.terminal.params.witness.num_live_blocks as u64,
+                live_blocks: schedule.terminal.params.witness.blocks.live_blocks as u64,
             },
             inner_commit_matrix: GeneratedInnerCommitMatrix {
                 ring_dimension: schedule
                     .terminal
                     .params
                     .witness
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .ring_dimension() as u32,
-                log_basis: schedule.terminal.params.witness.log_basis_inner,
+                log_basis: schedule.terminal.params.witness.inner.digits.log_basis,
             },
-            num_digits_inner: schedule.terminal.params.witness.num_digits_inner as u32,
-            fold_log_basis: schedule.terminal.params.witness.fold_log_basis,
-            fold_digit_count: schedule.terminal.params.witness.fold_digit_count as u32,
-            inner_output_rank: schedule
-                .terminal
-                .params
-                .witness
-                .inner_commit_matrix
-                .output_rank() as u32,
+            num_digits_inner: schedule.terminal.params.witness.inner.digits.num_digits as u32,
+            fold_log_basis: schedule.terminal.params.witness.fold.log_basis,
+            fold_digit_count: schedule.terminal.params.witness.fold.num_digits as u32,
+            inner_output_rank: schedule.terminal.params.witness.inner.matrix.output_rank() as u32,
             inner_coeff_linf_bound: schedule
                 .terminal
                 .params
                 .witness
-                .inner_commit_matrix
+                .inner
+                .matrix
                 .coeff_linf_bound()
                 .unwrap_or(0),
             response_l2_sq_cap: schedule.terminal.params.witness.response_l2_sq_cap(),

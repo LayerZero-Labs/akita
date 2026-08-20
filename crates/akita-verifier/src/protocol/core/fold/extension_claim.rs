@@ -398,8 +398,8 @@ where
         opening_batch,
         basis,
         params.d_a(),
-        params.num_positions_per_block,
-        params.num_live_blocks,
+        params.blocks.positions_per_block,
+        params.blocks.live_blocks,
         E::EXT_DEGREE > 1,
         transcript,
     )

@@ -255,7 +255,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
             .terminal
             .input_witness_len
             .is_multiple_of(terminal_d)
-        || terminal.inner_commit_matrix.ring_dimension() != terminal_d
+        || terminal.inner.matrix.ring_dimension() != terminal_d
     {
         return Err(AkitaError::InvalidSetup(
             "terminal inner ring dimension is inconsistent with witness length".to_string(),

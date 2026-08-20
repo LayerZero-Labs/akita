@@ -140,7 +140,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
     assert_eq!(terminal.witness.response_l2_sq_cap(), Some(798_341_908));
-    assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 6);
+    assert_eq!(terminal.witness.inner.matrix.output_rank(), 6);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
@@ -180,8 +180,8 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
         .into_schedule();
     assert_eq!(
         (
-            schedule.terminal.params.witness.fold_log_basis,
-            schedule.terminal.params.witness.fold_digit_count,
+            schedule.terminal.params.witness.fold.log_basis,
+            schedule.terminal.params.witness.fold.num_digits,
         ),
         (
             entry.terminal.fold_log_basis,
@@ -194,7 +194,8 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
             .terminal
             .params
             .witness
-            .inner_commit_matrix
+            .inner
+            .matrix
             .security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     ));
@@ -225,7 +226,7 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
                 .into_schedule();
             schedule.recursive_folds.iter().any(|step| {
                 matches!(
-                    step.params.witness.inner_commit_matrix.security_route(),
+                    step.params.inner_commit_matrix.security_route(),
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             }) || matches!(
@@ -233,7 +234,8 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
                     .terminal
                     .params
                     .witness
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .security_route(),
                 akita_types::InnerCommitSecurityRoute::L2 { .. }
             )
@@ -273,10 +275,11 @@ fn setup_capacity_includes_terminal_inner_matrix() {
     let envelope = setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
     let terminal = &schedule.terminal.params.witness;
     let terminal_a = terminal
-        .inner_commit_matrix
+        .inner
+        .matrix
         .output_rank()
         .checked_mul(terminal.inner_width())
-        .and_then(|width| width.checked_mul(terminal.inner_commit_matrix.ring_dimension()))
+        .and_then(|width| width.checked_mul(terminal.inner.matrix.ring_dimension()))
         .expect("terminal setup capacity");
     assert!(envelope.num_field_elements >= terminal_a);
 }

@@ -149,7 +149,7 @@ mod tests {
             .params
             .precommitted_groups
             .iter()
-            .all(|group| group.descriptor == expected));
+            .all(|group| group.profile == expected));
     }
 
     #[test]
@@ -170,6 +170,6 @@ mod tests {
             .schedule()
             .recursive_folds
             .iter()
-            .any(|fold| fold.params.incoming_setup_prefix.is_some()));
+            .any(|fold| fold.params.setup_prefix.is_some()));
     }
 }

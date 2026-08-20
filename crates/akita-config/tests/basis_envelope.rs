@@ -76,7 +76,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             source_basis = fold.params.log_basis_open;
         }
         assert_eq!(
-            schedule.terminal.params.witness.log_basis_inner, source_basis,
+            schedule.terminal.params.witness.inner.digits.log_basis, source_basis,
             "terminal fold redecomposes its balanced-digit input at nv={nv}"
         );
         let within_window = root.log_basis_inner <= inner_basis_max
@@ -87,7 +87,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                     && fold.params.log_basis_outer <= opening_basis_max
                     && fold.params.log_basis_open <= opening_basis_max
             })
-            && schedule.terminal.params.witness.log_basis_inner <= opening_basis_max;
+            && schedule.terminal.params.witness.inner.digits.log_basis <= opening_basis_max;
         assert!(
             within_window,
             "adaptive onehot schedule exceeded its configured basis range at nv={nv}: {schedule:?}"

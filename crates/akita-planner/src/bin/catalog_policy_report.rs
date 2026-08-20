@@ -188,7 +188,8 @@ pub(super) fn catalog_policy_signature(
                 .terminal
                 .params
                 .witness
-                .inner_commit_matrix
+                .inner
+                .matrix
                 .security_route(),
         ),
     )

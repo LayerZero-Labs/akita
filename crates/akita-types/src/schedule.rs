@@ -1,9 +1,8 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
-use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, InnerCommitSecurityRoute, OpeningMethod,
-    RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
+    CommittedGroupParams, InnerCommitSecurityRoute, OpeningMethod, RelationAddressGeometry,
+    SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::AkitaError;
 
@@ -121,16 +120,12 @@ impl FoldParams {
 /// matrix and no outer/open response decomposition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalCommittedGroupParams {
-    pub log_basis_inner: u32,
-    /// Response basis used by the planner for this terminal fold.
-    pub fold_log_basis: u32,
-    /// Number of response digits used by the planner for this terminal fold.
-    pub fold_digit_count: usize,
-    pub inner_commit_matrix: InnerCommitMatrixParams,
-    pub num_live_ring_elements_per_claim: usize,
-    pub num_positions_per_block: usize,
-    pub num_live_blocks: usize,
-    pub num_digits_inner: usize,
+    /// Exact `(N, M, B)` block split of the terminal source.
+    pub blocks: crate::BlockGeometry,
+    /// A/source role: gadget decomposition and audited matrix identity.
+    pub inner: crate::InnerRoleParams,
+    /// Response basis and depth this terminal fold was planned against.
+    pub fold: crate::GadgetDigits,
 }
 
 /// Minimum fraction of the unconstrained terminal-response target that a
@@ -151,14 +146,12 @@ impl TerminalCommittedGroupParams {
 
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
-            log_basis_inner: params.log_basis_inner,
-            fold_log_basis: params.log_basis_open,
-            fold_digit_count: params.num_digits_fold,
-            inner_commit_matrix: params.inner_commit_matrix,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-            num_positions_per_block: params.num_positions_per_block,
-            num_live_blocks: params.num_live_blocks,
-            num_digits_inner: params.num_digits_inner,
+            blocks: params.blocks(),
+            inner: crate::RoleParams::new(
+                crate::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
+                params.inner_commit_matrix,
+            ),
+            fold: crate::GadgetDigits::new(params.log_basis_open, params.num_digits_fold),
         }
     }
 
@@ -200,20 +193,20 @@ impl TerminalCommittedGroupParams {
 
     #[inline]
     pub fn d_a(&self) -> usize {
-        self.inner_commit_matrix.ring_dimension()
+        self.inner.matrix.ring_dimension()
     }
 
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.inner_commit_matrix.input_width()
+        self.inner.matrix.input_width()
     }
 
     /// Logical opening-point width for the witness entering the terminal fold.
     pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
         crate::layout::params::recursive_opening_num_vars_for_geometry(
             self.d_a(),
-            self.num_positions_per_block,
-            self.num_live_blocks,
+            self.blocks.positions_per_block,
+            self.blocks.live_blocks,
         )
     }
 
@@ -228,14 +221,14 @@ impl TerminalCommittedGroupParams {
         sparse: &akita_challenges::SparseChallengeConfig,
     ) -> Result<u128, AkitaError> {
         if matches!(
-            self.inner_commit_matrix.security_route(),
+            self.inner.matrix.security_route(),
             crate::sis::InnerCommitSecurityRoute::L2 { .. }
         ) {
             return Err(AkitaError::InvalidSetup(
                 "terminal L2 route has no independent Linf cap".into(),
             ));
         }
-        crate::sis::certified_terminal_response_linf_cap(&self.inner_commit_matrix, sparse)
+        crate::sis::certified_terminal_response_linf_cap(&self.inner.matrix, sparse)
     }
 
     /// Validate that the wire carries exactly the norm cap required by the
@@ -245,7 +238,7 @@ impl TerminalCommittedGroupParams {
         sparse: &akita_challenges::SparseChallengeConfig,
         scheduled_cap: Option<u128>,
     ) -> Result<(), AkitaError> {
-        match self.inner_commit_matrix.security_route() {
+        match self.inner.matrix.security_route() {
             crate::sis::InnerCommitSecurityRoute::Linf(_) => {
                 let cap = scheduled_cap.ok_or_else(|| {
                     AkitaError::InvalidSetup("terminal Linf route is missing its cap".into())
@@ -270,7 +263,7 @@ impl TerminalCommittedGroupParams {
     /// Verifier-enforced complete physical L2 cap for a clear terminal route.
     #[must_use]
     pub fn response_l2_sq_cap(&self) -> Option<u128> {
-        match self.inner_commit_matrix.security_route() {
+        match self.inner.matrix.security_route() {
             crate::sis::InnerCommitSecurityRoute::Linf(_) => None,
             crate::sis::InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap, ..
@@ -278,15 +271,17 @@ impl TerminalCommittedGroupParams {
         }
     }
 
+    /// Role-atomic order, per the plan's encoding rule: declared field order,
+    /// each field written by its own encoder.
+    ///
+    /// This is the one encoder in the plan whose byte order changes. It used to
+    /// interleave the A basis, the fold decomposition, the A matrix, the block
+    /// triple, and the A depth; it now writes geometry, then the A role as
+    /// `basis, depth, matrix`, then the fold decomposition.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        push_u32(bytes, self.log_basis_inner);
-        push_u32(bytes, self.fold_log_basis);
-        push_usize(bytes, self.fold_digit_count);
-        self.inner_commit_matrix.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.num_live_ring_elements_per_claim);
-        push_usize(bytes, self.num_positions_per_block);
-        push_usize(bytes, self.num_live_blocks);
-        push_usize(bytes, self.num_digits_inner);
+        self.blocks.append_descriptor_bytes(bytes);
+        self.inner.append_descriptor_bytes(bytes);
+        self.fold.append_descriptor_bytes(bytes);
     }
 }
 

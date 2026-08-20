@@ -43,12 +43,7 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
         "  L{} terminal: D{}, rank={}, input={}",
         schedule.recursive_folds.len() + 1,
         schedule.terminal.params.witness.d_a(),
-        schedule
-            .terminal
-            .params
-            .witness
-            .inner_commit_matrix
-            .output_rank(),
+        schedule.terminal.params.witness.inner.matrix.output_rank(),
         schedule.terminal.input_witness_len,
     );
 }

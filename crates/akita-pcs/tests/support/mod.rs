@@ -186,19 +186,20 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
             AkitaError::InvalidSetup("packing test output has no supported terminal divisor".into())
         })?;
     terminal.params.sparse_challenge_config = Cfg::ring_challenge_config(terminal_d)?;
-    terminal_witness.num_live_ring_elements_per_claim = terminal.input_witness_len / terminal_d;
+    terminal_witness.blocks.live_ring_elements_per_claim = terminal.input_witness_len / terminal_d;
     let terminal_witness_norms =
-        FoldWitnessNorms::bounded(terminal_witness.log_basis_inner, terminal_d);
+        FoldWitnessNorms::bounded(terminal_witness.inner.digits.log_basis, terminal_d);
     let ring_dimension = terminal_d
         .try_into()
         .map_err(|_| AkitaError::InvalidSetup("packing terminal dimension exceeds u32".into()))?;
     let mut selected = None;
     for positions_per_block in [256usize, 128, 64, 32, 16, 8, 4, 2, 1] {
         let num_live_blocks = terminal_witness
-            .num_live_ring_elements_per_claim
+            .blocks
+            .live_ring_elements_per_claim
             .div_ceil(positions_per_block);
         let a_width = positions_per_block
-            .checked_mul(terminal_witness.num_digits_inner)
+            .checked_mul(terminal_witness.inner.digits.num_digits)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("synthetic terminal A width overflow".into())
             })?;
@@ -212,13 +213,14 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
                     challenge_dimension: terminal_d,
                     num_claims: 1,
                     num_live_ring_elements_per_claim: terminal_witness
-                        .num_live_ring_elements_per_claim,
+                        .blocks
+                        .live_ring_elements_per_claim,
                     num_live_blocks,
                     num_positions_per_block: positions_per_block,
                     num_chunks: 1,
                     num_fold_coeffs: response_width,
                     witness_norms: terminal_witness_norms,
-                    log_basis_response: terminal_witness.fold_log_basis,
+                    log_basis_response: terminal_witness.fold.log_basis,
                     challenge_config: &terminal.params.sparse_challenge_config,
                 })?;
         let Some(a_bound) = akita_types::sis::rounded_up_role_a_inf_norm(
@@ -226,7 +228,7 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             terminal_d,
-            terminal_witness.fold_log_basis,
+            terminal_witness.fold.log_basis,
             &terminal.params.sparse_challenge_config,
             fold_digit_count,
         ) else {
@@ -257,10 +259,10 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
         selected.ok_or_else(|| {
             AkitaError::InvalidSetup("packing test terminal has no admissible Linf geometry".into())
         })?;
-    terminal_witness.num_positions_per_block = positions_per_block;
-    terminal_witness.num_live_blocks = num_live_blocks;
-    terminal_witness.fold_digit_count = fold_digit_count;
-    terminal_witness.inner_commit_matrix = matrix;
+    terminal_witness.blocks.positions_per_block = positions_per_block;
+    terminal_witness.blocks.live_blocks = num_live_blocks;
+    terminal_witness.fold.num_digits = fold_digit_count;
+    terminal_witness.inner.matrix = matrix;
     let encoding_scale =
         terminal_witness.certified_response_linf_cap(&terminal.params.sparse_challenge_config)?;
     terminal.params.response_shape =

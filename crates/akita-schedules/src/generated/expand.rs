@@ -885,14 +885,16 @@ impl GeneratedTerminalFold {
             )?
         };
         let terminal = TerminalCommittedGroupParams {
-            log_basis_inner,
-            fold_log_basis: self.fold_log_basis,
-            fold_digit_count,
-            inner_commit_matrix,
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-            num_digits_inner,
+            blocks: akita_types::BlockGeometry::new(
+                num_live_ring_elements_per_claim,
+                num_positions_per_block,
+                num_live_blocks,
+            ),
+            inner: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                inner_commit_matrix,
+            ),
+            fold: akita_types::GadgetDigits::new(self.fold_log_basis, fold_digit_count),
         };
         if terminal
             .validate_terminal_linf_cap(&sparse, self.z_linf_cap)
@@ -995,7 +997,7 @@ mod tests {
             &*requested_dimensions.borrow(),
             &[input.commitment.inner.matrix.ring_dimension()]
         );
-        assert_eq!(expanded.layout, input.commitment);
+        assert_eq!(expanded.profile, input.commitment);
         assert_eq!(expanded.opening, input.opening);
     }
 

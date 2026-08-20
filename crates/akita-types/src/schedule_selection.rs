@@ -13,7 +13,7 @@ use akita_serialization::{
 };
 use std::io::{Read, Write};
 
-const SCHEDULE_ROW_DOMAIN_V2: &[u8] = b"akita/schedule-row/v2";
+const SCHEDULE_ROW_DOMAIN_V3: &[u8] = b"akita/schedule-row/v3";
 
 /// Cryptographic identity of one complete expanded schedule row.
 #[repr(transparent)]
@@ -58,7 +58,7 @@ pub fn schedule_row_digest(
             AkitaError::InvalidSetup("schedule row group count overflow".to_string())
         })?;
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(SCHEDULE_ROW_DOMAIN_V2);
+    bytes.extend_from_slice(SCHEDULE_ROW_DOMAIN_V3);
     bytes.push(1);
     push_usize(&mut bytes, num_groups);
     for profile in &profiles.precommitteds {

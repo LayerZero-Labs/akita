@@ -45,7 +45,7 @@ pub(crate) static FP128_ONEHOT_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             witness_partition: GeneratedWitnessPartition::Single,
         },
         recursive_folds: &[],
-        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1726, positions_per_block: 256, live_blocks: 7 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, num_digits_inner: 1, fold_log_basis: 3, fold_digit_count: 4, inner_output_rank: 4, inner_coeff_linf_bound: 1048575, response_l2_sq_cap: None, z_linf_cap: Some(196), z_rice_low_bits: 5, z_payload_bytes: 18432 },
+        terminal: GeneratedTerminalFold { geometry: GeneratedBlockGeometry { live_ring_elements_per_claim: 1726, positions_per_block: 256, live_blocks: 7 }, inner_commit_matrix: GeneratedInnerCommitMatrix { ring_dimension: 64, log_basis: 3 }, num_digits_inner: 1, fold_log_basis: 5, fold_digit_count: 2, inner_output_rank: 4, inner_coeff_linf_bound: 262143, response_l2_sq_cap: None, z_linf_cap: Some(196), z_rice_low_bits: 5, z_payload_bytes: 18432 },
     },
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
@@ -506,7 +506,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_onehot",
-    protocol_epoch: 1,
+    protocol_epoch: 2,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
     selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
@@ -528,5 +528,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 16577217186669637934,
     key_count: 29,
-    key_digest: 12100995564347852363,
+    key_digest: 11911446571699384715,
 };

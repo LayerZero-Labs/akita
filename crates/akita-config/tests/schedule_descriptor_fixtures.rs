@@ -53,6 +53,14 @@ use akita_types::{
 };
 
 const FIXTURE_PATH: &str = "tests/fixtures/schedule_descriptor_bytes.txt";
+/// Byte-frozen subset: commit-phase profiles and catalog identity.
+///
+/// These must not move even when everything above them breaks. Keeping them in
+/// a separate file means re-blessing the main fixture — which step 5 legitimately
+/// requires — cannot silently take them along. Blessing this one is a deliberate,
+/// separate act.
+const FROZEN_PATH: &str = "tests/fixtures/schedule_frozen_profile_bytes.txt";
+const BLESS_FROZEN_ENV: &str = "AKITA_BLESS_FROZEN_PROFILE_FIXTURES";
 const BLESS_ENV: &str = "AKITA_BLESS_SCHEDULE_FIXTURES";
 
 /// FNV-1a 64. Implemented here on purpose: the fixture must not drift because a
@@ -253,9 +261,14 @@ fn render(records: &[Record]) -> String {
     out.push_str("# Golden descriptor-byte fixtures for the generated schedule catalogs.\n");
     out.push_str("#\n");
     out.push_str("# Owned by specs/parameter-struct-consolidation.md (step 1).\n");
-    out.push_str("# Steps 2 through 4 of that plan must produce an EMPTY diff here.\n");
-    out.push_str("# Step 5 breaks everything above the commit-phase profile on purpose;\n");
-    out.push_str("# the profile and catalog.* lines must still not move.\n");
+    out.push_str("# Steps 2 through 4 of that plan produced an EMPTY diff here.\n");
+    out.push_str("# Step 5d broke everything above the commit-phase profile on purpose:\n");
+    out.push_str("#   - the terminal descriptor is now role-atomic (geometry, A role, fold),\n");
+    out.push_str("#   - protocol_epoch 1 -> 2, schedule-row domain v2 -> v3,\n");
+    out.push_str("#   - the FoldSchedule descriptor tag 1 -> 2.\n");
+    out.push_str("# Old proof bytes no longer verify. The commit-phase profile bytes and the\n");
+    out.push_str("# catalog sort key did NOT move; that subset has its own frozen fixture in\n");
+    out.push_str("# schedule_frozen_profile_bytes.txt, which must be blessed separately.\n");
     out.push_str("#\n");
     out.push_str("# Regenerate (only after reading the diff):\n");
     out.push_str("#   AKITA_BLESS_SCHEDULE_FIXTURES=1 cargo test -p akita-config \\\n");
@@ -330,6 +343,71 @@ fn the_fixture_mechanism_detects_change() {
 /// Family name a record line belongs to (the first whitespace-delimited token).
 fn family_of(line: &str) -> &str {
     line.split_whitespace().next().unwrap_or("")
+}
+
+/// Is this record part of the byte-frozen commit-phase surface?
+///
+/// Deliberately excludes `catalog.identity`: it embeds `protocol_epoch`, so it
+/// *must* move when the epoch is bumped, and freezing it would assert the
+/// opposite of what §10.2 says. What is frozen is the commit-phase profile
+/// bytes, the catalog sort key and its digest, and the lookup keys — the things
+/// that must hold still while everything above them breaks.
+fn is_frozen(label: &str) -> bool {
+    label.contains(".profile")
+        || label.contains("lookup_key")
+        || label.contains("catalog.key_digest")
+        || label.contains("catalog.key_count")
+}
+
+/// The commit-phase profile bytes and catalog identity are frozen.
+///
+/// `specs/parameter-struct-consolidation.md` §10.2 keeps these fixed while the
+/// levels above them break once, because profile bytes feed the catalog
+/// `key_digest` and are the catalog sort key. A change here means entry ordering
+/// shifted or a committed digest moved, which is a different and much larger
+/// event than re-encoding a fold.
+#[test]
+fn commit_phase_profile_and_catalog_bytes_are_frozen() {
+    let records = collect_records();
+    let frozen: Vec<&Record> = records.iter().filter(|r| is_frozen(&r.label)).collect();
+    assert!(
+        frozen.len() > 50,
+        "expected a populated frozen subset, got {}",
+        frozen.len()
+    );
+    let rendered: String = frozen.iter().map(|r| format!("{}\n", r.line())).collect();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(FROZEN_PATH);
+
+    if std::env::var_os(BLESS_FROZEN_ENV).is_some() {
+        std::fs::create_dir_all(path.parent().expect("fixture parent"))
+            .expect("create fixture dir");
+        std::fs::write(&path, &rendered).expect("write frozen fixture");
+        eprintln!("blessed {} frozen records", frozen.len());
+        return;
+    }
+
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "missing frozen fixture {}: {error}\n\
+             create it with {BLESS_FROZEN_ENV}=1 and the all-schedules feature",
+            path.display()
+        )
+    });
+    let linked: std::collections::BTreeSet<&str> =
+        frozen.iter().map(|r| family_of(&r.label)).collect();
+    let expected: String = expected
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter(|line| linked.contains(family_of(line)))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(
+        expected, rendered,
+        "commit-phase profile or catalog bytes moved. This is NOT ordinary \
+         step-5 churn: profile bytes are the catalog sort key and feed key_digest. \
+         Do not re-bless without establishing why entry ordering or a committed \
+         digest changed."
+    );
 }
 
 #[test]

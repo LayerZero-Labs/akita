@@ -46,7 +46,7 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 256, 512];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_onehot_multi_chunk_w4r2",
-    protocol_epoch: 1,
+    protocol_epoch: 2,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
     selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,

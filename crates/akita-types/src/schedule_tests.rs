@@ -613,7 +613,7 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
 
     let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
         .expect("terminal projection");
-    assert_eq!(terminal.inner_commit_matrix, expected_inner);
+    assert_eq!(terminal.inner.matrix, expected_inner);
     assert_eq!(
         response_cap,
         terminal.certified_response_linf_cap(&sparse).unwrap()

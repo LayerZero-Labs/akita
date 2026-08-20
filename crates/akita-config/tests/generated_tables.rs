@@ -102,11 +102,8 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
                             .unwrap_or_else(|error| {
                                 panic!("{} S-row lookup failed: {error}", family.module_name)
                             });
-                    GroupCommitPhaseParams::try_from_params(
-                        group,
-                        &schedule.root.params.final_group.commitment,
-                    )
-                    .expect("valid generated profile")
+                    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
+                        .expect("valid generated profile")
                 })
         })
         .collect::<Vec<_>>();

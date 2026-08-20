@@ -162,12 +162,14 @@ pub(crate) fn walk_generated_schedule_entry(
         .checked_mul(terminal_params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
     let e_field_elems = terminal_params
-        .num_live_blocks
+        .blocks
+        .live_blocks
         .checked_mul(terminal_params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
     let t_field_elems = terminal_params
-        .num_live_blocks
-        .checked_mul(terminal_params.inner_commit_matrix.output_rank())
+        .blocks
+        .live_blocks
+        .checked_mul(terminal_params.inner.matrix.output_rank())
         .and_then(|value| value.checked_mul(terminal_params.d_a()))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
     let logical_num_elems = z_coords

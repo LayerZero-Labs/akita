@@ -330,8 +330,8 @@ where
                     &[&witness_source],
                     &protocol_point,
                     BasisMode::Lagrange,
-                    params.num_positions_per_block,
-                    params.num_live_blocks,
+                    params.blocks.positions_per_block,
+                    params.blocks.live_blocks,
                     alpha_bits,
                 )?;
             let (trace, _) = compute_trace_target::<F, E, T, D>(

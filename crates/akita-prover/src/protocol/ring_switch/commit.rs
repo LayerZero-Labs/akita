@@ -232,10 +232,10 @@ where
             let witness = packed_witness.as_ref().unwrap_or(logical_w);
             let view = witness.view::<Cfg::Field, D_A>()?;
             let plan = CommitInnerPlan {
-                n_a: commit_params.inner_commit_matrix.output_rank(),
-                num_positions_per_block: commit_params.num_positions_per_block,
-                num_digits_inner: commit_params.num_digits_inner,
-                log_basis_inner: commit_params.log_basis_inner,
+                n_a: commit_params.inner.matrix.output_rank(),
+                num_positions_per_block: commit_params.blocks.positions_per_block,
+                num_digits_inner: commit_params.inner.digits.num_digits,
+                log_basis_inner: commit_params.inner.digits.log_basis,
             };
             let inner_group = backend.commit_inner_group(prepared, vec![view], plan)?;
             let [inner] = inner_group

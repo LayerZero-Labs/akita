@@ -334,13 +334,14 @@ impl TerminalResponseShape {
             .inner_width()
             .checked_mul(d)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
-        let e_field_elems = params
-            .num_live_blocks
-            .checked_mul(d)
-            .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
+        let e_field_elems =
+            params.blocks.live_blocks.checked_mul(d).ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal e coordinates overflow".into())
+            })?;
         let t_field_elems = params
-            .num_live_blocks
-            .checked_mul(params.inner_commit_matrix.output_rank())
+            .blocks
+            .live_blocks
+            .checked_mul(params.inner.matrix.output_rank())
             .and_then(|value| value.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
         let z_rice_low_bits = wire_rice_low_bits(encoding_scale);
@@ -358,7 +359,7 @@ impl TerminalResponseShape {
                     z_coords,
                     e_field_elems,
                     t_field_elems,
-                    z_linf_cap: match params.inner_commit_matrix.security_route() {
+                    z_linf_cap: match params.inner.matrix.security_route() {
                         crate::sis::InnerCommitSecurityRoute::Linf(_) => Some(encoding_scale),
                         crate::sis::InnerCommitSecurityRoute::L2 { .. } => None,
                     },

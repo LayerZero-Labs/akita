@@ -422,12 +422,12 @@ impl NttExecutionRequirements {
         params: &TerminalCommittedGroupParams,
     ) -> Result<(), AkitaError> {
         let key = NttCacheKey::from_matrix_shape(
-            params.inner_commit_matrix.ring_dimension(),
-            params.inner_commit_matrix.output_rank(),
-            params.inner_commit_matrix.input_width(),
+            params.inner.matrix.ring_dimension(),
+            params.inner.matrix.output_rank(),
+            params.inner.matrix.input_width(),
             signed_commit_domain(
-                params.inner_commit_matrix.input_width(),
-                params.log_basis_inner,
+                params.inner.matrix.input_width(),
+                params.inner.digits.log_basis,
             )?,
         )?;
         self.add_matrix(
@@ -435,8 +435,8 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             key,
             matrix_extent(
-                params.inner_commit_matrix.output_rank(),
-                params.inner_commit_matrix.input_width(),
+                params.inner.matrix.output_rank(),
+                params.inner.matrix.input_width(),
             )?,
         )
     }

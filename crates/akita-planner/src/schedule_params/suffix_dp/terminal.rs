@@ -107,8 +107,8 @@ pub(crate) fn terminal_direct_suffix_cost(
                 }),
             },
         )? {
-            if l2_matrix.output_rank() < terminal_params.inner_commit_matrix.output_rank() {
-                terminal_params.inner_commit_matrix = l2_matrix;
+            if l2_matrix.output_rank() < terminal_params.inner.matrix.output_rank() {
+                terminal_params.inner.matrix = l2_matrix;
                 sparse_challenge_config = l2_challenge;
             }
         }
@@ -120,7 +120,7 @@ pub(crate) fn terminal_direct_suffix_cost(
     let modeled_encoding_scale = source_moment.and_then(|moment| {
         moment.response_linf_cap(
             sparse_challenge_config.challenge_l2_sq_max(),
-            terminal_params.num_live_blocks,
+            terminal_params.blocks.live_blocks,
             1,
             num_fold_coeffs,
             terminal_params.d_a(),

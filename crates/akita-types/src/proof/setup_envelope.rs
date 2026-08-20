@@ -238,9 +238,9 @@ pub fn accumulate_terminal_matrix_field_elements(
 ) -> Result<(), AkitaError> {
     include_matrix_field_elements(
         max_field_elements,
-        params.inner_commit_matrix.output_rank(),
+        params.inner.matrix.output_rank(),
         params.inner_width(),
-        params.inner_commit_matrix.ring_dimension(),
+        params.inner.matrix.ring_dimension(),
         "terminal inner setup",
     )
 }

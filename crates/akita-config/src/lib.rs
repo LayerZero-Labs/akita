@@ -837,9 +837,9 @@ mod fp128_policy_tests {
             })
             .expect("recursive generated row");
         let error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
-            let alignment = schedule.recursive_folds[0].params.witness.d_a().max(
+            let alignment = schedule.recursive_folds[0].params.d_a().max(
                 if schedule.recursive_folds.len() > 1 {
-                    schedule.recursive_folds[1].params.witness.d_a()
+                    schedule.recursive_folds[1].params.d_a()
                 } else {
                     schedule.terminal.params.witness.d_a()
                 },

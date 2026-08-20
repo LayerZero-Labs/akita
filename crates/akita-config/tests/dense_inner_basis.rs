@@ -29,7 +29,7 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
         PolynomialGroupLayout::singleton(26),
     ))
     .expect("generated dense nv=26 schedule");
-    let root = &schedule.schedule().root.params.final_group.commitment;
+    let root = &schedule.schedule().root.params;
     Snapshot {
         inner_basis: root.log_basis_inner,
         opening_basis: root.log_basis_open,

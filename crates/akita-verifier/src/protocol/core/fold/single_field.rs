@@ -51,8 +51,8 @@ where
             prepare_opening_point::<F, E, D>(
                 protocol_point,
                 basis,
-                params.num_positions_per_block,
-                params.num_live_blocks,
+                params.blocks.positions_per_block,
+                params.blocks.live_blocks,
                 params.d_a().trailing_zeros() as usize,
             )
         }

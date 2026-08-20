@@ -35,7 +35,7 @@ fn root_shape<Cfg: CommitmentConfig>(num_vars: usize) -> RootShape {
     ))
     .expect("generated singleton schedule")
     .into_schedule();
-    let root = &schedule.root.params.final_group.commitment;
+    let root = &schedule.root.params;
     RootShape {
         inner_basis: root.log_basis_inner,
         inner_digits: root.num_digits_inner,
